@@ -2,8 +2,10 @@ import React, { useState, useEffect } from 'react';
 import {
   Users, CheckSquare, IndianRupee, TrendingUp, MessageCircle,
   ArrowUpRight, ArrowDownRight, Bot, CreditCard, BarChart3,
-  Clock, AlertCircle, CheckCircle2
+  Clock, AlertCircle, CheckCircle2, RefreshCw
 } from 'lucide-react';
+import { getDashboardStats, getActivityFeed } from '../lib/db';
+import { isSupabaseConfigured } from '../lib/supabase';
 import './Pages.css';
 
 const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul'];
@@ -66,29 +68,68 @@ const tasks = [
 ];
 
 const Dashboard = () => {
-  const [taskList, setTaskList] = useState(tasks);
+  const [taskList, setTaskList] = useState([]);
   const [maxBar] = useState(Math.max(...revenueData));
+  const [stats, setStats] = useState(null);
+  const [activity, setActivity] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const loadData = async () => {
+    setLoading(true);
+    const [statsRes, activityRes] = await Promise.all([
+      getDashboardStats(),
+      getActivityFeed(5),
+    ]);
+    if (statsRes.data) setStats(statsRes.data);
+    if (activityRes.data) setActivity(activityRes.data);
+    setLoading(false);
+  };
 
   const toggleTask = (id) => {
     setTaskList(prev => prev.map(t => t.id === id ? { ...t, done: !t.done } : t));
   };
 
+  const fmtAmount = (n) => n >= 100000
+    ? '₹' + (n / 100000).toFixed(1) + 'L'
+    : '₹' + n.toLocaleString('en-IN');
+
+  const activityIconMap = {
+    lead: { bg: 'var(--success-bg)', color: 'var(--success)', icon: <Users size={15} /> },
+    whatsapp: { bg: 'var(--whatsapp-bg)', color: 'var(--whatsapp)', icon: <MessageCircle size={15} /> },
+    payment: { bg: 'var(--danger-bg)', color: 'var(--danger)', icon: <IndianRupee size={15} /> },
+    task: { bg: 'var(--warning-bg)', color: 'var(--warning)', icon: <CheckSquare size={15} /> },
+    tally: { bg: 'var(--accent-glow)', color: 'var(--accent-primary)', icon: <RefreshCw size={15} /> },
+    system: { bg: 'var(--bg-tertiary)', color: 'var(--text-muted)', icon: <Bot size={15} /> },
+  };
+
   return (
     <div className="page-container">
-      {/* Demo Banner */}
-      <div className="demo-banner">
-        <span className="demo-badge">DEMO</span>
-        All data is simulated for demonstration. WhatsApp API, Tally, and other integrations will be connected in production.
+      {/* Connection Status Banner */}
+      <div className={`demo-banner ${isSupabaseConfigured ? 'live' : ''}`} style={{
+        background: isSupabaseConfigured ? 'rgba(16,185,129,0.08)' : undefined,
+        borderColor: isSupabaseConfigured ? 'rgba(16,185,129,0.2)' : undefined,
+        color: isSupabaseConfigured ? 'var(--success)' : undefined,
+      }}>
+        <span className="demo-badge" style={{ background: isSupabaseConfigured ? 'var(--success)' : undefined }}>
+          {isSupabaseConfigured ? 'LIVE' : 'DEMO'}
+        </span>
+        {isSupabaseConfigured
+          ? 'Connected to Supabase · Showing real-time data from your database.'
+          : 'All data is simulated. Add your Supabase keys in .env to switch to live mode.'}
       </div>
 
       {/* Page Header */}
       <div className="page-header">
         <div className="page-title-group">
           <h1 className="page-title">Dashboard Overview</h1>
-          <p className="page-subtitle">Welcome back, Admin! Here's your business pulse for today.</p>
+          <p className="page-subtitle">Here's your Real Estate business pulse for today.</p>
         </div>
         <div className="page-actions">
-          <button className="btn btn-secondary"><Clock size={15} /> Today</button>
+          <button className="btn btn-secondary" onClick={loadData}><RefreshCw size={15} className={loading ? 'animate-spin' : ''} /> Refresh</button>
           <button className="btn btn-primary"><BarChart3 size={15} /> Generate Report</button>
         </div>
       </div>

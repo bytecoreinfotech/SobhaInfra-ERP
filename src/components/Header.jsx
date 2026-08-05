@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Search, Bell, Sun, Moon, Menu, MessageCircle, CheckCircle2, AlertCircle, IndianRupee } from 'lucide-react';
+import { Search, Bell, Sun, Moon, Menu, MessageCircle, CheckCircle2, AlertCircle, IndianRupee, LogOut } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
+import { useAuth } from '../context/AuthContext';
 import { useLocation } from 'react-router-dom';
 import './Header.css';
 
@@ -42,6 +43,7 @@ const routeLabels = {
 
 const Header = ({ onMobileMenuOpen }) => {
   const { theme, toggleTheme } = useTheme();
+  const { user, signOut } = useAuth();
   const [showNotif, setShowNotif] = useState(false);
   const [notifs, setNotifs] = useState(notifications);
   const notifRef = useRef(null);
@@ -142,14 +144,28 @@ const Header = ({ onMobileMenuOpen }) => {
           )}
         </div>
 
-        {/* User Profile */}
+        {/* User Profile + Sign Out */}
         <div className="user-profile">
-          <div className="user-avatar">AU</div>
-          <div className="user-info">
-            <div className="user-name">Admin User</div>
-            <div className="user-role">Super Admin</div>
+          <div className="user-avatar">{user?.avatar || user?.email?.slice(0,2).toUpperCase() || 'AU'}</div>
+          <div className="user-info hide-mobile">
+            <div className="user-name">{user?.name || user?.email || 'Admin User'}</div>
+            <div className="user-role">{user?.role || 'User'}</div>
           </div>
         </div>
+        <button
+          onClick={signOut}
+          title="Sign Out"
+          style={{
+            background: 'none', border: '1px solid var(--border-color)', borderRadius: 8,
+            padding: '0.4rem', cursor: 'pointer', color: 'var(--text-muted)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            transition: 'all 0.2s'
+          }}
+          onMouseEnter={e => { e.currentTarget.style.color = 'var(--danger)'; e.currentTarget.style.borderColor = 'var(--danger)'; }}
+          onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.borderColor = 'var(--border-color)'; }}
+        >
+          <LogOut size={15} />
+        </button>
       </div>
     </header>
   );

@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   MessageCircle, Mail, Phone, Plus, Search, Filter,
   X, CheckCircle2, Send, User, Building2, Star,
-  ChevronRight, MoreVertical
+  ChevronRight, MoreVertical, RefreshCw
 } from 'lucide-react';
+import { getLeads, createLead, updateLead, deleteLead } from '../lib/db';
 import './Pages.css';
 
 const allLeads = [
