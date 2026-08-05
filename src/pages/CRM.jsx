@@ -2,337 +2,284 @@ import React, { useState, useEffect } from 'react';
 import {
   MessageCircle, Mail, Phone, Plus, Search, Filter,
   X, CheckCircle2, Send, User, Building2, Star,
-  ChevronRight, MoreVertical, RefreshCw
+  ChevronRight, MoreVertical, RefreshCw, Trash2, Edit2
 } from 'lucide-react';
 import { getLeads, createLead, updateLead, deleteLead } from '../lib/db';
 import './Pages.css';
 
-const allLeads = [
-  { id: 1, name: 'Rajesh Kumar', company: 'Global Traders Pvt. Ltd.', status: 'Hot Lead', phone: '+91 98765 43210', email: 'rajesh@globaltraders.in', value: '₹3,50,000', source: 'WhatsApp', lastContact: 'Today', stage: 'Negotiation', assigned: 'Priya S.' },
-  { id: 2, name: 'Priya Sharma', company: 'Tech Innovators India', status: 'In Discussion', phone: '+91 87654 32109', email: 'priya@techinnovators.co', value: '₹1,80,000', source: 'Website', lastContact: 'Yesterday', stage: 'Proposal', assigned: 'Admin' },
-  { id: 3, name: 'Amit Singh', company: 'BuildRight Construction', status: 'New', phone: '+91 76543 21098', email: 'amit@buildright.com', value: '₹5,20,000', source: 'Referral', lastContact: '2 days ago', stage: 'Contacted', assigned: 'Rajesh K.' },
-  { id: 4, name: 'Sneha Patel', company: 'Patel Logistics Ltd.', status: 'Closed', phone: '+91 65432 10987', email: 'sneha@patellogistics.com', value: '₹2,10,000', source: 'Cold Call', lastContact: '1 week ago', stage: 'Closed Won', assigned: 'Admin' },
-  { id: 5, name: 'Vikram Desai', company: 'Alpha Manufacturing', status: 'Hot Lead', phone: '+91 99887 76655', email: 'vikram@alphamfg.in', value: '₹8,50,000', source: 'LinkedIn', lastContact: '3 hr ago', stage: 'Demo', assigned: 'Priya S.' },
-  { id: 6, name: 'Karan Mehta', company: 'Mehta Industries', status: 'New', phone: '+91 88776 65544', email: 'karan@mehtaind.com', value: '₹95,000', source: 'WhatsApp', lastContact: 'Just now', stage: 'New', assigned: 'Unassigned' },
-];
-
 const statusConfig = {
-  'Hot Lead': 'badge-danger',
-  'In Discussion': 'badge-warning',
-  'Closed': 'badge-success',
-  'New': 'badge-neutral',
+  Hot:       { badge: 'badge-danger',   dot: '#ef4444' },
+  Warm:      { badge: 'badge-warning',  dot: '#f59e0b' },
+  New:       { badge: 'badge-neutral',  dot: '#94a3b8' },
+  Cold:      { badge: 'badge-neutral',  dot: '#64748b' },
+  Converted: { badge: 'badge-success',  dot: '#10b981' },
+  Lost:      { badge: 'badge-neutral',  dot: '#475569' },
 };
 
-const templates = [
-  {
-    id: 1, name: 'Follow Up – Product Pitch',
-    body: `Hi {name},\n\nThank you for your interest in ERPPro! 🙏\n\nWe noticed you explored our platform and we'd love to schedule a personalized demo for you.\n\n📅 Are you available for a quick 15-min call this week?\n\nBest regards,\nTeam ERPPro`
-  },
-  {
-    id: 2, name: 'Meeting Reminder',
-    body: `Hi {name},\n\nThis is a friendly reminder about our scheduled meeting tomorrow. 📅\n\nLooking forward to connecting with you!\n\nTeam ERPPro`
-  },
-  {
-    id: 3, name: 'Festival Discount Offer',
-    body: `🎉 Special Offer for {name}!\n\nThis festive season, get 25% OFF on ERPPro Annual Plan!\n\n✅ WhatsApp CRM\n✅ Tally Integration\n✅ Unlimited Automations\n\nOffer valid till Aug 31. Reply YES to claim!\n\nTeam ERPPro`
-  },
-];
+const sourceColors = {
+  WhatsApp:  '#25d366', Facebook: '#1877f2', Instagram: '#e1306c',
+  Website:   '#6366f1', Referral: '#f59e0b', 'Walk-in': '#10b981',
+};
+
+const EMPTY_LEAD = { name: '', phone: '', email: '', source: 'WhatsApp', status: 'New', property_interest: '', budget: '', notes: '' };
 
 const CRM = () => {
-  const [leads] = useState(allLeads);
-  const [selectedLead, setSelectedLead] = useState(null);
-  const [selectedTemplate, setSelectedTemplate] = useState(templates[0]);
-  const [isSending, setIsSending] = useState(false);
-  const [sentSuccess, setSentSuccess] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
+  const [leads, setLeads] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
   const [activeFilter, setActiveFilter] = useState('All');
-  const [showAddModal, setShowAddModal] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const [editLead, setEditLead] = useState(null);
+  const [form, setForm] = useState(EMPTY_LEAD);
+  const [saving, setSaving] = useState(false);
+  const [showWA, setShowWA] = useState(null);
+  const [chatMsg, setChatMsg] = useState('');
+  const [chatSent, setChatSent] = useState(false);
+  const [selectedTemplate, setSelectedTemplate] = useState('Hi {name}, just checking in about your property interest. Can we schedule a site visit?');
 
-  const filters = ['All', 'Hot Lead', 'In Discussion', 'New', 'Closed'];
+  useEffect(() => { loadLeads(); }, []);
 
-  const filteredLeads = leads.filter(lead => {
-    const matchSearch = lead.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      lead.company.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchFilter = activeFilter === 'All' || lead.status === activeFilter;
-    return matchSearch && matchFilter;
+  const loadLeads = async () => {
+    setLoading(true);
+    const { data } = await getLeads();
+    setLeads(data || []);
+    setLoading(false);
+  };
+
+  const filtered = leads.filter(l => {
+    const matchFilter = activeFilter === 'All' || l.status === activeFilter;
+    const matchSearch = !search || l.name.toLowerCase().includes(search.toLowerCase()) || l.phone?.includes(search) || l.property_interest?.toLowerCase().includes(search.toLowerCase());
+    return matchFilter && matchSearch;
   });
 
-  const handleSend = (e) => {
-    e.preventDefault();
-    setIsSending(true);
-    setTimeout(() => {
-      setIsSending(false);
-      setSentSuccess(true);
-      setTimeout(() => { setSentSuccess(false); setSelectedLead(null); }, 2500);
-    }, 1800);
+  const openAdd = () => { setForm(EMPTY_LEAD); setEditLead(null); setShowForm(true); };
+  const openEdit = (lead) => { setForm({ name: lead.name, phone: lead.phone || '', email: lead.email || '', source: lead.source, status: lead.status, property_interest: lead.property_interest || '', budget: lead.budget || '', notes: lead.notes || '' }); setEditLead(lead); setShowForm(true); };
+
+  const handleSave = async () => {
+    if (!form.name.trim()) return;
+    setSaving(true);
+    if (editLead) {
+      const { data } = await updateLead(editLead.id, form);
+      if (data) setLeads(prev => prev.map(l => l.id === editLead.id ? { ...l, ...form } : l));
+    } else {
+      const { data } = await createLead(form);
+      if (data) setLeads(prev => [data, ...prev]);
+    }
+    setSaving(false);
+    setShowForm(false);
+    setEditLead(null);
   };
 
-  const getPreviewBody = (lead) => {
-    return selectedTemplate.body.replace(/{name}/g, lead?.name || 'there');
+  const handleDelete = async (id) => {
+    await deleteLead(id);
+    setLeads(prev => prev.filter(l => l.id !== id));
   };
+
+  const handleSendWA = () => {
+    setChatSent(true);
+    setTimeout(() => { setChatSent(false); setShowWA(null); setChatMsg(''); }, 2000);
+  };
+
+  const filters = ['All', 'Hot', 'Warm', 'New', 'Cold', 'Converted'];
+  const counts = filters.reduce((acc, f) => ({ ...acc, [f]: f === 'All' ? leads.length : leads.filter(l => l.status === f).length }), {});
+
+  const waTemplates = [
+    'Hi {name}, just checking in about your property interest. Can we schedule a site visit?',
+    '🏠 Hi {name}! We have a new listing that matches your requirement ({property}). Interested?',
+    'Dear {name}, your booking advance of {amount} is due. Please clear at the earliest.',
+    '📅 Hi {name}, your site visit is confirmed for tomorrow at 11 AM. See you there!',
+  ];
 
   return (
     <div className="page-container animate-fade-in">
-      {/* Demo Banner */}
-      <div className="demo-banner">
-        <span className="demo-badge">DEMO</span>
-        WhatsApp messages are simulated. In production, real messages will be sent via WhatsApp Business API (Meta).
-      </div>
-
       {/* Header */}
       <div className="page-header">
         <div className="page-title-group">
-          <h1 className="page-title">CRM & Lead Management</h1>
-          <p className="page-subtitle">{leads.length} total contacts · {leads.filter(l => l.status === 'Hot Lead').length} hot leads</p>
+          <h1 className="page-title">CRM & Leads</h1>
+          <p className="page-subtitle">Real Estate lead pipeline — {leads.length} contacts total</p>
         </div>
         <div className="page-actions">
-          <button className="btn btn-secondary"><Filter size={15} /> Filter</button>
-          <button className="btn btn-whatsapp"><MessageCircle size={15} /> Bulk Broadcast</button>
-          <button className="btn btn-primary" onClick={() => setShowAddModal(true)}><Plus size={15} /> Add Lead</button>
+          <button className="btn btn-secondary" onClick={loadLeads}><RefreshCw size={15} className={loading ? 'animate-spin' : ''} /> Refresh</button>
+          <button className="btn btn-primary" onClick={openAdd}><Plus size={15} /> Add Lead</button>
         </div>
       </div>
 
-      {/* Filter Chips + Search */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-        <div className="input-group" style={{ maxWidth: 300 }}>
+      {/* Pipeline Stats */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '0.75rem' }}>
+        {filters.slice(1).map(f => (
+          <div key={f} className="glass-card" style={{ padding: '1rem', textAlign: 'center', cursor: 'pointer', border: activeFilter === f ? `2px solid ${statusConfig[f]?.dot}` : '1px solid var(--border-color)', transition: 'all 0.2s' }} onClick={() => setActiveFilter(activeFilter === f ? 'All' : f)}>
+            <div style={{ fontSize: '1.6rem', fontWeight: 800, color: statusConfig[f]?.dot, fontFamily: 'Outfit, sans-serif' }}>{counts[f]}</div>
+            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>{f}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Search + Filter */}
+      <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+        <div className="input-group" style={{ flex: 1, minWidth: 200 }}>
           <Search size={15} className="input-icon" />
-          <input
-            type="text"
-            placeholder="Search leads..."
-            className="input-field"
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-          />
+          <input type="text" className="input-field" placeholder="Search by name, phone, property..." value={search} onChange={e => setSearch(e.target.value)} />
         </div>
-        <div className="filter-bar">
+        <div className="filter-bar" style={{ margin: 0 }}>
           {filters.map(f => (
-            <button
-              key={f}
-              className={`filter-chip ${activeFilter === f ? 'active' : ''}`}
-              onClick={() => setActiveFilter(f)}
-            >
-              {f} {f !== 'All' && <span>({leads.filter(l => l.status === f).length})</span>}
+            <button key={f} className={`filter-chip ${activeFilter === f ? 'active' : ''}`} onClick={() => setActiveFilter(f)}>
+              {f} <span style={{ opacity: 0.7, fontSize: '0.68rem' }}>({counts[f]})</span>
             </button>
           ))}
         </div>
       </div>
 
-      {/* Table */}
-      <div className="glass-card table-container">
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>Lead Name</th>
-              <th>Company</th>
-              <th>Deal Value</th>
-              <th>Status</th>
-              <th>Stage</th>
-              <th>Last Contact</th>
-              <th>Assigned</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredLeads.map(lead => (
-              <tr key={lead.id}>
-                <td>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
-                    <div className="mini-avatar">{lead.name.slice(0, 2).toUpperCase()}</div>
-                    <div>
-                      <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>{lead.name}</div>
-                      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{lead.phone}</div>
-                    </div>
-                  </div>
-                </td>
-                <td>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem' }}>
-                    <Building2 size={13} style={{ color: 'var(--text-muted)' }} />
-                    {lead.company}
-                  </div>
-                </td>
-                <td style={{ fontWeight: 700, color: 'var(--success)', fontSize: '0.875rem' }}>{lead.value}</td>
-                <td><span className={`badge ${statusConfig[lead.status] || 'badge-neutral'}`}>{lead.status}</span></td>
-                <td style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>{lead.stage}</td>
-                <td style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{lead.lastContact}</td>
-                <td style={{ fontSize: '0.82rem' }}>{lead.assigned}</td>
-                <td>
-                  <div style={{ display: 'flex', gap: '0.25rem' }}>
-                    <button
-                      className="btn-icon"
-                      title="Send WhatsApp"
-                      onClick={() => setSelectedLead(lead)}
-                      style={{ color: 'var(--whatsapp)' }}
-                    >
-                      <MessageCircle size={16} />
-                    </button>
-                    <button className="btn-icon" title="Send Email"><Mail size={16} /></button>
-                    <button className="btn-icon" title="Call"><Phone size={16} /></button>
-                    <button className="btn-icon" title="More"><MoreVertical size={16} /></button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {filteredLeads.length === 0 && (
-          <div className="empty-state">
-            <div className="empty-icon">🔍</div>
-            <p>No leads match your search.</p>
-          </div>
-        )}
-      </div>
+      {/* Loading state */}
+      {loading && (
+        <div style={{ display: 'flex', justifyContent: 'center', padding: '3rem', color: 'var(--text-muted)' }}>
+          <RefreshCw size={24} className="animate-spin" />
+        </div>
+      )}
 
-      {/* WhatsApp Modal */}
-      {selectedLead && (
+      {/* Leads Table */}
+      {!loading && (
+        <div className="glass-card table-container">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Lead</th>
+                <th>Contact</th>
+                <th>Status</th>
+                <th>Property Interest</th>
+                <th>Budget</th>
+                <th>Source</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.length === 0 && (
+                <tr><td colSpan={7} style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>No leads found</td></tr>
+              )}
+              {filtered.map(lead => (
+                <tr key={lead.id}>
+                  <td>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+                      <div className="mini-avatar" style={{ background: `${statusConfig[lead.status]?.dot}22`, color: statusConfig[lead.status]?.dot, border: `1.5px solid ${statusConfig[lead.status]?.dot}` }}>
+                        {lead.name.slice(0, 2).toUpperCase()}
+                      </div>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: '0.875rem' }}>{lead.name}</div>
+                        {lead.notes && <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lead.notes}</div>}
+                      </div>
+                    </div>
+                  </td>
+                  <td>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
+                      {lead.phone && <div style={{ fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}><Phone size={11} color="var(--text-muted)" />{lead.phone}</div>}
+                      {lead.email && <div style={{ fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}><Mail size={11} color="var(--text-muted)" />{lead.email}</div>}
+                    </div>
+                  </td>
+                  <td><span className={`badge ${statusConfig[lead.status]?.badge}`}>{lead.status}</span></td>
+                  <td style={{ fontSize: '0.82rem', maxWidth: 180 }}>{lead.property_interest || '—'}</td>
+                  <td style={{ fontWeight: 600, fontSize: '0.82rem', color: 'var(--success)' }}>{lead.budget || '—'}</td>
+                  <td>
+                    <span style={{ fontSize: '0.72rem', fontWeight: 700, color: sourceColors[lead.source] || 'var(--text-muted)', background: (sourceColors[lead.source] || '#666') + '18', padding: '0.2rem 0.5rem', borderRadius: 99 }}>
+                      {lead.source}
+                    </span>
+                  </td>
+                  <td>
+                    <div style={{ display: 'flex', gap: '0.35rem' }}>
+                      <button className="btn-icon" title="Send WhatsApp" onClick={() => { setShowWA(lead); setChatMsg(''); setChatSent(false); }}><MessageCircle size={14} style={{ color: 'var(--whatsapp)' }} /></button>
+                      <button className="btn-icon" title="Edit" onClick={() => openEdit(lead)}><Edit2 size={14} /></button>
+                      <button className="btn-icon" title="Delete" onClick={() => handleDelete(lead.id)}><Trash2 size={14} style={{ color: 'var(--danger)' }} /></button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Add / Edit Lead Modal */}
+      {showForm && (
         <div className="modal-overlay">
           <div className="modal-content modal-lg">
-            <button
-              style={{ position: 'absolute', top: '1.25rem', right: '1.25rem', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}
-              onClick={() => { setSelectedLead(null); setSentSuccess(false); }}
-            >
-              <X size={20} />
-            </button>
-
-            {sentSuccess ? (
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem', padding: '2rem', textAlign: 'center' }}>
-                <CheckCircle2 size={64} style={{ color: 'var(--whatsapp)' }} />
-                <h3 style={{ fontSize: '1.25rem', fontWeight: 700 }}>Message Sent! ✅</h3>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
-                  WhatsApp message delivered to <strong>{selectedLead.name}</strong> ({selectedLead.phone})<br />
-                  <span style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>Automated flow triggered · Demo simulation</span>
-                </p>
+            <button style={{ position: 'absolute', top: '1.25rem', right: '1.25rem', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }} onClick={() => setShowForm(false)}><X size={20} /></button>
+            <h2 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '1.5rem' }}>{editLead ? 'Edit Lead' : 'Add New Lead'}</h2>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+              {[
+                { label: 'Full Name *', key: 'name', type: 'text', placeholder: 'e.g. Ravi Mehta' },
+                { label: 'Phone Number', key: 'phone', type: 'text', placeholder: '+91 XXXXX XXXXX' },
+                { label: 'Email', key: 'email', type: 'email', placeholder: 'email@example.com' },
+                { label: 'Budget', key: 'budget', type: 'text', placeholder: '₹50L - ₹80L' },
+                { label: 'Property Interest', key: 'property_interest', type: 'text', placeholder: '3BHK - Andheri West' },
+              ].map(f => (
+                <div key={f.key}>
+                  <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>{f.label}</label>
+                  <input type={f.type} className="input-field" placeholder={f.placeholder} value={form[f.key]} onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))} />
+                </div>
+              ))}
+              <div>
+                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Source</label>
+                <select className="input-field" value={form.source} onChange={e => setForm(p => ({ ...p, source: e.target.value }))}>
+                  {['WhatsApp','Facebook','Instagram','Website','Walk-in','Referral'].map(s => <option key={s}>{s}</option>)}
+                </select>
               </div>
-            ) : (
-              <>
-                <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.5rem', fontSize: '1.1rem' }}>
-                  <MessageCircle size={22} style={{ color: 'var(--whatsapp)' }} />
-                  Send WhatsApp Message
-                </h2>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
-                  {/* Left: config */}
-                  <div>
-                    <div style={{ marginBottom: '1rem' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.875rem', background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
-                        <div className="mini-avatar" style={{ width: 36, height: 36, fontSize: '0.8rem' }}>{selectedLead.name.slice(0, 2).toUpperCase()}</div>
-                        <div>
-                          <div style={{ fontSize: '0.875rem', fontWeight: 600 }}>{selectedLead.name}</div>
-                          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{selectedLead.phone}</div>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div style={{ marginBottom: '1rem' }}>
-                      <label style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.4rem' }}>Select Template</label>
-                      {templates.map(t => (
-                        <div
-                          key={t.id}
-                          onClick={() => setSelectedTemplate(t)}
-                          style={{
-                            padding: '0.65rem 0.875rem', marginBottom: '0.4rem', borderRadius: 'var(--radius-md)',
-                            border: `1px solid ${selectedTemplate.id === t.id ? 'var(--accent-primary)' : 'var(--border-color)'}`,
-                            background: selectedTemplate.id === t.id ? 'rgba(99,102,241,0.05)' : 'var(--bg-tertiary)',
-                            cursor: 'pointer', transition: 'var(--transition)',
-                            fontSize: '0.82rem', color: 'var(--text-primary)'
-                          }}
-                        >
-                          {t.name}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Right: preview */}
-                  <div>
-                    <label style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.4rem' }}>
-                      Message Preview
-                    </label>
-                    <div style={{
-                      background: '#ECE5DD', borderRadius: 'var(--radius-md)', padding: '1rem',
-                      minHeight: 200, position: 'relative'
-                    }}>
-                      <div style={{
-                        background: 'white', borderRadius: '0 12px 12px 12px',
-                        padding: '0.75rem', fontSize: '0.8rem', lineHeight: 1.6,
-                        color: '#111', boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-                        whiteSpace: 'pre-wrap', maxWidth: '90%'
-                      }}>
-                        {getPreviewBody(selectedLead)}
-                      </div>
-                      <div style={{ textAlign: 'right', fontSize: '0.65rem', color: '#999', marginTop: '0.4rem' }}>10:34 AM ✓✓</div>
-                    </div>
-                  </div>
-                </div>
-
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1.5rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
-                  <div>
-                    <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                      🔒 Powered by WhatsApp Business API (Meta) · Demo Mode
-                    </span>
-                  </div>
-                  <div style={{ display: 'flex', gap: '0.75rem' }}>
-                    <button className="btn btn-secondary" onClick={() => setSelectedLead(null)}>Cancel</button>
-                    <button
-                      className="btn btn-whatsapp"
-                      onClick={handleSend}
-                      disabled={isSending}
-                    >
-                      <Send size={15} />
-                      {isSending ? 'Sending...' : 'Send Message'}
-                    </button>
-                  </div>
-                </div>
-              </>
-            )}
+              <div>
+                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Status</label>
+                <select className="input-field" value={form.status} onChange={e => setForm(p => ({ ...p, status: e.target.value }))}>
+                  {['New','Hot','Warm','Cold','Converted','Lost'].map(s => <option key={s}>{s}</option>)}
+                </select>
+              </div>
+            </div>
+            <div style={{ marginTop: '1rem' }}>
+              <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Notes</label>
+              <textarea className="input-field textarea-field" rows={2} placeholder="Any important details..." value={form.notes} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))} />
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1.5rem' }}>
+              <button className="btn btn-secondary" onClick={() => setShowForm(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleSave} disabled={saving || !form.name.trim()}>
+                {saving ? 'Saving...' : editLead ? 'Update Lead' : 'Add Lead'}
+              </button>
+            </div>
           </div>
         </div>
       )}
 
-      {/* Add Lead Modal */}
-      {showAddModal && (
+      {/* WhatsApp Quick Message Modal */}
+      {showWA && (
         <div className="modal-overlay">
           <div className="modal-content">
-            <button
-              style={{ position: 'absolute', top: '1.25rem', right: '1.25rem', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}
-              onClick={() => setShowAddModal(false)}
-            >
-              <X size={20} />
-            </button>
-            <h2 style={{ fontSize: '1.1rem', marginBottom: '1.5rem' }}>Add New Lead</h2>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              <div>
-                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Full Name *</label>
-                <input type="text" className="input-field" placeholder="e.g. Rajesh Kumar" />
+            <button style={{ position: 'absolute', top: '1.25rem', right: '1.25rem', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }} onClick={() => setShowWA(null)}><X size={20} /></button>
+            <h2 style={{ fontSize: '1.05rem', fontWeight: 700, marginBottom: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <MessageCircle size={18} style={{ color: 'var(--whatsapp)' }} /> Send WhatsApp
+            </h2>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '1.25rem' }}>To: <strong>{showWA.name}</strong> · {showWA.phone}</p>
+
+            {chatSent ? (
+              <div style={{ textAlign: 'center', padding: '2rem' }}>
+                <div style={{ fontSize: '2.5rem' }}>✅</div>
+                <p style={{ color: 'var(--success)', fontWeight: 600, marginTop: '0.5rem' }}>Message Sent!</p>
+                <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Demo: No actual message sent</p>
               </div>
-              <div>
-                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Company</label>
-                <input type="text" className="input-field" placeholder="e.g. Global Traders Pvt. Ltd." />
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                <div>
-                  <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Phone (WhatsApp)</label>
-                  <input type="text" className="input-field" placeholder="+91 XXXXX XXXXX" />
+            ) : (
+              <>
+                <div style={{ marginBottom: '1rem' }}>
+                  <label style={{ fontSize: '0.78rem', fontWeight: 600, display: 'block', marginBottom: '0.5rem' }}>Quick Template</label>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                    {waTemplates.map((t, i) => (
+                      <div key={i} onClick={() => setSelectedTemplate(t)} style={{ padding: '0.6rem 0.875rem', borderRadius: 8, background: selectedTemplate === t ? 'rgba(99,102,241,0.1)' : 'var(--bg-tertiary)', border: `1px solid ${selectedTemplate === t ? 'var(--accent-primary)' : 'var(--border-color)'}`, cursor: 'pointer', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                        {t.replace('{name}', showWA.name).replace('{property}', showWA.property_interest || '2BHK').replace('{amount}', showWA.budget || '₹50,000')}
+                      </div>
+                    ))}
+                  </div>
                 </div>
                 <div>
-                  <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Deal Value</label>
-                  <input type="text" className="input-field" placeholder="₹0" />
+                  <label style={{ fontSize: '0.78rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Custom Message</label>
+                  <textarea className="input-field textarea-field" rows={3} placeholder="Type a custom message..." value={chatMsg} onChange={e => setChatMsg(e.target.value)} />
                 </div>
-              </div>
-              <div>
-                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Lead Source</label>
-                <select className="input-field">
-                  <option>WhatsApp</option>
-                  <option>Website</option>
-                  <option>Referral</option>
-                  <option>LinkedIn</option>
-                  <option>Cold Call</option>
-                </select>
-              </div>
-              <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
-                <button className="btn btn-secondary" onClick={() => setShowAddModal(false)}>Cancel</button>
-                <button className="btn btn-primary" onClick={() => setShowAddModal(false)}>Add Lead</button>
-              </div>
-            </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1rem' }}>
+                  <button className="btn btn-secondary" onClick={() => setShowWA(null)}>Cancel</button>
+                  <button className="btn btn-whatsapp" onClick={handleSendWA}><Send size={14} /> Send via WhatsApp</button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
