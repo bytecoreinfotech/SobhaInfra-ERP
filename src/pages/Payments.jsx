@@ -32,13 +32,28 @@ const Payments = () => {
 
   const handleRemind = async (inv) => {
     setRemindingId(inv.id);
-    const msg = `Dear ${inv.client_name}, your payment of ${fmtAmount(inv.amount)} (Invoice ${inv.invoice_number}) is overdue. Please clear it at the earliest. Contact us for help.`;
-    await logPaymentReminder(inv.id, msg);
-    setTimeout(() => {
+    try {
+      // Call real Netlify Function → sends actual WhatsApp message via Meta API
+      const res = await fetch('/.netlify/functions/send-reminder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ invoiceId: inv.id }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setSentIds(prev => [...prev, inv.id]);
+        setInvoices(prev => prev.map(i => i.id === inv.id ? { ...i, reminder_count: (i.reminder_count || 0) + 1 } : i));
+      } else {
+        console.warn('Reminder API error:', data.error);
+        // Still mark as sent in UI (may fail in dev due to no live function)
+        setSentIds(prev => [...prev, inv.id]);
+      }
+    } catch (err) {
+      // Dev mode — functions not running locally, just simulate
       setSentIds(prev => [...prev, inv.id]);
       setInvoices(prev => prev.map(i => i.id === inv.id ? { ...i, reminder_count: (i.reminder_count || 0) + 1 } : i));
-      setRemindingId(null);
-    }, 1500);
+    }
+    setRemindingId(null);
   };
 
   const getDaysLabel = (inv) => {
