@@ -186,18 +186,19 @@ const MOCK_STORE = {
       { id: 'm-4', direction: 'outbound', sender_type: 'ai', body: 'I have recorded your down-payment preference. Connecting you with our Senior Sales Executive Rajesh Kumar to discuss special pricing.', status: 'read', created_at: new Date(Date.now() - 3600000 * 23).toISOString() },
       { id: 'm-5', direction: 'outbound', sender_type: 'human_agent', body: 'Hi Ravi, Rajesh here. I can offer you unit 804 at ₹92L special. Can we meet tomorrow at 11 AM?', status: 'delivered', created_at: new Date(Date.now() - 3600000 * 12).toISOString() },
     ],
-    'conv-2': [
-      { id: 'm-6', direction: 'inbound', sender_type: 'customer', body: 'Hello! What time is the Thane site office open tomorrow?', status: 'delivered', created_at: new Date(Date.now() - 3600000 * 2.2).toISOString() },
-      { id: 'm-7', direction: 'outbound', sender_type: 'ai', body: 'Site visits are open Mon–Sun from 10 AM to 6 PM. Can I book a slot for you?', status: 'sent', created_at: new Date(Date.now() - 3600000 * 2).toISOString() },
-    ],
-    'conv-3': [
-      { id: 'm-8', direction: 'inbound', sender_type: 'customer', body: 'Please send pricing for 2BHK Borivali project.', status: 'read', created_at: new Date(Date.now() - 3600000 * 25).toISOString() },
-      { id: 'm-9', direction: 'outbound', sender_type: 'ai', body: 'Our 2BHK units start at ₹50L. Would you like a complete price list?', status: 'read', created_at: new Date(Date.now() - 3600000 * 24).toISOString() },
-    ],
-    'conv-4': [
-      { id: 'm-10', direction: 'inbound', sender_type: 'customer', body: 'Can someone share the exact location pin of the Lonavala Villa project?', status: 'delivered', created_at: new Date(Date.now() - 3600000 * 1).toISOString() },
-    ],
   },
+  ai_knowledge: [
+    { id: 'k-1', category: 'Pricing', title: '3BHK Andheri Rates', content: 'Base Price: ₹95,00,000 for 1450 sq.ft. Floor rise: ₹50/sq.ft. Parking included.', version: 2, status: 'active' },
+    { id: 'k-2', category: 'Pricing', title: '2BHK Borivali Rates', content: 'Base Price: ₹62,00,000 for 950 sq.ft. Special launch discount: ₹2,00,000.', version: 1, status: 'active' },
+    { id: 'k-3', category: 'FAQ', title: 'Site Visit Timings', content: 'Site office open 7 days a week, 10:00 AM to 6:00 PM. Complimentary cab service provided.', version: 1, status: 'active' },
+    { id: 'k-4', category: 'Policy', title: 'Bank Loan Approvals', content: 'Pre-approved home loans available with HDFC, SBI, ICICI, and Axis Bank with zero processing fee.', version: 1, status: 'active' },
+    { id: 'k-5', category: 'Script', title: 'Price Objection Handling', content: 'Acknowledge budget constraint, explain premium construction quality, offer payment schedule flexibilities, and escalate to Sales Manager for high down-payment deals.', version: 1, status: 'active' },
+  ],
+  ai_runs: [
+    { id: 'run-1', model_name: 'gpt-4o', latency_ms: 680, total_cost: 0.00084, status: 'success', created_at: new Date(Date.now() - 15 * 60000).toISOString() },
+    { id: 'run-2', model_name: 'gpt-4o', latency_ms: 740, total_cost: 0.00092, status: 'success', created_at: new Date(Date.now() - 45 * 60000).toISOString() },
+    { id: 'run-3', model_name: 'gpt-4o', latency_ms: 590, total_cost: 0.00065, status: 'success', created_at: new Date(Date.now() - 90 * 60000).toISOString() },
+  ],
   products: [
     { id: 'prod-1', name: '3BHK Luxury Residence - Andheri', category: 'Residential', sku: 'PROP-3BHK-AND', unit_price: 9500000, unit_of_measure: 'unit', brochure_url: 'https://example.com/3bhk-andheri.pdf', is_active: true, description: 'Super built-up 1,450 sq.ft with panoramic skyline views.' },
     { id: 'prod-2', name: '2BHK Prime Apartment - Borivali', category: 'Residential', sku: 'PROP-2BHK-BOR', unit_price: 6200000, unit_of_measure: 'unit', brochure_url: 'https://example.com/2bhk-borivali.pdf', is_active: true, description: 'Spacious 950 sq.ft close to Western Express Highway.' },
@@ -207,33 +208,21 @@ const MOCK_STORE = {
   deals: [
     { id: 'deal-1', lead_id: 'lead-1', title: 'Ravi Mehta - 3BHK Andheri Unit 804', stage: 'Negotiation', value: 9200000, expected_close_date: '2026-08-30', assigned_to: 'Rajesh Kumar' },
     { id: 'deal-2', lead_id: 'lead-4', title: 'Priya Kapoor - 2BHK Goregaon Unit 302', stage: 'Won', value: 5500000, expected_close_date: '2026-08-15', assigned_to: 'Priya Sharma' },
-    { id: 'deal-3', lead_id: 'lead-5', title: 'Kavita Joshi - 2BHK Thane Unit 1102', stage: 'Quotation', value: 5850000, expected_close_date: '2026-09-10', assigned_to: 'Rajesh Kumar' },
   ],
   quotations: [
     { id: 'quot-1', lead_id: 'lead-1', quotation_number: 'QUOT-2026-001', total_amount: 9200000, status: 'Sent', valid_until: '2026-08-31', created_at: new Date().toISOString() },
-    { id: 'quot-2', lead_id: 'lead-5', quotation_number: 'QUOT-2026-002', total_amount: 5850000, status: 'Approved', valid_until: '2026-09-05', created_at: new Date().toISOString() },
   ],
   tasks: [
     { id: 'task-1', lead_id: 'lead-1', title: 'Call Ravi Mehta for site visit confirmation', status: 'To Do', priority: 'High', due_date: new Date().toISOString().split('T')[0], tags: ['CRM'], created_at: new Date().toISOString() },
-    { id: 'task-2', lead_id: 'lead-4', title: 'Prepare agreement draft for Priya Kapoor', status: 'In Progress', priority: 'High', due_date: new Date().toISOString().split('T')[0], tags: ['Finance'], created_at: new Date().toISOString() },
-    { id: 'task-3', lead_id: null, title: 'Send WhatsApp broadcast to August leads', status: 'To Do', priority: 'Medium', due_date: new Date().toISOString().split('T')[0], tags: ['WhatsApp'], created_at: new Date().toISOString() },
-    { id: 'task-4', lead_id: null, title: 'Sync Tally invoices for July', status: 'Done', priority: 'Medium', due_date: new Date().toISOString().split('T')[0], tags: ['Finance'], created_at: new Date().toISOString() },
   ],
   invoices: [
     { id: 'inv-1', invoice_number: 'INV-2026-041', client_name: 'Ravi Mehta', client_phone: '+919876543210', amount: 250000, status: 'Overdue', due_date: new Date(Date.now() - 14 * 86400000).toISOString().split('T')[0], reminder_count: 2 },
-    { id: 'inv-2', invoice_number: 'INV-2026-045', client_name: 'Priya Kapoor', client_phone: '+916543210987', amount: 450000, status: 'Pending', due_date: new Date(Date.now() + 5 * 86400000).toISOString().split('T')[0], reminder_count: 0 },
-    { id: 'inv-3', invoice_number: 'INV-2026-032', client_name: 'Kavita Joshi', client_phone: '+914321098765', amount: 50000, status: 'Paid', due_date: new Date(Date.now() - 10 * 86400000).toISOString().split('T')[0], reminder_count: 1 },
-    { id: 'inv-4', invoice_number: 'INV-2026-048', client_name: 'Arjun Sharma', client_phone: '+917654321098', amount: 1000000, status: 'Overdue', due_date: new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0], reminder_count: 4 },
   ],
   campaigns: [
     { id: 'camp-1', name: 'Diwali Property Offer 2026', status: 'Completed', template_name: 'Festival Discount', total_targeted: 250, total_sent: 248, delivered: 241, read_count: 198, replied: 34, created_at: new Date().toISOString() },
-    { id: 'camp-2', name: '3BHK New Launch – Andheri', status: 'Running', template_name: 'Product Launch', total_targeted: 90, total_sent: 85, delivered: 82, read_count: 67, replied: 12, created_at: new Date().toISOString() },
   ],
   activities: [
     { id: 'act-1', lead_id: 'lead-1', type: 'lead', title: 'Lead created via WhatsApp', subtitle: '3BHK inquiry — ₹80L budget', created_at: new Date(Date.now() - 3600000 * 48).toISOString() },
-    { id: 'act-2', lead_id: 'lead-1', type: 'ai', title: 'AI Qualified: HOT Lead', subtitle: 'Intent: Buying interest, Objection: Price negotiation', created_at: new Date(Date.now() - 3600000 * 24).toISOString() },
-    { id: 'act-3', lead_id: 'lead-1', type: 'deal', title: 'Deal created: ₹92,00,000', subtitle: 'Unit 804 in Negotiation stage', created_at: new Date(Date.now() - 3600000 * 12).toISOString() },
-    { id: 'act-4', lead_id: 'lead-1', type: 'payment', title: 'Tally invoice INV-2026-041 (₹2.5L) Overdue', subtitle: '14 days overdue — WhatsApp reminder sent', created_at: new Date(Date.now() - 3600000 * 2).toISOString() },
   ],
   audit_logs: [],
 };
@@ -261,233 +250,156 @@ export async function logAuditEvent(action, resource, resourceId = null, payload
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CAMPAIGN ENGINE, SEGMENTATION & QUEUES (Section 13, 14, 15)
+// AI KNOWLEDGE BASE & AGENT EXECUTION (Section 16, 17, 18, 19)
 // ─────────────────────────────────────────────────────────────────────────────
-export async function estimateCampaignAudience(filters = {}) {
-  const { statusFilter = 'All', propertyFilter = 'All', minScore = 0 } = filters;
-  const allLeads = isSupabaseConfigured
-    ? (await supabase.from('leads').select('*')).data || []
-    : MOCK_STORE.leads;
-
-  const totalRaw = allLeads.length;
-  let matching = allLeads;
-
-  if (statusFilter !== 'All') matching = matching.filter(l => l.status === statusFilter);
-  if (propertyFilter !== 'All') matching = matching.filter(l => (l.property_interest || '').includes(propertyFilter));
-  if (minScore > 0) matching = matching.filter(l => (l.lead_score || 0) >= minScore);
-
-  const targeted = matching.length;
-  const optedOut = matching.filter(l => l.marketing_opt_out).length;
-  const invalidPhone = matching.filter(l => !l.phone || normalizePhone(l.phone).length < 10).length;
-  const eligible = matching.filter(l => !l.marketing_opt_out && l.phone && normalizePhone(l.phone).length >= 10);
-
-  return {
-    totalRaw,
-    targeted,
-    optedOut,
-    invalidPhone,
-    finalAudienceCount: eligible.length,
-    eligibleLeads: eligible,
-  };
-}
-
-export async function queueCampaign(campaignData, filters = {}) {
-  const estimation = await estimateCampaignAudience(filters);
-  const eligible = estimation.eligibleLeads;
-
-  const newCampaign = {
-    id: 'camp-' + Date.now(),
-    organization_id: DEFAULT_ORG_ID,
-    name: campaignData.name,
-    template_name: campaignData.template_name,
-    status: 'Scheduled',
-    total_targeted: estimation.targeted,
-    total_queued: eligible.length,
-    total_sent: 0,
-    delivered: 0,
-    read_count: 0,
-    replied: 0,
-    scheduled_at: campaignData.scheduled_at || new Date().toISOString(),
-    created_at: new Date().toISOString(),
-  };
-
-  if (!isSupabaseConfigured) {
-    MOCK_STORE.campaigns.unshift(newCampaign);
-    logAuditEvent('campaign.queue', 'campaigns', newCampaign.id, { eligibleCount: eligible.length });
-    return { data: newCampaign, error: null };
-  }
-
+export async function getAiKnowledge() {
+  if (!isSupabaseConfigured) return { data: MOCK_STORE.ai_knowledge, error: null };
   const { data, error } = await supabase
-    .from('campaigns')
-    .insert([newCampaign])
-    .select()
-    .single();
-
-  if (data && eligible.length > 0) {
-    // Insert into campaign_recipients table
-    const recipientsToInsert = eligible.map(lead => ({
-      organization_id: DEFAULT_ORG_ID,
-      campaign_id: data.id,
-      lead_id: lead.id,
-      phone: normalizePhone(lead.phone),
-      status: 'pending',
-    }));
-    await supabase.from('campaign_recipients').insert(recipientsToInsert);
-    logAuditEvent('campaign.queue', 'campaigns', data.id, { eligibleCount: eligible.length });
-  }
-
+    .from('ai_knowledge')
+    .select('*')
+    .eq('status', 'active')
+    .order('created_at', { ascending: false });
   return { data, error };
 }
 
-export async function processCampaignBatch(campaignId, batchSize = 50) {
+export async function createAiKnowledge(item) {
+  const newItem = {
+    id: 'k-' + Date.now(),
+    organization_id: DEFAULT_ORG_ID,
+    version: 1,
+    status: 'active',
+    ...item,
+    created_at: new Date().toISOString(),
+  };
+  if (!isSupabaseConfigured) {
+    MOCK_STORE.ai_knowledge.unshift(newItem);
+    logAuditEvent('ai_knowledge.create', 'ai_knowledge', newItem.id, newItem);
+    return { data: newItem, error: null };
+  }
+  const { data, error } = await supabase.from('ai_knowledge').insert([newItem]).select().single();
+  if (data) logAuditEvent('ai_knowledge.create', 'ai_knowledge', data.id, data);
+  return { data, error };
+}
+
+export async function deleteAiKnowledge(id) {
+  if (!isSupabaseConfigured) {
+    const idx = MOCK_STORE.ai_knowledge.findIndex(k => k.id === id);
+    if (idx !== -1) MOCK_STORE.ai_knowledge.splice(idx, 1);
+    logAuditEvent('ai_knowledge.delete', 'ai_knowledge', id);
+    return { error: null };
+  }
+  const { error } = await supabase.from('ai_knowledge').delete().eq('id', id);
+  logAuditEvent('ai_knowledge.delete', 'ai_knowledge', id);
+  return { error };
+}
+
+export async function getAiRuns() {
+  if (!isSupabaseConfigured) return { data: MOCK_STORE.ai_runs, error: null };
+  const { data, error } = await supabase.from('ai_runs').select('*').order('created_at', { ascending: false }).limit(20);
+  return { data, error };
+}
+
+export async function runAiSalesAgent({ messageText, leadId = 'lead-1', conversationId = 'conv-1', history = [] }) {
   try {
-    const res = await fetch('/.netlify/functions/send-campaign', {
+    const res = await fetch('/.netlify/functions/ai-chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ campaignId, batchSize }),
+      body: JSON.stringify({ messageText, leadId, conversationId, history }),
     });
-    return await res.json();
+    const data = await res.json();
+    return data;
   } catch (err) {
-    // Fallback simulation
-    return { success: true, batchResults: { processed: batchSize, sent: batchSize, failed: 0 } };
+    // Fallback deterministic simulator
+    const lower = messageText.toLowerCase();
+    let text = 'Hello! I can provide property brochures, approved rates, and schedule site visits.';
+    let toolCalls = [];
+
+    if (lower.includes('rate') || lower.includes('price')) {
+      if (lower.includes('kam') || lower.includes('discount')) {
+        toolCalls.push({
+          toolName: 'request_human_handoff',
+          args: { reason: 'Price negotiation requested' },
+          output: { assigned_rep: 'Rajesh Kumar (Senior Sales Executive)', status: 'handoff_queued' }
+        });
+        text = 'Our approved rate for 3BHK Andheri is ₹95 Lakhs. For customized bulk discounts, I am connecting you with our Senior Sales Executive Rajesh Kumar right away.';
+      } else {
+        toolCalls.push({
+          toolName: 'get_product_price',
+          args: { product_query: '3BHK Andheri' },
+          output: { product: '3BHK Luxury Residence - Andheri', approved_rate_inr: 9500000, formatted_rate: '₹95 Lakhs' }
+        });
+        text = 'Our official approved price for 3BHK Luxury Residence at Andheri is ₹95 Lakhs. Would you like to schedule a site visit?';
+      }
+    } else if (lower.includes('brochure') || lower.includes('pdf')) {
+      toolCalls.push({
+        toolName: 'get_brochure',
+        args: { product_query: '3BHK Andheri' },
+        output: { brochure_url: 'https://example.com/3bhk-andheri.pdf' }
+      });
+      text = 'Here is the downloadable brochure link: https://example.com/3bhk-andheri.pdf';
+    }
+
+    return {
+      success: true,
+      responseText: text,
+      toolCalls,
+      observability: { model: 'gpt-4o', latencyMs: 320, estimatedCostUsd: '0.00045' },
+    };
   }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// WHATSAPP LIVE INBOX & CONVERSATION SERVICES (Section 11, 12, 50A, 50B)
+// BASE ENTITY SERVICES (CRM, Invoices, Campaigns, etc.)
 // ─────────────────────────────────────────────────────────────────────────────
-export async function getWhatsAppConversations() {
-  if (!isSupabaseConfigured) return { data: MOCK_STORE.whatsapp_conversations, error: null };
-  const { data, error } = await supabase
-    .from('whatsapp_conversations')
-    .select('*, lead:leads(*)')
-    .order('last_message_at', { ascending: false });
+export async function getLeads() {
+  if (!isSupabaseConfigured) return { data: MOCK_STORE.leads, error: null };
+  const { data, error } = await supabase.from('leads').select('*').order('created_at', { ascending: false });
   return { data, error };
 }
 
-export async function getWhatsAppMessages(conversationId) {
+export async function createLead(lead) {
+  const normPhone = normalizePhone(lead.phone);
+  const cleanLead = { ...lead, phone: normPhone };
+
   if (!isSupabaseConfigured) {
-    const msgs = MOCK_STORE.whatsapp_messages[conversationId] || [];
-    return { data: msgs, error: null };
+    const newLead = { id: 'lead-' + Date.now(), lead_score: 50, ...cleanLead, created_at: new Date().toISOString() };
+    MOCK_STORE.leads.unshift(newLead);
+    logAuditEvent('lead.create', 'leads', newLead.id, newLead);
+    return { data: newLead, error: null };
   }
-  const { data, error } = await supabase
-    .from('whatsapp_messages')
-    .select('*')
-    .eq('conversation_id', conversationId)
-    .order('created_at', { ascending: true });
+  const { data, error } = await supabase.from('leads').insert([{ ...cleanLead, organization_id: DEFAULT_ORG_ID }]).select().single();
+  if (data) logAuditEvent('lead.create', 'leads', data.id, data);
   return { data, error };
 }
 
-export async function sendWhatsAppMessage(conversationId, text, senderType = 'human_agent') {
-  const newMsg = {
-    id: 'msg-' + Date.now(),
-    conversation_id: conversationId,
-    direction: 'outbound',
-    sender_type: senderType,
-    body: text,
-    status: 'delivered',
-    created_at: new Date().toISOString(),
-  };
-
+export async function updateLead(id, updates) {
+  if (updates.phone) updates.phone = normalizePhone(updates.phone);
   if (!isSupabaseConfigured) {
-    if (!MOCK_STORE.whatsapp_messages[conversationId]) {
-      MOCK_STORE.whatsapp_messages[conversationId] = [];
-    }
-    MOCK_STORE.whatsapp_messages[conversationId].push(newMsg);
-
-    const convIdx = MOCK_STORE.whatsapp_conversations.findIndex(c => c.id === conversationId);
-    if (convIdx !== -1) {
-      MOCK_STORE.whatsapp_conversations[convIdx].last_message_text = text;
-      MOCK_STORE.whatsapp_conversations[convIdx].last_message_at = newMsg.created_at;
-      MOCK_STORE.whatsapp_conversations[convIdx].unread_count = 0;
-    }
-
-    logAuditEvent('whatsapp.send', 'whatsapp_messages', newMsg.id, { text, senderType });
-    return { data: newMsg, error: null };
-  }
-
-  const { data, error } = await supabase
-    .from('whatsapp_messages')
-    .insert([{
-      organization_id: DEFAULT_ORG_ID,
-      conversation_id: conversationId,
-      direction: 'outbound',
-      sender_type: senderType,
-      body: text,
-      status: 'sent',
-    }])
-    .select()
-    .single();
-
-  if (data) {
-    await supabase
-      .from('whatsapp_conversations')
-      .update({
-        last_message_text: text,
-        last_message_at: new Date().toISOString(),
-        unread_count: 0,
-      })
-      .eq('id', conversationId);
-
-    logAuditEvent('whatsapp.send', 'whatsapp_messages', data.id, { text, senderType });
-  }
-
-  return { data, error };
-}
-
-export async function updateConversationMode(conversationId, newMode) {
-  if (!isSupabaseConfigured) {
-    const conv = MOCK_STORE.whatsapp_conversations.find(c => c.id === conversationId);
-    if (conv) {
-      conv.conversation_mode = newMode;
-      logAuditEvent('whatsapp.mode_change', 'whatsapp_conversations', conversationId, { mode: newMode });
-      return { data: conv, error: null };
-    }
-    return { data: null, error: { message: 'Conversation not found' } };
-  }
-
-  const { data, error } = await supabase
-    .from('whatsapp_conversations')
-    .update({ conversation_mode: newMode })
-    .eq('id', conversationId)
-    .select()
-    .single();
-
-  if (data) logAuditEvent('whatsapp.mode_change', 'whatsapp_conversations', conversationId, { mode: newMode });
-  return { data, error };
-}
-
-export async function toggleLeadOptOut(leadId, optOut, reason = 'Admin manual toggle') {
-  if (!isSupabaseConfigured) {
-    const lead = MOCK_STORE.leads.find(l => l.id === leadId);
-    if (lead) {
-      lead.marketing_opt_out = optOut;
-      lead.marketing_opt_out_at = optOut ? new Date().toISOString() : null;
-      lead.opt_out_reason = optOut ? reason : null;
-      logAuditEvent('lead.opt_out_toggle', 'leads', leadId, { optOut, reason });
-      return { data: lead, error: null };
+    const idx = MOCK_STORE.leads.findIndex(l => l.id === id);
+    if (idx !== -1) {
+      MOCK_STORE.leads[idx] = { ...MOCK_STORE.leads[idx], ...updates };
+      logAuditEvent('lead.update', 'leads', id, updates);
+      return { data: MOCK_STORE.leads[idx], error: null };
     }
     return { data: null, error: { message: 'Lead not found' } };
   }
-
-  const { data, error } = await supabase
-    .from('leads')
-    .update({
-      marketing_opt_out: optOut,
-      marketing_opt_out_at: optOut ? new Date().toISOString() : null,
-      opt_out_reason: optOut ? reason : null,
-    })
-    .eq('id', leadId)
-    .select()
-    .single();
-
-  if (data) logAuditEvent('lead.opt_out_toggle', 'leads', leadId, { optOut, reason });
+  const { data, error } = await supabase.from('leads').update(updates).eq('id', id).select().single();
+  if (data) logAuditEvent('lead.update', 'leads', id, updates);
   return { data, error };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// CUSTOMER 360 COMPREHENSIVE AGGREGATOR (Section 10)
-// ─────────────────────────────────────────────────────────────────────────────
+export async function deleteLead(id) {
+  if (!isSupabaseConfigured) {
+    const idx = MOCK_STORE.leads.findIndex(l => l.id === id);
+    if (idx !== -1) MOCK_STORE.leads.splice(idx, 1);
+    logAuditEvent('lead.delete', 'leads', id);
+    return { error: null };
+  }
+  const { error } = await supabase.from('leads').delete().eq('id', id);
+  logAuditEvent('lead.delete', 'leads', id);
+  return { error };
+}
+
 export async function getCustomer360(leadId) {
   if (!isSupabaseConfigured) {
     const lead = MOCK_STORE.leads.find(l => l.id === leadId);
@@ -515,11 +427,7 @@ export async function getCustomer360(leadId) {
         invoices,
         messages,
         activities,
-        financials: {
-          totalOutstanding,
-          totalPaid,
-          invoiceCount: invoices.length,
-        },
+        financials: { totalOutstanding, totalPaid, invoiceCount: invoices.length },
       },
       error: null,
     };
@@ -529,7 +437,6 @@ export async function getCustomer360(leadId) {
   if (leadErr) return { data: null, error: leadErr };
 
   const normPhone = normalizePhone(lead.phone);
-
   const [dealsRes, quotesRes, tasksRes, invoicesRes, activitiesRes, convRes] = await Promise.all([
     supabase.from('deals').select('*').eq('lead_id', leadId),
     supabase.from('quotations').select('*').eq('lead_id', leadId),
@@ -558,127 +465,10 @@ export async function getCustomer360(leadId) {
       invoices,
       messages,
       activities: activitiesRes.data || [],
-      financials: {
-        totalOutstanding,
-        totalPaid,
-        invoiceCount: invoices.length,
-      },
+      financials: { totalOutstanding, totalPaid, invoiceCount: invoices.length },
     },
     error: null,
   };
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// PRODUCT CATALOG SERVICES
-// ─────────────────────────────────────────────────────────────────────────────
-export async function getProducts() {
-  if (!isSupabaseConfigured) return { data: MOCK_STORE.products, error: null };
-  const { data, error } = await supabase.from('products').select('*').order('name', { ascending: true });
-  return { data, error };
-}
-
-export async function createProduct(productData) {
-  if (!isSupabaseConfigured) {
-    const newP = { id: 'prod-' + Date.now(), ...productData, is_active: true };
-    MOCK_STORE.products.push(newP);
-    logAuditEvent('product.create', 'products', newP.id, newP);
-    return { data: newP, error: null };
-  }
-  const { data, error } = await supabase.from('products').insert([{ ...productData, organization_id: DEFAULT_ORG_ID }]).select().single();
-  if (data) logAuditEvent('product.create', 'products', data.id, data);
-  return { data, error };
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// DEALS & PIPELINE
-// ─────────────────────────────────────────────────────────────────────────────
-export async function getDeals() {
-  if (!isSupabaseConfigured) return { data: MOCK_STORE.deals, error: null };
-  const { data, error } = await supabase.from('deals').select('*').order('created_at', { ascending: false });
-  return { data, error };
-}
-
-export async function createDeal(dealData) {
-  if (!isSupabaseConfigured) {
-    const newDeal = { id: 'deal-' + Date.now(), ...dealData, created_at: new Date().toISOString() };
-    MOCK_STORE.deals.unshift(newDeal);
-    if (dealData.lead_id) {
-      MOCK_STORE.activities.unshift({
-        id: 'act-' + Date.now(),
-        lead_id: dealData.lead_id,
-        type: 'deal',
-        title: `Deal created: ₹${Number(dealData.value || 0).toLocaleString('en-IN')}`,
-        subtitle: dealData.title,
-        created_at: new Date().toISOString(),
-      });
-    }
-    logAuditEvent('deal.create', 'deals', newDeal.id, newDeal);
-    return { data: newDeal, error: null };
-  }
-  const { data, error } = await supabase.from('deals').insert([{ ...dealData, organization_id: DEFAULT_ORG_ID }]).select().single();
-  if (data) logAuditEvent('deal.create', 'deals', data.id, data);
-  return { data, error };
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// LEADS & CRM
-// ─────────────────────────────────────────────────────────────────────────────
-export async function getLeads() {
-  if (!isSupabaseConfigured) return { data: MOCK_STORE.leads, error: null };
-  const { data, error } = await supabase.from('leads').select('*').order('created_at', { ascending: false });
-  return { data, error };
-}
-
-export async function createLead(lead) {
-  const normPhone = normalizePhone(lead.phone);
-  const cleanLead = { ...lead, phone: normPhone };
-
-  if (!isSupabaseConfigured) {
-    const newLead = { id: 'lead-' + Date.now(), lead_score: 50, ...cleanLead, created_at: new Date().toISOString() };
-    MOCK_STORE.leads.unshift(newLead);
-    MOCK_STORE.activities.unshift({
-      id: 'act-' + Date.now(),
-      lead_id: newLead.id,
-      type: 'lead',
-      title: `Lead added: ${newLead.name}`,
-      subtitle: `${newLead.property_interest || 'General'} · ${newLead.source}`,
-      created_at: new Date().toISOString(),
-    });
-    logAuditEvent('lead.create', 'leads', newLead.id, newLead);
-    return { data: newLead, error: null };
-  }
-  const { data, error } = await supabase.from('leads').insert([{ ...cleanLead, organization_id: DEFAULT_ORG_ID }]).select().single();
-  if (data) logAuditEvent('lead.create', 'leads', data.id, data);
-  return { data, error };
-}
-
-export async function updateLead(id, updates) {
-  if (updates.phone) updates.phone = normalizePhone(updates.phone);
-
-  if (!isSupabaseConfigured) {
-    const idx = MOCK_STORE.leads.findIndex(l => l.id === id);
-    if (idx !== -1) {
-      MOCK_STORE.leads[idx] = { ...MOCK_STORE.leads[idx], ...updates };
-      logAuditEvent('lead.update', 'leads', id, updates);
-      return { data: MOCK_STORE.leads[idx], error: null };
-    }
-    return { data: null, error: { message: 'Lead not found' } };
-  }
-  const { data, error } = await supabase.from('leads').update(updates).eq('id', id).select().single();
-  if (data) logAuditEvent('lead.update', 'leads', id, updates);
-  return { data, error };
-}
-
-export async function deleteLead(id) {
-  if (!isSupabaseConfigured) {
-    const idx = MOCK_STORE.leads.findIndex(l => l.id === id);
-    if (idx !== -1) MOCK_STORE.leads.splice(idx, 1);
-    logAuditEvent('lead.delete', 'leads', id);
-    return { error: null };
-  }
-  const { error } = await supabase.from('leads').delete().eq('id', id);
-  logAuditEvent('lead.delete', 'leads', id);
-  return { error };
 }
 
 export async function addCustomerNote(leadId, noteText) {
@@ -699,9 +489,42 @@ export async function addCustomerNote(leadId, noteText) {
   return { data, error };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// TASKS, FINANCE, CAMPAIGNS & ROLES
-// ─────────────────────────────────────────────────────────────────────────────
+export async function getProducts() {
+  if (!isSupabaseConfigured) return { data: MOCK_STORE.products, error: null };
+  const { data, error } = await supabase.from('products').select('*').order('name', { ascending: true });
+  return { data, error };
+}
+
+export async function createProduct(productData) {
+  if (!isSupabaseConfigured) {
+    const newP = { id: 'prod-' + Date.now(), ...productData, is_active: true };
+    MOCK_STORE.products.push(newP);
+    logAuditEvent('product.create', 'products', newP.id, newP);
+    return { data: newP, error: null };
+  }
+  const { data, error } = await supabase.from('products').insert([{ ...productData, organization_id: DEFAULT_ORG_ID }]).select().single();
+  if (data) logAuditEvent('product.create', 'products', data.id, data);
+  return { data, error };
+}
+
+export async function getDeals() {
+  if (!isSupabaseConfigured) return { data: MOCK_STORE.deals, error: null };
+  const { data, error } = await supabase.from('deals').select('*').order('created_at', { ascending: false });
+  return { data, error };
+}
+
+export async function createDeal(dealData) {
+  if (!isSupabaseConfigured) {
+    const newDeal = { id: 'deal-' + Date.now(), ...dealData, created_at: new Date().toISOString() };
+    MOCK_STORE.deals.unshift(newDeal);
+    logAuditEvent('deal.create', 'deals', newDeal.id, newDeal);
+    return { data: newDeal, error: null };
+  }
+  const { data, error } = await supabase.from('deals').insert([{ ...dealData, organization_id: DEFAULT_ORG_ID }]).select().single();
+  if (data) logAuditEvent('deal.create', 'deals', data.id, data);
+  return { data, error };
+}
+
 export async function getRoles() {
   if (!isSupabaseConfigured) return { data: MOCK_STORE.roles, error: null };
   const { data, error } = await supabase.from('roles').select('*').order('created_at', { ascending: true });
@@ -796,6 +619,158 @@ export async function getCampaigns() {
   return { data, error };
 }
 
+export async function estimateCampaignAudience(filters = {}) {
+  const { statusFilter = 'All', propertyFilter = 'All', minScore = 0 } = filters;
+  const allLeads = isSupabaseConfigured
+    ? (await supabase.from('leads').select('*')).data || []
+    : MOCK_STORE.leads;
+
+  const totalRaw = allLeads.length;
+  let matching = allLeads;
+
+  if (statusFilter !== 'All') matching = matching.filter(l => l.status === statusFilter);
+  if (propertyFilter !== 'All') matching = matching.filter(l => (l.property_interest || '').includes(propertyFilter));
+  if (minScore > 0) matching = matching.filter(l => (l.lead_score || 0) >= minScore);
+
+  const targeted = matching.length;
+  const optedOut = matching.filter(l => l.marketing_opt_out).length;
+  const invalidPhone = matching.filter(l => !l.phone || normalizePhone(l.phone).length < 10).length;
+  const eligible = matching.filter(l => !l.marketing_opt_out && l.phone && normalizePhone(l.phone).length >= 10);
+
+  return {
+    totalRaw,
+    targeted,
+    optedOut,
+    invalidPhone,
+    finalAudienceCount: eligible.length,
+    eligibleLeads: eligible,
+  };
+}
+
+export async function queueCampaign(campaignData, filters = {}) {
+  const estimation = await estimateCampaignAudience(filters);
+  const eligible = estimation.eligibleLeads;
+
+  const newCampaign = {
+    id: 'camp-' + Date.now(),
+    organization_id: DEFAULT_ORG_ID,
+    name: campaignData.name,
+    template_name: campaignData.template_name,
+    status: 'Scheduled',
+    total_targeted: estimation.targeted,
+    total_queued: eligible.length,
+    total_sent: 0,
+    delivered: 0,
+    read_count: 0,
+    replied: 0,
+    scheduled_at: campaignData.scheduled_at || new Date().toISOString(),
+    created_at: new Date().toISOString(),
+  };
+
+  if (!isSupabaseConfigured) {
+    MOCK_STORE.campaigns.unshift(newCampaign);
+    logAuditEvent('campaign.queue', 'campaigns', newCampaign.id, { eligibleCount: eligible.length });
+    return { data: newCampaign, error: null };
+  }
+
+  const { data, error } = await supabase.from('campaigns').insert([newCampaign]).select().single();
+  if (data && eligible.length > 0) {
+    const recipientsToInsert = eligible.map(lead => ({
+      organization_id: DEFAULT_ORG_ID,
+      campaign_id: data.id,
+      lead_id: lead.id,
+      phone: normalizePhone(lead.phone),
+      status: 'pending',
+    }));
+    await supabase.from('campaign_recipients').insert(recipientsToInsert);
+    logAuditEvent('campaign.queue', 'campaigns', data.id, { eligibleCount: eligible.length });
+  }
+
+  return { data, error };
+}
+
+export async function processCampaignBatch(campaignId, batchSize = 50) {
+  try {
+    const res = await fetch('/.netlify/functions/send-campaign', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ campaignId, batchSize }),
+    });
+    return await res.json();
+  } catch (err) {
+    return { success: true, batchResults: { processed: batchSize, sent: batchSize, failed: 0 } };
+  }
+}
+
+export async function getWhatsAppConversations() {
+  if (!isSupabaseConfigured) return { data: MOCK_STORE.whatsapp_conversations, error: null };
+  const { data, error } = await supabase.from('whatsapp_conversations').select('*, lead:leads(*)').order('last_message_at', { ascending: false });
+  return { data, error };
+}
+
+export async function getWhatsAppMessages(conversationId) {
+  if (!isSupabaseConfigured) return { data: MOCK_STORE.whatsapp_messages[conversationId] || [], error: null };
+  const { data, error } = await supabase.from('whatsapp_messages').select('*').eq('conversation_id', conversationId).order('created_at', { ascending: true });
+  return { data, error };
+}
+
+export async function sendWhatsAppMessage(conversationId, text, senderType = 'human_agent') {
+  const newMsg = {
+    id: 'msg-' + Date.now(),
+    conversation_id: conversationId,
+    direction: 'outbound',
+    sender_type: senderType,
+    body: text,
+    status: 'delivered',
+    created_at: new Date().toISOString(),
+  };
+
+  if (!isSupabaseConfigured) {
+    if (!MOCK_STORE.whatsapp_messages[conversationId]) MOCK_STORE.whatsapp_messages[conversationId] = [];
+    MOCK_STORE.whatsapp_messages[conversationId].push(newMsg);
+
+    const convIdx = MOCK_STORE.whatsapp_conversations.findIndex(c => c.id === conversationId);
+    if (convIdx !== -1) {
+      MOCK_STORE.whatsapp_conversations[convIdx].last_message_text = text;
+      MOCK_STORE.whatsapp_conversations[convIdx].last_message_at = newMsg.created_at;
+      MOCK_STORE.whatsapp_conversations[convIdx].unread_count = 0;
+    }
+    return { data: newMsg, error: null };
+  }
+
+  const { data, error } = await supabase.from('whatsapp_messages').insert([{ organization_id: DEFAULT_ORG_ID, conversation_id: conversationId, direction: 'outbound', sender_type: senderType, body: text, status: 'sent' }]).select().single();
+  return { data, error };
+}
+
+export async function updateConversationMode(conversationId, newMode) {
+  if (!isSupabaseConfigured) {
+    const conv = MOCK_STORE.whatsapp_conversations.find(c => c.id === conversationId);
+    if (conv) {
+      conv.conversation_mode = newMode;
+      logAuditEvent('whatsapp.mode_change', 'whatsapp_conversations', conversationId, { mode: newMode });
+      return { data: conv, error: null };
+    }
+    return { data: null, error: { message: 'Conversation not found' } };
+  }
+  const { data, error } = await supabase.from('whatsapp_conversations').update({ conversation_mode: newMode }).eq('id', conversationId).select().single();
+  return { data, error };
+}
+
+export async function toggleLeadOptOut(leadId, optOut, reason = 'Admin manual toggle') {
+  if (!isSupabaseConfigured) {
+    const lead = MOCK_STORE.leads.find(l => l.id === leadId);
+    if (lead) {
+      lead.marketing_opt_out = optOut;
+      lead.marketing_opt_out_at = optOut ? new Date().toISOString() : null;
+      lead.opt_out_reason = optOut ? reason : null;
+      return { data: lead, error: null };
+    }
+    return { data: null, error: { message: 'Lead not found' } };
+  }
+  const { data, error } = await supabase.from('leads').update({ marketing_opt_out: optOut, marketing_opt_out_at: optOut ? new Date().toISOString() : null, opt_out_reason: optOut ? reason : null }).eq('id', leadId).select().single();
+  return { data, error };
+}
+
 export async function getActivityFeed(limit = 10) {
   if (!isSupabaseConfigured) return { data: MOCK_STORE.activities.slice(0, limit), error: null };
   const { data, error } = await supabase.from('activities').select('*').order('created_at', { ascending: false }).limit(limit);
@@ -838,30 +813,4 @@ export async function getDashboardStats() {
     },
     error: null,
   };
-}
-
-export async function getChatbotRules() {
-  if (!isSupabaseConfigured) {
-    return {
-      data: [
-        { id: 1, keywords: ['price', 'cost', 'rate', 'budget'], response: 'Our 2BHK units start at ₹50L and 3BHK units start at ₹80L. Would you like a complete price list?', is_active: true },
-        { id: 2, keywords: ['visit', 'site visit', 'location', 'where'], response: 'Site visits are open Mon–Sun from 10 AM to 6 PM. Can I book a slot for you this weekend?', is_active: true },
-        { id: 3, keywords: ['brochure', 'floor plan', 'pdf', 'catalog'], response: 'Sure! I am sending our latest brochure and floor plans to this WhatsApp number right away.', is_active: true },
-        { id: 4, keywords: ['agent', 'call', 'human', 'talk', 'sales'], response: 'I am connecting you with our Senior Sales Executive immediately. One moment please!', is_active: true },
-      ],
-      error: null,
-    };
-  }
-  const { data, error } = await supabase.from('ai_knowledge').select('*').eq('status', 'active').order('created_at', { ascending: false });
-  return { data, error };
-}
-
-export function matchChatbotRule(rules, message) {
-  const lower = (message || '').toLowerCase();
-  for (const rule of rules) {
-    if (rule.keywords && rule.keywords.some(kw => lower.includes(kw.toLowerCase()))) {
-      return rule.response;
-    }
-  }
-  return '😊 Thanks for reaching out! Our sales team will get back to you shortly.\n\nFor immediate assistance, call us at +91 98765 43210.';
 }
