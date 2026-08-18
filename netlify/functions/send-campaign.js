@@ -163,17 +163,26 @@ exports.handler = async (event) => {
 
     // 4. Update Aggregated Stats on Campaign Master
     if (supabase && campaignId) {
-      await supabase.rpc('increment_campaign_stats', {
-        c_id: campaignId,
-        sent_delta: results.sent,
-        failed_delta: results.failed,
-      }).catch(async () => {
-        // Fallback direct update
-        await supabase.from('campaigns').update({
-          total_sent: (campaign?.total_sent || 0) + results.sent,
-          status: 'Running',
-        }).eq('id', campaignId);
-      });
+      try {
+        const { error: rpcErr } = await supabase.rpc('increment_campaign_stats', {
+          c_id: campaignId,
+          sent_delta: results.sent,
+          failed_delta: results.failed,
+        });
+        if (rpcErr) {
+          await supabase.from('campaigns').update({
+            total_sent: (campaign?.total_sent || 0) + results.sent,
+            status: 'Running',
+          }).eq('id', campaignId);
+        }
+      } catch {
+        try {
+          await supabase.from('campaigns').update({
+            total_sent: (campaign?.total_sent || 0) + results.sent,
+            status: 'Running',
+          }).eq('id', campaignId);
+        } catch {}
+      }
     }
 
     return {

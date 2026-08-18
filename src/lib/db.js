@@ -44,14 +44,14 @@ const MOCK_STORE = {
   leads: [
     {
       id: 'lead-1',
-      name: 'Ravi Mehta',
-      phone: '+919876543210',
-      email: 'ravi.mehta@gmail.com',
+      name: 'Abhay Kumar',
+      phone: '+918092897590',
+      email: 'abhayk7481@gmail.com',
       source: 'WhatsApp',
       status: 'Hot',
       property_interest: '3BHK - Andheri West',
       budget: '₹80L - ₹1Cr',
-      notes: 'Interested in bulk booking. Requested price review.',
+      notes: 'Active live verified WhatsApp contact. Interested in 3BHK Andheri.',
       lead_score: 85,
       first_touch_campaign: 'Diwali Property Offer 2026',
       last_touch_campaign: '3BHK New Launch – Andheri',
@@ -132,10 +132,10 @@ const MOCK_STORE = {
     {
       id: 'conv-1',
       lead_id: 'lead-1',
-      contact_name: 'Ravi Mehta',
-      contact_phone: '+919876543210',
+      contact_name: 'Abhay Kumar',
+      contact_phone: '+918092897590',
       conversation_mode: 'HUMAN ACTIVE',
-      last_message_text: 'Hi Ravi, Rajesh here. I can offer you unit 804 at ₹92L special. Can we meet tomorrow?',
+      last_message_text: 'Hi Abhay, Rajesh here. I can offer you unit 804 at ₹92L special. Can we meet tomorrow?',
       last_message_at: new Date(Date.now() - 12 * 3600000).toISOString(),
       unread_count: 0,
       assigned_salesperson: 'Rajesh Kumar',
@@ -707,7 +707,24 @@ export async function getWhatsAppMessages(conversationId) {
   return { data, error };
 }
 
-export async function sendWhatsAppMessage(conversationId, text, senderType = 'human_agent') {
+export async function sendWhatsAppMessage(conversationId, text, senderType = 'human_agent', recipientPhone = null) {
+  let targetPhone = recipientPhone;
+  if (!targetPhone) {
+    const mockConv = MOCK_STORE.whatsapp_conversations.find(c => c.id === conversationId);
+    if (mockConv) targetPhone = mockConv.contact_phone;
+  }
+
+  // Attempt live outbound dispatch via Meta Cloud API Netlify function
+  if (targetPhone) {
+    try {
+      fetch('/.netlify/functions/send-message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: targetPhone, text, conversationId, senderType })
+      }).catch(() => {});
+    } catch {}
+  }
+
   const newMsg = {
     id: 'msg-' + Date.now(),
     conversation_id: conversationId,
@@ -732,7 +749,7 @@ export async function sendWhatsAppMessage(conversationId, text, senderType = 'hu
   }
 
   const { data, error } = await supabase.from('whatsapp_messages').insert([{ organization_id: DEFAULT_ORG_ID, conversation_id: conversationId, direction: 'outbound', sender_type: senderType, body: text, status: 'sent' }]).select().single();
-  return { data, error };
+  return { data: data || newMsg, error };
 }
 
 export async function updateConversationMode(conversationId, newMode) {

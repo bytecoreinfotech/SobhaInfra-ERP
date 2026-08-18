@@ -105,7 +105,7 @@ const WhatsApp = () => {
     const textToSend = msgInput;
     setMsgInput('');
 
-    const { data: newMsg } = await sendWhatsAppMessage(selectedConv.id, textToSend, 'human_agent');
+    const { data: newMsg } = await sendWhatsAppMessage(selectedConv.id, textToSend, 'human_agent', selectedConv.contact_phone);
     if (newMsg) {
       setMessages(prev => [...prev, newMsg]);
       if (selectedConv.conversation_mode === 'AI ACTIVE') {

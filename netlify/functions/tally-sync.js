@@ -63,24 +63,28 @@ exports.handler = async (event) => {
 
     if (supabase) {
       // 0. Create sync job record
-      const { data: syncJob } = await supabase.from('tally_sync_jobs').insert([{
-        organization_id: organizationId,
-        status: 'started',
-        records_received: vouchers.length,
-      }]).select('id').single().catch(() => ({ data: null }));
+      let syncJobId = null;
+      try {
+        const { data: syncJob } = await supabase.from('tally_sync_jobs').insert([{
+          organization_id: organizationId,
+          status: 'started',
+          records_received: vouchers.length,
+        }]).select('id').single();
+        syncJobId = syncJob?.id || null;
+      } catch {}
 
-      const syncJobId = syncJob?.id || null;
-
-      // 1. Update Connection Health (matches 005 migration: tally_connections)
-      await supabase.from('tally_connections').upsert([{
-        organization_id: organizationId,
-        sync_status: connectorStatus,
-        last_sync_at: new Date().toISOString(),
-        last_health_check_at: new Date().toISOString(),
-        tally_host: 'http://localhost:9000',
-        company_name: 'Techma Real Estate Pvt Ltd',
-        connector_token: EXPECTED_TOKEN,
-      }], { onConflict: 'connector_token' }).catch(() => {});
+      // 1. Update Connection Health
+      try {
+        await supabase.from('tally_connections').upsert([{
+          organization_id: organizationId,
+          sync_status: connectorStatus,
+          last_sync_at: new Date().toISOString(),
+          last_health_check_at: new Date().toISOString(),
+          tally_host: 'http://localhost:9000',
+          company_name: 'Techma Real Estate Pvt Ltd',
+          connector_token: EXPECTED_TOKEN,
+        }], { onConflict: 'connector_token' });
+      } catch {}
 
       // 2. Fetch existing leads for auto-mapping
       const { data: allLeads } = await supabase.from('leads').select('id, name, phone');
@@ -95,7 +99,7 @@ exports.handler = async (event) => {
             l.name.toLowerCase() === (v.ledger_name || '').toLowerCase()
           );
 
-          // Upsert invoice (matches 005 migration: invoices table)
+          // Upsert invoice
           const { error: invErr } = await supabase.from('invoices').upsert([{
             organization_id: organizationId,
             customer_id: matchedLead ? matchedLead.id : null,
@@ -113,42 +117,46 @@ exports.handler = async (event) => {
             results.upsertedInvoices++;
           }
 
-          // Ledger Mapping Record (matches 005 migration: tally_mappings)
-          await supabase.from('tally_mappings').upsert([{
-            organization_id: organizationId,
-            tally_ledger_name: v.ledger_name,
-            customer_id: matchedLead ? matchedLead.id : null,
-            mapping_status: matchedLead ? 'exact_match' : 'possible_match',
-            confidence_score: matchedLead ? 1.0 : 0.0,
-            updated_at: new Date().toISOString(),
-          }], { onConflict: 'organization_id,tally_ledger_name' }).catch(() => {});
+          // Ledger Mapping Record
+          try {
+            await supabase.from('tally_mappings').upsert([{
+              organization_id: organizationId,
+              tally_ledger_name: v.ledger_name,
+              customer_id: matchedLead ? matchedLead.id : null,
+              mapping_status: matchedLead ? 'exact_match' : 'possible_match',
+              confidence_score: matchedLead ? 1.0 : 0.0,
+              updated_at: new Date().toISOString(),
+            }], { onConflict: 'organization_id,tally_ledger_name' });
+          } catch {}
 
           if (matchedLead) results.mappedLedgers++;
           else results.unmappedLedgers++;
 
         } catch (itemErr) {
           results.errors.push({ voucher: v.invoice_number, error: itemErr.message });
-          // Log into tally_sync_errors (matches 005 migration)
-          await supabase.from('tally_sync_errors').insert([{
-            organization_id: organizationId,
-            sync_job_id: syncJobId,
-            voucher_number: v.invoice_number,
-            error_message: itemErr.message,
-            raw_xml: JSON.stringify(v),
-          }]).catch(() => {});
+          try {
+            await supabase.from('tally_sync_errors').insert([{
+              organization_id: organizationId,
+              sync_job_id: syncJobId,
+              voucher_number: v.invoice_number,
+              error_message: itemErr.message,
+              raw_xml: JSON.stringify(v),
+            }]);
+          } catch {}
         }
       }
 
       // 3. Update sync job as complete
       if (syncJobId) {
-        await supabase.from('tally_sync_jobs').update({
-          status: results.errors.length > 0 ? 'partial' : 'success',
-          records_synced: results.upsertedInvoices,
-          records_failed: results.errors.length,
-        }).eq('id', syncJobId).catch(() => {});
+        try {
+          await supabase.from('tally_sync_jobs').update({
+            status: results.errors.length > 0 ? 'partial' : 'success',
+            records_synced: results.upsertedInvoices,
+            records_failed: results.errors.length,
+          }).eq('id', syncJobId);
+        } catch {}
       }
     } else {
-      // Mock mode: report all vouchers processed
       results.upsertedInvoices = vouchers.length;
       results.mappedLedgers = Math.max(0, vouchers.length - 1);
       results.unmappedLedgers = 1;

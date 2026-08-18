@@ -258,7 +258,7 @@ exports.handler = async (event) => {
             event_type: 'incoming_message',
             payload: body,
             processed: true,
-          }], { onConflict: 'provider,provider_event_id' }).catch(() => {});
+          }], { onConflict: 'provider,provider_event_id' });
 
           // Lead lookup or creation
           const { data: existingLead } = await supabase.from('leads').select('id').eq('phone', fromPhone).maybeSingle();
