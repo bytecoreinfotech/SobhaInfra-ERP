@@ -109,12 +109,6 @@ const CRM = () => {
 
   return (
     <div className="page-container animate-fade-in">
-      {/* Banner */}
-      <div className="demo-banner">
-        <span className="demo-badge">CUSTOMER 360</span>
-        Click on any lead to open their complete Customer 360 profile, WhatsApp thread, deals, and Tally accounting ledger.
-      </div>
-
       {/* Header */}
       <div className="page-header">
         <div className="page-title-group">
@@ -229,7 +223,18 @@ const CRM = () => {
               {loading ? (
                 <tr><td colSpan={8} style={{ textAlign: 'center', padding: '3rem' }}><RefreshCw size={24} className="animate-spin" style={{ color: 'var(--text-muted)' }} /></td></tr>
               ) : filtered.length === 0 ? (
-                <tr><td colSpan={8} style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>No leads matching criteria.</td></tr>
+                <tr>
+                  <td colSpan={8} style={{ textAlign: 'center', padding: '3.5rem 1rem' }}>
+                    <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: '0.75rem' }}>
+                      {leads.length === 0 ? 'No leads in your database yet.' : 'No leads match your search criteria.'}
+                    </div>
+                    {leads.length === 0 && (
+                      <button className="btn btn-primary btn-sm" onClick={openAdd}>
+                        <Plus size={14} /> Add First Lead
+                      </button>
+                    )}
+                  </td>
+                </tr>
               ) : (
                 filtered.map(lead => (
                   <tr

@@ -97,9 +97,6 @@ const Header = ({ onMobileMenuOpen }) => {
       </div>
 
       <div className="header-actions">
-        {/* Demo pill */}
-        <span className="demo-pill hide-mobile">DEMO</span>
-
         {/* Theme toggle */}
         <button
           className="theme-toggle"

@@ -35,145 +35,28 @@ const MOCK_STORE = {
   ],
   users: [
     { id: 'usr-1', full_name: 'Admin User', email: 'admin@erppro.in', role: 'Super Admin', is_active: true, last_login_at: 'Today, 10:35 AM', avatar: 'AU' },
-    { id: 'usr-2', full_name: 'Priya Sharma', email: 'manager@erppro.in', role: 'Manager', is_active: true, last_login_at: 'Today, 9:12 AM', avatar: 'PS' },
-    { id: 'usr-3', full_name: 'Rajesh Kumar', email: 'sales@erppro.in', role: 'Sales Executive', is_active: true, last_login_at: 'Yesterday', avatar: 'RK' },
-    { id: 'usr-4', full_name: 'Amit Verma', email: 'amit@erppro.in', role: 'Sales Executive', is_active: true, last_login_at: 'Today, 8:45 AM', avatar: 'AV' },
-    { id: 'usr-5', full_name: 'Sunita Patel', email: 'sunita@erppro.in', role: 'Accounts', is_active: true, last_login_at: 'Yesterday', avatar: 'SP' },
-    { id: 'usr-6', full_name: 'Dev Kumar', email: 'dev@erppro.in', role: 'Support Agent', is_active: false, last_login_at: '3 days ago', avatar: 'DK' },
   ],
-  leads: [
-    {
-      id: 'lead-1',
-      name: 'Demo Contact',
-      phone: '+919000000001',
-      email: 'demo@client.com',
-      source: 'WhatsApp',
-      status: 'Hot',
-      property_interest: '3BHK - Andheri West',
-      budget: '₹80L - ₹1Cr',
-      notes: 'Demo contact — replace with real customer data from Supabase.',
-      lead_score: 85,
-      first_touch_campaign: 'Demo Campaign',
-      last_touch_campaign: '3BHK New Launch – Andheri',
-      marketing_opt_in: true,
-      marketing_opt_out: false,
-      created_at: new Date(Date.now() - 3 * 86400000).toISOString(),
-    },
-    {
-      id: 'lead-2',
-      name: 'Sunita Patel',
-      phone: '+918765432109',
-      email: 'sunita.p@yahoo.com',
-      source: 'Facebook',
-      status: 'Warm',
-      property_interest: '2BHK - Borivali',
-      budget: '₹50L - ₹65L',
-      notes: 'Looking for fast possession by Diwali.',
-      lead_score: 60,
-      first_touch_campaign: 'Facebook Ads - July',
-      last_touch_campaign: null,
-      marketing_opt_in: true,
-      marketing_opt_out: false,
-      created_at: new Date(Date.now() - 5 * 86400000).toISOString(),
-    },
-    {
-      id: 'lead-3',
-      name: 'Arjun Sharma',
-      phone: '+917654321098',
-      email: 'arjun.sharma@gmail.com',
-      source: 'Instagram',
-      status: 'New',
-      property_interest: 'Weekend Villa - Lonavala',
-      budget: '₹2Cr+',
-      notes: 'Inquired via Instagram lead ad.',
-      lead_score: 35,
-      first_touch_campaign: 'Instagram Reels Campaign',
-      last_touch_campaign: null,
-      marketing_opt_in: true,
-      marketing_opt_out: false,
-      created_at: new Date(Date.now() - 1 * 86400000).toISOString(),
-    },
-    {
-      id: 'lead-4',
-      name: 'Priya Kapoor',
-      phone: '+916543210987',
-      email: 'priya.k@outlook.com',
-      source: 'Referral',
-      status: 'Converted',
-      property_interest: '2BHK - Goregaon',
-      budget: '₹55L',
-      notes: 'Agreement signed, booking advance received.',
-      lead_score: 100,
-      first_touch_campaign: 'Referral Program',
-      last_touch_campaign: 'Payment Reminder – July',
-      marketing_opt_in: true,
-      marketing_opt_out: false,
-      created_at: new Date(Date.now() - 20 * 86400000).toISOString(),
-    },
-    {
-      id: 'lead-5',
-      name: 'Kavita Joshi',
-      phone: '+914321098765',
-      email: 'kavita.j@rediffmail.com',
-      source: 'WhatsApp',
-      status: 'Hot',
-      property_interest: '2BHK - Thane',
-      budget: '₹60L',
-      notes: 'Site visit completed, awaiting final discount approval.',
-      lead_score: 80,
-      first_touch_campaign: 'Site Visit Drive – August',
-      last_touch_campaign: 'Site Visit Drive – August',
-      marketing_opt_in: true,
-      marketing_opt_out: false,
-      created_at: new Date(Date.now() - 2 * 86400000).toISOString(),
-    },
-  ],
+  leads: [],
   whatsapp_conversations: [],
   whatsapp_messages: {},
-  ai_knowledge: [
-    { id: 'k-1', category: 'Pricing', title: '3BHK Andheri Rates', content: 'Base Price: ₹95,00,000 for 1450 sq.ft. Floor rise: ₹50/sq.ft. Parking included.', version: 2, status: 'active' },
-  ],
-  invoices: [
-    { id: 'inv-1', invoice_number: 'INV-2026-041', client_name: 'Ravi Mehta', client_phone: '+919876543210', amount: 250000, status: 'Overdue', due_date: new Date(Date.now() - 14 * 86400000).toISOString().split('T')[0], reminder_count: 2 },
-    { id: 'inv-2', invoice_number: 'INV-2026-045', client_name: 'Priya Kapoor', client_phone: '+916543210987', amount: 450000, status: 'Pending', due_date: new Date(Date.now() + 5 * 86400000).toISOString().split('T')[0], reminder_count: 0 },
-    { id: 'inv-3', invoice_number: 'INV-2026-032', client_name: 'Kavita Joshi', client_phone: '+914321098765', amount: 50000, status: 'Paid', due_date: new Date(Date.now() - 10 * 86400000).toISOString().split('T')[0], reminder_count: 1 },
-    { id: 'inv-4', invoice_number: 'INV-2026-048', client_name: 'Arjun Sharma', client_phone: '+917654321098', amount: 1000000, status: 'Overdue', due_date: new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0], reminder_count: 4 },
-  ],
+  ai_knowledge: [],
+  invoices: [],
   tally_connection: {
     status: 'ONLINE',
     tally_host: '127.0.0.1:9000',
     tally_company: 'Techma Real Estate Pvt Ltd',
-    last_sync_at: new Date(Date.now() - 15 * 60000).toISOString(),
+    last_sync_at: new Date().toISOString(),
     sync_frequency: '15m',
-    total_synced_vouchers: 48,
+    total_synced_vouchers: 0,
   },
-  ledger_mappings: [
-    { id: 'lm-1', tally_ledger_name: 'Ravi Mehta', lead_id: 'lead-1', lead_name: 'Ravi Mehta', lead_phone: '+919876543210', mapping_status: 'MAPPED', match_confidence: 1.0 },
-    { id: 'lm-2', tally_ledger_name: 'Priya Kapoor', lead_id: 'lead-4', lead_name: 'Priya Kapoor', lead_phone: '+916543210987', mapping_status: 'MAPPED', match_confidence: 1.0 },
-    { id: 'lm-3', tally_ledger_name: 'Kavita Joshi', lead_id: 'lead-5', lead_name: 'Kavita Joshi', lead_phone: '+914321098765', mapping_status: 'MAPPED', match_confidence: 1.0 },
-    { id: 'lm-4', tally_ledger_name: 'Sharma Bros Enterprises', lead_id: null, lead_name: '—', lead_phone: '—', mapping_status: 'AMBIGUOUS', match_confidence: 0.4 },
-  ],
-  sync_errors: [
-    { id: 'err-1', entity_type: 'invoice', entity_id: 'INV-2026-039', error_message: 'Ledger "Gupta Traders" has no matching phone number or PAN', created_at: new Date(Date.now() - 4 * 3600000).toISOString(), resolved: false }
-  ],
-  campaigns: [
-    { id: 'camp-1', name: 'Diwali Property Offer 2026', status: 'Completed', template_name: 'Festival Discount', total_targeted: 250, total_sent: 248, delivered: 241, read_count: 198, replied: 34, created_at: new Date().toISOString() },
-  ],
-  activities: [
-    { id: 'act-1', lead_id: 'lead-1', type: 'payment', title: 'Tally Invoice INV-2026-041 Overdue', subtitle: '₹2.5 Lakhs (14 Days Overdue)', created_at: new Date().toISOString() },
-  ],
-  tasks: [
-    { id: 'task-1', lead_id: 'lead-1', title: 'Call Ravi Mehta for site visit & pricing negotiation', status: 'To Do', priority: 'High', due_date: new Date().toISOString().split('T')[0], assigned_to: 'Rajesh Kumar', tags: ['CRM', 'AI-Handoff'], created_at: new Date().toISOString() },
-  ],
-  products: [
-    { id: 'prod-1', name: '3BHK Luxury Residence - Andheri', category: 'Residential', sku: 'PROP-3BHK-AND', unit_price: 9500000, unit_of_measure: 'unit', brochure_url: 'https://example.com/3bhk-andheri.pdf', is_active: true, description: 'Super built-up 1,450 sq.ft with panoramic skyline views.' },
-  ],
-  deals: [
-    { id: 'deal-1', lead_id: 'lead-1', title: 'Ravi Mehta - 3BHK Andheri Unit 804', stage: 'Negotiation', value: 9200000, expected_close_date: '2026-08-30', assigned_to: 'Rajesh Kumar' },
-  ],
-  quotations: [
-    { id: 'quot-1', lead_id: 'lead-1', quotation_number: 'QUOT-2026-001', total_amount: 9200000, status: 'Sent', valid_until: '2026-08-31', created_at: new Date().toISOString() },
-  ],
+  ledger_mappings: [],
+  sync_errors: [],
+  campaigns: [],
+  activities: [],
+  tasks: [],
+  products: [],
+  deals: [],
+  quotations: [],
   audit_logs: [],
   automation_rules: [
     {
@@ -384,8 +267,11 @@ export async function sendPaymentReminderWhatsApp(invoiceId) {
 export async function getInvoices() {
   if (!isSupabaseConfigured) return { data: MOCK_STORE.invoices, error: null };
   const { data, error } = await supabase.from('invoices').select('*').order('created_at', { ascending: false });
-  if (error || !data || data.length === 0) return { data: MOCK_STORE.invoices, error: null };
-  return { data, error };
+  if (error) {
+    console.warn('[db] getInvoices error:', error.message);
+    return { data: [], error };
+  }
+  return { data: data || [], error: null };
 }
 
 export async function logPaymentReminder(invoiceId, message) {
@@ -403,8 +289,11 @@ export async function logPaymentReminder(invoiceId, message) {
 export async function getLeads() {
   if (!isSupabaseConfigured) return { data: MOCK_STORE.leads, error: null };
   const { data, error } = await supabase.from('leads').select('*').order('created_at', { ascending: false });
-  if (error || !data || data.length === 0) return { data: MOCK_STORE.leads, error: null };
-  return { data, error };
+  if (error) {
+    console.warn('[db] getLeads error:', error.message);
+    return { data: [], error };
+  }
+  return { data: data || [], error: null };
 }
 
 export async function createLead(lead) {
@@ -678,15 +567,21 @@ export async function processCampaignBatch(campaignId, batchSize = 50) {
 export async function getWhatsAppConversations() {
   if (!isSupabaseConfigured) return { data: MOCK_STORE.whatsapp_conversations, error: null };
   const { data, error } = await supabase.from('whatsapp_conversations').select('*, lead:leads(*)').order('last_message_at', { ascending: false });
-  if (error || !data || data.length === 0) return { data: MOCK_STORE.whatsapp_conversations, error: null };
-  return { data, error };
+  if (error) {
+    console.warn('[db] getWhatsAppConversations error:', error.message);
+    return { data: [], error };
+  }
+  return { data: data || [], error: null };
 }
 
 export async function getWhatsAppMessages(conversationId) {
   if (!isSupabaseConfigured) return { data: MOCK_STORE.whatsapp_messages[conversationId] || [], error: null };
   const { data, error } = await supabase.from('whatsapp_messages').select('*').eq('conversation_id', conversationId).order('created_at', { ascending: true });
-  if (error || !data || data.length === 0) return { data: MOCK_STORE.whatsapp_messages[conversationId] || [], error: null };
-  return { data, error };
+  if (error) {
+    console.warn('[db] getWhatsAppMessages error:', error.message);
+    return { data: [], error };
+  }
+  return { data: data || [], error: null };
 }
 
 export async function sendWhatsAppMessage(conversationId, text, senderType = 'human_agent', recipientPhone = null) {

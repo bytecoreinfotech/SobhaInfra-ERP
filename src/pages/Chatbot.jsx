@@ -118,12 +118,6 @@ const Chatbot = () => {
 
   return (
     <div className="page-container animate-fade-in">
-      {/* Banner */}
-      <div className="demo-banner">
-        <span className="demo-badge">BOUNDED AI SALES AGENT</span>
-        OpenAI GPT-4o function-calling engine with pricing guardrails, knowledge base grounding, and automatic human takeover triggers.
-      </div>
-
       {/* Header */}
       <div className="page-header">
         <div className="page-title-group">

@@ -82,12 +82,6 @@ const Roles = () => {
 
   return (
     <div className="page-container animate-fade-in">
-      {/* Banner */}
-      <div className="demo-banner">
-        <span className="demo-badge">RBAC</span>
-        Multi-tenant Role Based Access Control (RBAC). Roles and user permissions are enforced server-side.
-      </div>
-
       {feedbackMsg && (
         <div style={{
           padding: '0.75rem 1rem', borderRadius: 8, marginBottom: '1rem',

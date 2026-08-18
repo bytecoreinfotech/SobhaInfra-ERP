@@ -70,12 +70,6 @@ const Payments = () => {
 
   return (
     <div className="page-container animate-fade-in">
-      {/* Demo Banner */}
-      <div className="demo-banner">
-        <span className="demo-badge">DEMO</span>
-        Invoice data is synced from Supabase. In production, Tally auto-push updates these records. WhatsApp reminder simulation only.
-      </div>
-
       {/* Header */}
       <div className="page-header">
         <div className="page-title-group">

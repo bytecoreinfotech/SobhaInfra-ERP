@@ -86,11 +86,6 @@ const Reports = () => {
 
   return (
     <div className="page-container animate-fade-in">
-      <div className="demo-banner">
-        <span className="demo-badge">INTELLIGENCE</span>
-        Multi-touch attribution, campaign ROI, CRM conversion funnels, and AI agent performance — all from live data.
-      </div>
-
       <div className="page-header">
         <div className="page-title-group">
           <h1 className="page-title">Reports & Multi-Touch Attribution</h1>

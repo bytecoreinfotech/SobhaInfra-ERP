@@ -51,11 +51,6 @@ const Tasks = () => {
 
   return (
     <div className="page-container animate-fade-in">
-      <div className="demo-banner">
-        <span className="demo-badge">LIVE</span>
-        Tasks are saved to Supabase. Status changes persist across sessions and team members.
-      </div>
-
       <div className="page-header">
         <div className="page-title-group">
           <h1 className="page-title">Task Management</h1>

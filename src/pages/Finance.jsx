@@ -126,12 +126,6 @@ const Finance = () => {
         </div>
       )}
 
-      {/* Banner */}
-      <div className="demo-banner">
-        <span className="demo-badge">TALLYPRIME CONNECTOR</span>
-        Tally is the accounting source of truth. CRM synchronizes vouchers, tracks aging outstandings, and dispatches WhatsApp payment reminders.
-      </div>
-
       {/* Header */}
       <div className="page-header">
         <div className="page-title-group">

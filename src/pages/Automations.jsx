@@ -137,11 +137,6 @@ const Automations = () => {
         </div>
       )}
 
-      <div className="demo-banner">
-        <span className="demo-badge">AUTOMATION ENGINE</span>
-        Section 31-34: Rule-based business automation with event triggers, condition evaluation, and chained actions (Tasks, WhatsApp, Score Updates).
-      </div>
-
       <div className="page-header">
         <div className="page-title-group">
           <h1 className="page-title">Automation Rules & Engine</h1>

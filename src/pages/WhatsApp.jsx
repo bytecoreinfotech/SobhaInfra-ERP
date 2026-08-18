@@ -227,12 +227,6 @@ const WhatsApp = () => {
 
   return (
     <div className="page-container animate-fade-in">
-      {/* Banner */}
-      <div className="demo-banner">
-        <span className="demo-badge">WHATSAPP CLOUD API</span>
-        Meta Cloud API integration with live 3-pane inbox, human takeover mode switching, and bulk campaign broadcaster.
-      </div>
-
       {/* Header */}
       <div className="page-header">
         <div className="page-title-group">

@@ -94,33 +94,10 @@ const Dashboard = () => {
     note: { bg: 'var(--info-bg)', color: 'var(--info)', icon: <Star size={15} /> },
   };
 
-  // Hardcoded activity feed when no live data
-  const defaultActivities = [
-    { id: 'da-1', type: 'whatsapp', title: 'WhatsApp campaign sent to 248 contacts – Festival Offer', created_at: new Date(Date.now() - 120000).toISOString() },
-    { id: 'da-2', type: 'task', title: 'Task "UI Design Review" completed by Priya S.', created_at: new Date(Date.now() - 2040000).toISOString() },
-    { id: 'da-3', type: 'payment', title: 'Payment reminder auto-sent to Ravi Mehta (₹2.5L overdue)', created_at: new Date(Date.now() - 3600000).toISOString() },
-    { id: 'da-4', type: 'lead', title: 'New lead Arjun Sharma from Instagram added to CRM', created_at: new Date(Date.now() - 7200000).toISOString() },
-    { id: 'da-5', type: 'tally', title: 'Tally sync complete — 4 vouchers imported', created_at: new Date(Date.now() - 10800000).toISOString() },
-  ];
-
-  const displayActivities = activities.length > 0 ? activities : defaultActivities;
+  const displayActivities = activities;
 
   return (
     <div className="page-container">
-      {/* Connection Status Banner */}
-      <div className={`demo-banner`} style={{
-        background: isSupabaseConfigured ? 'rgba(16,185,129,0.08)' : undefined,
-        borderColor: isSupabaseConfigured ? 'rgba(16,185,129,0.2)' : undefined,
-        color: isSupabaseConfigured ? 'var(--success)' : undefined,
-      }}>
-        <span className="demo-badge" style={{ background: isSupabaseConfigured ? 'var(--success)' : undefined }}>
-          {isSupabaseConfigured ? 'LIVE' : 'DEMO'}
-        </span>
-        {isSupabaseConfigured
-          ? 'Connected to Supabase · Showing real-time data from your database.'
-          : 'All data is simulated from in-memory store. Add Supabase keys in .env to switch to live mode.'}
-      </div>
-
       {/* Page Header */}
       <div className="page-header">
         <div className="page-title-group">
@@ -233,7 +210,11 @@ const Dashboard = () => {
             <span className="badge badge-neutral">{displayActivities.length} Events</span>
           </div>
           <div className="activity-feed">
-            {displayActivities.slice(0, 6).map(act => {
+            {displayActivities.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '1.5rem', color: 'var(--text-muted)', fontSize: '0.82rem' }}>
+                No recent activity events logged yet.
+              </div>
+            ) : displayActivities.slice(0, 6).map(act => {
               const iconInfo = actIconMap[act.type] || actIconMap['note'];
               const timeAgo = (() => {
                 const diff = Date.now() - new Date(act.created_at).getTime();
