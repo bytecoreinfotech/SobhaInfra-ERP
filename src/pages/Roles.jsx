@@ -1,27 +1,12 @@
-import React, { useState } from 'react';
-import { Shield, Plus, X, Edit2, Trash2, User, Check } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Shield, Plus, X, Edit2, Trash2, User, Check, RefreshCw, AlertCircle } from 'lucide-react';
+import { getRoles, createRole, getTeamMembers, inviteTeamMember } from '../lib/db';
+import { useAuth } from '../context/AuthContext';
 import './Pages.css';
-
-const roles = [
-  { id: 1, name: 'Super Admin', color: 'var(--danger)', users: 1, permissions: 'all' },
-  { id: 2, name: 'Manager', color: 'var(--accent-primary)', users: 3, permissions: 'high' },
-  { id: 3, name: 'Sales Executive', color: 'var(--success)', users: 8, permissions: 'medium' },
-  { id: 4, name: 'Accounts', color: 'var(--warning)', users: 2, permissions: 'finance' },
-  { id: 5, name: 'Support Agent', color: 'var(--info)', users: 4, permissions: 'low' },
-];
-
-const users = [
-  { id: 1, name: 'Admin User', email: 'admin@erppro.in', role: 'Super Admin', status: 'Active', lastLogin: 'Today, 10:35 AM', avatar: 'AU' },
-  { id: 2, name: 'Priya Sharma', email: 'priya@erppro.in', role: 'Manager', status: 'Active', lastLogin: 'Today, 9:12 AM', avatar: 'PS' },
-  { id: 3, name: 'Rajesh Kumar', email: 'rajesh@erppro.in', role: 'Sales Executive', status: 'Active', lastLogin: 'Yesterday', avatar: 'RK' },
-  { id: 4, name: 'Amit Verma', email: 'amit@erppro.in', role: 'Sales Executive', status: 'Active', lastLogin: 'Today, 8:45 AM', avatar: 'AV' },
-  { id: 5, name: 'Sunita Patel', email: 'sunita@erppro.in', role: 'Accounts', status: 'Active', lastLogin: 'Yesterday', avatar: 'SP' },
-  { id: 6, name: 'Dev Kumar', email: 'dev@erppro.in', role: 'Support Agent', status: 'Inactive', lastLogin: '3 days ago', avatar: 'DK' },
-];
 
 const modules = ['Dashboard', 'WhatsApp', 'CRM', 'Tasks', 'Payments', 'Finance', 'Reports', 'Roles'];
 
-const permissionMatrix = {
+const defaultMatrix = {
   'Super Admin': { Dashboard: true, WhatsApp: true, CRM: true, Tasks: true, Payments: true, Finance: true, Reports: true, Roles: true },
   'Manager':     { Dashboard: true, WhatsApp: true, CRM: true, Tasks: true, Payments: true, Finance: true, Reports: true, Roles: false },
   'Sales Executive': { Dashboard: true, WhatsApp: true, CRM: true, Tasks: true, Payments: false, Finance: false, Reports: true, Roles: false },
@@ -30,43 +15,135 @@ const permissionMatrix = {
 };
 
 const Roles = () => {
-  const [showAddUser, setShowAddUser] = useState(false);
+  const { hasPermission } = useAuth();
+  const [roles, setRoles] = useState([]);
+  const [teamMembers, setTeamMembers] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('users');
+  
+  // Modals
+  const [showAddUser, setShowAddUser] = useState(false);
+  const [showAddRole, setShowAddRole] = useState(false);
+  
+  // Forms
+  const [userForm, setUserForm] = useState({ full_name: '', email: '', role: 'Sales Executive', phone: '' });
+  const [roleForm, setRoleForm] = useState({ name: '', description: '', color: '#6366f1' });
+  const [submitting, setSubmitting] = useState(false);
+  const [feedbackMsg, setFeedbackMsg] = useState(null);
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const loadData = async () => {
+    setLoading(true);
+    const [rolesRes, usersRes] = await Promise.all([
+      getRoles(),
+      getTeamMembers(),
+    ]);
+    setRoles(rolesRes.data || []);
+    setTeamMembers(usersRes.data || []);
+    setLoading(false);
+  };
+
+  const handleInviteUser = async (e) => {
+    e.preventDefault();
+    if (!userForm.full_name || !userForm.email) return;
+    setSubmitting(true);
+    const { data, error } = await inviteTeamMember(userForm);
+    if (data) {
+      setTeamMembers(prev => [data, ...prev]);
+      setShowAddUser(false);
+      setUserForm({ full_name: '', email: '', role: 'Sales Executive', phone: '' });
+      setFeedbackMsg({ type: 'success', text: `Invitation sent to ${data.email}!` });
+      setTimeout(() => setFeedbackMsg(null), 4000);
+    } else {
+      setFeedbackMsg({ type: 'error', text: error?.message || 'Failed to invite user.' });
+    }
+    setSubmitting(false);
+  };
+
+  const handleCreateRole = async (e) => {
+    e.preventDefault();
+    if (!roleForm.name) return;
+    setSubmitting(true);
+    const { data, error } = await createRole(roleForm);
+    if (data) {
+      setRoles(prev => [...prev, data]);
+      setShowAddRole(false);
+      setRoleForm({ name: '', description: '', color: '#6366f1' });
+      setFeedbackMsg({ type: 'success', text: `Role "${data.name}" created!` });
+      setTimeout(() => setFeedbackMsg(null), 4000);
+    } else {
+      setFeedbackMsg({ type: 'error', text: error?.message || 'Failed to create role.' });
+    }
+    setSubmitting(false);
+  };
 
   return (
     <div className="page-container animate-fade-in">
+      {/* Banner */}
+      <div className="demo-banner">
+        <span className="demo-badge">RBAC</span>
+        Multi-tenant Role Based Access Control (RBAC). Roles and user permissions are enforced server-side.
+      </div>
+
+      {feedbackMsg && (
+        <div style={{
+          padding: '0.75rem 1rem', borderRadius: 8, marginBottom: '1rem',
+          background: feedbackMsg.type === 'success' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
+          border: `1px solid ${feedbackMsg.type === 'success' ? 'rgba(16,185,129,0.3)' : 'rgba(239,68,68,0.3)'}`,
+          color: feedbackMsg.type === 'success' ? 'var(--success)' : 'var(--danger)',
+          display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem'
+        }}>
+          {feedbackMsg.type === 'success' ? <Check size={16} /> : <AlertCircle size={16} />}
+          {feedbackMsg.text}
+        </div>
+      )}
+
       {/* Header */}
       <div className="page-header">
         <div className="page-title-group">
-          <h1 className="page-title">Roles & User Access</h1>
-          <p className="page-subtitle">Manage team members, roles, and module-level permissions.</p>
+          <h1 className="page-title">Roles & Access Control</h1>
+          <p className="page-subtitle">Manage organization team members, roles, and module-level permissions.</p>
         </div>
         <div className="page-actions">
-          <button className="btn btn-secondary"><Shield size={15} /> Manage Roles</button>
-          <button className="btn btn-primary" onClick={() => setShowAddUser(true)}><Plus size={15} /> Add User</button>
+          <button className="btn btn-secondary" onClick={loadData}>
+            <RefreshCw size={15} className={loading ? 'animate-spin' : ''} /> Refresh
+          </button>
+          <button className="btn btn-secondary" onClick={() => setShowAddRole(true)}>
+            <Shield size={15} /> Create Role
+          </button>
+          <button className="btn btn-primary" onClick={() => setShowAddUser(true)}>
+            <Plus size={15} /> Invite Member
+          </button>
         </div>
       </div>
 
       {/* Role Cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1rem' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
         {roles.map(role => (
-          <div key={role.id} className="glass-card p-6" style={{ textAlign: 'center', '--card-accent': role.color }}>
+          <div key={role.id} className="glass-card p-6" style={{ textAlign: 'center', '--card-accent': role.color || '#6366f1' }}>
             <div style={{
-              width: 48, height: 48, borderRadius: '50%', background: role.color + '22',
-              border: `2px solid ${role.color}`, display: 'flex', alignItems: 'center',
-              justifyContent: 'center', margin: '0 auto 0.75rem', color: role.color
+              width: 48, height: 48, borderRadius: '50%', background: (role.color || '#6366f1') + '22',
+              border: `2px solid ${role.color || '#6366f1'}`, display: 'flex', alignItems: 'center',
+              justifyContent: 'center', margin: '0 auto 0.75rem', color: role.color || '#6366f1'
             }}>
               <Shield size={20} />
             </div>
-            <div style={{ fontWeight: 700, fontSize: '0.875rem', marginBottom: '0.25rem' }}>{role.name}</div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>{role.users} users</div>
-            <button className="btn btn-secondary btn-sm" style={{ width: '100%' }}><Edit2 size={12} /> Edit Role</button>
+            <div style={{ fontWeight: 700, fontSize: '0.9rem', marginBottom: '0.2rem' }}>{role.name}</div>
+            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '0.6rem' }}>
+              {teamMembers.filter(m => m.role === role.name).length || role.users_count || 0} active members
+            </div>
+            <span className={`badge ${role.is_system ? 'badge-neutral' : 'badge-accent'}`} style={{ fontSize: '0.65rem' }}>
+              {role.is_system ? 'System Role' : 'Custom Role'}
+            </span>
           </div>
         ))}
       </div>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', gap: '0', borderBottom: '1px solid var(--border-color)' }}>
+      <div style={{ display: 'flex', borderBottom: '1px solid var(--border-color)', marginBottom: '1rem' }}>
         {['users', 'permissions'].map(tab => (
           <button
             key={tab}
@@ -80,7 +157,7 @@ const Roles = () => {
               transition: 'all 0.2s ease', marginBottom: -1
             }}
           >
-            {tab === 'users' ? 'Team Members' : 'Permission Matrix'}
+            {tab === 'users' ? `Team Members (${teamMembers.length})` : 'Permission Matrix'}
           </button>
         ))}
       </div>
@@ -99,35 +176,37 @@ const Roles = () => {
               </tr>
             </thead>
             <tbody>
-              {users.map(u => {
+              {loading ? (
+                <tr><td colSpan={5} style={{ textAlign: 'center', padding: '2.5rem', color: 'var(--text-muted)' }}><RefreshCw size={20} className="animate-spin" /></td></tr>
+              ) : teamMembers.map(u => {
                 const roleObj = roles.find(r => r.name === u.role);
                 return (
                   <tr key={u.id}>
                     <td>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
-                        <div className="mini-avatar" style={{ width: 36, height: 36, fontSize: '0.7rem' }}>{u.avatar}</div>
+                        <div className="mini-avatar" style={{ width: 36, height: 36, fontSize: '0.72rem' }}>{u.avatar || u.full_name?.slice(0, 2).toUpperCase() || 'U'}</div>
                         <div>
-                          <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>{u.name}</div>
+                          <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>{u.full_name}</div>
                           <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{u.email}</div>
                         </div>
                       </div>
                     </td>
                     <td>
-                      <span className="badge" style={{ background: (roleObj?.color || 'var(--accent-primary)') + '22', color: roleObj?.color || 'var(--accent-primary)' }}>
+                      <span className="badge" style={{ background: (roleObj?.color || '#6366f1') + '22', color: roleObj?.color || '#6366f1' }}>
                         {u.role}
                       </span>
                     </td>
                     <td>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                        <span className={`status-dot ${u.status === 'Active' ? 'online' : 'offline'}`} />
-                        <span style={{ fontSize: '0.82rem' }}>{u.status}</span>
+                        <span className={`status-dot ${u.is_active ? 'online' : 'offline'}`} />
+                        <span style={{ fontSize: '0.82rem' }}>{u.is_active ? 'Active' : 'Inactive'}</span>
                       </div>
                     </td>
-                    <td style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{u.lastLogin}</td>
+                    <td style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{u.last_login_at || 'Never'}</td>
                     <td>
                       <div style={{ display: 'flex', gap: '0.4rem' }}>
-                        <button className="btn-icon"><Edit2 size={14} /></button>
-                        {u.id !== 1 && <button className="btn-icon" style={{ color: 'var(--danger)' }}><Trash2 size={14} /></button>}
+                        <button className="btn-icon" title="Edit Permissions"><Edit2 size={14} /></button>
+                        {u.role !== 'Super Admin' && <button className="btn-icon" style={{ color: 'var(--danger)' }} title="Remove Member"><Trash2 size={14} /></button>}
                       </div>
                     </td>
                   </tr>
@@ -144,18 +223,18 @@ const Roles = () => {
           <table className="permission-matrix">
             <thead>
               <tr>
-                <th>Module / Role</th>
+                <th>Module / Action</th>
                 {roles.map(r => (
-                  <th key={r.id} style={{ color: r.color }}>{r.name}</th>
+                  <th key={r.id} style={{ color: r.color || 'var(--accent-primary)' }}>{r.name}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {modules.map(mod => (
                 <tr key={mod}>
-                  <td>{mod}</td>
+                  <td style={{ fontWeight: 600 }}>{mod}</td>
                   {roles.map(r => {
-                    const has = permissionMatrix[r.name]?.[mod];
+                    const has = defaultMatrix[r.name]?.[mod] || r.name === 'Super Admin';
                     return (
                       <td key={r.id}>
                         {has
@@ -172,47 +251,84 @@ const Roles = () => {
         </div>
       )}
 
-      {/* Add User Modal */}
+      {/* Invite Member Modal */}
       {showAddUser && (
         <div className="modal-overlay">
           <div className="modal-content">
             <button style={{ position: 'absolute', top: '1.25rem', right: '1.25rem', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }} onClick={() => setShowAddUser(false)}>
               <X size={20} />
             </button>
-            <h2 style={{ fontSize: '1.1rem', marginBottom: '1.5rem' }}>Add Team Member</h2>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                <div>
-                  <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>First Name *</label>
-                  <input type="text" className="input-field" placeholder="John" />
-                </div>
-                <div>
-                  <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Last Name *</label>
-                  <input type="text" className="input-field" placeholder="Doe" />
-                </div>
+            <h2 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '1.5rem' }}>Invite Team Member</h2>
+            <form onSubmit={handleInviteUser} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div>
+                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Full Name *</label>
+                <input type="text" className="input-field" placeholder="e.g. Anand Sharma" value={userForm.full_name} onChange={e => setUserForm(p => ({ ...p, full_name: e.target.value }))} required />
               </div>
               <div>
-                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Email *</label>
-                <input type="email" className="input-field" placeholder="john@company.com" />
+                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Email Address *</label>
+                <input type="email" className="input-field" placeholder="anand@company.com" value={userForm.email} onChange={e => setUserForm(p => ({ ...p, email: e.target.value }))} required />
+              </div>
+              <div>
+                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Phone Number</label>
+                <input type="text" className="input-field" placeholder="+91 98765 43210" value={userForm.phone} onChange={e => setUserForm(p => ({ ...p, phone: e.target.value }))} />
               </div>
               <div>
                 <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Assign Role *</label>
-                <select className="input-field">
-                  {roles.map(r => <option key={r.id}>{r.name}</option>)}
+                <select className="input-field" value={userForm.role} onChange={e => setUserForm(p => ({ ...p, role: e.target.value }))}>
+                  {roles.map(r => <option key={r.id} value={r.name}>{r.name}</option>)}
                 </select>
               </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1rem' }}>
+                <button type="button" className="btn btn-secondary" onClick={() => setShowAddUser(false)}>Cancel</button>
+                <button type="submit" className="btn btn-primary" disabled={submitting}>
+                  {submitting ? 'Sending...' : 'Send Invitation'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Create Role Modal */}
+      {showAddRole && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <button style={{ position: 'absolute', top: '1.25rem', right: '1.25rem', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }} onClick={() => setShowAddRole(false)}>
+              <X size={20} />
+            </button>
+            <h2 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '1.5rem' }}>Create Custom Role</h2>
+            <form onSubmit={handleCreateRole} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div>
-                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Phone</label>
-                <input type="text" className="input-field" placeholder="+91 XXXXX XXXXX" />
+                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Role Name *</label>
+                <input type="text" className="input-field" placeholder="e.g. Billing Specialist" value={roleForm.name} onChange={e => setRoleForm(p => ({ ...p, name: e.target.value }))} required />
               </div>
-              <div style={{ padding: '0.65rem', background: 'var(--success-bg)', borderRadius: 'var(--radius-md)', fontSize: '0.78rem', color: 'var(--success)' }}>
-                📧 An invitation email with login credentials will be sent to the user.
+              <div>
+                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Description</label>
+                <input type="text" className="input-field" placeholder="Brief scope of responsibilities" value={roleForm.description} onChange={e => setRoleForm(p => ({ ...p, description: e.target.value }))} />
               </div>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
-                <button className="btn btn-secondary" onClick={() => setShowAddUser(false)}>Cancel</button>
-                <button className="btn btn-primary" onClick={() => setShowAddUser(false)}>Send Invite</button>
+              <div>
+                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Badge Color</label>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  {['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#06b6d4', '#8b5cf6'].map(c => (
+                    <div
+                      key={c}
+                      onClick={() => setRoleForm(p => ({ ...p, color: c }))}
+                      style={{
+                        width: 28, height: 28, borderRadius: '50%', background: c,
+                        border: roleForm.color === c ? '3px solid white' : '2px solid transparent',
+                        cursor: 'pointer', boxShadow: roleForm.color === c ? '0 0 10px ' + c : 'none'
+                      }}
+                    />
+                  ))}
+                </div>
               </div>
-            </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1rem' }}>
+                <button type="button" className="btn btn-secondary" onClick={() => setShowAddRole(false)}>Cancel</button>
+                <button type="submit" className="btn btn-primary" disabled={submitting}>
+                  {submitting ? 'Creating...' : 'Create Role'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

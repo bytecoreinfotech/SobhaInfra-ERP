@@ -1,14 +1,43 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { DEFAULT_ORG_ID, logAuditEvent } from '../lib/db';
 
 const AuthContext = createContext(null);
 
-// Demo credentials — always work regardless of Supabase config
-// These are the quick-login users for showing the demo to clients
+// Demo credentials with explicit permission sets
 const DEMO_USERS = {
-  'admin@erppro.in':   { password: 'demo1234', role: 'Super Admin',     name: 'Admin User',    avatar: 'AU' },
-  'manager@erppro.in': { password: 'demo1234', role: 'Manager',         name: 'Priya Sharma',  avatar: 'PS' },
-  'sales@erppro.in':   { password: 'demo1234', role: 'Sales Executive', name: 'Rajesh Kumar',  avatar: 'RK' },
+  'admin@erppro.in': {
+    password: 'demo1234',
+    role: 'Super Admin',
+    name: 'Admin User',
+    avatar: 'AU',
+    organization_id: DEFAULT_ORG_ID,
+    permissions: ['all'],
+  },
+  'manager@erppro.in': {
+    password: 'demo1234',
+    role: 'Manager',
+    name: 'Priya Sharma',
+    avatar: 'PS',
+    organization_id: DEFAULT_ORG_ID,
+    permissions: ['dashboard:view', 'whatsapp:view', 'whatsapp:send', 'whatsapp:campaign', 'crm:read', 'crm:write', 'crm:assign', 'tasks:read', 'tasks:write', 'finance:read', 'finance:remind', 'ai:view'],
+  },
+  'sales@erppro.in': {
+    password: 'demo1234',
+    role: 'Sales Executive',
+    name: 'Rajesh Kumar',
+    avatar: 'RK',
+    organization_id: DEFAULT_ORG_ID,
+    permissions: ['dashboard:view', 'whatsapp:view', 'whatsapp:send', 'crm:read', 'crm:write', 'tasks:read', 'tasks:write', 'ai:view'],
+  },
+  'accounts@erppro.in': {
+    password: 'demo1234',
+    role: 'Accounts',
+    name: 'Sunita Patel',
+    avatar: 'SP',
+    organization_id: DEFAULT_ORG_ID,
+    permissions: ['dashboard:view', 'finance:read', 'finance:sync', 'finance:remind', 'crm:read', 'tasks:read'],
+  },
 };
 
 export const AuthProvider = ({ children }) => {
@@ -16,27 +45,31 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Check for persisted demo session first (always, even when Supabase is configured)
+    // 1. Check for persisted demo session first
     const demoSession = localStorage.getItem('erm-demo-user');
     if (demoSession) {
-      setUser(JSON.parse(demoSession));
-      setLoading(false);
-      return;
+      try {
+        setUser(JSON.parse(demoSession));
+        setLoading(false);
+        return;
+      } catch (e) {
+        localStorage.removeItem('erm-demo-user');
+      }
     }
 
+    // 2. Check for real Supabase Auth session if configured
     if (isSupabaseConfigured) {
-      // Check for real Supabase session
       supabase.auth.getSession().then(({ data: { session } }) => {
         if (session?.user) {
-          setUser({ ...session.user, name: session.user.email, role: 'User', avatar: session.user.email?.slice(0,2).toUpperCase() });
+          hydrateSupabaseUser(session.user);
         }
         setLoading(false);
       });
 
       const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
         if (session?.user && !localStorage.getItem('erm-demo-user')) {
-          setUser({ ...session.user, name: session.user.email, role: 'User', avatar: session.user.email?.slice(0,2).toUpperCase() });
-        } else if (!session) {
+          hydrateSupabaseUser(session.user);
+        } else if (!session && !localStorage.getItem('erm-demo-user')) {
           setUser(null);
         }
       });
@@ -46,29 +79,77 @@ export const AuthProvider = ({ children }) => {
     }
   }, []);
 
+  const hydrateSupabaseUser = async (authUser) => {
+    try {
+      const { data: profile } = await supabase
+        .from('users')
+        .select('*, user_roles(role:roles(name, color, permissions:role_permissions(permission:permissions(code))))')
+        .eq('id', authUser.id)
+        .maybeSingle();
+
+      const userRole = profile?.user_roles?.[0]?.role?.name || 'User';
+      const perms = profile?.user_roles?.[0]?.role?.permissions?.map(p => p.permission?.code) || [];
+
+      setUser({
+        id: authUser.id,
+        email: authUser.email,
+        name: profile?.full_name || authUser.email,
+        role: userRole,
+        avatar: (profile?.full_name || authUser.email).slice(0, 2).toUpperCase(),
+        organization_id: profile?.organization_id || DEFAULT_ORG_ID,
+        permissions: perms,
+        isDemo: false,
+      });
+    } catch (e) {
+      console.warn('Could not hydrate user profile from DB:', e.message);
+      setUser({
+        id: authUser.id,
+        email: authUser.email,
+        name: authUser.email,
+        role: 'User',
+        avatar: authUser.email.slice(0, 2).toUpperCase(),
+        organization_id: DEFAULT_ORG_ID,
+        permissions: ['dashboard:view', 'crm:read'],
+        isDemo: false,
+      });
+    }
+  };
+
   const signIn = async (email, password) => {
-    // 1. Always check demo credentials first (instant, no network call)
-    const demoUser = DEMO_USERS[email.toLowerCase()];
+    const cleanEmail = (email || '').trim().toLowerCase();
+
+    // 1. Instant check for demo accounts
+    const demoUser = DEMO_USERS[cleanEmail];
     if (demoUser && demoUser.password === password) {
-      const mockUser = { id: 'demo-' + email, email, ...demoUser, isDemo: true };
+      const mockUser = {
+        id: 'demo-' + cleanEmail,
+        email: cleanEmail,
+        ...demoUser,
+        isDemo: true,
+      };
       localStorage.setItem('erm-demo-user', JSON.stringify(mockUser));
       setUser(mockUser);
+      logAuditEvent('user.login', 'auth', mockUser.id, { method: 'demo_auth', email: cleanEmail });
       return { data: mockUser, error: null };
     }
 
-    // 2. Try real Supabase auth for production users
+    // 2. Real Supabase Auth
     if (isSupabaseConfigured) {
-      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+      const { data, error } = await supabase.auth.signInWithPassword({ email: cleanEmail, password });
       if (data?.user) {
-        setUser({ ...data.user, name: data.user.email, role: 'User', avatar: data.user.email?.slice(0,2).toUpperCase() });
+        await hydrateSupabaseUser(data.user);
+        logAuditEvent('user.login', 'auth', data.user.id, { method: 'supabase_auth', email: cleanEmail });
       }
       return { data, error };
     }
 
-    return { data: null, error: { message: 'Invalid email or password.' } };
+    return { data: null, error: { message: 'Invalid credentials. For demo, use admin@erppro.in / demo1234.' } };
   };
 
   const signOut = async () => {
+    if (user?.id) {
+      logAuditEvent('user.logout', 'auth', user.id);
+    }
     localStorage.removeItem('erm-demo-user');
     if (isSupabaseConfigured && !user?.isDemo) {
       await supabase.auth.signOut();
@@ -76,8 +157,24 @@ export const AuthProvider = ({ children }) => {
     setUser(null);
   };
 
+  const hasPermission = (permissionCode) => {
+    if (!user) return false;
+    if (user.role === 'Super Admin' || user.permissions?.includes('all')) return true;
+    return user.permissions?.includes(permissionCode) || false;
+  };
+
   return (
-    <AuthContext.Provider value={{ user, loading, signIn, signOut, isDemo: !!user?.isDemo }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        loading,
+        signIn,
+        signOut,
+        hasPermission,
+        isDemo: !!user?.isDemo,
+        organizationId: user?.organization_id || DEFAULT_ORG_ID,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );
@@ -85,6 +182,6 @@ export const AuthProvider = ({ children }) => {
 
 export const useAuth = () => {
   const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error('useAuth must be used inside AuthProvider');
+  if (!ctx) throw new Error('useAuth must be used within an AuthProvider');
   return ctx;
 };

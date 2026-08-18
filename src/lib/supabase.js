@@ -3,17 +3,43 @@ import { createClient } from '@supabase/supabase-js';
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-if (!supabaseUrl || !supabaseAnonKey) {
+export const isSupabaseConfigured = !!(
+  supabaseUrl &&
+  supabaseAnonKey &&
+  !supabaseUrl.includes('placeholder') &&
+  !supabaseUrl.includes('your-supabase-url')
+);
+
+if (!isSupabaseConfigured) {
   console.warn(
-    '[Supabase] Missing environment variables. Running in demo mode with mock data.\n' +
-    'Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to your .env file.'
+    '[Supabase] Running in offline demo mode with in-memory state.\n' +
+    'To connect live database, set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in .env.'
   );
 }
 
 export const supabase = createClient(
   supabaseUrl || 'https://placeholder.supabase.co',
-  supabaseAnonKey || 'placeholder-key'
+  supabaseAnonKey || 'placeholder-key',
+  {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+    },
+  }
 );
 
-// Helper: Check if Supabase is properly configured
-export const isSupabaseConfigured = !!(supabaseUrl && supabaseAnonKey && !supabaseUrl.includes('placeholder'));
+/**
+ * Checks connection health to Supabase
+ * @returns {Promise<boolean>}
+ */
+export async function checkSupabaseConnection() {
+  if (!isSupabaseConfigured) return false;
+  try {
+    const { error } = await supabase.from('organizations').select('id').limit(1);
+    return !error;
+  } catch (err) {
+    console.warn('[Supabase] Connection test failed:', err.message);
+    return false;
+  }
+}
