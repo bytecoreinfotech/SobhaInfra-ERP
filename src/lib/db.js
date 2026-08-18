@@ -150,7 +150,7 @@ const MOCK_STORE = {
       last_message_text: 'Site visits are open Mon–Sun from 10 AM to 6 PM. Can I book a slot for you?',
       last_message_at: new Date(Date.now() - 2 * 3600000).toISOString(),
       unread_count: 1,
-      assigned_salesperson: 'Unassigned',
+      assigned_salesperson: 'Rajesh Kumar',
       property_interest: '2BHK - Thane',
     },
     {
@@ -162,7 +162,7 @@ const MOCK_STORE = {
       last_message_text: 'Our 2BHK units start at ₹50L. Would you like a complete price list?',
       last_message_at: new Date(Date.now() - 24 * 3600000).toISOString(),
       unread_count: 0,
-      assigned_salesperson: 'Unassigned',
+      assigned_salesperson: 'Amit Verma',
       property_interest: '2BHK - Borivali',
     },
     {
@@ -191,29 +191,25 @@ const MOCK_STORE = {
     { id: 'k-1', category: 'Pricing', title: '3BHK Andheri Rates', content: 'Base Price: ₹95,00,000 for 1450 sq.ft. Floor rise: ₹50/sq.ft. Parking included.', version: 2, status: 'active' },
     { id: 'k-2', category: 'Pricing', title: '2BHK Borivali Rates', content: 'Base Price: ₹62,00,000 for 950 sq.ft. Special launch discount: ₹2,00,000.', version: 1, status: 'active' },
     { id: 'k-3', category: 'FAQ', title: 'Site Visit Timings', content: 'Site office open 7 days a week, 10:00 AM to 6:00 PM. Complimentary cab service provided.', version: 1, status: 'active' },
-    { id: 'k-4', category: 'Policy', title: 'Bank Loan Approvals', content: 'Pre-approved home loans available with HDFC, SBI, ICICI, and Axis Bank with zero processing fee.', version: 1, status: 'active' },
-    { id: 'k-5', category: 'Script', title: 'Price Objection Handling', content: 'Acknowledge budget constraint, explain premium construction quality, offer payment schedule flexibilities, and escalate to Sales Manager for high down-payment deals.', version: 1, status: 'active' },
   ],
-  ai_runs: [
-    { id: 'run-1', model_name: 'gpt-4o', latency_ms: 680, total_cost: 0.00084, status: 'success', created_at: new Date(Date.now() - 15 * 60000).toISOString() },
-    { id: 'run-2', model_name: 'gpt-4o', latency_ms: 740, total_cost: 0.00092, status: 'success', created_at: new Date(Date.now() - 45 * 60000).toISOString() },
-    { id: 'run-3', model_name: 'gpt-4o', latency_ms: 590, total_cost: 0.00065, status: 'success', created_at: new Date(Date.now() - 90 * 60000).toISOString() },
+  ai_feedback: [
+    { id: 'fb-1', conversation_id: 'conv-1', rating: 5, feedback_type: 'AI Helpful', comments: 'AI handled initial rate inquiry well and captured 50% down-payment preference accurately.', created_at: new Date(Date.now() - 10 * 3600000).toISOString() }
+  ],
+  tasks: [
+    { id: 'task-1', lead_id: 'lead-1', title: 'Call Ravi Mehta for site visit & pricing negotiation', status: 'To Do', priority: 'High', due_date: new Date().toISOString().split('T')[0], assigned_to: 'Rajesh Kumar', tags: ['CRM', 'AI-Handoff'], created_at: new Date().toISOString() },
+    { id: 'task-2', lead_id: 'lead-4', title: 'Prepare agreement draft for Priya Kapoor', status: 'In Progress', priority: 'High', due_date: new Date().toISOString().split('T')[0], assigned_to: 'Priya Sharma', tags: ['Finance'], created_at: new Date().toISOString() },
+    { id: 'task-3', lead_id: null, title: 'Send WhatsApp broadcast to August leads', status: 'To Do', priority: 'Medium', due_date: new Date().toISOString().split('T')[0], assigned_to: 'Amit Verma', tags: ['WhatsApp'], created_at: new Date().toISOString() },
   ],
   products: [
     { id: 'prod-1', name: '3BHK Luxury Residence - Andheri', category: 'Residential', sku: 'PROP-3BHK-AND', unit_price: 9500000, unit_of_measure: 'unit', brochure_url: 'https://example.com/3bhk-andheri.pdf', is_active: true, description: 'Super built-up 1,450 sq.ft with panoramic skyline views.' },
     { id: 'prod-2', name: '2BHK Prime Apartment - Borivali', category: 'Residential', sku: 'PROP-2BHK-BOR', unit_price: 6200000, unit_of_measure: 'unit', brochure_url: 'https://example.com/2bhk-borivali.pdf', is_active: true, description: 'Spacious 950 sq.ft close to Western Express Highway.' },
     { id: 'prod-3', name: 'Weekend Villa - Lonavala Hills', category: 'Luxury Villa', sku: 'PROP-VIL-LON', unit_price: 21000000, unit_of_measure: 'unit', brochure_url: 'https://example.com/villa-lonavala.pdf', is_active: true, description: '4BHK standalone hillside villa with private pool.' },
-    { id: 'prod-4', name: 'Commercial Retail Space - BKC', category: 'Commercial', sku: 'PROP-COM-BKC', unit_price: 35000000, unit_of_measure: 'unit', brochure_url: 'https://example.com/retail-bkc.pdf', is_active: true, description: 'Ground floor 2,200 sq.ft high footfall retail space.' },
   ],
   deals: [
     { id: 'deal-1', lead_id: 'lead-1', title: 'Ravi Mehta - 3BHK Andheri Unit 804', stage: 'Negotiation', value: 9200000, expected_close_date: '2026-08-30', assigned_to: 'Rajesh Kumar' },
-    { id: 'deal-2', lead_id: 'lead-4', title: 'Priya Kapoor - 2BHK Goregaon Unit 302', stage: 'Won', value: 5500000, expected_close_date: '2026-08-15', assigned_to: 'Priya Sharma' },
   ],
   quotations: [
     { id: 'quot-1', lead_id: 'lead-1', quotation_number: 'QUOT-2026-001', total_amount: 9200000, status: 'Sent', valid_until: '2026-08-31', created_at: new Date().toISOString() },
-  ],
-  tasks: [
-    { id: 'task-1', lead_id: 'lead-1', title: 'Call Ravi Mehta for site visit confirmation', status: 'To Do', priority: 'High', due_date: new Date().toISOString().split('T')[0], tags: ['CRM'], created_at: new Date().toISOString() },
   ],
   invoices: [
     { id: 'inv-1', invoice_number: 'INV-2026-041', client_name: 'Ravi Mehta', client_phone: '+919876543210', amount: 250000, status: 'Overdue', due_date: new Date(Date.now() - 14 * 86400000).toISOString().split('T')[0], reminder_count: 2 },
@@ -250,102 +246,91 @@ export async function logAuditEvent(action, resource, resourceId = null, payload
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// AI KNOWLEDGE BASE & AGENT EXECUTION (Section 16, 17, 18, 19)
+// HUMAN TAKEOVER & AI FEEDBACK (Section 23, 24, 25)
 // ─────────────────────────────────────────────────────────────────────────────
-export async function getAiKnowledge() {
-  if (!isSupabaseConfigured) return { data: MOCK_STORE.ai_knowledge, error: null };
-  const { data, error } = await supabase
-    .from('ai_knowledge')
-    .select('*')
-    .eq('status', 'active')
-    .order('created_at', { ascending: false });
-  return { data, error };
-}
+export async function triggerHumanHandoff({ conversationId, leadId, assignedTo = 'Rajesh Kumar', priority = 'High', summary = '', taskTitle = '' }) {
+  // 1. Switch conversation mode to 'HUMAN ACTIVE' and assign rep
+  await updateConversationMode(conversationId, 'HUMAN ACTIVE');
+  await reassignSalesperson(conversationId, assignedTo);
 
-export async function createAiKnowledge(item) {
-  const newItem = {
-    id: 'k-' + Date.now(),
-    organization_id: DEFAULT_ORG_ID,
-    version: 1,
-    status: 'active',
-    ...item,
+  // 2. Create follow-up task
+  const titleToUse = taskTitle || `Call customer (${assignedTo}) - AI Takeover`;
+  const taskPayload = {
+    lead_id: leadId,
+    title: titleToUse,
+    priority,
+    status: 'To Do',
+    assigned_to: assignedTo,
+    due_date: new Date().toISOString().split('T')[0],
+    tags: ['CRM', 'AI-Handoff'],
+  };
+  const { data: taskData } = await createTask(taskPayload);
+
+  // 3. Log Activity
+  const act = {
+    id: 'act-' + Date.now(),
+    lead_id: leadId,
+    type: 'ai',
+    title: `Human Takeover: Assigned to ${assignedTo}`,
+    subtitle: summary || 'AI auto-paused; human sales takeover activated.',
     created_at: new Date().toISOString(),
   };
   if (!isSupabaseConfigured) {
-    MOCK_STORE.ai_knowledge.unshift(newItem);
-    logAuditEvent('ai_knowledge.create', 'ai_knowledge', newItem.id, newItem);
-    return { data: newItem, error: null };
+    MOCK_STORE.activities.unshift(act);
   }
-  const { data, error } = await supabase.from('ai_knowledge').insert([newItem]).select().single();
-  if (data) logAuditEvent('ai_knowledge.create', 'ai_knowledge', data.id, data);
-  return { data, error };
+
+  logAuditEvent('human_handoff.trigger', 'whatsapp_conversations', conversationId, { assignedTo, priority, summary });
+  return { success: true, task: taskData };
 }
 
-export async function deleteAiKnowledge(id) {
+export async function submitAiFeedback({ conversationId, rating = 5, feedbackType = 'AI Helpful', comments = '' }) {
+  const newFb = {
+    id: 'fb-' + Date.now(),
+    organization_id: DEFAULT_ORG_ID,
+    conversation_id: conversationId,
+    rating,
+    feedback_type: feedbackType,
+    comments,
+    created_at: new Date().toISOString(),
+  };
+
   if (!isSupabaseConfigured) {
-    const idx = MOCK_STORE.ai_knowledge.findIndex(k => k.id === id);
-    if (idx !== -1) MOCK_STORE.ai_knowledge.splice(idx, 1);
-    logAuditEvent('ai_knowledge.delete', 'ai_knowledge', id);
-    return { error: null };
+    MOCK_STORE.ai_feedback.unshift(newFb);
+    logAuditEvent('ai.feedback', 'ai_feedback', newFb.id, { feedbackType, rating });
+    return { data: newFb, error: null };
   }
-  const { error } = await supabase.from('ai_knowledge').delete().eq('id', id);
-  logAuditEvent('ai_knowledge.delete', 'ai_knowledge', id);
-  return { error };
-}
 
-export async function getAiRuns() {
-  if (!isSupabaseConfigured) return { data: MOCK_STORE.ai_runs, error: null };
-  const { data, error } = await supabase.from('ai_runs').select('*').order('created_at', { ascending: false }).limit(20);
+  const { data, error } = await supabase.from('ai_feedback').insert([newFb]).select().single();
+  if (data) logAuditEvent('ai.feedback', 'ai_feedback', data.id, { feedbackType, rating });
   return { data, error };
 }
 
-export async function runAiSalesAgent({ messageText, leadId = 'lead-1', conversationId = 'conv-1', history = [] }) {
-  try {
-    const res = await fetch('/.netlify/functions/ai-chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messageText, leadId, conversationId, history }),
-    });
-    const data = await res.json();
-    return data;
-  } catch (err) {
-    // Fallback deterministic simulator
-    const lower = messageText.toLowerCase();
-    let text = 'Hello! I can provide property brochures, approved rates, and schedule site visits.';
-    let toolCalls = [];
+export async function getAiFeedbackList() {
+  if (!isSupabaseConfigured) return { data: MOCK_STORE.ai_feedback, error: null };
+  const { data, error } = await supabase.from('ai_feedback').select('*').order('created_at', { ascending: false });
+  return { data, error };
+}
 
-    if (lower.includes('rate') || lower.includes('price')) {
-      if (lower.includes('kam') || lower.includes('discount')) {
-        toolCalls.push({
-          toolName: 'request_human_handoff',
-          args: { reason: 'Price negotiation requested' },
-          output: { assigned_rep: 'Rajesh Kumar (Senior Sales Executive)', status: 'handoff_queued' }
-        });
-        text = 'Our approved rate for 3BHK Andheri is ₹95 Lakhs. For customized bulk discounts, I am connecting you with our Senior Sales Executive Rajesh Kumar right away.';
-      } else {
-        toolCalls.push({
-          toolName: 'get_product_price',
-          args: { product_query: '3BHK Andheri' },
-          output: { product: '3BHK Luxury Residence - Andheri', approved_rate_inr: 9500000, formatted_rate: '₹95 Lakhs' }
-        });
-        text = 'Our official approved price for 3BHK Luxury Residence at Andheri is ₹95 Lakhs. Would you like to schedule a site visit?';
-      }
-    } else if (lower.includes('brochure') || lower.includes('pdf')) {
-      toolCalls.push({
-        toolName: 'get_brochure',
-        args: { product_query: '3BHK Andheri' },
-        output: { brochure_url: 'https://example.com/3bhk-andheri.pdf' }
-      });
-      text = 'Here is the downloadable brochure link: https://example.com/3bhk-andheri.pdf';
+export async function reassignSalesperson(conversationId, salespersonName) {
+  if (!isSupabaseConfigured) {
+    const conv = MOCK_STORE.whatsapp_conversations.find(c => c.id === conversationId);
+    if (conv) {
+      conv.assigned_salesperson = salespersonName;
+      logAuditEvent('salesperson.reassign', 'whatsapp_conversations', conversationId, { assigned_to: salespersonName });
+      return { data: conv, error: null };
     }
-
-    return {
-      success: true,
-      responseText: text,
-      toolCalls,
-      observability: { model: 'gpt-4o', latencyMs: 320, estimatedCostUsd: '0.00045' },
-    };
+    return { data: null, error: { message: 'Conversation not found' } };
   }
+
+  const { data, error } = await supabase
+    .from('whatsapp_conversations')
+    .update({ assigned_salesperson: salespersonName })
+    .eq('id', conversationId)
+    .select()
+    .single();
+
+  if (data) logAuditEvent('salesperson.reassign', 'whatsapp_conversations', conversationId, { assigned_to: salespersonName });
+  return { data, error };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -769,6 +754,78 @@ export async function toggleLeadOptOut(leadId, optOut, reason = 'Admin manual to
   }
   const { data, error } = await supabase.from('leads').update({ marketing_opt_out: optOut, marketing_opt_out_at: optOut ? new Date().toISOString() : null, opt_out_reason: optOut ? reason : null }).eq('id', leadId).select().single();
   return { data, error };
+}
+
+export async function getAiKnowledge() {
+  if (!isSupabaseConfigured) return { data: MOCK_STORE.ai_knowledge, error: null };
+  const { data, error } = await supabase.from('ai_knowledge').select('*').eq('status', 'active').order('created_at', { ascending: false });
+  return { data, error };
+}
+
+export async function createAiKnowledge(item) {
+  const newItem = { id: 'k-' + Date.now(), organization_id: DEFAULT_ORG_ID, version: 1, status: 'active', ...item, created_at: new Date().toISOString() };
+  if (!isSupabaseConfigured) {
+    MOCK_STORE.ai_knowledge.unshift(newItem);
+    logAuditEvent('ai_knowledge.create', 'ai_knowledge', newItem.id, newItem);
+    return { data: newItem, error: null };
+  }
+  const { data, error } = await supabase.from('ai_knowledge').insert([newItem]).select().single();
+  return { data, error };
+}
+
+export async function deleteAiKnowledge(id) {
+  if (!isSupabaseConfigured) {
+    const idx = MOCK_STORE.ai_knowledge.findIndex(k => k.id === id);
+    if (idx !== -1) MOCK_STORE.ai_knowledge.splice(idx, 1);
+    return { error: null };
+  }
+  const { error } = await supabase.from('ai_knowledge').delete().eq('id', id);
+  return { error };
+}
+
+export async function getAiRuns() {
+  if (!isSupabaseConfigured) return { data: MOCK_STORE.ai_runs || [], error: null };
+  const { data, error } = await supabase.from('ai_runs').select('*').order('created_at', { ascending: false }).limit(20);
+  return { data, error };
+}
+
+export async function runAiSalesAgent({ messageText, leadId = 'lead-1', conversationId = 'conv-1', history = [] }) {
+  try {
+    const res = await fetch('/.netlify/functions/ai-chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messageText, leadId, conversationId, history }),
+    });
+    return await res.json();
+  } catch (err) {
+    const lower = messageText.toLowerCase();
+    let text = 'Hello! I can provide property brochures, approved rates, and schedule site visits.';
+    let toolCalls = [];
+
+    if (lower.includes('rate') || lower.includes('price')) {
+      if (lower.includes('kam') || lower.includes('discount')) {
+        toolCalls.push({
+          toolName: 'request_human_handoff',
+          args: { reason: 'Price negotiation requested' },
+          output: { assigned_rep: 'Rajesh Kumar (Senior Sales Executive)', status: 'handoff_queued' }
+        });
+        text = 'Our approved rate for 3BHK Andheri is ₹95 Lakhs. For customized bulk discounts, I am connecting you with our Senior Sales Executive Rajesh Kumar right away.';
+      } else {
+        toolCalls.push({
+          toolName: 'get_product_price',
+          args: { product_query: '3BHK Andheri' },
+          output: { product: '3BHK Luxury Residence - Andheri', approved_rate_inr: 9500000, formatted_rate: '₹95 Lakhs' }
+        });
+        text = 'Our official approved price for 3BHK Luxury Residence at Andheri is ₹95 Lakhs. Would you like to schedule a site visit?';
+      }
+    }
+    return {
+      success: true,
+      responseText: text,
+      toolCalls,
+      observability: { model: 'gpt-4o', latencyMs: 320, estimatedCostUsd: '0.00045' },
+    };
+  }
 }
 
 export async function getActivityFeed(limit = 10) {

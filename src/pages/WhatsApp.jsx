@@ -2,15 +2,17 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   MessageCircle, Send, Users, BarChart3, Plus,
   CheckCircle2, Clock, XCircle, FileText, Zap, RefreshCw,
-  Search, User, Phone, Shield, Pause, Play, CheckCheck, Eye
+  Search, User, Phone, Shield, Pause, Play, CheckCheck, Eye,
+  UserCheck, ThumbsUp, ThumbsDown, MessageSquare, Award
 } from 'lucide-react';
 import {
   getCampaigns, getLeads,
   getWhatsAppConversations, getWhatsAppMessages, sendWhatsAppMessage,
-  updateConversationMode, toggleLeadOptOut, normalizePhone
+  updateConversationMode, toggleLeadOptOut, reassignSalesperson, submitAiFeedback
 } from '../lib/db';
 import Customer360Modal from '../components/Customer360Modal';
 import CampaignBuilderModal from '../components/CampaignBuilderModal';
+import HumanHandoffModal from '../components/HumanHandoffModal';
 import './Pages.css';
 
 const statusConfig = {
@@ -28,6 +30,9 @@ const templates = [
   { id: 4, tag: 'Festival', name: 'Festival Offer', preview: '🎉 {name}, this festive season get special pricing on our 2BHK & 3BHK properties! Limited period offer.' },
 ];
 
+const AI_FEEDBACK_TAGS = ['AI Helpful', 'Wrong Information', 'Premature Handoff', 'Late Handoff', 'Customer Annoyed'];
+const TEAM_MEMBERS = ['Rajesh Kumar', 'Priya Sharma', 'Amit Verma', 'Sunita Patel'];
+
 const WhatsApp = () => {
   const [activeTab, setActiveTab] = useState('inbox'); // 'inbox' | 'campaigns'
   
@@ -40,6 +45,11 @@ const WhatsApp = () => {
   const [convLoading, setConvLoading] = useState(true);
   const [sendingMsg, setSendingMsg] = useState(false);
   const [selected360LeadId, setSelected360LeadId] = useState(null);
+
+  // Phase 6 Handoff & Feedback Modals
+  const [showHandoffModal, setShowHandoffModal] = useState(false);
+  const [selectedFeedbackTag, setSelectedFeedbackTag] = useState(null);
+  const [feedbackSuccess, setFeedbackSuccess] = useState(false);
 
   // Campaigns State
   const [campaigns, setCampaigns] = useState([]);
@@ -56,6 +66,8 @@ const WhatsApp = () => {
   useEffect(() => {
     if (selectedConv) {
       loadMessages(selectedConv.id);
+      setSelectedFeedbackTag(null);
+      setFeedbackSuccess(false);
     }
   }, [selectedConv]);
 
@@ -108,6 +120,25 @@ const WhatsApp = () => {
     await updateConversationMode(selectedConv.id, newMode);
     setSelectedConv(prev => ({ ...prev, conversation_mode: newMode }));
     setConversations(prev => prev.map(c => c.id === selectedConv.id ? { ...c, conversation_mode: newMode } : c));
+  };
+
+  const handleReassign = async (newRep) => {
+    if (!selectedConv) return;
+    await reassignSalesperson(selectedConv.id, newRep);
+    setSelectedConv(prev => ({ ...prev, assigned_salesperson: newRep }));
+    setConversations(prev => prev.map(c => c.id === selectedConv.id ? { ...c, assigned_salesperson: newRep } : c));
+  };
+
+  const handleFeedbackSubmit = async (tag) => {
+    if (!selectedConv) return;
+    setSelectedFeedbackTag(tag);
+    await submitAiFeedback({
+      conversationId: selectedConv.id,
+      rating: tag === 'AI Helpful' ? 5 : 2,
+      feedbackType: tag,
+      comments: `Agent feedback tagged as: ${tag}`,
+    });
+    setFeedbackSuccess(true);
   };
 
   const totalSent = campaigns.reduce((s, c) => s + (c.total_sent || 0), 0);
@@ -180,7 +211,7 @@ const WhatsApp = () => {
           TAB 1: 3-PANE LIVE INBOX
          ========================================================================= */}
       {activeTab === 'inbox' && (
-        <div className="glass-card" style={{ display: 'grid', gridTemplateColumns: '300px 1fr 280px', height: '640px', overflow: 'hidden', padding: 0 }}>
+        <div className="glass-card" style={{ display: 'grid', gridTemplateColumns: '300px 1fr 300px', height: '640px', overflow: 'hidden', padding: 0 }}>
           
           {/* PANE 1: CONVERSATIONS LIST */}
           <div style={{ borderRight: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', background: 'var(--bg-secondary)' }}>
@@ -267,12 +298,14 @@ const WhatsApp = () => {
                       {selectedConv.contact_phone} · {selectedConv.property_interest || 'General'}
                     </div>
                   </div>
-                  <button
-                    className="btn btn-secondary btn-sm"
-                    onClick={() => setSelected360LeadId(selectedConv.lead_id || 'lead-1')}
-                  >
-                    <Eye size={13} /> View 360 Profile
-                  </button>
+                  <div style={{ display: 'flex', gap: '0.4rem' }}>
+                    <button className="btn btn-secondary btn-sm" onClick={() => setShowHandoffModal(true)}>
+                      <UserCheck size={13} color="var(--accent-primary)" /> Assign & Handoff
+                    </button>
+                    <button className="btn btn-secondary btn-sm" onClick={() => setSelected360LeadId(selectedConv.lead_id || 'lead-1')}>
+                      <Eye size={13} /> 360 View
+                    </button>
+                  </div>
                 </div>
 
                 {/* Messages List */}
@@ -297,7 +330,7 @@ const WhatsApp = () => {
                       >
                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', fontSize: '0.65rem', color: 'var(--text-muted)', marginBottom: '0.25rem' }}>
                           <span>
-                            {m.sender_type === 'customer' ? selectedConv.contact_name : m.sender_type === 'ai' ? '🤖 AI Sales Assistant' : '👤 Sales Executive (Rajesh)'}
+                            {m.sender_type === 'customer' ? selectedConv.contact_name : m.sender_type === 'ai' ? '🤖 AI Sales Assistant' : `👤 ${selectedConv.assigned_salesperson || 'Sales Executive'}`}
                           </span>
                           <span>{new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                         </div>
@@ -318,7 +351,7 @@ const WhatsApp = () => {
                   <input
                     type="text"
                     className="input-field"
-                    placeholder={`Reply as human agent to ${selectedConv.contact_name}...`}
+                    placeholder={`Reply as ${selectedConv.assigned_salesperson || 'Sales Rep'}...`}
                     value={msgInput}
                     onChange={e => setMsgInput(e.target.value)}
                   />
@@ -334,22 +367,20 @@ const WhatsApp = () => {
             )}
           </div>
 
-          {/* PANE 3: CUSTOMER CONTEXT & MODE SWITCHER */}
+          {/* PANE 3: HUMAN TAKEOVER, REASSIGNMENT & AI FEEDBACK LOOP (Section 23, 24) */}
           <div style={{ borderLeft: '1px solid var(--border-color)', background: 'var(--bg-secondary)', padding: '1.25rem', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
             {selectedConv ? (
               <>
+                {/* 1. Mode Controls */}
                 <div>
-                  <span className="section-title" style={{ fontSize: '0.85rem' }}>Conversation Mode</span>
-                  <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', margin: '0.25rem 0 0.75rem 0' }}>
-                    Take over to silence automated AI replies or resume AI assistance.
-                  </p>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                  <span className="section-title" style={{ fontSize: '0.82rem' }}>Conversation Mode</span>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', marginTop: '0.4rem' }}>
                     <button
                       className={`btn btn-sm ${selectedConv.conversation_mode === 'HUMAN ACTIVE' ? 'btn-primary' : 'btn-secondary'}`}
                       style={{ width: '100%', justifyContent: 'flex-start' }}
                       onClick={() => handleModeChange('HUMAN ACTIVE')}
                     >
-                      <User size={13} /> Take Over (Human Active)
+                      <User size={13} /> Human Takeover (Mute AI)
                     </button>
                     <button
                       className={`btn btn-sm ${selectedConv.conversation_mode === 'AI ACTIVE' ? 'btn-success' : 'btn-secondary'}`}
@@ -358,33 +389,62 @@ const WhatsApp = () => {
                     >
                       <Play size={13} /> Resume AI Assistant
                     </button>
-                    <button
-                      className={`btn btn-sm ${selectedConv.conversation_mode === 'AI PAUSED' ? 'btn-warning' : 'btn-secondary'}`}
-                      style={{ width: '100%', justifyContent: 'flex-start' }}
-                      onClick={() => handleModeChange('AI PAUSED')}
-                    >
-                      <Pause size={13} /> Pause AI
-                    </button>
                   </div>
                 </div>
 
-                <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
-                  <span className="section-title" style={{ fontSize: '0.85rem' }}>Customer Context</span>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.6rem', fontSize: '0.78rem' }}>
-                    <div><span className="text-muted">Assigned Rep:</span> <strong>{selectedConv.assigned_salesperson || 'Rajesh Kumar'}</strong></div>
-                    <div><span className="text-muted">Interest:</span> <strong>{selectedConv.property_interest || '3BHK - Andheri'}</strong></div>
-                    <div><span className="text-muted">Phone:</span> <strong>{selectedConv.contact_phone}</strong></div>
-                  </div>
+                {/* 2. Salesperson Assignment */}
+                <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '0.85rem' }}>
+                  <span className="section-title" style={{ fontSize: '0.82rem' }}>Assigned Salesperson</span>
+                  <select
+                    className="input-field"
+                    style={{ fontSize: '0.78rem', marginTop: '0.4rem' }}
+                    value={selectedConv.assigned_salesperson || 'Rajesh Kumar'}
+                    onChange={e => handleReassign(e.target.value)}
+                  >
+                    {TEAM_MEMBERS.map(m => <option key={m}>{m}</option>)}
+                  </select>
                 </div>
 
-                <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
-                  <span className="section-title" style={{ fontSize: '0.85rem' }}>Consent & Opt-Out</span>
-                  <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', margin: '0.2rem 0 0.5rem 0' }}>
-                    Customer is eligible for campaign broadcasts.
+                {/* 3. Section 24: Salesperson AI Feedback Loop */}
+                <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '0.85rem' }}>
+                  <span className="section-title" style={{ fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                    <Award size={14} color="var(--warning)" /> Rate AI Performance
+                  </span>
+                  <p style={{ fontSize: '0.68rem', color: 'var(--text-muted)', margin: '0.2rem 0 0.5rem 0' }}>
+                    Section 24: Helps refine knowledge base & prompts.
                   </p>
+                  
+                  {feedbackSuccess ? (
+                    <div style={{ padding: '0.5rem', background: 'rgba(16,185,129,0.1)', border: '1px solid var(--success)', borderRadius: 6, fontSize: '0.72rem', color: 'var(--success)', textAlign: 'center' }}>
+                      ✅ Feedback submitted!
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                      {AI_FEEDBACK_TAGS.map(tag => (
+                        <button
+                          key={tag}
+                          onClick={() => handleFeedbackSubmit(tag)}
+                          className="btn btn-secondary btn-sm"
+                          style={{
+                            fontSize: '0.68rem',
+                            padding: '0.25rem 0.5rem',
+                            justifyContent: 'flex-start',
+                            background: selectedFeedbackTag === tag ? 'rgba(99,102,241,0.2)' : undefined,
+                            borderColor: selectedFeedbackTag === tag ? 'var(--accent-primary)' : undefined,
+                          }}
+                        >
+                          {tag === 'AI Helpful' ? '👍' : '⚠️'} {tag}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* 4. Opt-Out Safeguard */}
+                <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '0.85rem' }}>
                   <button
                     className="btn btn-secondary btn-sm"
-                    style={{ width: '100%', color: 'var(--danger)', borderColor: 'rgba(239,68,68,0.3)' }}
+                    style={{ width: '100%', color: 'var(--danger)', borderColor: 'rgba(239,68,68,0.3)', fontSize: '0.72rem' }}
                     onClick={() => toggleLeadOptOut(selectedConv.lead_id || 'lead-1', true, 'Manual agent request')}
                   >
                     Opt-Out Contact (STOP)
@@ -452,27 +512,6 @@ const WhatsApp = () => {
               </table>
             </div>
           </div>
-
-          {/* Templates Library */}
-          <div>
-            <div className="section-header" style={{ marginBottom: '1rem' }}>
-              <span className="section-title">Meta-Approved Message Templates</span>
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '1rem' }}>
-              {templates.map(t => (
-                <div key={t.id} className="template-card">
-                  <div style={{ marginBottom: '0.5rem' }}><span className="template-tag">{t.tag}</span></div>
-                  <div className="template-title">{t.name}</div>
-                  <div className="template-preview">{t.preview}</div>
-                  <div style={{ marginTop: '1rem', display: 'flex', gap: '0.5rem' }}>
-                    <button className="btn btn-whatsapp btn-sm" style={{ width: '100%' }} onClick={() => setShowCampaignBuilder(true)}>
-                      Launch Broadcast
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
         </div>
       )}
 
@@ -482,6 +521,20 @@ const WhatsApp = () => {
           isOpen={showCampaignBuilder}
           onClose={() => setShowCampaignBuilder(false)}
           onCampaignQueued={loadAllData}
+        />
+      )}
+
+      {/* Human Handoff Modal */}
+      {showHandoffModal && selectedConv && (
+        <HumanHandoffModal
+          isOpen={showHandoffModal}
+          onClose={() => setShowHandoffModal(false)}
+          conversation={selectedConv}
+          lead={leads.find(l => l.id === selectedConv.lead_id)}
+          onHandoffCompleted={(newRep) => {
+            setSelectedConv(p => ({ ...p, conversation_mode: 'HUMAN ACTIVE', assigned_salesperson: newRep }));
+            loadAllData();
+          }}
         />
       )}
 
