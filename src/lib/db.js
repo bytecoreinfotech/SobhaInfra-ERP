@@ -128,6 +128,76 @@ const MOCK_STORE = {
       created_at: new Date(Date.now() - 2 * 86400000).toISOString(),
     },
   ],
+  whatsapp_conversations: [
+    {
+      id: 'conv-1',
+      lead_id: 'lead-1',
+      contact_name: 'Ravi Mehta',
+      contact_phone: '+919876543210',
+      conversation_mode: 'HUMAN ACTIVE', // 'AI ACTIVE', 'HUMAN ACTIVE', 'AI PAUSED', 'CLOSED'
+      last_message_text: 'Hi Ravi, Rajesh here. I can offer you unit 804 at ₹92L special. Can we meet tomorrow?',
+      last_message_at: new Date(Date.now() - 12 * 3600000).toISOString(),
+      unread_count: 0,
+      assigned_salesperson: 'Rajesh Kumar',
+      property_interest: '3BHK - Andheri West',
+    },
+    {
+      id: 'conv-2',
+      lead_id: 'lead-5',
+      contact_name: 'Kavita Joshi',
+      contact_phone: '+914321098765',
+      conversation_mode: 'AI ACTIVE',
+      last_message_text: 'Site visits are open Mon–Sun from 10 AM to 6 PM. Can I book a slot for you?',
+      last_message_at: new Date(Date.now() - 2 * 3600000).toISOString(),
+      unread_count: 1,
+      assigned_salesperson: 'Unassigned',
+      property_interest: '2BHK - Thane',
+    },
+    {
+      id: 'conv-3',
+      lead_id: 'lead-2',
+      contact_name: 'Sunita Patel',
+      contact_phone: '+918765432109',
+      conversation_mode: 'AI ACTIVE',
+      last_message_text: 'Our 2BHK units start at ₹50L. Would you like a complete price list?',
+      last_message_at: new Date(Date.now() - 24 * 3600000).toISOString(),
+      unread_count: 0,
+      assigned_salesperson: 'Unassigned',
+      property_interest: '2BHK - Borivali',
+    },
+    {
+      id: 'conv-4',
+      lead_id: 'lead-3',
+      contact_name: 'Arjun Sharma',
+      contact_phone: '+917654321098',
+      conversation_mode: 'AI PAUSED',
+      last_message_text: 'Can someone share the exact location pin of the Lonavala Villa project?',
+      last_message_at: new Date(Date.now() - 1 * 3600000).toISOString(),
+      unread_count: 2,
+      assigned_salesperson: 'Priya Sharma',
+      property_interest: 'Weekend Villa - Lonavala',
+    },
+  ],
+  whatsapp_messages: {
+    'conv-1': [
+      { id: 'm-1', direction: 'inbound', sender_type: 'customer', body: 'Hi, I saw your 3BHK ad in Andheri. What is the current rate?', status: 'read', created_at: new Date(Date.now() - 3600000 * 48).toISOString() },
+      { id: 'm-2', direction: 'outbound', sender_type: 'ai', body: 'Hello Ravi! 🏠 Our 3BHK Luxury Residence at Andheri starts at ₹95L. Here is the brochure: https://example.com/3bhk-andheri.pdf. Would you like to schedule a site visit?', status: 'read', created_at: new Date(Date.now() - 3600000 * 47).toISOString() },
+      { id: 'm-3', direction: 'inbound', sender_type: 'customer', body: 'Rate thoda kam hoga kya if I do 50% immediate down payment?', status: 'read', created_at: new Date(Date.now() - 3600000 * 24).toISOString() },
+      { id: 'm-4', direction: 'outbound', sender_type: 'ai', body: 'I have recorded your down-payment preference. Connecting you with our Senior Sales Executive Rajesh Kumar to discuss special pricing.', status: 'read', created_at: new Date(Date.now() - 3600000 * 23).toISOString() },
+      { id: 'm-5', direction: 'outbound', sender_type: 'human_agent', body: 'Hi Ravi, Rajesh here. I can offer you unit 804 at ₹92L special. Can we meet tomorrow at 11 AM?', status: 'delivered', created_at: new Date(Date.now() - 3600000 * 12).toISOString() },
+    ],
+    'conv-2': [
+      { id: 'm-6', direction: 'inbound', sender_type: 'customer', body: 'Hello! What time is the Thane site office open tomorrow?', status: 'delivered', created_at: new Date(Date.now() - 3600000 * 2.2).toISOString() },
+      { id: 'm-7', direction: 'outbound', sender_type: 'ai', body: 'Site visits are open Mon–Sun from 10 AM to 6 PM. Can I book a slot for you?', status: 'sent', created_at: new Date(Date.now() - 3600000 * 2).toISOString() },
+    ],
+    'conv-3': [
+      { id: 'm-8', direction: 'inbound', sender_type: 'customer', body: 'Please send pricing for 2BHK Borivali project.', status: 'read', created_at: new Date(Date.now() - 3600000 * 25).toISOString() },
+      { id: 'm-9', direction: 'outbound', sender_type: 'ai', body: 'Our 2BHK units start at ₹50L. Would you like a complete price list?', status: 'read', created_at: new Date(Date.now() - 3600000 * 24).toISOString() },
+    ],
+    'conv-4': [
+      { id: 'm-10', direction: 'inbound', sender_type: 'customer', body: 'Can someone share the exact location pin of the Lonavala Villa project?', status: 'delivered', created_at: new Date(Date.now() - 3600000 * 1).toISOString() },
+    ],
+  },
   products: [
     { id: 'prod-1', name: '3BHK Luxury Residence - Andheri', category: 'Residential', sku: 'PROP-3BHK-AND', unit_price: 9500000, unit_of_measure: 'unit', brochure_url: 'https://example.com/3bhk-andheri.pdf', is_active: true, description: 'Super built-up 1,450 sq.ft with panoramic skyline views.' },
     { id: 'prod-2', name: '2BHK Prime Apartment - Borivali', category: 'Residential', sku: 'PROP-2BHK-BOR', unit_price: 6200000, unit_of_measure: 'unit', brochure_url: 'https://example.com/2bhk-borivali.pdf', is_active: true, description: 'Spacious 950 sq.ft close to Western Express Highway.' },
@@ -143,15 +213,6 @@ const MOCK_STORE = {
     { id: 'quot-1', lead_id: 'lead-1', quotation_number: 'QUOT-2026-001', total_amount: 9200000, status: 'Sent', valid_until: '2026-08-31', created_at: new Date().toISOString() },
     { id: 'quot-2', lead_id: 'lead-5', quotation_number: 'QUOT-2026-002', total_amount: 5850000, status: 'Approved', valid_until: '2026-09-05', created_at: new Date().toISOString() },
   ],
-  whatsapp_threads: {
-    'lead-1': [
-      { id: 'msg-1', direction: 'inbound', sender_type: 'customer', body: 'Hi, I saw your 3BHK ad in Andheri. What is the current rate?', created_at: new Date(Date.now() - 3600000 * 48).toISOString() },
-      { id: 'msg-2', direction: 'outbound', sender_type: 'ai', body: 'Hello Ravi! 🏠 Our 3BHK Luxury Residence at Andheri starts at ₹95L. Here is the brochure: https://example.com/3bhk-andheri.pdf. Would you like to schedule a site visit?', created_at: new Date(Date.now() - 3600000 * 47).toISOString() },
-      { id: 'msg-3', direction: 'inbound', sender_type: 'customer', body: 'Rate thoda kam hoga kya if I do 50% immediate down payment?', created_at: new Date(Date.now() - 3600000 * 24).toISOString() },
-      { id: 'msg-4', direction: 'outbound', sender_type: 'ai', body: 'I have recorded your down-payment preference. Connecting you with our Senior Sales Executive Rajesh Kumar to discuss special pricing.', created_at: new Date(Date.now() - 3600000 * 23).toISOString() },
-      { id: 'msg-5', direction: 'outbound', sender_type: 'human_agent', body: 'Hi Ravi, Rajesh here. I can offer you unit 804 at ₹92L special. Can we meet tomorrow at 11 AM?', created_at: new Date(Date.now() - 3600000 * 12).toISOString() },
-    ],
-  },
   tasks: [
     { id: 'task-1', lead_id: 'lead-1', title: 'Call Ravi Mehta for site visit confirmation', status: 'To Do', priority: 'High', due_date: new Date().toISOString().split('T')[0], tags: ['CRM'], created_at: new Date().toISOString() },
     { id: 'task-2', lead_id: 'lead-4', title: 'Prepare agreement draft for Priya Kapoor', status: 'In Progress', priority: 'High', due_date: new Date().toISOString().split('T')[0], tags: ['Finance'], created_at: new Date().toISOString() },
@@ -200,6 +261,139 @@ export async function logAuditEvent(action, resource, resourceId = null, payload
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// WHATSAPP LIVE INBOX & CONVERSATION SERVICES (Section 11, 12, 50A, 50B)
+// ─────────────────────────────────────────────────────────────────────────────
+export async function getWhatsAppConversations() {
+  if (!isSupabaseConfigured) return { data: MOCK_STORE.whatsapp_conversations, error: null };
+  const { data, error } = await supabase
+    .from('whatsapp_conversations')
+    .select('*, lead:leads(*)')
+    .order('last_message_at', { ascending: false });
+  return { data, error };
+}
+
+export async function getWhatsAppMessages(conversationId) {
+  if (!isSupabaseConfigured) {
+    const msgs = MOCK_STORE.whatsapp_messages[conversationId] || [];
+    return { data: msgs, error: null };
+  }
+  const { data, error } = await supabase
+    .from('whatsapp_messages')
+    .select('*')
+    .eq('conversation_id', conversationId)
+    .order('created_at', { ascending: true });
+  return { data, error };
+}
+
+export async function sendWhatsAppMessage(conversationId, text, senderType = 'human_agent') {
+  const newMsg = {
+    id: 'msg-' + Date.now(),
+    conversation_id: conversationId,
+    direction: 'outbound',
+    sender_type: senderType,
+    body: text,
+    status: 'delivered',
+    created_at: new Date().toISOString(),
+  };
+
+  if (!isSupabaseConfigured) {
+    if (!MOCK_STORE.whatsapp_messages[conversationId]) {
+      MOCK_STORE.whatsapp_messages[conversationId] = [];
+    }
+    MOCK_STORE.whatsapp_messages[conversationId].push(newMsg);
+
+    // Update conversation last message
+    const convIdx = MOCK_STORE.whatsapp_conversations.findIndex(c => c.id === conversationId);
+    if (convIdx !== -1) {
+      MOCK_STORE.whatsapp_conversations[convIdx].last_message_text = text;
+      MOCK_STORE.whatsapp_conversations[convIdx].last_message_at = newMsg.created_at;
+      MOCK_STORE.whatsapp_conversations[convIdx].unread_count = 0;
+    }
+
+    logAuditEvent('whatsapp.send', 'whatsapp_messages', newMsg.id, { text, senderType });
+    return { data: newMsg, error: null };
+  }
+
+  const { data, error } = await supabase
+    .from('whatsapp_messages')
+    .insert([{
+      organization_id: DEFAULT_ORG_ID,
+      conversation_id: conversationId,
+      direction: 'outbound',
+      sender_type: senderType,
+      body: text,
+      status: 'sent',
+    }])
+    .select()
+    .single();
+
+  if (data) {
+    await supabase
+      .from('whatsapp_conversations')
+      .update({
+        last_message_text: text,
+        last_message_at: new Date().toISOString(),
+        unread_count: 0,
+      })
+      .eq('id', conversationId);
+
+    logAuditEvent('whatsapp.send', 'whatsapp_messages', data.id, { text, senderType });
+  }
+
+  return { data, error };
+}
+
+export async function updateConversationMode(conversationId, newMode) {
+  if (!isSupabaseConfigured) {
+    const conv = MOCK_STORE.whatsapp_conversations.find(c => c.id === conversationId);
+    if (conv) {
+      conv.conversation_mode = newMode;
+      logAuditEvent('whatsapp.mode_change', 'whatsapp_conversations', conversationId, { mode: newMode });
+      return { data: conv, error: null };
+    }
+    return { data: null, error: { message: 'Conversation not found' } };
+  }
+
+  const { data, error } = await supabase
+    .from('whatsapp_conversations')
+    .update({ conversation_mode: newMode })
+    .eq('id', conversationId)
+    .select()
+    .single();
+
+  if (data) logAuditEvent('whatsapp.mode_change', 'whatsapp_conversations', conversationId, { mode: newMode });
+  return { data, error };
+}
+
+export async function toggleLeadOptOut(leadId, optOut, reason = 'Admin manual toggle') {
+  if (!isSupabaseConfigured) {
+    const lead = MOCK_STORE.leads.find(l => l.id === leadId);
+    if (lead) {
+      lead.marketing_opt_out = optOut;
+      lead.marketing_opt_out_at = optOut ? new Date().toISOString() : null;
+      lead.opt_out_reason = optOut ? reason : null;
+      logAuditEvent('lead.opt_out_toggle', 'leads', leadId, { optOut, reason });
+      return { data: lead, error: null };
+    }
+    return { data: null, error: { message: 'Lead not found' } };
+  }
+
+  const { data, error } = await supabase
+    .from('leads')
+    .update({
+      marketing_opt_out: optOut,
+      marketing_opt_out_at: optOut ? new Date().toISOString() : null,
+      opt_out_reason: optOut ? reason : null,
+    })
+    .eq('id', leadId)
+    .select()
+    .single();
+
+  if (data) logAuditEvent('lead.opt_out_toggle', 'leads', leadId, { optOut, reason });
+  return { data, error };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // CUSTOMER 360 COMPREHENSIVE AGGREGATOR (Section 10)
 // ─────────────────────────────────────────────────────────────────────────────
 export async function getCustomer360(leadId) {
@@ -212,7 +406,10 @@ export async function getCustomer360(leadId) {
     const quotations = MOCK_STORE.quotations.filter(q => q.lead_id === leadId);
     const tasks = MOCK_STORE.tasks.filter(t => t.lead_id === leadId);
     const invoices = MOCK_STORE.invoices.filter(i => normalizePhone(i.client_phone) === normPhone || i.client_name === lead.name);
-    const messages = MOCK_STORE.whatsapp_threads[leadId] || [];
+
+    // Find conversation
+    const conv = MOCK_STORE.whatsapp_conversations.find(c => c.lead_id === leadId || normalizePhone(c.contact_phone) === normPhone);
+    const messages = conv ? (MOCK_STORE.whatsapp_messages[conv.id] || []) : [];
     const activities = MOCK_STORE.activities.filter(a => a.lead_id === leadId);
 
     const totalOutstanding = invoices.filter(i => i.status !== 'Paid').reduce((s, i) => s + Number(i.amount), 0);
@@ -243,13 +440,20 @@ export async function getCustomer360(leadId) {
 
   const normPhone = normalizePhone(lead.phone);
 
-  const [dealsRes, quotesRes, tasksRes, invoicesRes, activitiesRes] = await Promise.all([
+  const [dealsRes, quotesRes, tasksRes, invoicesRes, activitiesRes, convRes] = await Promise.all([
     supabase.from('deals').select('*').eq('lead_id', leadId),
     supabase.from('quotations').select('*').eq('lead_id', leadId),
     supabase.from('tasks').select('*').eq('related_lead_id', leadId),
     supabase.from('invoices').select('*').eq('client_phone', normPhone),
     supabase.from('activities').select('*').eq('lead_id', leadId).order('created_at', { ascending: false }),
+    supabase.from('whatsapp_conversations').select('id').eq('contact_phone', normPhone).maybeSingle(),
   ]);
+
+  let messages = [];
+  if (convRes?.data?.id) {
+    const { data: msgs } = await supabase.from('whatsapp_messages').select('*').eq('conversation_id', convRes.data.id).order('created_at', { ascending: true });
+    messages = msgs || [];
+  }
 
   const invoices = invoicesRes.data || [];
   const totalOutstanding = invoices.filter(i => i.status !== 'Paid').reduce((s, i) => s + Number(i.amount), 0);
@@ -262,7 +466,7 @@ export async function getCustomer360(leadId) {
       quotations: quotesRes.data || [],
       tasks: tasksRes.data || [],
       invoices,
-      messages: [],
+      messages,
       activities: activitiesRes.data || [],
       financials: {
         totalOutstanding,
@@ -275,14 +479,11 @@ export async function getCustomer360(leadId) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PRODUCT CATALOG SERVICES (Section 19 - Pricing Guardrails)
+// PRODUCT CATALOG SERVICES
 // ─────────────────────────────────────────────────────────────────────────────
 export async function getProducts() {
   if (!isSupabaseConfigured) return { data: MOCK_STORE.products, error: null };
-  const { data, error } = await supabase
-    .from('products')
-    .select('*, product_prices(*)')
-    .order('name', { ascending: true });
+  const { data, error } = await supabase.from('products').select('*').order('name', { ascending: true });
   return { data, error };
 }
 
@@ -293,11 +494,7 @@ export async function createProduct(productData) {
     logAuditEvent('product.create', 'products', newP.id, newP);
     return { data: newP, error: null };
   }
-  const { data, error } = await supabase
-    .from('products')
-    .insert([{ ...productData, organization_id: DEFAULT_ORG_ID }])
-    .select()
-    .single();
+  const { data, error } = await supabase.from('products').insert([{ ...productData, organization_id: DEFAULT_ORG_ID }]).select().single();
   if (data) logAuditEvent('product.create', 'products', data.id, data);
   return { data, error };
 }
@@ -328,11 +525,7 @@ export async function createDeal(dealData) {
     logAuditEvent('deal.create', 'deals', newDeal.id, newDeal);
     return { data: newDeal, error: null };
   }
-  const { data, error } = await supabase
-    .from('deals')
-    .insert([{ ...dealData, organization_id: DEFAULT_ORG_ID }])
-    .select()
-    .single();
+  const { data, error } = await supabase.from('deals').insert([{ ...dealData, organization_id: DEFAULT_ORG_ID }]).select().single();
   if (data) logAuditEvent('deal.create', 'deals', data.id, data);
   return { data, error };
 }
@@ -342,10 +535,7 @@ export async function createDeal(dealData) {
 // ─────────────────────────────────────────────────────────────────────────────
 export async function getLeads() {
   if (!isSupabaseConfigured) return { data: MOCK_STORE.leads, error: null };
-  const { data, error } = await supabase
-    .from('leads')
-    .select('*')
-    .order('created_at', { ascending: false });
+  const { data, error } = await supabase.from('leads').select('*').order('created_at', { ascending: false });
   return { data, error };
 }
 
@@ -367,11 +557,7 @@ export async function createLead(lead) {
     logAuditEvent('lead.create', 'leads', newLead.id, newLead);
     return { data: newLead, error: null };
   }
-  const { data, error } = await supabase
-    .from('leads')
-    .insert([{ ...cleanLead, organization_id: DEFAULT_ORG_ID }])
-    .select()
-    .single();
+  const { data, error } = await supabase.from('leads').insert([{ ...cleanLead, organization_id: DEFAULT_ORG_ID }]).select().single();
   if (data) logAuditEvent('lead.create', 'leads', data.id, data);
   return { data, error };
 }
@@ -388,12 +574,7 @@ export async function updateLead(id, updates) {
     }
     return { data: null, error: { message: 'Lead not found' } };
   }
-  const { data, error } = await supabase
-    .from('leads')
-    .update(updates)
-    .eq('id', id)
-    .select()
-    .single();
+  const { data, error } = await supabase.from('leads').update(updates).eq('id', id).select().single();
   if (data) logAuditEvent('lead.update', 'leads', id, updates);
   return { data, error };
 }
@@ -424,22 +605,12 @@ export async function addCustomerNote(leadId, noteText) {
     MOCK_STORE.activities.unshift(newAct);
     return { data: newAct, error: null };
   }
-  const { data, error } = await supabase
-    .from('activities')
-    .insert([{
-      organization_id: DEFAULT_ORG_ID,
-      lead_id: leadId,
-      activity_type: 'note',
-      title: 'Internal Note',
-      content: noteText,
-    }])
-    .select()
-    .single();
+  const { data, error } = await supabase.from('activities').insert([{ organization_id: DEFAULT_ORG_ID, lead_id: leadId, activity_type: 'note', title: 'Internal Note', content: noteText }]).select().single();
   return { data, error };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// TASKS, FINANCE, CAMPAIGNS & ROLES (Remaining Base Services)
+// TASKS, FINANCE, CAMPAIGNS & ROLES
 // ─────────────────────────────────────────────────────────────────────────────
 export async function getRoles() {
   if (!isSupabaseConfigured) return { data: MOCK_STORE.roles, error: null };
