@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Search, Bell, Sun, Moon, Menu, MessageCircle, CheckCircle2, AlertCircle, IndianRupee, LogOut } from 'lucide-react';
+import { Search, Bell, Sun, Moon, Menu, MessageCircle, CheckCircle2, AlertCircle, IndianRupee, LogOut, Users } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
+import { useLiveCounts } from '../context/LiveCountsContext';
 import { useLocation } from 'react-router-dom';
 import './Header.css';
 
@@ -44,27 +45,34 @@ const routeLabels = {
 const Header = ({ onMobileMenuOpen }) => {
   const { theme, toggleTheme } = useTheme();
   const { user, signOut } = useAuth();
+  const { notifications: liveNotifs } = useLiveCounts();
   const [showNotif, setShowNotif] = useState(false);
-  const [notifs, setNotifs] = useState(notifications);
+  const [readIds, setReadIds] = useState(new Set());
   const notifRef = useRef(null);
   const location = useLocation();
 
-  const unreadCount = notifs.filter(n => n.unread).length;
+  // Icon map for notification types
+  const notifIconMap = {
+    whatsapp: { icon: <MessageCircle size={14} />, bg: 'var(--whatsapp-bg)', color: 'var(--whatsapp)' },
+    lead:     { icon: <Users size={14} />,          bg: 'var(--accent-glow)',  color: 'var(--accent-primary)' },
+    payment:  { icon: <IndianRupee size={14} />,    bg: 'var(--danger-bg)',    color: 'var(--danger)' },
+    default:  { icon: <CheckCircle2 size={14} />,   bg: 'var(--success-bg)',   color: 'var(--success)' },
+  };
+
+  const unreadCount = liveNotifs.filter(n => n.unread && !readIds.has(n.id)).length;
   const currentPage = routeLabels[location.pathname] || 'Dashboard';
+
+  const markAllRead = () => setReadIds(new Set(liveNotifs.map(n => n.id)));
+  const markRead = (id) => setReadIds(prev => new Set([...prev, id]));
 
   useEffect(() => {
     const handleClickOutside = (e) => {
-      if (notifRef.current && !notifRef.current.contains(e.target)) {
-        setShowNotif(false);
-      }
+      if (notifRef.current && !notifRef.current.contains(e.target)) setShowNotif(false);
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const markAllRead = () => {
-    setNotifs(prev => prev.map(n => ({ ...n, unread: false })));
-  };
 
   return (
     <header className="header">
@@ -120,25 +128,30 @@ const Header = ({ onMobileMenuOpen }) => {
                 <button className="notif-mark-read" onClick={markAllRead}>Mark all read</button>
               </div>
               <div className="notif-list">
-                {notifs.map(n => (
-                  <div
-                    key={n.id}
-                    className={`notif-item ${n.unread ? 'unread' : ''}`}
-                    onClick={() => setNotifs(prev => prev.map(item => item.id === n.id ? { ...item, unread: false } : item))}
-                  >
-                    <div
-                      className="notif-icon"
-                      style={{ background: n.iconBg, color: n.iconColor }}
-                    >
-                      {n.icon}
-                    </div>
-                    <div className="notif-text">
-                      <div className="notif-title">{n.title}</div>
-                      <div className="notif-time">{n.time}</div>
-                    </div>
-                    {n.unread && <span className="status-dot online" style={{ marginTop: '6px' }} />}
+                {liveNotifs.length === 0 ? (
+                  <div style={{ padding: '1.5rem', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.82rem' }}>
+                    ✅ All caught up — no new alerts.
                   </div>
-                ))}
+                ) : liveNotifs.map(n => {
+                  const isRead = readIds.has(n.id);
+                  const iconDef = notifIconMap[n.type] || notifIconMap.default;
+                  return (
+                    <div
+                      key={n.id}
+                      className={`notif-item ${!isRead ? 'unread' : ''}`}
+                      onClick={() => markRead(n.id)}
+                    >
+                      <div className="notif-icon" style={{ background: iconDef.bg, color: iconDef.color }}>
+                        {iconDef.icon}
+                      </div>
+                      <div className="notif-text">
+                        <div className="notif-title">{n.title}</div>
+                        <div className="notif-time">{n.time}</div>
+                      </div>
+                      {!isRead && <span className="status-dot online" style={{ marginTop: '6px' }} />}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}

@@ -3,45 +3,51 @@ import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, Users, CheckSquare, IndianRupee,
   MessageCircle, Bot, CreditCard, Shield, BarChart3,
-  Settings, ChevronLeft, ChevronRight, LogOut, Zap
+  Settings, ChevronLeft, ChevronRight
 } from 'lucide-react';
+import { useLiveCounts } from '../context/LiveCountsContext';
 import './Sidebar.css';
 
-const navSections = [
-  {
-    label: 'Core',
-    items: [
-      { name: 'Dashboard', path: '/', icon: <LayoutDashboard size={18} />, end: true },
-      { name: 'Reports & Analytics', path: '/reports', icon: <BarChart3 size={18} /> },
-    ]
-  },
-  {
-    label: 'WhatsApp & CRM',
-    items: [
-      { name: 'WhatsApp Campaigns', path: '/whatsapp', icon: <MessageCircle size={18} />, badge: '3' },
-      { name: 'Chatbot & Auto-Reply', path: '/chatbot', icon: <Bot size={18} /> },
-      { name: 'CRM & Leads', path: '/crm', icon: <Users size={18} />, badge: '12' },
-    ]
-  },
-  {
-    label: 'Operations',
-    items: [
-      { name: 'Task Management', path: '/tasks', icon: <CheckSquare size={18} />, badge: '5' },
-      { name: 'Automation Rules', path: '/automations', icon: <Zap size={18} /> },
-      { name: 'Payment Follow-up', path: '/payments', icon: <CreditCard size={18} />, badge: '2' },
-      { name: 'Finance & Tally', path: '/finance', icon: <IndianRupee size={18} /> },
-    ]
-  },
-  {
-    label: 'Admin',
-    items: [
-      { name: 'Roles & Access', path: '/roles', icon: <Shield size={18} /> },
-      { name: 'Settings', path: '/settings', icon: <Settings size={18} /> },
-    ]
-  }
-];
-
 const Sidebar = ({ collapsed, onToggle, mobileOpen, onMobileClose }) => {
+  const { whatsapp, leads, tasks, payments } = useLiveCounts();
+
+  // Badge values: only show when > 0, cap display at 99
+  const badge = (n) => (n > 0 ? (n > 99 ? '99+' : String(n)) : null);
+
+  const navSections = [
+    {
+      label: 'Core',
+      items: [
+        { name: 'Dashboard',         path: '/',        icon: <LayoutDashboard size={18} />, end: true },
+        { name: 'Reports & Analytics', path: '/reports', icon: <BarChart3 size={18} /> },
+      ]
+    },
+    {
+      label: 'WhatsApp & CRM',
+      items: [
+        { name: 'WhatsApp Campaign',  path: '/whatsapp', icon: <MessageCircle size={18} />, badge: badge(whatsapp) },
+        { name: 'Chatbot & Auto-Reply', path: '/chatbot', icon: <Bot size={18} /> },
+        { name: 'CRM & Leads',        path: '/crm',     icon: <Users size={18} />,         badge: badge(leads) },
+      ]
+    },
+    {
+      label: 'Operations',
+      items: [
+        { name: 'Task Management',   path: '/tasks',       icon: <CheckSquare size={18} />, badge: badge(tasks) },
+        { name: 'Automation Rules',  path: '/automations', icon: <Settings size={18} /> },
+        { name: 'Payment Follow-up', path: '/payments',    icon: <CreditCard size={18} />,  badge: badge(payments) },
+        { name: 'Finance & Tally',   path: '/finance',     icon: <IndianRupee size={18} /> },
+      ]
+    },
+    {
+      label: 'Admin',
+      items: [
+        { name: 'Roles & Access', path: '/roles',    icon: <Shield size={18} /> },
+        { name: 'Settings',       path: '/settings', icon: <Settings size={18} /> },
+      ]
+    }
+  ];
+
   return (
     <>
       {/* Mobile Overlay */}

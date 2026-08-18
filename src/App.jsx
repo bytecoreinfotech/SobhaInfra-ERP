@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { ThemeProvider } from './context/ThemeContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { LiveCountsProvider } from './context/LiveCountsContext';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import Login from './pages/Login';
@@ -82,9 +83,11 @@ function App() {
   return (
     <ThemeProvider>
       <AuthProvider>
-        <Router>
-          <AppInner />
-        </Router>
+        <LiveCountsProvider>
+          <Router>
+            <AppInner />
+          </Router>
+        </LiveCountsProvider>
       </AuthProvider>
     </ThemeProvider>
   );
