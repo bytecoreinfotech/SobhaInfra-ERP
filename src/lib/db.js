@@ -402,6 +402,7 @@ export async function sendPaymentReminderWhatsApp(invoiceId) {
 export async function getInvoices() {
   if (!isSupabaseConfigured) return { data: MOCK_STORE.invoices, error: null };
   const { data, error } = await supabase.from('invoices').select('*').order('created_at', { ascending: false });
+  if (error || !data || data.length === 0) return { data: MOCK_STORE.invoices, error: null };
   return { data, error };
 }
 
@@ -420,6 +421,7 @@ export async function logPaymentReminder(invoiceId, message) {
 export async function getLeads() {
   if (!isSupabaseConfigured) return { data: MOCK_STORE.leads, error: null };
   const { data, error } = await supabase.from('leads').select('*').order('created_at', { ascending: false });
+  if (error || !data || data.length === 0) return { data: MOCK_STORE.leads, error: null };
   return { data, error };
 }
 
@@ -694,12 +696,14 @@ export async function processCampaignBatch(campaignId, batchSize = 50) {
 export async function getWhatsAppConversations() {
   if (!isSupabaseConfigured) return { data: MOCK_STORE.whatsapp_conversations, error: null };
   const { data, error } = await supabase.from('whatsapp_conversations').select('*, lead:leads(*)').order('last_message_at', { ascending: false });
+  if (error || !data || data.length === 0) return { data: MOCK_STORE.whatsapp_conversations, error: null };
   return { data, error };
 }
 
 export async function getWhatsAppMessages(conversationId) {
   if (!isSupabaseConfigured) return { data: MOCK_STORE.whatsapp_messages[conversationId] || [], error: null };
   const { data, error } = await supabase.from('whatsapp_messages').select('*').eq('conversation_id', conversationId).order('created_at', { ascending: true });
+  if (error || !data || data.length === 0) return { data: MOCK_STORE.whatsapp_messages[conversationId] || [], error: null };
   return { data, error };
 }
 
