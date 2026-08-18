@@ -79,7 +79,7 @@ exports.handler = async (event) => {
           await supabase.from('whatsapp_conversations').update({
             last_message_text: text,
             last_message_at: new Date().toISOString(),
-            conversation_mode: 'HUMAN ACTIVE',
+            conversation_mode: 'AI ACTIVE',
           }).eq('id', conversationId);
         }
       } catch (dbErr) {

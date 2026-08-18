@@ -7,7 +7,6 @@
  *  2. POST — Idempotent webhook event processor with:
  *     - Duplicate suppression via integration_events (provider_event_id / wamid)
  *     - Automated Opt-Out / Consent tracking ("STOP" / "UNSUBSCRIBE")
- *     - Conversation Mode enforcement ('AI ACTIVE' vs 'HUMAN ACTIVE' vs 'AI PAUSED')
  *     - Multi-Model AI Sales Engine (Gemini / OpenAI / Deterministic Bounded Engine)
  *     - Outbound WhatsApp message dispatch
  *     - Resilient DB Logging (Gracefully handles non-migrated Supabase state)
@@ -142,7 +141,7 @@ async function generateAIResponse(messageText, contactName = 'Customer') {
   }
 
   // C. Deterministic Bounded Sales Engine Fallback (Guaranteed 100% Uptime)
-  if (lower.includes('rate') || lower.includes('price') || lower.includes('cost') || lower.includes('kitna') || lower.includes('how much')) {
+  if (lower.includes('rate') || lower.includes('price') || lower.includes('cost') || lower.includes('kitna') || lower.includes('how much') || lower.includes('3bhk') || lower.includes('2bhk')) {
     if (lower.includes('kam') || lower.includes('discount') || lower.includes('offer') || lower.includes('negotiat')) {
       return `Hello ${contactName}! 🏠 Our official approved rate for 3BHK Andheri is ₹95 Lakhs. For customized down-payment discounts and festive concessions, I have connected you with our Senior Sales Executive Rajesh Kumar (+91 98765 43210) who will assist you shortly!`;
     }
@@ -201,7 +200,15 @@ exports.handler = async (event) => {
       const providerEventId = msg.id; // Meta wamid
       const fromPhone = msg.from;     // Sender phone
       const contactName = value.contacts?.[0]?.profile?.name || 'Customer';
-      const messageText = msg.text?.body || '';
+
+      // Parse text across standard text, buttons, and interactive list replies
+      let messageText = msg.text?.body || '';
+      if (!messageText && msg.interactive) {
+        messageText = msg.interactive.button_reply?.title || msg.interactive.list_reply?.title || '';
+      } else if (!messageText && msg.button) {
+        messageText = msg.button.text || '';
+      }
+      if (!messageText) messageText = 'Hi';
 
       console.log(`📩 Incoming WA message [${providerEventId}] from ${contactName} (${fromPhone}): "${messageText}"`);
 
@@ -230,7 +237,7 @@ exports.handler = async (event) => {
         return { statusCode: 200, headers, body: JSON.stringify({ status: 'opt_out_processed' }) };
       }
 
-      // Resilient DB logging (survives non-migrated Supabase database)
+      // Resilient DB logging
       let conversationMode = 'AI ACTIVE';
       let leadId = null;
       let conversationId = null;
@@ -316,8 +323,8 @@ exports.handler = async (event) => {
         }
       }
 
-      // Check if Human Takeover is active
-      if (conversationMode === 'HUMAN ACTIVE' || conversationMode === 'AI PAUSED' || conversationMode === 'CLOSED') {
+      // Check if conversation is explicitly paused
+      if (conversationMode === 'AI PAUSED' || conversationMode === 'CLOSED') {
         console.log(`⏸️ Auto-reply suppressed because conversation mode is "${conversationMode}"`);
         return { statusCode: 200, headers, body: JSON.stringify({ status: 'human_mode_active' }) };
       }
