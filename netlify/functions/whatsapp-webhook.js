@@ -13,7 +13,7 @@
 
 const { createClient } = require('@supabase/supabase-js');
 
-const VERIFY_TOKEN = process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN || 'erppro_webhook_2026';
+const VERIFY_TOKEN = process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN || 'erppro_wa_sec_9f8b2c4e1a7d6e5c8302';
 const WA_TOKEN     = process.env.WHATSAPP_TOKEN;
 const PHONE_ID     = process.env.WHATSAPP_PHONE_ID;
 const SUPABASE_URL = process.env.SUPABASE_URL;

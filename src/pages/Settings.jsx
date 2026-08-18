@@ -416,9 +416,9 @@ const Settings = () => {
               </div>
               {[
                 { label: 'Phone Number ID', placeholder: 'Meta Phone Number ID (e.g. 1217775984755724)', type: 'text', val: '1217775984755724' },
-                { label: 'WhatsApp Business Account ID', placeholder: 'WABA ID from Meta Business Suite', type: 'text', val: '107376818438244' },
-                { label: 'Access Token (Permanent / System User)', placeholder: '••••••••••••••••••••••••••', type: 'password', val: 'EAAO5bP4en30BSKKS08uX7V1...' },
-                { label: 'Webhook Verify Token', placeholder: 'Custom verify token for webhook', type: 'text', val: 'erppro_webhook_2026' },
+                { label: 'WhatsApp Business Account ID', placeholder: 'WABA ID from Meta Business Suite', type: 'text', val: '1073768118438244' },
+                { label: 'Access Token (Permanent / System User)', placeholder: '••••••••••••••••••••••••••', type: 'password', val: 'EAAO5bP4en30BSechJ6djYxtfPtupXj...' },
+                { label: 'Webhook Verify Token', placeholder: 'Custom verify token for webhook', type: 'text', val: 'erppro_wa_sec_9f8b2c4e1a7d6e5c8302' },
               ].map(f => (
                 <div key={f.label}>
                   <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>{f.label}</label>
