@@ -260,6 +260,21 @@ const MOCK_STORE = {
     { id: 'run-4', rule_id: 'rule-2', rule_name: 'Invoice Overdue 7d → WhatsApp Payment Reminder', trigger_event: 'tally.invoice_overdue_7d', status: 'failed', actions_executed: [], error_message: 'WhatsApp API rate limit exceeded. Retrying in 60s.', execution_duration_ms: 5200, created_at: new Date(Date.now() - 8 * 3600000).toISOString() },
   ],
   business_events: [],
+  system_safety: {
+    daily_request_limit: 100000,
+    daily_requests_used: 1420,
+    ai_monthly_budget_usd: 50.0,
+    ai_month_spent_usd: 4.82,
+    max_campaign_batch_size: 50,
+    ai_messages_per_contact_day: 15,
+    circuit_breaker_mode: 'Normal', // 'Normal' | 'Warning' | 'Degraded' | 'Paused'
+    services: {
+      database: { name: 'Supabase PostgreSQL (RLS)', status: 'Healthy', latency_ms: 42, quota_pct: 8 },
+      whatsapp_api: { name: 'Meta WhatsApp Cloud API v20.0', status: 'Healthy', latency_ms: 175, quota_pct: 24 },
+      ai_engine: { name: 'OpenAI GPT-4o Bounded Agent', status: 'Healthy', latency_ms: 310, quota_pct: 10 },
+      tally_connector: { name: 'Local TallyPrime Bridge (Port 9000)', status: 'Connected', latency_ms: 14, quota_pct: 0 },
+    },
+  },
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1052,3 +1067,74 @@ export async function executeAutomation(ruleId) {
   logAuditEvent('automation.executed', 'automation_rules', ruleId, run);
   return { data: run, error: null };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PHASE 10: FREE-TIER SAFETY, DEGRADED MODES & DATA PORTABILITY (Sec 5, 6, 50E, 50F)
+// ─────────────────────────────────────────────────────────────────────────────
+export async function getSystemSafetyAndQuotas() {
+  const dbHealthy = isSupabaseConfigured;
+  const store = MOCK_STORE.system_safety;
+  const data = {
+    ...store,
+    services: {
+      ...store.services,
+      database: {
+        ...store.services.database,
+        status: dbHealthy ? 'Healthy (Live)' : 'Healthy (Demo Mode)',
+      },
+    },
+  };
+  return { data, error: null };
+}
+
+export async function updateSystemSafety(settings) {
+  MOCK_STORE.system_safety = {
+    ...MOCK_STORE.system_safety,
+    ...settings,
+  };
+  logAuditEvent('system_safety.updated', 'system_safety', 'config', settings);
+  return { data: MOCK_STORE.system_safety, error: null };
+}
+
+export async function toggleCircuitBreaker(newMode) {
+  MOCK_STORE.system_safety.circuit_breaker_mode = newMode;
+  logAuditEvent('circuit_breaker.toggled', 'system_safety', 'mode', { newMode });
+  return { data: MOCK_STORE.system_safety, error: null };
+}
+
+export async function exportAllData() {
+  const snapshot = {
+    exported_at: new Date().toISOString(),
+    version: '4.0.0',
+    platform: 'Techma ERPPro Real Estate Suite',
+    organization_id: DEFAULT_ORG_ID,
+    summary: {
+      leads_count: MOCK_STORE.leads.length,
+      customers_count: MOCK_STORE.customers.length,
+      invoices_count: MOCK_STORE.invoices.length,
+      tasks_count: MOCK_STORE.tasks.length,
+      deals_count: MOCK_STORE.deals.length,
+      campaigns_count: MOCK_STORE.campaigns.length,
+      products_count: MOCK_STORE.products.length,
+      mappings_count: MOCK_STORE.tally_mappings.length,
+      automation_rules_count: MOCK_STORE.automation_rules.length,
+    },
+    data: {
+      leads: MOCK_STORE.leads,
+      customers: MOCK_STORE.customers,
+      invoices: MOCK_STORE.invoices,
+      tasks: MOCK_STORE.tasks,
+      deals: MOCK_STORE.deals,
+      campaigns: MOCK_STORE.campaigns,
+      products: MOCK_STORE.products,
+      tally_mappings: MOCK_STORE.tally_mappings,
+      automation_rules: MOCK_STORE.automation_rules,
+      ai_knowledge: MOCK_STORE.ai_knowledge,
+      audit_logs: MOCK_STORE.audit_logs,
+    },
+  };
+
+  logAuditEvent('data.full_export', 'backup', 'all', { count: snapshot.summary.leads_count });
+  return { data: snapshot, error: null };
+}
+
