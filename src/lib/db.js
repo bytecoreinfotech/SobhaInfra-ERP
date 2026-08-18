@@ -134,7 +134,7 @@ const MOCK_STORE = {
       lead_id: 'lead-1',
       contact_name: 'Abhay Kumar',
       contact_phone: '+918092897590',
-      conversation_mode: 'HUMAN ACTIVE',
+      conversation_mode: 'AI ACTIVE',
       last_message_text: 'Hi Abhay, Rajesh here. I can offer you unit 804 at ₹92L special. Can we meet tomorrow?',
       last_message_at: new Date(Date.now() - 12 * 3600000).toISOString(),
       unread_count: 0,

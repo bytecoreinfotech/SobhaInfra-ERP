@@ -33,6 +33,23 @@ const templates = [
 const AI_FEEDBACK_TAGS = ['AI Helpful', 'Wrong Information', 'Premature Handoff', 'Late Handoff', 'Customer Annoyed'];
 const TEAM_MEMBERS = ['Rajesh Kumar', 'Priya Sharma', 'Amit Verma', 'Sunita Patel'];
 
+// ── Live polling helpers ────────────────────────────────────────────────────
+async function fetchLiveConversations() {
+  try {
+    const res = await fetch('/.netlify/functions/get-conversations');
+    const json = await res.json();
+    return json.conversations || [];
+  } catch { return []; }
+}
+
+async function fetchLiveMessages(convId) {
+  try {
+    const res = await fetch(`/.netlify/functions/get-conversations?conv_id=${convId}`);
+    const json = await res.json();
+    return json.messages || [];
+  } catch { return []; }
+}
+
 const WhatsApp = () => {
   const [activeTab, setActiveTab] = useState('inbox'); // 'inbox' | 'campaigns'
   
@@ -45,6 +62,7 @@ const WhatsApp = () => {
   const [convLoading, setConvLoading] = useState(true);
   const [sendingMsg, setSendingMsg] = useState(false);
   const [selected360LeadId, setSelected360LeadId] = useState(null);
+  const selectedConvRef = useRef(null);
 
   // Phase 6 Handoff & Feedback Modals
   const [showHandoffModal, setShowHandoffModal] = useState(false);
@@ -59,8 +77,47 @@ const WhatsApp = () => {
 
   const messagesEndRef = useRef(null);
 
+  // Keep ref in sync with state for use inside interval
+  useEffect(() => { selectedConvRef.current = selectedConv; }, [selectedConv]);
+
   useEffect(() => {
     loadAllData();
+
+    // ── Poll for new conversations & messages every 4 seconds ───────────────
+    const pollInterval = setInterval(async () => {
+      // Refresh conversation list
+      const liveConvs = await fetchLiveConversations();
+      if (liveConvs.length > 0) {
+        setConversations(prev => {
+          // Merge: live data takes priority, keep any that are only in mock
+          const liveIds = new Set(liveConvs.map(c => c.id));
+          const mockOnly = prev.filter(c => !liveIds.has(c.id));
+          return [...liveConvs, ...mockOnly];
+        });
+        // If the selected conversation was updated (new message), sync it
+        const currentConv = selectedConvRef.current;
+        if (currentConv) {
+          const updated = liveConvs.find(c => c.id === currentConv.id);
+          if (updated && updated.last_message_at !== currentConv.last_message_at) {
+            setSelectedConv(updated);
+          }
+        }
+      }
+
+      // Refresh messages for selected conversation
+      const currentConv = selectedConvRef.current;
+      if (currentConv) {
+        const liveMessages = await fetchLiveMessages(currentConv.id);
+        if (liveMessages.length > 0) {
+          setMessages(prev => {
+            if (liveMessages.length !== prev.length) return liveMessages;
+            return prev;
+          });
+        }
+      }
+    }, 4000);
+
+    return () => clearInterval(pollInterval);
   }, []);
 
   useEffect(() => {
@@ -69,7 +126,7 @@ const WhatsApp = () => {
       setSelectedFeedbackTag(null);
       setFeedbackSuccess(false);
     }
-  }, [selectedConv]);
+  }, [selectedConv?.id]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -78,24 +135,39 @@ const WhatsApp = () => {
   const loadAllData = async () => {
     setLoading(true);
     setConvLoading(true);
-    const [cRes, lRes, convRes] = await Promise.all([
+    const [cRes, lRes] = await Promise.all([
       getCampaigns(),
       getLeads(),
-      getWhatsAppConversations(),
     ]);
     setCampaigns(cRes.data || []);
     setLeads(lRes.data || []);
-    setConversations(convRes.data || []);
-    if (convRes.data && convRes.data.length > 0 && !selectedConv) {
-      setSelectedConv(convRes.data[0]);
+
+    // Try live Netlify proxy first (always bypasses RLS & returns real Supabase data)
+    const liveConvs = await fetchLiveConversations();
+    if (liveConvs.length > 0) {
+      setConversations(liveConvs);
+      if (!selectedConvRef.current) setSelectedConv(liveConvs[0]);
+    } else {
+      // Fallback to local db.js (mock or Supabase client)
+      const convRes = await getWhatsAppConversations();
+      const convData = convRes.data || [];
+      setConversations(convData);
+      if (convData.length > 0 && !selectedConvRef.current) setSelectedConv(convData[0]);
     }
+
     setLoading(false);
     setConvLoading(false);
   };
 
   const loadMessages = async (convId) => {
-    const res = await getWhatsAppMessages(convId);
-    setMessages(res.data || []);
+    // Try live proxy first, fallback to db.js
+    const liveMessages = await fetchLiveMessages(convId);
+    if (liveMessages.length > 0) {
+      setMessages(liveMessages);
+    } else {
+      const res = await getWhatsAppMessages(convId);
+      setMessages(res.data || []);
+    }
   };
 
   const handleSendMessage = async (e) => {
