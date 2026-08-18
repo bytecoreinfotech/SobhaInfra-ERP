@@ -5,11 +5,12 @@ import {
   Search, User, Phone, Shield, Pause, Play, CheckCheck, Eye
 } from 'lucide-react';
 import {
-  getCampaigns, createCampaign, getLeads,
+  getCampaigns, getLeads,
   getWhatsAppConversations, getWhatsAppMessages, sendWhatsAppMessage,
   updateConversationMode, toggleLeadOptOut, normalizePhone
 } from '../lib/db';
 import Customer360Modal from '../components/Customer360Modal';
+import CampaignBuilderModal from '../components/CampaignBuilderModal';
 import './Pages.css';
 
 const statusConfig = {
@@ -44,10 +45,7 @@ const WhatsApp = () => {
   const [campaigns, setCampaigns] = useState([]);
   const [leads, setLeads] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [showNewCampaign, setShowNewCampaign] = useState(false);
-  const [isSending, setIsSending] = useState(false);
-  const [campaignSent, setCampaignSent] = useState(false);
-  const [newCampaign, setNewCampaign] = useState({ name: '', template_name: templates[0].name, audience_filter: {}, scheduled_at: '' });
+  const [showCampaignBuilder, setShowCampaignBuilder] = useState(false);
 
   const messagesEndRef = useRef(null);
 
@@ -76,7 +74,7 @@ const WhatsApp = () => {
     setCampaigns(cRes.data || []);
     setLeads(lRes.data || []);
     setConversations(convRes.data || []);
-    if (convRes.data && convRes.data.length > 0) {
+    if (convRes.data && convRes.data.length > 0 && !selectedConv) {
       setSelectedConv(convRes.data[0]);
     }
     setLoading(false);
@@ -98,7 +96,6 @@ const WhatsApp = () => {
     const { data: newMsg } = await sendWhatsAppMessage(selectedConv.id, textToSend, 'human_agent');
     if (newMsg) {
       setMessages(prev => [...prev, newMsg]);
-      // If conversation was in AI Active mode, auto switch to Human Active
       if (selectedConv.conversation_mode === 'AI ACTIVE') {
         handleModeChange('HUMAN ACTIVE');
       }
@@ -118,28 +115,6 @@ const WhatsApp = () => {
   const totalRead = campaigns.reduce((s, c) => s + (c.read_count || 0), 0);
   const totalReplied = campaigns.reduce((s, c) => s + (c.replied || 0), 0);
   const readRate = totalSent > 0 ? ((totalRead / totalSent) * 100).toFixed(1) : '0.0';
-
-  const handleLaunch = async () => {
-    if (!newCampaign.name.trim()) return;
-    setIsSending(true);
-    // Filter out opted-out contacts (Section 50B)
-    const validLeads = leads.filter(l => !l.marketing_opt_out);
-    const payload = {
-      name: newCampaign.name,
-      status: 'Running',
-      template_name: newCampaign.template_name,
-      total_sent: validLeads.length,
-      delivered: Math.floor(validLeads.length * 0.96),
-      read_count: Math.floor(validLeads.length * 0.72),
-      replied: Math.floor(validLeads.length * 0.14),
-    };
-    const { data } = await createCampaign(payload);
-    if (data) setCampaigns(prev => [data, ...prev]);
-    setTimeout(() => {
-      setIsSending(false);
-      setCampaignSent(true);
-    }, 1500);
-  };
 
   const filteredConversations = conversations.filter(c => {
     if (!searchConv) return true;
@@ -194,7 +169,7 @@ const WhatsApp = () => {
             <RefreshCw size={15} className={loading ? 'animate-spin' : ''} /> Refresh
           </button>
           {activeTab === 'campaigns' && (
-            <button className="btn btn-whatsapp" onClick={() => { setShowNewCampaign(true); setCampaignSent(false); }}>
+            <button className="btn btn-whatsapp" onClick={() => setShowCampaignBuilder(true)}>
               <Plus size={15} /> New Campaign
             </button>
           )}
@@ -457,15 +432,16 @@ const WhatsApp = () => {
             <div className="table-container">
               <table className="data-table">
                 <thead>
-                  <tr><th>Campaign Name</th><th>Status</th><th>Sent</th><th>Delivered</th><th>Read</th><th>Replied</th><th>Template</th></tr>
+                  <tr><th>Campaign Name</th><th>Status</th><th>Targeted</th><th>Sent</th><th>Delivered</th><th>Read</th><th>Replied</th><th>Template</th></tr>
                 </thead>
                 <tbody>
-                  {campaigns.length === 0 && <tr><td colSpan={7} style={{ textAlign: 'center', padding: '2.5rem', color: 'var(--text-muted)' }}>No campaigns launched yet.</td></tr>}
+                  {campaigns.length === 0 && <tr><td colSpan={8} style={{ textAlign: 'center', padding: '2.5rem', color: 'var(--text-muted)' }}>No campaigns launched yet.</td></tr>}
                   {campaigns.map(c => (
                     <tr key={c.id}>
                       <td style={{ fontWeight: 600 }}>{c.name}</td>
                       <td><span className={`badge ${statusConfig[c.status]}`}>{c.status}</span></td>
-                      <td>{(c.total_sent || 0).toLocaleString()}</td>
+                      <td>{(c.total_targeted || c.total_sent || 0).toLocaleString()}</td>
+                      <td style={{ fontWeight: 700 }}>{(c.total_sent || 0).toLocaleString()}</td>
                       <td style={{ color: 'var(--success)' }}>{(c.delivered || 0).toLocaleString()}</td>
                       <td style={{ color: 'var(--warning)' }}>{(c.read_count || 0).toLocaleString()}</td>
                       <td style={{ color: 'var(--whatsapp)' }}>{(c.replied || 0)}</td>
@@ -489,7 +465,7 @@ const WhatsApp = () => {
                   <div className="template-title">{t.name}</div>
                   <div className="template-preview">{t.preview}</div>
                   <div style={{ marginTop: '1rem', display: 'flex', gap: '0.5rem' }}>
-                    <button className="btn btn-whatsapp btn-sm" style={{ width: '100%' }} onClick={() => { setNewCampaign(p => ({ ...p, template_name: t.name })); setShowNewCampaign(true); setCampaignSent(false); }}>
+                    <button className="btn btn-whatsapp btn-sm" style={{ width: '100%' }} onClick={() => setShowCampaignBuilder(true)}>
                       Launch Broadcast
                     </button>
                   </div>
@@ -500,60 +476,13 @@ const WhatsApp = () => {
         </div>
       )}
 
-      {/* New Campaign Modal */}
-      {showNewCampaign && (
-        <div className="modal-overlay">
-          <div className="modal-content modal-lg">
-            <button style={{ position: 'absolute', top: '1.25rem', right: '1.25rem', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }} onClick={() => setShowNewCampaign(false)}>
-              <XCircle size={20} />
-            </button>
-            {campaignSent ? (
-              <div style={{ textAlign: 'center', padding: '2rem' }}>
-                <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>✅</div>
-                <h3 style={{ fontSize: '1.25rem', fontWeight: 700 }}>Broadcast Queued Successfully!</h3>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginTop: '0.5rem' }}>
-                  Targeted {leads.filter(l => !l.marketing_opt_out).length} opted-in contacts (opted-out numbers automatically excluded).
-                </p>
-                <button className="btn btn-secondary" style={{ marginTop: '1.25rem' }} onClick={() => setShowNewCampaign(false)}>Close</button>
-              </div>
-            ) : (
-              <>
-                <h2 style={{ fontSize: '1.1rem', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <MessageCircle size={20} style={{ color: 'var(--whatsapp)' }} /> Launch WhatsApp Broadcast Campaign
-                </h2>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                  <div>
-                    <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Campaign Name *</label>
-                    <input type="text" className="input-field" placeholder="e.g. August Launch Special" value={newCampaign.name} onChange={e => setNewCampaign(p => ({ ...p, name: e.target.value }))} />
-                  </div>
-                  <div>
-                    <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Target Audience</label>
-                    <select className="input-field">
-                      <option>All Active Leads ({leads.filter(l => !l.marketing_opt_out).length} opted-in)</option>
-                      <option>Hot Leads ({leads.filter(l => l.status === 'Hot' && !l.marketing_opt_out).length} contacts)</option>
-                      <option>Warm Leads ({leads.filter(l => l.status === 'Warm' && !l.marketing_opt_out).length} contacts)</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Message Template</label>
-                    <select className="input-field" value={newCampaign.template_name} onChange={e => setNewCampaign(p => ({ ...p, template_name: e.target.value }))}>
-                      {templates.map(t => <option key={t.id}>{t.name}</option>)}
-                    </select>
-                  </div>
-                  <div style={{ padding: '0.75rem', background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
-                    🛡️ <strong>Consent Enforcement (Section 50B):</strong> Opted-out contacts will be skipped automatically. Messages queued in database background batches.
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
-                    <button className="btn btn-secondary" onClick={() => setShowNewCampaign(false)}>Cancel</button>
-                    <button className="btn btn-whatsapp" onClick={handleLaunch} disabled={isSending || !newCampaign.name.trim()}>
-                      <Send size={15} /> {isSending ? 'Queuing Batch...' : 'Queue Broadcast'}
-                    </button>
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
+      {/* Campaign Builder Modal */}
+      {showCampaignBuilder && (
+        <CampaignBuilderModal
+          isOpen={showCampaignBuilder}
+          onClose={() => setShowCampaignBuilder(false)}
+          onCampaignQueued={loadAllData}
+        />
       )}
 
       {/* Customer 360 Modal link from Live Inbox */}
