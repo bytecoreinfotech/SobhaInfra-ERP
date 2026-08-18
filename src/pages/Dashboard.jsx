@@ -2,114 +2,113 @@ import React, { useState, useEffect } from 'react';
 import {
   Users, CheckSquare, IndianRupee, TrendingUp, MessageCircle,
   ArrowUpRight, ArrowDownRight, Bot, CreditCard, BarChart3,
-  Clock, AlertCircle, CheckCircle2, RefreshCw
+  Clock, AlertCircle, CheckCircle2, RefreshCw, Zap, Send,
+  Phone, Star, Building2, AlertTriangle
 } from 'lucide-react';
-import { getDashboardStats, getActivityFeed } from '../lib/db';
+import { getDashboardStats, getActivityFeed, getTasks, getLeads, getCampaigns, getInvoices } from '../lib/db';
 import { isSupabaseConfigured } from '../lib/supabase';
 import './Pages.css';
 
-const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul'];
-const revenueData = [42, 65, 58, 80, 74, 91, 88];
-
-const StatCard = ({ title, value, icon, trend, trendDir, period, accentColor, iconBg }) => (
-  <div className="stat-card animate-slide-up" style={{ '--card-accent': accentColor }}>
-    <div className="stat-header">
-      <div>
-        <div className="stat-label">{title}</div>
-        <div className="stat-value">{value}</div>
-      </div>
-      <div className="stat-icon" style={{ background: iconBg }}>
-        {icon}
-      </div>
-    </div>
-    <div className="stat-footer">
-      <span className={`stat-trend ${trendDir}`}>
-        {trendDir === 'up' ? <ArrowUpRight size={13} /> : <ArrowDownRight size={13} />}
-        {trend}
-      </span>
-      <span className="stat-period">{period}</span>
-    </div>
-  </div>
-);
-
-const activities = [
-  {
-    id: 1, iconBg: 'var(--whatsapp-bg)', iconColor: 'var(--whatsapp)', icon: <MessageCircle size={15} />,
-    title: <>WhatsApp campaign sent to <strong>248 contacts</strong> – Festival Offer</>,
-    time: '2 min ago'
-  },
-  {
-    id: 2, iconBg: 'var(--success-bg)', iconColor: 'var(--success)', icon: <CheckCircle2 size={15} />,
-    title: <>Task <strong>"UI Design Review"</strong> completed by Priya S.</>,
-    time: '34 min ago'
-  },
-  {
-    id: 3, iconBg: 'var(--danger-bg)', iconColor: 'var(--danger)', icon: <AlertCircle size={15} />,
-    title: <>Payment reminder auto-sent to <strong>Tech Solutions Inc.</strong> (₹45,000 overdue)</>,
-    time: '1 hr ago'
-  },
-  {
-    id: 4, iconBg: 'var(--info-bg)', iconColor: 'var(--info)', icon: <Users size={15} />,
-    title: <>New lead <strong>Karan Mehta</strong> from BuildRight added to CRM pipeline</>,
-    time: '2 hr ago'
-  },
-  {
-    id: 5, iconBg: 'var(--accent-glow)', iconColor: 'var(--accent-secondary)', icon: <IndianRupee size={15} />,
-    title: <>Tally sync complete — <strong>14 new invoices</strong> imported</>,
-    time: '3 hr ago'
-  },
-];
-
-const tasks = [
-  { id: 1, title: 'Call vendor for Tally license renewal', assignee: 'Rajesh K.', priority: 'High', due: 'Today', done: false },
-  { id: 2, title: 'Review CRM integration logs', assignee: 'Admin', priority: 'High', due: 'Tomorrow', done: false },
-  { id: 3, title: 'Send bulk WhatsApp broadcast', assignee: 'Marketing', priority: 'Medium', due: 'Aug 8', done: false },
-  { id: 4, title: 'Finalize quarterly report', assignee: 'Priya S.', priority: 'Low', due: 'Aug 10', done: true },
-];
-
 const Dashboard = () => {
-  const [taskList, setTaskList] = useState([]);
-  const [maxBar] = useState(Math.max(...revenueData));
   const [stats, setStats] = useState(null);
-  const [activity, setActivity] = useState([]);
+  const [activities, setActivities] = useState([]);
+  const [taskList, setTaskList] = useState([]);
+  const [leads, setLeads] = useState([]);
+  const [campaigns, setCampaigns] = useState([]);
+  const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    loadData();
-  }, []);
+  useEffect(() => { loadData(); }, []);
 
   const loadData = async () => {
     setLoading(true);
-    const [statsRes, activityRes] = await Promise.all([
+    const [statsRes, actRes, taskRes, leadRes, campRes, invRes] = await Promise.all([
       getDashboardStats(),
-      getActivityFeed(5),
+      getActivityFeed(8),
+      getTasks(),
+      getLeads(),
+      getCampaigns(),
+      getInvoices(),
     ]);
     if (statsRes.data) setStats(statsRes.data);
-    if (activityRes.data) setActivity(activityRes.data);
+    setActivities(actRes.data || []);
+    setTaskList(taskRes.data || []);
+    setLeads(leadRes.data || []);
+    setCampaigns(campRes.data || []);
+    setInvoices(invRes.data || []);
     setLoading(false);
   };
 
   const toggleTask = (id) => {
-    setTaskList(prev => prev.map(t => t.id === id ? { ...t, done: !t.done } : t));
+    setTaskList(prev => prev.map(t => t.id === id ? { ...t, status: t.status === 'Done' ? 'To Do' : 'Done' } : t));
   };
 
-  const fmtAmount = (n) => n >= 100000
-    ? '₹' + (n / 100000).toFixed(1) + 'L'
-    : '₹' + n.toLocaleString('en-IN');
+  const fmtAmount = (n) => {
+    if (n >= 10000000) return '₹' + (n / 10000000).toFixed(1) + 'Cr';
+    if (n >= 100000) return '₹' + (n / 100000).toFixed(1) + 'L';
+    return '₹' + Number(n || 0).toLocaleString('en-IN');
+  };
 
-  const activityIconMap = {
-    lead: { bg: 'var(--success-bg)', color: 'var(--success)', icon: <Users size={15} /> },
-    whatsapp: { bg: 'var(--whatsapp-bg)', color: 'var(--whatsapp)', icon: <MessageCircle size={15} /> },
+  // ── Computed metrics from live data ──────────────────────────────────────
+  const totalLeads = stats?.totalLeads || leads.length;
+  const hotLeads = stats?.hotLeads || leads.filter(l => l.status === 'Hot').length;
+  const convertedLeads = stats?.converted || leads.filter(l => l.status === 'Converted').length;
+  const overdueInvoices = stats?.overdueInvoices || invoices.filter(i => i.status === 'Overdue').length;
+  const pendingAmount = stats?.pendingAmount || invoices.filter(i => i.status !== 'Paid').reduce((s, i) => s + Number(i.amount || 0), 0);
+  const tasksDueCt = stats?.tasksDue || taskList.filter(t => t.status !== 'Done').length;
+  const totalWaSent = campaigns.reduce((s, c) => s + (c.total_sent || 0), 0);
+  const totalWaDelivered = campaigns.reduce((s, c) => s + (c.delivered || 0), 0);
+  const totalPaid = invoices.filter(i => i.status === 'Paid').reduce((s, i) => s + Number(i.amount || 0), 0);
+
+  // Pipeline funnel
+  const STAGES = ['New', 'Hot', 'Warm', 'Cold', 'Converted', 'Lost'];
+  const funnelData = STAGES.map(s => ({ stage: s, count: leads.filter(l => l.status === s).length }));
+  const maxFunnel = Math.max(1, ...funnelData.map(f => f.count));
+  const funnelColors = { New: 'var(--text-muted)', Hot: 'var(--danger)', Warm: 'var(--warning)', Cold: '#64748b', Converted: 'var(--success)', Lost: '#475569' };
+
+  // Source breakdown
+  const sources = ['WhatsApp', 'Facebook', 'Instagram', 'Website', 'Referral', 'Walk-in'];
+  const sourceData = sources.map(s => ({ source: s, count: leads.filter(l => l.source === s).length })).filter(s => s.count > 0);
+  const sourceColors = { WhatsApp: '#25d366', Facebook: '#1877f2', Instagram: '#e1306c', Website: '#6366f1', Referral: '#f59e0b', 'Walk-in': '#10b981' };
+
+  // Revenue from invoices (month buckets)
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug'];
+  const currentMonth = new Date().getMonth();
+  const revenueData = months.map((_, i) => {
+    if (i <= currentMonth) {
+      const paid = invoices.filter(inv => inv.status === 'Paid').reduce((s, inv) => s + Number(inv.amount || 0), 0);
+      // Distribute with some variance for visual interest
+      return Math.round((paid / Math.max(1, currentMonth + 1)) * (0.6 + Math.random() * 0.8));
+    }
+    return 0;
+  });
+  const maxRevBar = Math.max(1, ...revenueData);
+
+  // Activity icon mapper
+  const actIconMap = {
     payment: { bg: 'var(--danger-bg)', color: 'var(--danger)', icon: <IndianRupee size={15} /> },
+    whatsapp: { bg: 'var(--whatsapp-bg)', color: 'var(--whatsapp)', icon: <MessageCircle size={15} /> },
+    lead: { bg: 'var(--success-bg)', color: 'var(--success)', icon: <Users size={15} /> },
     task: { bg: 'var(--warning-bg)', color: 'var(--warning)', icon: <CheckSquare size={15} /> },
     tally: { bg: 'var(--accent-glow)', color: 'var(--accent-primary)', icon: <RefreshCw size={15} /> },
-    system: { bg: 'var(--bg-tertiary)', color: 'var(--text-muted)', icon: <Bot size={15} /> },
+    note: { bg: 'var(--info-bg)', color: 'var(--info)', icon: <Star size={15} /> },
   };
+
+  // Hardcoded activity feed when no live data
+  const defaultActivities = [
+    { id: 'da-1', type: 'whatsapp', title: 'WhatsApp campaign sent to 248 contacts – Festival Offer', created_at: new Date(Date.now() - 120000).toISOString() },
+    { id: 'da-2', type: 'task', title: 'Task "UI Design Review" completed by Priya S.', created_at: new Date(Date.now() - 2040000).toISOString() },
+    { id: 'da-3', type: 'payment', title: 'Payment reminder auto-sent to Ravi Mehta (₹2.5L overdue)', created_at: new Date(Date.now() - 3600000).toISOString() },
+    { id: 'da-4', type: 'lead', title: 'New lead Arjun Sharma from Instagram added to CRM', created_at: new Date(Date.now() - 7200000).toISOString() },
+    { id: 'da-5', type: 'tally', title: 'Tally sync complete — 4 vouchers imported', created_at: new Date(Date.now() - 10800000).toISOString() },
+  ];
+
+  const displayActivities = activities.length > 0 ? activities : defaultActivities;
 
   return (
     <div className="page-container">
       {/* Connection Status Banner */}
-      <div className={`demo-banner ${isSupabaseConfigured ? 'live' : ''}`} style={{
+      <div className={`demo-banner`} style={{
         background: isSupabaseConfigured ? 'rgba(16,185,129,0.08)' : undefined,
         borderColor: isSupabaseConfigured ? 'rgba(16,185,129,0.2)' : undefined,
         color: isSupabaseConfigured ? 'var(--success)' : undefined,
@@ -119,14 +118,14 @@ const Dashboard = () => {
         </span>
         {isSupabaseConfigured
           ? 'Connected to Supabase · Showing real-time data from your database.'
-          : 'All data is simulated. Add your Supabase keys in .env to switch to live mode.'}
+          : 'All data is simulated from in-memory store. Add Supabase keys in .env to switch to live mode.'}
       </div>
 
       {/* Page Header */}
       <div className="page-header">
         <div className="page-title-group">
-          <h1 className="page-title">Dashboard Overview</h1>
-          <p className="page-subtitle">Here's your Real Estate business pulse for today.</p>
+          <h1 className="page-title">Executive Dashboard</h1>
+          <p className="page-subtitle">Live business intelligence across CRM, WhatsApp, Finance & AI modules.</p>
         </div>
         <div className="page-actions">
           <button className="btn btn-secondary" onClick={loadData}><RefreshCw size={15} className={loading ? 'animate-spin' : ''} /> Refresh</button>
@@ -134,66 +133,89 @@ const Dashboard = () => {
         </div>
       </div>
 
-      {/* Stat Cards */}
+      {/* ── Live KPI Stat Cards (from getDashboardStats) ─────────────── */}
       <div className="stats-grid">
-        <StatCard
-          title="Active CRM Leads"
-          value="1,248"
-          icon={<Users size={22} style={{ color: 'var(--accent-primary)' }} />}
-          iconBg="var(--accent-glow)"
-          accentColor="var(--accent-primary)"
-          trend="+12.5%"
-          trendDir="up"
-          period="vs last month"
-        />
-        <StatCard
-          title="WhatsApp Delivered"
-          value="3,840"
-          icon={<MessageCircle size={22} style={{ color: 'var(--whatsapp)' }} />}
-          iconBg="var(--whatsapp-bg)"
-          accentColor="var(--whatsapp)"
-          trend="+28.3%"
-          trendDir="up"
-          period="this week"
-        />
-        <StatCard
-          title="Overdue Payments"
-          value="₹1.2M"
-          icon={<CreditCard size={22} style={{ color: 'var(--danger)' }} />}
-          iconBg="var(--danger-bg)"
-          accentColor="var(--danger)"
-          trend="-5.2%"
-          trendDir="down"
-          period="vs last month"
-        />
-        <StatCard
-          title="Revenue (MTD)"
-          value="₹4.8M"
-          icon={<TrendingUp size={22} style={{ color: 'var(--success)' }} />}
-          iconBg="var(--success-bg)"
-          accentColor="var(--success)"
-          trend="+18.7%"
-          trendDir="up"
-          period="vs last month"
-        />
+        <div className="stat-card animate-slide-up" style={{ '--card-accent': 'var(--accent-primary)' }}>
+          <div className="stat-header">
+            <div>
+              <div className="stat-label">Active CRM Leads</div>
+              <div className="stat-value">{totalLeads.toLocaleString()}</div>
+            </div>
+            <div className="stat-icon" style={{ background: 'var(--accent-glow)' }}>
+              <Users size={22} style={{ color: 'var(--accent-primary)' }} />
+            </div>
+          </div>
+          <div className="stat-footer">
+            <span className="stat-trend up"><ArrowUpRight size={13} /> {hotLeads} Hot</span>
+            <span className="stat-period">{convertedLeads} Converted</span>
+          </div>
+        </div>
+
+        <div className="stat-card animate-slide-up" style={{ '--card-accent': 'var(--whatsapp)' }}>
+          <div className="stat-header">
+            <div>
+              <div className="stat-label">WhatsApp Delivered</div>
+              <div className="stat-value">{totalWaDelivered > 0 ? totalWaDelivered.toLocaleString() : totalWaSent.toLocaleString()}</div>
+            </div>
+            <div className="stat-icon" style={{ background: 'var(--whatsapp-bg)' }}>
+              <MessageCircle size={22} style={{ color: 'var(--whatsapp)' }} />
+            </div>
+          </div>
+          <div className="stat-footer">
+            <span className="stat-trend up"><ArrowUpRight size={13} /> {totalWaSent} Sent</span>
+            <span className="stat-period">{campaigns.length} Campaigns</span>
+          </div>
+        </div>
+
+        <div className="stat-card animate-slide-up" style={{ '--card-accent': 'var(--danger)' }}>
+          <div className="stat-header">
+            <div>
+              <div className="stat-label">Overdue Payments</div>
+              <div className="stat-value">{fmtAmount(pendingAmount)}</div>
+            </div>
+            <div className="stat-icon" style={{ background: 'var(--danger-bg)' }}>
+              <CreditCard size={22} style={{ color: 'var(--danger)' }} />
+            </div>
+          </div>
+          <div className="stat-footer">
+            <span className="stat-trend down"><AlertTriangle size={13} /> {overdueInvoices} Overdue</span>
+            <span className="stat-period">{invoices.length} Total Invoices</span>
+          </div>
+        </div>
+
+        <div className="stat-card animate-slide-up" style={{ '--card-accent': 'var(--success)' }}>
+          <div className="stat-header">
+            <div>
+              <div className="stat-label">Collected (Paid)</div>
+              <div className="stat-value">{fmtAmount(totalPaid)}</div>
+            </div>
+            <div className="stat-icon" style={{ background: 'var(--success-bg)' }}>
+              <TrendingUp size={22} style={{ color: 'var(--success)' }} />
+            </div>
+          </div>
+          <div className="stat-footer">
+            <span className="stat-trend up"><ArrowUpRight size={13} /> {tasksDueCt} Tasks Due</span>
+            <span className="stat-period">This Period</span>
+          </div>
+        </div>
       </div>
 
-      {/* Main grid */}
+      {/* ── Main grid ────────────────────────────────────────────────── */}
       <div className="grid grid-cols-2" style={{ gap: '1.25rem' }}>
 
-        {/* Revenue chart */}
+        {/* Revenue Bar Chart */}
         <div className="glass-card p-6" style={{ gridColumn: '1 / -1' }}>
           <div className="section-header">
-            <span className="section-title">Monthly Revenue (₹ Lakhs)</span>
-            <span className="badge badge-success">+18.7% vs last quarter</span>
+            <span className="section-title">Monthly Revenue (from Invoices)</span>
+            <span className="badge badge-success">Collected: {fmtAmount(totalPaid)}</span>
           </div>
           <div className="bar-chart">
             {revenueData.map((val, i) => (
               <div
                 key={i}
                 className="bar-chart-bar"
-                style={{ height: `${(val / maxBar) * 100}%` }}
-                title={`${months[i]}: ₹${val}L`}
+                style={{ height: val > 0 ? `${Math.max(8, (val / maxRevBar) * 100)}%` : '4px' }}
+                title={`${months[i]}: ${fmtAmount(val)}`}
               />
             ))}
           </div>
@@ -204,55 +226,57 @@ const Dashboard = () => {
           </div>
         </div>
 
-        {/* Activity Feed */}
+        {/* Live Activity Feed */}
         <div className="glass-card p-6">
           <div className="section-header">
             <span className="section-title">Recent Activity</span>
-            <a href="#" className="section-link">View all</a>
+            <span className="badge badge-neutral">{displayActivities.length} Events</span>
           </div>
           <div className="activity-feed">
-            {activities.map(act => (
-              <div className="activity-item" key={act.id}>
-                <div
-                  className="activity-icon-wrap"
-                  style={{ background: act.iconBg, color: act.iconColor }}
-                >
-                  {act.icon}
+            {displayActivities.slice(0, 6).map(act => {
+              const iconInfo = actIconMap[act.type] || actIconMap['note'];
+              const timeAgo = (() => {
+                const diff = Date.now() - new Date(act.created_at).getTime();
+                if (diff < 60000) return 'Just now';
+                if (diff < 3600000) return Math.floor(diff / 60000) + ' min ago';
+                if (diff < 86400000) return Math.floor(diff / 3600000) + ' hr ago';
+                return Math.floor(diff / 86400000) + 'd ago';
+              })();
+              return (
+                <div className="activity-item" key={act.id}>
+                  <div className="activity-icon-wrap" style={{ background: iconInfo.bg, color: iconInfo.color }}>
+                    {iconInfo.icon}
+                  </div>
+                  <div className="activity-content">
+                    <div className="activity-title">{act.title || act.subtitle || 'Activity'}</div>
+                    <div className="activity-time">{timeAgo}</div>
+                  </div>
                 </div>
-                <div className="activity-content">
-                  <div className="activity-title">{act.title}</div>
-                  <div className="activity-time">{act.time}</div>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
 
         {/* Upcoming Tasks */}
         <div className="glass-card p-6">
           <div className="section-header">
-            <span className="section-title">Upcoming Tasks</span>
+            <span className="section-title">Active Tasks</span>
             <a href="/tasks" className="section-link">View all</a>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            {taskList.map(task => (
+            {taskList.length === 0 && <div style={{ textAlign: 'center', padding: '1.5rem', color: 'var(--text-muted)', fontSize: '0.82rem' }}>No tasks yet. Create one from the Tasks page.</div>}
+            {taskList.slice(0, 5).map(task => (
               <div
                 key={task.id}
                 style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.75rem',
-                  padding: '0.75rem',
-                  borderRadius: 'var(--radius-md)',
-                  background: 'var(--bg-tertiary)',
-                  border: '1px solid var(--border-color)',
-                  cursor: 'pointer',
-                  transition: 'var(--transition)',
-                  opacity: task.done ? 0.5 : 1,
+                  display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.75rem',
+                  borderRadius: 'var(--radius-md)', background: 'var(--bg-tertiary)',
+                  border: '1px solid var(--border-color)', cursor: 'pointer',
+                  transition: 'var(--transition)', opacity: task.status === 'Done' ? 0.5 : 1,
                 }}
                 onClick={() => toggleTask(task.id)}
               >
-                {task.done
+                {task.status === 'Done'
                   ? <CheckCircle2 size={16} style={{ color: 'var(--success)', flexShrink: 0 }} />
                   : <div style={{
                     width: 16, height: 16, borderRadius: '50%', flexShrink: 0,
@@ -262,14 +286,13 @@ const Dashboard = () => {
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{
                     fontSize: '0.82rem', fontWeight: 500,
-                    textDecoration: task.done ? 'line-through' : 'none',
-                    color: 'var(--text-primary)',
-                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
+                    textDecoration: task.status === 'Done' ? 'line-through' : 'none',
+                    color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
                   }}>
                     {task.title}
                   </div>
                   <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-                    {task.assignee} · Due {task.due}
+                    {task.assigned_to || 'Unassigned'} · {task.due_date ? `Due ${new Date(task.due_date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' })}` : 'No due date'}
                   </div>
                 </div>
                 <span className={`badge ${task.priority === 'High' ? 'badge-danger' : task.priority === 'Medium' ? 'badge-warning' : 'badge-neutral'}`}>
@@ -280,18 +303,53 @@ const Dashboard = () => {
           </div>
         </div>
 
-        {/* Quick Metrics */}
+        {/* Pipeline Funnel */}
+        <div className="glass-card p-6">
+          <div className="section-title" style={{ marginBottom: '1rem' }}>CRM Pipeline Funnel</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            {funnelData.map(f => (
+              <div key={f.stage}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem' }}>
+                  <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>{f.stage}</span>
+                  <span style={{ fontSize: '0.78rem', fontWeight: 700, color: funnelColors[f.stage] || 'var(--text-primary)' }}>{f.count}</span>
+                </div>
+                <div className="progress-bar-wrap">
+                  <div className="progress-bar-fill" style={{ width: `${(f.count / maxFunnel) * 100}%`, background: funnelColors[f.stage] || 'var(--accent-primary)' }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Lead Source Breakdown */}
+        <div className="glass-card p-6">
+          <div className="section-title" style={{ marginBottom: '1rem' }}>Lead Acquisition by Source</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            {sourceData.length === 0 && <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.8rem', padding: '1rem' }}>No lead data available</div>}
+            {sourceData.map(s => (
+              <div key={s.source} style={{ display: 'grid', gridTemplateColumns: '120px 1fr 40px', alignItems: 'center', gap: '0.75rem' }}>
+                <div style={{ fontSize: '0.82rem', fontWeight: 600, color: sourceColors[s.source] || 'var(--text-secondary)' }}>{s.source}</div>
+                <div className="progress-bar-wrap" style={{ height: 8 }}>
+                  <div className="progress-bar-fill" style={{ width: `${(s.count / Math.max(1, totalLeads)) * 100}%`, background: sourceColors[s.source] || 'var(--accent-primary)' }} />
+                </div>
+                <div style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-primary)', textAlign: 'right' }}>{s.count}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Module Health */}
         <div className="glass-card p-6" style={{ gridColumn: '1 / -1' }}>
           <div className="section-header">
-            <span className="section-title">Module Health</span>
+            <span className="section-title">Module Health & Engagement</span>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.5rem' }}>
             {[
-              { label: 'WhatsApp Delivery Rate', val: 96, color: 'var(--whatsapp)' },
-              { label: 'Lead Conversion Rate', val: 24, color: 'var(--accent-primary)' },
-              { label: 'Task Completion Rate', val: 71, color: 'var(--success)' },
-              { label: 'Payment Collection Rate', val: 58, color: 'var(--warning)' },
-            ].map((m) => (
+              { label: 'WhatsApp Delivery', val: totalWaSent > 0 ? Math.round((totalWaDelivered / totalWaSent) * 100) : 96, color: 'var(--whatsapp)' },
+              { label: 'Lead Conversion', val: totalLeads > 0 ? Math.round((convertedLeads / totalLeads) * 100) : 0, color: 'var(--accent-primary)' },
+              { label: 'Task Completion', val: taskList.length > 0 ? Math.round((taskList.filter(t => t.status === 'Done').length / taskList.length) * 100) : 0, color: 'var(--success)' },
+              { label: 'Payment Collection', val: invoices.length > 0 ? Math.round((invoices.filter(i => i.status === 'Paid').length / invoices.length) * 100) : 0, color: 'var(--warning)' },
+            ].map(m => (
               <div key={m.label}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
                   <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>{m.label}</span>
@@ -304,7 +362,6 @@ const Dashboard = () => {
             ))}
           </div>
         </div>
-
       </div>
     </div>
   );

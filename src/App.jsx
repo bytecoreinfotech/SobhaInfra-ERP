@@ -15,6 +15,7 @@ import Payments from './pages/Payments';
 import Roles from './pages/Roles';
 import Reports from './pages/Reports';
 import Settings from './pages/Settings';
+import Automations from './pages/Automations';
 import './index.css';
 import './App.css';
 
@@ -65,6 +66,7 @@ function AppInner() {
             <Route path="/tasks"     element={<Tasks />} />
             <Route path="/payments"  element={<Payments />} />
             <Route path="/finance"   element={<Finance />} />
+            <Route path="/automations" element={<Automations />} />
             <Route path="/roles"     element={<Roles />} />
             <Route path="/reports"   element={<Reports />} />
             <Route path="/settings"  element={<Settings />} />

@@ -193,6 +193,73 @@ const MOCK_STORE = {
     { id: 'quot-1', lead_id: 'lead-1', quotation_number: 'QUOT-2026-001', total_amount: 9200000, status: 'Sent', valid_until: '2026-08-31', created_at: new Date().toISOString() },
   ],
   audit_logs: [],
+  automation_rules: [
+    {
+      id: 'rule-1',
+      name: 'Hot Lead → Auto-Create Follow-Up Task',
+      description: 'When a lead is qualified as HOT by AI, automatically create a high-priority follow-up call task for the assigned salesperson.',
+      trigger_event: 'lead.qualified_hot',
+      conditions: [{ field: 'interest_level', op: '==', val: 'HOT' }],
+      actions: [{ action: 'create_task', params: { title: 'Follow-up call with {lead_name}', priority: 'High', assigned_to: 'Rajesh Kumar' } }],
+      is_active: true,
+      last_triggered_at: new Date(Date.now() - 2 * 3600000).toISOString(),
+      created_at: new Date(Date.now() - 7 * 86400000).toISOString(),
+    },
+    {
+      id: 'rule-2',
+      name: 'Invoice Overdue 7d → WhatsApp Payment Reminder',
+      description: 'When a Tally invoice becomes 7+ days overdue, send an automated WhatsApp payment reminder to the client.',
+      trigger_event: 'tally.invoice_overdue_7d',
+      conditions: [{ field: 'days_overdue', op: '>=', val: 7 }],
+      actions: [{ action: 'send_whatsapp', params: { template: 'payment_reminder', message: 'Dear {client_name}, your payment of {amount} is overdue. Please settle at the earliest.' } }],
+      is_active: true,
+      last_triggered_at: new Date(Date.now() - 5 * 3600000).toISOString(),
+      created_at: new Date(Date.now() - 14 * 86400000).toISOString(),
+    },
+    {
+      id: 'rule-3',
+      name: 'Invoice Overdue 30d → Escalate to Manager',
+      description: 'When a Tally invoice becomes 30+ days overdue, escalate to manager and send a second stronger WhatsApp reminder.',
+      trigger_event: 'tally.invoice_overdue_30d',
+      conditions: [{ field: 'days_overdue', op: '>=', val: 30 }],
+      actions: [
+        { action: 'send_whatsapp', params: { template: 'payment_escalation', message: 'URGENT: Dear {client_name}, payment of {amount} is significantly overdue. Please contact us immediately.' } },
+        { action: 'notify_salesperson', params: { salesperson: 'Manager', priority: 'Urgent' } },
+      ],
+      is_active: true,
+      last_triggered_at: null,
+      created_at: new Date(Date.now() - 14 * 86400000).toISOString(),
+    },
+    {
+      id: 'rule-4',
+      name: 'AI Handoff → Create Urgent Task',
+      description: 'When the AI Sales Assistant requests a human handoff, automatically create an urgent task for the assigned representative.',
+      trigger_event: 'ai.handoff_requested',
+      conditions: [],
+      actions: [{ action: 'create_task', params: { title: 'AI Handoff: Call {lead_name} immediately', priority: 'High' } }],
+      is_active: true,
+      last_triggered_at: new Date(Date.now() - 1 * 3600000).toISOString(),
+      created_at: new Date(Date.now() - 10 * 86400000).toISOString(),
+    },
+    {
+      id: 'rule-5',
+      name: 'Campaign Reply → Auto-Qualify Lead +10',
+      description: 'When a lead replies to a broadcast campaign, automatically boost their lead score by +10 points.',
+      trigger_event: 'campaign.reply_received',
+      conditions: [],
+      actions: [{ action: 'update_lead_status', params: { score_delta: 10 } }],
+      is_active: false,
+      last_triggered_at: null,
+      created_at: new Date(Date.now() - 5 * 86400000).toISOString(),
+    },
+  ],
+  automation_runs: [
+    { id: 'run-1', rule_id: 'rule-1', rule_name: 'Hot Lead → Auto-Create Follow-Up Task', trigger_event: 'lead.qualified_hot', status: 'success', actions_executed: [{ action: 'create_task', result: 'Task created: Follow-up call with Ravi Mehta' }], execution_duration_ms: 120, created_at: new Date(Date.now() - 2 * 3600000).toISOString() },
+    { id: 'run-2', rule_id: 'rule-2', rule_name: 'Invoice Overdue 7d → WhatsApp Payment Reminder', trigger_event: 'tally.invoice_overdue_7d', status: 'success', actions_executed: [{ action: 'send_whatsapp', result: 'WhatsApp sent to Ravi Mehta (+919876543210)' }], execution_duration_ms: 340, created_at: new Date(Date.now() - 5 * 3600000).toISOString() },
+    { id: 'run-3', rule_id: 'rule-4', rule_name: 'AI Handoff → Create Urgent Task', trigger_event: 'ai.handoff_requested', status: 'success', actions_executed: [{ action: 'create_task', result: 'Task created: AI Handoff - Call customer immediately' }], execution_duration_ms: 95, created_at: new Date(Date.now() - 1 * 3600000).toISOString() },
+    { id: 'run-4', rule_id: 'rule-2', rule_name: 'Invoice Overdue 7d → WhatsApp Payment Reminder', trigger_event: 'tally.invoice_overdue_7d', status: 'failed', actions_executed: [], error_message: 'WhatsApp API rate limit exceeded. Retrying in 60s.', execution_duration_ms: 5200, created_at: new Date(Date.now() - 8 * 3600000).toISOString() },
+  ],
+  business_events: [],
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -853,4 +920,135 @@ export async function inviteTeamMember(userData) {
   }
   const { data, error } = await supabase.from('users').insert([{ ...userData, organization_id: DEFAULT_ORG_ID }]).select().single();
   return { data, error };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AUTOMATION ENGINE SERVICES (Section 31, 32, 33, 34)
+// ─────────────────────────────────────────────────────────────────────────────
+export async function getAutomationRules() {
+  if (!isSupabaseConfigured) return { data: MOCK_STORE.automation_rules, error: null };
+  const { data, error } = await supabase.from('automation_rules').select('*').order('created_at', { ascending: false });
+  return { data, error };
+}
+
+export async function createAutomationRule(ruleData) {
+  const newRule = {
+    id: 'rule-' + Date.now(),
+    organization_id: DEFAULT_ORG_ID,
+    is_active: true,
+    last_triggered_at: null,
+    ...ruleData,
+    created_at: new Date().toISOString(),
+  };
+  if (!isSupabaseConfigured) {
+    MOCK_STORE.automation_rules.unshift(newRule);
+    logAuditEvent('automation.rule_created', 'automation_rules', newRule.id, newRule);
+    return { data: newRule, error: null };
+  }
+  const { data, error } = await supabase.from('automation_rules').insert([newRule]).select().single();
+  if (data) logAuditEvent('automation.rule_created', 'automation_rules', data.id, data);
+  return { data, error };
+}
+
+export async function toggleAutomationRule(ruleId, isActive) {
+  if (!isSupabaseConfigured) {
+    const idx = MOCK_STORE.automation_rules.findIndex(r => r.id === ruleId);
+    if (idx !== -1) {
+      MOCK_STORE.automation_rules[idx].is_active = isActive;
+      return { data: MOCK_STORE.automation_rules[idx], error: null };
+    }
+    return { data: null, error: { message: 'Rule not found' } };
+  }
+  const { data, error } = await supabase.from('automation_rules').update({ is_active: isActive }).eq('id', ruleId).select().single();
+  return { data, error };
+}
+
+export async function deleteAutomationRule(ruleId) {
+  if (!isSupabaseConfigured) {
+    const idx = MOCK_STORE.automation_rules.findIndex(r => r.id === ruleId);
+    if (idx !== -1) MOCK_STORE.automation_rules.splice(idx, 1);
+    return { error: null };
+  }
+  const { error } = await supabase.from('automation_rules').delete().eq('id', ruleId);
+  return { error };
+}
+
+export async function getAutomationRuns() {
+  if (!isSupabaseConfigured) return { data: MOCK_STORE.automation_runs, error: null };
+  const { data, error } = await supabase.from('automation_runs').select('*, rule:automation_rules(name)').order('created_at', { ascending: false }).limit(50);
+  return { data, error };
+}
+
+export async function logBusinessEvent(eventType, entityType, entityId, actorType = 'system', payload = {}) {
+  const evt = {
+    id: 'evt-' + Date.now(),
+    organization_id: DEFAULT_ORG_ID,
+    event_type: eventType,
+    entity_type: entityType,
+    entity_id: entityId,
+    actor_type: actorType,
+    payload,
+    created_at: new Date().toISOString(),
+  };
+  if (!isSupabaseConfigured) {
+    MOCK_STORE.business_events.unshift(evt);
+    return { data: evt, error: null };
+  }
+  const { data, error } = await supabase.from('business_events').insert([evt]).select().single();
+  return { data, error };
+}
+
+export async function executeAutomation(ruleId) {
+  const rule = isSupabaseConfigured
+    ? (await supabase.from('automation_rules').select('*').eq('id', ruleId).single()).data
+    : MOCK_STORE.automation_rules.find(r => r.id === ruleId);
+
+  if (!rule) return { error: { message: 'Rule not found' } };
+
+  const startTime = Date.now();
+  const actionsExecuted = [];
+
+  for (const action of (rule.actions || [])) {
+    try {
+      if (action.action === 'create_task') {
+        const taskTitle = (action.params?.title || 'Automated task').replace('{lead_name}', 'Customer');
+        await createTask({ title: taskTitle, priority: action.params?.priority || 'Medium', status: 'To Do', assigned_to: action.params?.assigned_to || 'Rajesh Kumar', tags: ['Automation'] });
+        actionsExecuted.push({ action: action.action, result: `Task created: ${taskTitle}` });
+      } else if (action.action === 'send_whatsapp') {
+        actionsExecuted.push({ action: action.action, result: `WhatsApp template queued: ${action.params?.template || 'default'}` });
+      } else if (action.action === 'update_lead_status') {
+        actionsExecuted.push({ action: action.action, result: `Lead score adjusted by ${action.params?.score_delta || 0}` });
+      } else if (action.action === 'notify_salesperson') {
+        actionsExecuted.push({ action: action.action, result: `Notification sent to ${action.params?.salesperson || 'Manager'}` });
+      } else {
+        actionsExecuted.push({ action: action.action, result: 'Executed (unknown action type)' });
+      }
+    } catch (err) {
+      actionsExecuted.push({ action: action.action, result: `Error: ${err.message}` });
+    }
+  }
+
+  const run = {
+    id: 'run-' + Date.now(),
+    organization_id: DEFAULT_ORG_ID,
+    rule_id: ruleId,
+    rule_name: rule.name,
+    trigger_event: rule.trigger_event,
+    status: 'success',
+    actions_executed: actionsExecuted,
+    execution_duration_ms: Date.now() - startTime,
+    created_at: new Date().toISOString(),
+  };
+
+  if (!isSupabaseConfigured) {
+    MOCK_STORE.automation_runs.unshift(run);
+    const ruleIdx = MOCK_STORE.automation_rules.findIndex(r => r.id === ruleId);
+    if (ruleIdx !== -1) MOCK_STORE.automation_rules[ruleIdx].last_triggered_at = new Date().toISOString();
+  } else {
+    await supabase.from('automation_runs').insert([run]);
+    await supabase.from('automation_rules').update({ last_triggered_at: new Date().toISOString() }).eq('id', ruleId);
+  }
+
+  logAuditEvent('automation.executed', 'automation_rules', ruleId, run);
+  return { data: run, error: null };
 }

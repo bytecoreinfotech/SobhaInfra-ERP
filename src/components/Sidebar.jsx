@@ -3,7 +3,7 @@ import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, Users, CheckSquare, IndianRupee,
   MessageCircle, Bot, CreditCard, Shield, BarChart3,
-  Settings, ChevronLeft, ChevronRight, LogOut
+  Settings, ChevronLeft, ChevronRight, LogOut, Zap
 } from 'lucide-react';
 import './Sidebar.css';
 
@@ -27,6 +27,7 @@ const navSections = [
     label: 'Operations',
     items: [
       { name: 'Task Management', path: '/tasks', icon: <CheckSquare size={18} />, badge: '5' },
+      { name: 'Automation Rules', path: '/automations', icon: <Zap size={18} /> },
       { name: 'Payment Follow-up', path: '/payments', icon: <CreditCard size={18} />, badge: '2' },
       { name: 'Finance & Tally', path: '/finance', icon: <IndianRupee size={18} /> },
     ]

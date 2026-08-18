@@ -153,6 +153,7 @@ exports.handler = async (event) => {
       // ── C. UPSERT LEAD & CONVERSATION ─────────────────────────────────────
       let conversationMode = 'AI ACTIVE';
       let leadId = null;
+      let conversationId = null;
 
       if (supabase) {
         // Find or create lead
@@ -184,6 +185,7 @@ exports.handler = async (event) => {
           .maybeSingle();
 
         if (conv) {
+          conversationId = conv.id;
           conversationMode = conv.conversation_mode || 'AI ACTIVE';
           await supabase.from('whatsapp_conversations').update({
             last_message_text: messageText,
@@ -191,7 +193,7 @@ exports.handler = async (event) => {
             unread_count: (conv.unread_count || 0) + 1,
           }).eq('id', conv.id);
         } else {
-          await supabase.from('whatsapp_conversations').insert([{
+          const { data: newConv } = await supabase.from('whatsapp_conversations').insert([{
             organization_id: DEFAULT_ORG_ID,
             lead_id: leadId,
             contact_phone: fromPhone,
@@ -200,12 +202,14 @@ exports.handler = async (event) => {
             last_message_text: messageText,
             last_message_at: new Date().toISOString(),
             unread_count: 1,
-          }]);
+          }]).select('id').single();
+          if (newConv) conversationId = newConv.id;
         }
 
-        // Log inbound message
+        // Log inbound message (now with conversation_id linked)
         await supabase.from('whatsapp_messages').insert([{
           organization_id: DEFAULT_ORG_ID,
+          conversation_id: conversationId,
           provider_message_id: providerEventId,
           direction: 'inbound',
           sender_type: 'customer',
@@ -238,6 +242,7 @@ exports.handler = async (event) => {
       if (supabase) {
         await supabase.from('whatsapp_messages').insert([{
           organization_id: DEFAULT_ORG_ID,
+          conversation_id: conversationId,
           direction: 'outbound',
           sender_type: 'ai',
           body: reply,
