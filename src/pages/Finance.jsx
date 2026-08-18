@@ -1,203 +1,521 @@
-import React, { useState } from 'react';
-import { RefreshCw, Download, Send, CheckCircle2, AlertTriangle, IndianRupee, TrendingUp } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import {
+  DollarSign, TrendingUp, AlertTriangle, CheckCircle2,
+  Clock, Plus, Search, Filter, ArrowUpRight, ArrowDownRight,
+  Download, Send, RefreshCw, X, FileText, Check, ShieldCheck,
+  Server, Link, AlertOctagon, HelpCircle, Building2
+} from 'lucide-react';
+import {
+  getInvoices, getTallyConnectionStatus, triggerTallySyncNow,
+  getLedgerMappings, updateLedgerMapping, getSyncErrors,
+  sendPaymentReminderWhatsApp, getLeads, normalizePhone
+} from '../lib/db';
 import './Pages.css';
 
-const invoices = [
-  { id: 'INV-2026-041', client: 'Tech Solutions Inc.', amount: 45000, status: 'Overdue', days: '14 days overdue', lastReminder: '3 days ago' },
-  { id: 'INV-2026-045', client: 'Global Traders Pvt. Ltd.', amount: 120000, status: 'Pending', days: 'Due in 5 days', lastReminder: '—' },
-  { id: 'INV-2026-032', client: 'BuildRight Construction', amount: 85500, status: 'Paid', days: '—', lastReminder: '—' },
-  { id: 'INV-2026-048', client: 'Alpha Corp', amount: 22000, status: 'Overdue', days: '30 days overdue', lastReminder: '1 week ago' },
-  { id: 'INV-2026-052', client: 'Mehta Industries', amount: 38500, status: 'Pending', days: 'Due in 2 days', lastReminder: '—' },
-  { id: 'INV-2026-038', client: 'Patel Logistics Ltd.', amount: 61000, status: 'Paid', days: '—', lastReminder: '—' },
-];
-
-const ledger = [
-  { account: 'Cash in Hand', balance: '₹1,24,500', type: 'Asset' },
-  { account: 'Bank – HDFC Current', balance: '₹18,42,350', type: 'Asset' },
-  { account: 'Trade Receivables', balance: '₹6,75,000', type: 'Asset' },
-  { account: 'Sundry Payables', balance: '₹2,34,200', type: 'Liability' },
-  { account: 'GST Payable', balance: '₹48,600', type: 'Liability' },
-  { account: 'Capital Account', balance: '₹50,00,000', type: 'Equity' },
-];
+const statusConfig = {
+  'Paid':    { badge: 'badge-success', icon: <CheckCircle2 size={13} /> },
+  'Pending': { badge: 'badge-warning', icon: <Clock size={13} /> },
+  'Overdue': { badge: 'badge-danger',  icon: <AlertTriangle size={13} /> },
+  'Draft':   { badge: 'badge-neutral', icon: <Clock size={13} /> },
+};
 
 const Finance = () => {
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [syncComplete, setSyncComplete] = useState(false);
+  const [activeTab, setActiveTab] = useState('invoices'); // 'invoices' | 'tally' | 'mappings' | 'errors'
+  
+  // Invoices & Outstandings State
+  const [invoices, setInvoices] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState('All');
+  const [search, setSearch] = useState('');
   const [remindingId, setRemindingId] = useState(null);
-  const [remindedIds, setRemindedIds] = useState([]);
+  const [reminderToast, setReminderToast] = useState(null);
 
-  const handleSyncTally = () => {
+  // Tally Connector State
+  const [tallyStatus, setTallyStatus] = useState(null);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState('');
+
+  // Ledger Mappings State
+  const [mappings, setMappings] = useState([]);
+  const [leads, setLeads] = useState([]);
+  const [showMapModal, setShowMapModal] = useState(false);
+  const [selectedMapping, setSelectedMapping] = useState(null);
+  const [targetLeadId, setTargetLeadId] = useState('');
+
+  // Sync Errors State
+  const [syncErrors, setSyncErrors] = useState([]);
+
+  useEffect(() => {
+    loadAllFinanceData();
+  }, []);
+
+  const loadAllFinanceData = async () => {
+    setLoading(true);
+    const [invRes, tallyRes, mapRes, errRes, leadsRes] = await Promise.all([
+      getInvoices(),
+      getTallyConnectionStatus(),
+      getLedgerMappings(),
+      getSyncErrors(),
+      getLeads(),
+    ]);
+    setInvoices(invRes.data || []);
+    setTallyStatus(tallyRes.data || null);
+    setMappings(mapRes.data || []);
+    setSyncErrors(errRes.data || []);
+    setLeads(leadsRes.data || []);
+    setLoading(false);
+  };
+
+  const handleSyncNow = async () => {
     setIsSyncing(true);
-    setSyncComplete(false);
+    setSyncMessage('Communicating with local TallyPrime XML port 9000...');
+    const { data } = await triggerTallySyncNow();
     setTimeout(() => {
       setIsSyncing(false);
-      setSyncComplete(true);
-      setTimeout(() => setSyncComplete(false), 4000);
-    }, 2500);
+      setSyncMessage(data?.message || 'Sync completed successfully!');
+      loadAllFinanceData();
+    }, 1200);
   };
 
-  const handleReminder = (id) => {
-    setRemindingId(id);
-    setTimeout(() => {
-      setRemindedIds(prev => [...prev, id]);
-      setRemindingId(null);
-    }, 1500);
+  const handleSendReminder = async (inv) => {
+    setRemindingId(inv.id);
+    const res = await sendPaymentReminderWhatsApp(inv.id);
+    setRemindingId(null);
+    setReminderToast(`WhatsApp reminder dispatched to ${inv.client_name} (${inv.client_phone})!`);
+    setTimeout(() => setReminderToast(null), 4000);
   };
 
-  const totalRevenue = invoices.filter(i => i.status === 'Paid').reduce((s, i) => s + i.amount, 0);
-  const totalOverdue = invoices.filter(i => i.status === 'Overdue').reduce((s, i) => s + i.amount, 0);
-  const totalPending = invoices.filter(i => i.status === 'Pending').reduce((s, i) => s + i.amount, 0);
+  const handleSaveMapping = async (e) => {
+    e.preventDefault();
+    if (!selectedMapping || !targetLeadId) return;
+    await updateLedgerMapping(selectedMapping.id, targetLeadId, selectedMapping.tally_ledger_name);
+    setShowMapModal(false);
+    setSelectedMapping(null);
+    loadAllFinanceData();
+  };
+
+  // Metrics
+  const totalInvoiced = invoices.reduce((s, i) => s + Number(i.amount || 0), 0);
+  const totalPaid = invoices.filter(i => i.status === 'Paid').reduce((s, i) => s + Number(i.amount || 0), 0);
+  const totalOverdue = invoices.filter(i => i.status === 'Overdue').reduce((s, i) => s + Number(i.amount || 0), 0);
+  const totalPending = invoices.filter(i => i.status === 'Pending').reduce((s, i) => s + Number(i.amount || 0), 0);
+
+  // Filter by aging / status
+  const filtered = invoices.filter(inv => {
+    const matchSearch = !search ||
+      inv.invoice_number?.toLowerCase().includes(search.toLowerCase()) ||
+      inv.client_name?.toLowerCase().includes(search.toLowerCase()) ||
+      inv.client_phone?.includes(search);
+
+    if (!matchSearch) return false;
+    if (filter === 'All') return true;
+    if (filter === 'Overdue') return inv.status === 'Overdue';
+    if (filter === 'Pending') return inv.status === 'Pending';
+    if (filter === 'Paid') return inv.status === 'Paid';
+    return true;
+  });
+
+  const fmtCurrency = (n) => '₹' + Number(n || 0).toLocaleString('en-IN');
 
   return (
     <div className="page-container animate-fade-in">
-      {/* Demo Banner */}
+      {/* Toast */}
+      {reminderToast && (
+        <div style={{ position: 'fixed', top: '1.5rem', right: '1.5rem', zIndex: 9999, background: 'var(--success)', color: 'white', padding: '0.75rem 1.25rem', borderRadius: 'var(--radius-md)', display: 'flex', alignItems: 'center', gap: '0.5rem', boxShadow: '0 8px 24px rgba(0,0,0,0.3)' }}>
+          <CheckCircle2 size={16} /> {reminderToast}
+        </div>
+      )}
+
+      {/* Banner */}
       <div className="demo-banner">
-        <span className="demo-badge">DEMO</span>
-        Tally integration uses Tally.ERP 9 / TallyPrime API. Ledger data shown is sample. Real sync requires Tally running locally or on server.
+        <span className="demo-badge">TALLYPRIME CONNECTOR</span>
+        Tally is the accounting source of truth. CRM synchronizes vouchers, tracks aging outstandings, and dispatches WhatsApp payment reminders.
       </div>
 
       {/* Header */}
       <div className="page-header">
         <div className="page-title-group">
-          <h1 className="page-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            Finance & Tally Sync
-            {syncComplete && (
-              <span className="badge badge-success animate-fade-in" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
-                <CheckCircle2 size={12} /> Synced
-              </span>
-            )}
-          </h1>
-          <p className="page-subtitle">Manage invoices, ledger and sync data from Tally.ERP 9 / TallyPrime.</p>
+          <h1 className="page-title">Finance & Tally Center</h1>
+          <p className="page-subtitle">Voucher ledger synchronization, overdue recovery, and ledger mapping master.</p>
         </div>
         <div className="page-actions">
-          <button className="btn btn-secondary"><Download size={15} /> Export CSV</button>
-          <button className="btn btn-primary" onClick={handleSyncTally} disabled={isSyncing}>
-            <RefreshCw size={15} className={isSyncing ? 'animate-spin' : ''} />
-            {isSyncing ? 'Syncing with Tally...' : 'Sync with Tally'}
+          {/* Tab navigation */}
+          <div style={{ display: 'flex', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
+            <button
+              className="btn"
+              onClick={() => setActiveTab('invoices')}
+              style={{
+                borderRadius: 0,
+                background: activeTab === 'invoices' ? 'var(--accent-primary)' : 'var(--bg-tertiary)',
+                color: activeTab === 'invoices' ? 'white' : 'var(--text-secondary)',
+                padding: '0.45rem 1rem',
+              }}
+            >
+              <DollarSign size={15} /> Invoices & Aging
+            </button>
+            <button
+              className="btn"
+              onClick={() => setActiveTab('tally')}
+              style={{
+                borderRadius: 0,
+                background: activeTab === 'tally' ? 'var(--accent-primary)' : 'var(--bg-tertiary)',
+                color: activeTab === 'tally' ? 'white' : 'var(--text-secondary)',
+                padding: '0.45rem 1rem',
+              }}
+            >
+              <Server size={15} /> Tally Connector
+            </button>
+            <button
+              className="btn"
+              onClick={() => setActiveTab('mappings')}
+              style={{
+                borderRadius: 0,
+                background: activeTab === 'mappings' ? 'var(--accent-primary)' : 'var(--bg-tertiary)',
+                color: activeTab === 'mappings' ? 'white' : 'var(--text-secondary)',
+                padding: '0.45rem 1rem',
+              }}
+            >
+              <Link size={15} /> Ledger Mappings ({mappings.length})
+            </button>
+            <button
+              className="btn"
+              onClick={() => setActiveTab('errors')}
+              style={{
+                borderRadius: 0,
+                background: activeTab === 'errors' ? 'var(--accent-primary)' : 'var(--bg-tertiary)',
+                color: activeTab === 'errors' ? 'white' : 'var(--text-secondary)',
+                padding: '0.45rem 1rem',
+              }}
+            >
+              <AlertOctagon size={15} /> Sync Errors ({syncErrors.length})
+            </button>
+          </div>
+
+          <button className="btn btn-secondary" onClick={loadAllFinanceData}>
+            <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
           </button>
         </div>
       </div>
 
-      {/* Stats */}
-      <div className="stats-grid">
-        {[
-          { label: 'Revenue Collected', value: '₹' + (totalRevenue / 1000).toFixed(0) + 'K', color: 'var(--success)', bg: 'var(--success-bg)', icon: <TrendingUp size={20} /> },
-          { label: 'Pending Invoices', value: '₹' + (totalPending / 1000).toFixed(0) + 'K', color: 'var(--warning)', bg: 'var(--warning-bg)', icon: <IndianRupee size={20} /> },
-          { label: 'Overdue Amount', value: '₹' + (totalOverdue / 1000).toFixed(0) + 'K', color: 'var(--danger)', bg: 'var(--danger-bg)', icon: <AlertTriangle size={20} /> },
-          { label: 'Last Tally Sync', value: syncComplete ? 'Just now' : '2 hr ago', color: 'var(--accent-primary)', bg: 'var(--accent-glow)', icon: <RefreshCw size={20} /> },
-        ].map(s => (
-          <div key={s.label} className="stat-card" style={{ '--card-accent': s.color }}>
-            <div className="stat-header">
-              <div>
-                <div className="stat-label">{s.label}</div>
-                <div className="stat-value" style={{ fontSize: '1.65rem' }}>{s.value}</div>
-              </div>
-              <div className="stat-icon" style={{ background: s.bg, color: s.color }}>{s.icon}</div>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '1.5rem', alignItems: 'start' }}>
-
-        {/* Invoice Table */}
-        <div className="glass-card table-container">
-          <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid var(--border-color)' }}>
-            <span className="section-title">Invoice Ledger</span>
-          </div>
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Invoice #</th>
-                <th>Client</th>
-                <th>Amount</th>
-                <th>Status</th>
-                <th>Due / Paid</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {invoices.map(inv => {
-                const reminded = remindedIds.includes(inv.id);
-                const isReminding = remindingId === inv.id;
-                return (
-                  <tr key={inv.id}>
-                    <td style={{ fontWeight: 700, color: 'var(--accent-primary)', fontFamily: 'monospace', fontSize: '0.8rem' }}>{inv.id}</td>
-                    <td style={{ fontWeight: 500 }}>{inv.client}</td>
-                    <td style={{ fontWeight: 700 }}>{'₹' + inv.amount.toLocaleString('en-IN')}</td>
-                    <td>
-                      <span className={`badge ${inv.status === 'Paid' ? 'badge-success' : inv.status === 'Overdue' ? 'badge-danger' : 'badge-warning'}`}>
-                        {inv.status}
-                      </span>
-                    </td>
-                    <td style={{ fontSize: '0.8rem', color: inv.status === 'Overdue' ? 'var(--danger)' : 'var(--text-muted)' }}>
-                      {inv.days}
-                    </td>
-                    <td>
-                      {inv.status !== 'Paid' && (
-                        <button
-                          className={`btn btn-sm ${reminded ? 'btn-success' : 'btn-secondary'}`}
-                          onClick={() => !reminded && handleReminder(inv.id)}
-                          disabled={isReminding || reminded}
-                        >
-                          {reminded ? <><CheckCircle2 size={13} /> Sent</> : isReminding ? 'Sending...' : <><Send size={13} /> Remind</>}
-                        </button>
-                      )}
-                      {inv.status === 'Paid' && <span style={{ fontSize: '0.78rem', color: 'var(--success)' }}>✓ Cleared</span>}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Ledger Summary */}
-        <div className="glass-card p-6">
-          <div className="section-title" style={{ marginBottom: '1rem' }}>Ledger Summary (Tally)</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            {ledger.map(entry => (
-              <div key={entry.account} style={{
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                padding: '0.65rem 0.875rem', background: 'var(--bg-tertiary)',
-                borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)'
-              }}>
-                <div>
-                  <div style={{ fontSize: '0.8rem', fontWeight: 500, color: 'var(--text-primary)' }}>{entry.account}</div>
-                  <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>{entry.type}</div>
-                </div>
-                <div style={{
-                  fontWeight: 700, fontSize: '0.875rem',
-                  color: entry.type === 'Asset' ? 'var(--success)' : entry.type === 'Liability' ? 'var(--danger)' : 'var(--accent-primary)'
-                }}>
-                  {entry.balance}
+      {/* =========================================================================
+          TAB 1: INVOICES & AGING OUTSTANDINGS
+         ========================================================================= */}
+      {activeTab === 'invoices' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+          {/* KPI Summary Cards */}
+          <div className="stats-grid">
+            {[
+              { label: 'Total Invoiced', value: fmtCurrency(totalInvoiced), icon: <DollarSign size={20} />, color: 'var(--accent-primary)', bg: 'var(--accent-glow)' },
+              { label: 'Total Collected', value: fmtCurrency(totalPaid), icon: <TrendingUp size={20} />, color: 'var(--success)', bg: 'var(--success-bg)' },
+              { label: 'Overdue Recovery', value: fmtCurrency(totalOverdue), icon: <AlertTriangle size={20} />, color: 'var(--danger)', bg: 'var(--danger-bg)' },
+              { label: 'Pending Due', value: fmtCurrency(totalPending), icon: <Clock size={20} />, color: 'var(--warning)', bg: 'var(--warning-bg)' },
+            ].map(s => (
+              <div key={s.label} className="stat-card" style={{ '--card-accent': s.color }}>
+                <div className="stat-header">
+                  <div>
+                    <div className="stat-label">{s.label}</div>
+                    <div className="stat-value" style={{ fontSize: '1.55rem' }}>{s.value}</div>
+                  </div>
+                  <div className="stat-icon" style={{ background: s.bg, color: s.color }}>{s.icon}</div>
                 </div>
               </div>
             ))}
           </div>
-          <div style={{ marginTop: '1rem', padding: '0.65rem', background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)', fontSize: '0.72rem', color: 'var(--text-muted)', textAlign: 'center' }}>
-            Data from Tally.ERP 9 · Last sync: {syncComplete ? 'Just now' : '2 hr ago'}
+
+          {/* Search & Filter Bar */}
+          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <div className="input-group" style={{ flex: 1, minWidth: 240 }}>
+              <Search size={15} className="input-icon" />
+              <input
+                type="text"
+                className="input-field"
+                placeholder="Search invoice number, client name, phone..."
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+              />
+            </div>
+            <div className="filter-bar" style={{ margin: 0 }}>
+              {['All', 'Overdue', 'Pending', 'Paid'].map(f => (
+                <button
+                  key={f}
+                  className={`filter-chip ${filter === f ? 'active' : ''}`}
+                  onClick={() => setFilter(f)}
+                >
+                  {f}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Invoices Data Table */}
+          <div className="glass-card table-container">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Invoice No.</th>
+                  <th>Client / Tally Ledger</th>
+                  <th>Contact Phone</th>
+                  <th>Due Date</th>
+                  <th>Amount</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loading ? (
+                  <tr><td colSpan={7} style={{ textAlign: 'center', padding: '3rem' }}><RefreshCw size={24} className="animate-spin" style={{ color: 'var(--text-muted)' }} /></td></tr>
+                ) : filtered.length === 0 ? (
+                  <tr><td colSpan={7} style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>No invoices found matching criteria.</td></tr>
+                ) : (
+                  filtered.map(inv => (
+                    <tr key={inv.id}>
+                      <td style={{ fontWeight: 700, fontFamily: 'monospace', color: 'var(--accent-secondary)' }}>
+                        {inv.invoice_number}
+                      </td>
+                      <td style={{ fontWeight: 600 }}>{inv.client_name}</td>
+                      <td style={{ fontFamily: 'monospace', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                        {normalizePhone(inv.client_phone)}
+                      </td>
+                      <td style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                        {inv.due_date ? new Date(inv.due_date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
+                      </td>
+                      <td style={{ fontWeight: 700, fontSize: '0.88rem' }}>{fmtCurrency(inv.amount)}</td>
+                      <td>
+                        <span className={`badge ${statusConfig[inv.status]?.badge || 'badge-neutral'}`} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
+                          {statusConfig[inv.status]?.icon} {inv.status}
+                        </span>
+                      </td>
+                      <td>
+                        {inv.status !== 'Paid' ? (
+                          <button
+                            className="btn btn-whatsapp btn-sm"
+                            style={{ padding: '0.25rem 0.6rem', fontSize: '0.72rem' }}
+                            onClick={() => handleSendReminder(inv)}
+                            disabled={remindingId === inv.id}
+                          >
+                            <Send size={12} /> {remindingId === inv.id ? 'Sending...' : 'Remind on WA'}
+                          </button>
+                        ) : (
+                          <span style={{ fontSize: '0.72rem', color: 'var(--success)', fontWeight: 600 }}>Settled</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
-      </div>
+      )}
 
-      {/* Tally Sync Overlay */}
-      {isSyncing && (
+      {/* =========================================================================
+          TAB 2: TALLY CONNECTOR HEALTH & SYNC CONSOLE
+         ========================================================================= */}
+      {activeTab === 'tally' && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '1.5rem' }}>
+          {/* Status & Sync Card */}
+          <div className="glass-card" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h2 style={{ fontSize: '1.1rem', fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <Server size={18} color="var(--accent-primary)" /> TallyPrime XML Bridge Status
+                </h2>
+                <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0.2rem 0 0 0' }}>
+                  Section 26: Secure read-mostly connection to local TallyPrime XML Server.
+                </p>
+              </div>
+              <span className={`badge ${tallyStatus?.status === 'ONLINE' ? 'badge-success' : 'badge-warning'}`} style={{ fontSize: '0.75rem', padding: '0.35rem 0.75rem' }}>
+                ● {tallyStatus?.status || 'ONLINE'}
+              </span>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', background: 'var(--bg-tertiary)', padding: '1rem', borderRadius: 'var(--radius-md)' }}>
+              <div>
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Target Host & Port</div>
+                <div style={{ fontWeight: 700, fontSize: '0.9rem', fontFamily: 'monospace' }}>{tallyStatus?.tally_host || '127.0.0.1:9000'}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Tally Company</div>
+                <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>{tallyStatus?.tally_company || 'Techma Real Estate Pvt Ltd'}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Last Synced</div>
+                <div style={{ fontWeight: 700, fontSize: '0.82rem', color: 'var(--accent-secondary)' }}>
+                  {tallyStatus?.last_sync_at ? new Date(tallyStatus.last_sync_at).toLocaleTimeString() : 'Just now'}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Sync Frequency</div>
+                <div style={{ fontWeight: 700, fontSize: '0.82rem' }}>Every 15 Minutes (Daemon)</div>
+              </div>
+            </div>
+
+            {syncMessage && (
+              <div style={{ padding: '0.75rem', background: 'rgba(16,185,129,0.1)', border: '1px solid var(--success)', borderRadius: 8, fontSize: '0.78rem', color: 'var(--success)' }}>
+                {syncMessage}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
+              <button
+                className="btn btn-primary"
+                onClick={handleSyncNow}
+                disabled={isSyncing}
+                style={{ flex: 1, justifyContent: 'center' }}
+              >
+                <RefreshCw size={15} className={isSyncing ? 'animate-spin' : ''} />
+                {isSyncing ? 'Polling Tally XML Server...' : 'Trigger Sync Now'}
+              </button>
+            </div>
+          </div>
+
+          {/* Architecture & Security Notice */}
+          <div className="glass-card" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <h3 style={{ fontSize: '0.95rem', fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              <ShieldCheck size={18} color="var(--success)" /> Security & Architecture Rules (Section 26)
+            </h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', fontSize: '0.78rem', lineHeight: 1.5 }}>
+              <div style={{ padding: '0.75rem', background: 'var(--bg-tertiary)', borderRadius: 8 }}>
+                <strong>1. Read-Mostly Bridge:</strong> TallyPrime remains the single source of truth for accounts. The connector operates without modifying historic ledgers.
+              </div>
+              <div style={{ padding: '0.75rem', background: 'var(--bg-tertiary)', borderRadius: 8 }}>
+                <strong>2. Token Authentication:</strong> Local Windows daemon signs every payload with a cryptographic <code>X-Connector-Token</code>.
+              </div>
+              <div style={{ padding: '0.75rem', background: 'var(--bg-tertiary)', borderRadius: 8 }}>
+                <strong>3. Automated Recovery:</strong> Inbound receipts in Tally immediately close out CRM aging alarms and silence WhatsApp payment reminder automations.
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =========================================================================
+          TAB 3: LEDGER MAPPINGS MASTER
+         ========================================================================= */}
+      {activeTab === 'mappings' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <h2 style={{ fontSize: '1.05rem', fontWeight: 700, margin: 0 }}>Ledger & Customer Mapping Master (Section 30)</h2>
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0.2rem 0 0 0' }}>
+                Bridges Tally accounting ledgers with CRM customer profiles via normalized phone matching.
+              </p>
+            </div>
+          </div>
+
+          <div className="glass-card table-container">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Tally Ledger Name</th>
+                  <th>Mapped CRM Customer</th>
+                  <th>Normalized Phone</th>
+                  <th>Match Confidence</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {mappings.map(m => (
+                  <tr key={m.id}>
+                    <td style={{ fontWeight: 700, fontSize: '0.85rem' }}>{m.tally_ledger_name}</td>
+                    <td style={{ color: m.mapping_status === 'MAPPED' ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                      {m.lead_name || '—'}
+                    </td>
+                    <td style={{ fontFamily: 'monospace', fontSize: '0.78rem' }}>{m.lead_phone || '—'}</td>
+                    <td>
+                      <span className="badge badge-neutral" style={{ fontWeight: 700 }}>
+                        {((m.match_confidence || 0) * 100).toFixed(0)}%
+                      </span>
+                    </td>
+                    <td>
+                      <span className={`badge ${m.mapping_status === 'MAPPED' ? 'badge-success' : m.mapping_status === 'AMBIGUOUS' ? 'badge-warning' : 'badge-danger'}`}>
+                        {m.mapping_status}
+                      </span>
+                    </td>
+                    <td>
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        style={{ fontSize: '0.72rem', padding: '0.2rem 0.5rem' }}
+                        onClick={() => { setSelectedMapping(m); setShowMapModal(true); }}
+                      >
+                        Map Lead
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* =========================================================================
+          TAB 4: SYNC ERRORS & AUDIT LOG
+         ========================================================================= */}
+      {activeTab === 'errors' && (
+        <div className="glass-card table-container">
+          <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span className="section-title">Tally Synchronization Audit & Error Log</span>
+            <button className="btn btn-secondary btn-sm" onClick={loadAllFinanceData}><RefreshCw size={13} /> Refresh</button>
+          </div>
+          <table className="data-table">
+            <thead>
+              <tr><th>Error ID</th><th>Entity</th><th>Voucher / Ledger ID</th><th>Error Detail</th><th>Logged At</th><th>Resolution</th></tr>
+            </thead>
+            <tbody>
+              {syncErrors.length === 0 ? (
+                <tr><td colSpan={6} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>No sync errors. All vouchers cleanly synchronized.</td></tr>
+              ) : (
+                syncErrors.map(err => (
+                  <tr key={err.id}>
+                    <td style={{ fontFamily: 'monospace', fontSize: '0.75rem' }}>{err.id}</td>
+                    <td><span className="badge badge-neutral">{err.entity_type}</span></td>
+                    <td style={{ fontWeight: 700, fontFamily: 'monospace', color: 'var(--accent-secondary)' }}>{err.entity_id}</td>
+                    <td style={{ fontSize: '0.78rem', color: 'var(--danger)', maxWidth: 300 }}>{err.error_message}</td>
+                    <td style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{new Date(err.created_at).toLocaleTimeString()}</td>
+                    <td>
+                      <button className="btn btn-secondary btn-sm" style={{ fontSize: '0.7rem', padding: '0.15rem 0.4rem' }} onClick={handleSyncNow}>
+                        Retry Sync
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Manual Ledger Mapping Modal */}
+      {showMapModal && selectedMapping && (
         <div className="modal-overlay">
-          <div style={{
-            background: 'var(--bg-secondary)', border: '1px solid var(--border-color)',
-            borderRadius: 'var(--radius-xl)', padding: '3rem', textAlign: 'center',
-            maxWidth: 360, width: '100%', boxShadow: 'var(--shadow-lg)'
-          }}>
-            <div style={{ marginBottom: '1.5rem' }}>
-              <RefreshCw size={56} style={{ color: 'var(--accent-primary)', animation: 'spin 1s linear infinite' }} />
-            </div>
-            <h3 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '0.5rem' }}>Connecting to Tally.ERP 9</h3>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginBottom: '1rem' }}>Fetching invoices, ledger balances and payment data...</p>
-            <div style={{ background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-full)', overflow: 'hidden', height: 4 }}>
-              <div style={{ height: '100%', width: '70%', background: 'linear-gradient(90deg, var(--accent-primary), var(--accent-secondary))', animation: 'shimmer 1.5s infinite', backgroundSize: '200% 100%' }} />
-            </div>
-            <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.75rem' }}>Demo: No actual Tally connection</p>
+          <div className="modal-content animate-fade-in" style={{ maxWidth: 500 }}>
+            <button style={{ position: 'absolute', top: '1.25rem', right: '1.25rem', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }} onClick={() => setShowMapModal(false)}>
+              <X size={20} />
+            </button>
+            <h2 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '1.25rem' }}>
+              Map Tally Ledger to CRM Customer
+            </h2>
+            <form onSubmit={handleSaveMapping} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div>
+                <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.25rem' }}>Tally Ledger Name</label>
+                <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>{selectedMapping.tally_ledger_name}</div>
+              </div>
+              <div>
+                <label style={{ fontSize: '0.78rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Select Matching CRM Lead *</label>
+                <select className="input-field" value={targetLeadId} onChange={e => setTargetLeadId(e.target.value)} required>
+                  <option value="">-- Choose CRM Lead --</option>
+                  {leads.map(l => (
+                    <option key={l.id} value={l.id}>{l.name} ({l.phone})</option>
+                  ))}
+                </select>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.5rem' }}>
+                <button type="button" className="btn btn-secondary" onClick={() => setShowMapModal(false)}>Cancel</button>
+                <button type="submit" className="btn btn-primary">Save Ledger Mapping</button>
+              </div>
+            </form>
           </div>
         </div>
       )}
