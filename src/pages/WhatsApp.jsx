@@ -303,7 +303,19 @@ const WhatsApp = () => {
 
             <div style={{ flex: 1, overflowY: 'auto' }}>
               {convLoading ? (
-                <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}><RefreshCw size={20} className="animate-spin" /></div>
+                // Skeleton shimmer cards while loading
+                <div style={{ padding: '0.5rem' }}>
+                  {[1,2,3,4].map(i => (
+                    <div key={i} style={{ padding: '0.85rem 1rem', borderBottom: '1px solid var(--border-color)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
+                        <div style={{ width: '60%', height: 12, background: 'var(--bg-tertiary)', borderRadius: 4, animation: 'skeleton-pulse 1.5s ease-in-out infinite' }} />
+                        <div style={{ width: '15%', height: 10, background: 'var(--bg-tertiary)', borderRadius: 4, animation: 'skeleton-pulse 1.5s ease-in-out infinite' }} />
+                      </div>
+                      <div style={{ width: '85%', height: 10, background: 'var(--bg-tertiary)', borderRadius: 4, marginBottom: '0.3rem', animation: 'skeleton-pulse 1.5s ease-in-out infinite' }} />
+                      <div style={{ width: '30%', height: 10, background: 'var(--bg-tertiary)', borderRadius: 4, animation: 'skeleton-pulse 1.5s ease-in-out infinite' }} />
+                    </div>
+                  ))}
+                </div>
               ) : filteredConversations.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)', fontSize: '0.8rem' }}>No conversations found.</div>
               ) : (

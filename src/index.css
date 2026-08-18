@@ -594,6 +594,11 @@ h1, h2, h3, h4, h5, h6 {
 .animate-spin       { animation: spin 1s linear infinite; }
 .animate-pulse-dot  { animation: pulse-dot 1.5s ease infinite; }
 
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}
+
 /* Staggered fade-in for lists */
 .stagger-1 { animation-delay: 0.05s; }
 .stagger-2 { animation-delay: 0.10s; }

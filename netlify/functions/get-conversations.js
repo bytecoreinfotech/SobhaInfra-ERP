@@ -32,6 +32,21 @@ exports.handler = async (event) => {
     }
 
     const convId = event.queryStringParameters?.conv_id;
+    const loadKb = event.queryStringParameters?.kb === '1';
+
+    if (loadKb) {
+      const { data: kb, error } = await supabase
+        .from('ai_knowledge')
+        .select('*')
+        .eq('status', 'active')
+        .order('category', { ascending: true });
+      if (error) {
+        console.warn('[get-conversations] kb query error:', error.message);
+        return { statusCode: 200, headers: cors, body: JSON.stringify({ kb: [] }) };
+      }
+      return { statusCode: 200, headers: cors, body: JSON.stringify({ kb: kb || [] }) };
+    }
+
 
     if (convId) {
       // Return messages for a specific conversation

@@ -2,11 +2,16 @@ import React, { useState, useEffect } from 'react';
 import {
   Settings as SettingsIcon, Bell, Shield, Palette, MessageCircle,
   RefreshCw, Save, Check, Zap, Download, AlertTriangle, Activity,
-  Server, Cpu, Database, Radio, ToggleLeft, ToggleRight, FileSpreadsheet, FileJson
+  Server, Cpu, Database, Radio, ToggleLeft, ToggleRight, FileSpreadsheet, FileJson,
+  Brain, Plus, Trash2, Edit3, BookOpen, CheckCircle2
 } from 'lucide-react';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { useTheme } from '../context/ThemeContext';
 import { getSystemSafetyAndQuotas, updateSystemSafety, toggleCircuitBreaker, exportAllData } from '../lib/db';
 import './Pages.css';
+
+const KB_CATEGORIES = ['Properties', 'Pricing', 'Policy', 'FAQ', 'Operations', 'Contact', 'Payment Terms'];
+const DEFAULT_ORG_ID = '00000000-0000-0000-0000-000000000001';
 
 const Settings = () => {
   const { theme, toggleTheme } = useTheme();
@@ -16,9 +21,80 @@ const Settings = () => {
   const [downloading, setDownloading] = useState(false);
   const [exportSuccess, setExportSuccess] = useState(false);
 
+  // AI Knowledge Base state
+  const [kbItems, setKbItems] = useState([]);
+  const [kbLoading, setKbLoading] = useState(false);
+  const [kbSaving, setKbSaving] = useState(false);
+  const [editingKb, setEditingKb] = useState(null); // null | 'new' | item
+  const [kbForm, setKbForm] = useState({ category: 'Properties', title: '', content: '', status: 'active' });
+  const [kbSuccess, setKbSuccess] = useState('');
+
   useEffect(() => {
     loadSafety();
   }, []);
+
+  useEffect(() => {
+    if (activeTab === 'ai_kb') loadKnowledgeBase();
+  }, [activeTab]);
+
+  const loadKnowledgeBase = async () => {
+    setKbLoading(true);
+    try {
+      if (isSupabaseConfigured) {
+        const { data, error } = await supabase.from('ai_knowledge').select('*').order('category').order('created_at');
+        if (!error && data) { setKbItems(data); setKbLoading(false); return; }
+      }
+      // Fallback: load from webhook proxy
+      const res = await fetch('/.netlify/functions/get-conversations?kb=1');
+      const json = await res.json();
+      setKbItems(json.kb || []);
+    } catch {}
+    setKbLoading(false);
+  };
+
+  const handleKbSave = async () => {
+    if (!kbForm.title.trim() || !kbForm.content.trim()) return;
+    setKbSaving(true);
+    try {
+      if (editingKb && editingKb !== 'new') {
+        // Update existing
+        await supabase.from('ai_knowledge').update({
+          ...kbForm, updated_at: new Date().toISOString()
+        }).eq('id', editingKb.id);
+        setKbItems(prev => prev.map(k => k.id === editingKb.id ? { ...k, ...kbForm } : k));
+      } else {
+        // Insert new
+        const { data } = await supabase.from('ai_knowledge').insert([{
+          organization_id: DEFAULT_ORG_ID, ...kbForm, version: 1
+        }]).select().single();
+        if (data) setKbItems(prev => [...prev, data]);
+      }
+      setKbSuccess('Knowledge item saved! AI will use this in next response.');
+      setEditingKb(null);
+      setKbForm({ category: 'Properties', title: '', content: '', status: 'active' });
+      setTimeout(() => setKbSuccess(''), 4000);
+    } catch (e) {
+      setKbSuccess('Error: ' + e.message);
+    }
+    setKbSaving(false);
+  };
+
+  const handleKbDelete = async (id) => {
+    if (!window.confirm('Delete this knowledge item? The AI will no longer use it.')) return;
+    await supabase.from('ai_knowledge').delete().eq('id', id);
+    setKbItems(prev => prev.filter(k => k.id !== id));
+  };
+
+  const handleKbEdit = (item) => {
+    setEditingKb(item);
+    setKbForm({ category: item.category, title: item.title, content: item.content, status: item.status });
+  };
+
+  const handleKbToggleStatus = async (item) => {
+    const newStatus = item.status === 'active' ? 'inactive' : 'active';
+    await supabase.from('ai_knowledge').update({ status: newStatus }).eq('id', item.id);
+    setKbItems(prev => prev.map(k => k.id === item.id ? { ...k, status: newStatus } : k));
+  };
 
   const loadSafety = async () => {
     const { data } = await getSystemSafetyAndQuotas();
@@ -77,6 +153,7 @@ const Settings = () => {
 
   const tabs = [
     { id: 'general', label: 'General', icon: <SettingsIcon size={16} /> },
+    { id: 'ai_kb', label: 'AI Knowledge Base', icon: <Brain size={16} /> },
     { id: 'safety', label: 'Free-Tier Safety & Quotas', icon: <Zap size={16} /> },
     { id: 'export', label: 'Data Portability & Export', icon: <Download size={16} /> },
     { id: 'whatsapp', label: 'WhatsApp API', icon: <MessageCircle size={16} /> },
@@ -525,6 +602,107 @@ const Settings = () => {
                   Tenant multi-tenancy isolation is enforced at the database layer via Supabase RLS on all 16 tables.
                 </div>
                 <span className="badge badge-success">RLS Active (Org ID Enforced)</span>
+              </div>
+            </div>
+          )}
+
+          {/* ════════════════════════════════════════════════════════════════
+              TAB: AI KNOWLEDGE BASE (Section 17 — Dynamic AI context editor)
+             ════════════════════════════════════════════════════════════════ */}
+          {activeTab === 'ai_kb' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <div>
+                  <h3 style={{ fontSize: '1rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <Brain size={18} color="var(--accent-primary)" /> AI Knowledge Base
+                  </h3>
+                  <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
+                    All knowledge items below are used by the AI Sales Assistant to answer customer queries. The AI will never invent prices or policies — it only uses what you configure here.
+                  </p>
+                </div>
+                <button className="btn btn-primary" onClick={() => { setEditingKb('new'); setKbForm({ category: 'Properties', title: '', content: '', status: 'active' }); }}>
+                  <Plus size={14} /> Add Knowledge
+                </button>
+              </div>
+
+              {kbSuccess && (
+                <div style={{ padding: '0.75rem 1rem', background: 'rgba(16,185,129,0.12)', border: '1px solid var(--success)', borderRadius: 8, color: 'var(--success)', fontSize: '0.82rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <CheckCircle2 size={15} /> {kbSuccess}
+                </div>
+              )}
+
+              {/* Add / Edit Form */}
+              {editingKb && (
+                <div className="glass-card" style={{ border: '1px solid var(--accent-primary)', padding: '1.25rem' }}>
+                  <div style={{ fontWeight: 700, fontSize: '0.9rem', marginBottom: '1rem', color: 'var(--accent-primary)' }}>
+                    {editingKb === 'new' ? '➕ Add New Knowledge Item' : '✏️ Edit Knowledge Item'}
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
+                    <div>
+                      <label style={{ fontSize: '0.75rem', fontWeight: 600, display: 'block', marginBottom: '0.25rem' }}>Category</label>
+                      <select className="input-field" style={{ fontSize: '0.8rem' }} value={kbForm.category} onChange={e => setKbForm(p => ({ ...p, category: e.target.value }))}>
+                        {KB_CATEGORIES.map(c => <option key={c}>{c}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '0.75rem', fontWeight: 600, display: 'block', marginBottom: '0.25rem' }}>Title</label>
+                      <input className="input-field" style={{ fontSize: '0.8rem' }} placeholder="e.g. 3BHK Andheri Pricing" value={kbForm.title} onChange={e => setKbForm(p => ({ ...p, title: e.target.value }))} />
+                    </div>
+                  </div>
+                  <div style={{ marginBottom: '0.75rem' }}>
+                    <label style={{ fontSize: '0.75rem', fontWeight: 600, display: 'block', marginBottom: '0.25rem' }}>Content (what the AI will say)</label>
+                    <textarea
+                      className="input-field"
+                      style={{ fontSize: '0.8rem', minHeight: 100, resize: 'vertical' }}
+                      placeholder="e.g. Base Price: ₹95 Lakhs for 1,450 sq.ft. Includes 1 parking. Floor rise: ₹50,000/floor. GST extra."
+                      value={kbForm.content}
+                      onChange={e => setKbForm(p => ({ ...p, content: e.target.value }))}
+                    />
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                    <button className="btn btn-secondary" onClick={() => setEditingKb(null)}>Cancel</button>
+                    <button className="btn btn-primary" onClick={handleKbSave} disabled={kbSaving || !kbForm.title || !kbForm.content}>
+                      {kbSaving ? <><RefreshCw size={13} className="animate-spin" /> Saving…</> : <><Save size={13} /> Save Knowledge</>}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Knowledge Items Table */}
+              {kbLoading ? (
+                <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}><RefreshCw size={22} className="animate-spin" /></div>
+              ) : kbItems.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>
+                  <BookOpen size={32} style={{ marginBottom: '0.75rem', opacity: 0.4 }} />
+                  <div style={{ fontWeight: 600 }}>No knowledge items yet</div>
+                  <div style={{ fontSize: '0.8rem', marginTop: '0.25rem' }}>Click "Add Knowledge" to configure what the AI knows about your business.</div>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                  {kbItems.map(item => (
+                    <div key={item.id} style={{ padding: '0.85rem 1rem', background: 'var(--bg-secondary)', borderRadius: 8, border: `1px solid ${item.status === 'active' ? 'rgba(16,185,129,0.2)' : 'var(--border-color)'}`, display: 'grid', gridTemplateColumns: '1fr auto', gap: '0.75rem', alignItems: 'start' }}>
+                      <div>
+                        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.25rem' }}>
+                          <span className="badge" style={{ fontSize: '0.6rem', background: 'rgba(99,102,241,0.15)', color: 'var(--accent-primary)' }}>{item.category}</span>
+                          <span style={{ fontWeight: 700, fontSize: '0.85rem' }}>{item.title}</span>
+                          <span className={`badge ${item.status === 'active' ? 'badge-success' : 'badge-neutral'}`} style={{ fontSize: '0.6rem' }}>{item.status}</span>
+                        </div>
+                        <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{item.content}</div>
+                      </div>
+                      <div style={{ display: 'flex', gap: '0.4rem' }}>
+                        <button className="btn btn-secondary btn-sm" onClick={() => handleKbToggleStatus(item)} title={item.status === 'active' ? 'Disable' : 'Enable'}>
+                          {item.status === 'active' ? <ToggleRight size={14} color="var(--success)" /> : <ToggleLeft size={14} />}
+                        </button>
+                        <button className="btn btn-secondary btn-sm" onClick={() => handleKbEdit(item)}><Edit3 size={13} /></button>
+                        <button className="btn btn-secondary btn-sm" style={{ color: 'var(--danger)' }} onClick={() => handleKbDelete(item.id)}><Trash2 size={13} /></button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div style={{ padding: '0.75rem 1rem', background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: 8, fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                💡 <strong>Tip:</strong> The AI refreshes its knowledge every 5 minutes. After saving, send a test WhatsApp message to verify the AI uses your new content.
               </div>
             </div>
           )}
