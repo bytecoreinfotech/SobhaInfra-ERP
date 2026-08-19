@@ -612,8 +612,6 @@ exports.handler = async (event) => {
           }).eq('id', conv.id);
         } else {
           const newConvPayload = {
-            organization_id: DEFAULT_ORG_ID,
-            lead_id: leadId,
             contact_phone: fromPhone.startsWith('+') ? fromPhone : '+' + fromPhone,
             contact_name: contactName,
             conversation_mode: 'AI ACTIVE',
@@ -632,7 +630,6 @@ exports.handler = async (event) => {
 
         // Log inbound message
         const messageInsert = {
-          organization_id: DEFAULT_ORG_ID,
           conversation_id: conversationId,
           provider_message_id: providerEventId,
           direction: 'inbound',
@@ -651,12 +648,7 @@ exports.handler = async (event) => {
           }
         }
 
-        let { data: insertedMsg, error: mErr } = await supabase.from('whatsapp_messages').insert([messageInsert]).select('id').maybeSingle();
-        if (mErr && mErr.message && mErr.message.includes('organization_id')) {
-          delete messageInsert.organization_id;
-          const fb = await supabase.from('whatsapp_messages').insert([messageInsert]).select('id').maybeSingle();
-          insertedMsg = fb.data;
-        }
+        const { data: insertedMsg } = await supabase.from('whatsapp_messages').insert([messageInsert]).select('id').maybeSingle();
 
         // Store media reference in whatsapp_media table
         if (['image', 'document', 'audio', 'video', 'sticker'].includes(msg.type) && insertedMsg?.id) {

@@ -80,15 +80,13 @@ exports.handler = async (event) => {
           if (existingConv) {
             effectiveConvId = existingConv.id;
           } else {
-            // Check if matching lead exists
+            // Check if matching lead name exists (just for display)
             const { data: leadMatch } = await supabase.from('leads')
               .select('id, name')
               .or(`phone.eq.${cleanPhone},phone.eq.${digitsOnly},phone.eq.+${digitsOnly}`)
               .maybeSingle();
 
             const newConvPayload = {
-              organization_id: DEFAULT_ORG_ID,
-              lead_id: leadMatch?.id || null,
               contact_name: leadMatch?.name || 'Customer',
               contact_phone: cleanPhone.startsWith('+') ? cleanPhone : '+' + cleanPhone,
               conversation_mode: 'HUMAN ACTIVE',
@@ -97,19 +95,13 @@ exports.handler = async (event) => {
               unread_count: 0,
             };
 
-            let { data: newConv, error: convErr } = await supabase.from('whatsapp_conversations').insert([newConvPayload]).select('id').maybeSingle();
-            if (convErr && convErr.message && convErr.message.includes('organization_id')) {
-              delete newConvPayload.organization_id;
-              const fallbackConv = await supabase.from('whatsapp_conversations').insert([newConvPayload]).select('id').maybeSingle();
-              newConv = fallbackConv.data;
-            }
+            const { data: newConv } = await supabase.from('whatsapp_conversations').insert([newConvPayload]).select('id').maybeSingle();
             effectiveConvId = newConv?.id;
           }
         }
 
         if (effectiveConvId) {
           const msgPayload = {
-            organization_id: DEFAULT_ORG_ID,
             conversation_id: effectiveConvId,
             direction: 'outbound',
             sender_type: senderType,
@@ -118,11 +110,7 @@ exports.handler = async (event) => {
             provider_message_id: sendRes.messageId || null,
           };
 
-          let { error: msgErr } = await supabase.from('whatsapp_messages').insert([msgPayload]);
-          if (msgErr && msgErr.message && msgErr.message.includes('organization_id')) {
-            delete msgPayload.organization_id;
-            await supabase.from('whatsapp_messages').insert([msgPayload]);
-          }
+          await supabase.from('whatsapp_messages').insert([msgPayload]);
 
           // Preserve conversation mode based on sender type
           const newMode = senderType === 'ai' ? 'AI ACTIVE' : 'HUMAN ACTIVE';
