@@ -560,54 +560,95 @@ exports.handler = async (event) => {
           payload: body, processed: true,
         }], { onConflict: 'provider_event_id' });
 
-        // Lead upsert
-        const { data: existingLead } = await supabase.from('leads').select('id').eq('phone', fromPhone).maybeSingle();
+        // Lead upsert with multi-format phone search
+        const cleanFromDigits = fromPhone.replace(/[^\d]/g, '');
+        const { data: existingLead } = await supabase.from('leads')
+          .select('id')
+          .or(`phone.eq.${fromPhone},phone.eq.+${fromPhone},phone.eq.${cleanFromDigits},phone.eq.+${cleanFromDigits}`)
+          .maybeSingle();
+
         if (existingLead) {
           leadId = existingLead.id;
         } else {
-          const { data: newLead } = await supabase.from('leads').insert([{
-            organization_id: DEFAULT_ORG_ID, name: contactName, phone: fromPhone,
-            source: 'WhatsApp', status: 'New', notes: 'Auto-created by webhook',
-          }]).select('id').single();
+          const newLeadPayload = {
+            organization_id: DEFAULT_ORG_ID,
+            name: contactName,
+            phone: fromPhone.startsWith('+') ? fromPhone : '+' + fromPhone,
+            source: 'WhatsApp',
+            status: 'New',
+            notes: 'Auto-created by webhook',
+          };
+          let { data: newLead, error: lErr } = await supabase.from('leads').insert([newLeadPayload]).select('id').maybeSingle();
+          if (lErr && lErr.message && lErr.message.includes('organization_id')) {
+            delete newLeadPayload.organization_id;
+            const fb = await supabase.from('leads').insert([newLeadPayload]).select('id').maybeSingle();
+            newLead = fb.data;
+          }
           leadId = newLead?.id;
         }
 
-        // Conversation upsert
+        // Conversation upsert with multi-format phone matching
         const { data: conv } = await supabase.from('whatsapp_conversations')
-          .select('id, conversation_mode, unread_count').eq('contact_phone', fromPhone).maybeSingle();
+          .select('id, conversation_mode, unread_count')
+          .or(`contact_phone.eq.${fromPhone},contact_phone.eq.+${fromPhone},contact_phone.eq.${cleanFromDigits},contact_phone.eq.+${cleanFromDigits},lead_id.eq.${leadId}`)
+          .maybeSingle();
+
         if (conv) {
           conversationId = conv.id;
           conversationMode = conv.conversation_mode || 'AI ACTIVE';
           await supabase.from('whatsapp_conversations').update({
-            last_message_text: messageText, last_message_at: new Date().toISOString(),
+            last_message_text: messageText,
+            last_message_at: new Date().toISOString(),
             unread_count: (conv.unread_count || 0) + 1,
+            lead_id: leadId || conv.lead_id,
           }).eq('id', conv.id);
         } else {
-          const { data: newConv } = await supabase.from('whatsapp_conversations').insert([{
-            organization_id: DEFAULT_ORG_ID, lead_id: leadId, contact_phone: fromPhone,
-            contact_name: contactName, conversation_mode: 'AI ACTIVE',
-            last_message_text: messageText, last_message_at: new Date().toISOString(), unread_count: 1,
-          }]).select('id').single();
+          const newConvPayload = {
+            organization_id: DEFAULT_ORG_ID,
+            lead_id: leadId,
+            contact_phone: fromPhone.startsWith('+') ? fromPhone : '+' + fromPhone,
+            contact_name: contactName,
+            conversation_mode: 'AI ACTIVE',
+            last_message_text: messageText,
+            last_message_at: new Date().toISOString(),
+            unread_count: 1,
+          };
+          let { data: newConv, error: cErr } = await supabase.from('whatsapp_conversations').insert([newConvPayload]).select('id').maybeSingle();
+          if (cErr && cErr.message && cErr.message.includes('organization_id')) {
+            delete newConvPayload.organization_id;
+            const fb = await supabase.from('whatsapp_conversations').insert([newConvPayload]).select('id').maybeSingle();
+            newConv = fb.data;
+          }
           conversationId = newConv?.id;
         }
 
         // Log inbound message
         const messageInsert = {
-          organization_id: DEFAULT_ORG_ID, conversation_id: conversationId,
-          provider_message_id: providerEventId, direction: 'inbound',
-          sender_type: 'customer', message_type: msg.type || 'text',
-          body: messageText, status: 'delivered', raw_payload: msg,
+          organization_id: DEFAULT_ORG_ID,
+          conversation_id: conversationId,
+          provider_message_id: providerEventId,
+          direction: 'inbound',
+          sender_type: 'customer',
+          message_type: msg.type || 'text',
+          body: messageText,
+          status: 'delivered',
+          raw_payload: msg,
         };
 
         // Handle media attachments
         if (['image', 'document', 'audio', 'video', 'sticker'].includes(msg.type)) {
           const mediaObj = msg[msg.type];
           if (mediaObj?.id) {
-            messageInsert.media_url = mediaObj.id; // Store Meta media ID for later retrieval
+            messageInsert.media_url = mediaObj.id;
           }
         }
 
-        const { data: insertedMsg } = await supabase.from('whatsapp_messages').insert([messageInsert]).select('id').single();
+        let { data: insertedMsg, error: mErr } = await supabase.from('whatsapp_messages').insert([messageInsert]).select('id').maybeSingle();
+        if (mErr && mErr.message && mErr.message.includes('organization_id')) {
+          delete messageInsert.organization_id;
+          const fb = await supabase.from('whatsapp_messages').insert([messageInsert]).select('id').maybeSingle();
+          insertedMsg = fb.data;
+        }
 
         // Store media reference in whatsapp_media table
         if (['image', 'document', 'audio', 'video', 'sticker'].includes(msg.type) && insertedMsg?.id) {

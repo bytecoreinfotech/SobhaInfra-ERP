@@ -62,30 +62,76 @@ exports.handler = async (event) => {
     const sendRes = await sendMetaWhatsApp(to, text);
 
     let supabase = null;
+    let effectiveConvId = conversationId;
+
     if (SUPABASE_URL && SUPABASE_KEY && !SUPABASE_URL.includes('placeholder')) {
       try {
         supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
-        if (conversationId) {
-          await supabase.from('whatsapp_messages').insert([{
+        const cleanPhone = String(to).replace(/[^\d+]/g, '');
+        const digitsOnly = cleanPhone.replace(/[^\d]/g, '');
+
+        // If no conversationId passed, find or create one in Supabase
+        if (!effectiveConvId) {
+          const { data: existingConv } = await supabase.from('whatsapp_conversations')
+            .select('id')
+            .or(`contact_phone.eq.${cleanPhone},contact_phone.eq.${digitsOnly},contact_phone.eq.+${digitsOnly}`)
+            .maybeSingle();
+
+          if (existingConv) {
+            effectiveConvId = existingConv.id;
+          } else {
+            // Check if matching lead exists
+            const { data: leadMatch } = await supabase.from('leads')
+              .select('id, name')
+              .or(`phone.eq.${cleanPhone},phone.eq.${digitsOnly},phone.eq.+${digitsOnly}`)
+              .maybeSingle();
+
+            const newConvPayload = {
+              organization_id: DEFAULT_ORG_ID,
+              lead_id: leadMatch?.id || null,
+              contact_name: leadMatch?.name || 'Customer',
+              contact_phone: cleanPhone.startsWith('+') ? cleanPhone : '+' + cleanPhone,
+              conversation_mode: 'HUMAN ACTIVE',
+              last_message_text: text,
+              last_message_at: new Date().toISOString(),
+              unread_count: 0,
+            };
+
+            let { data: newConv, error: convErr } = await supabase.from('whatsapp_conversations').insert([newConvPayload]).select('id').maybeSingle();
+            if (convErr && convErr.message && convErr.message.includes('organization_id')) {
+              delete newConvPayload.organization_id;
+              const fallbackConv = await supabase.from('whatsapp_conversations').insert([newConvPayload]).select('id').maybeSingle();
+              newConv = fallbackConv.data;
+            }
+            effectiveConvId = newConv?.id;
+          }
+        }
+
+        if (effectiveConvId) {
+          const msgPayload = {
             organization_id: DEFAULT_ORG_ID,
-            conversation_id: conversationId,
+            conversation_id: effectiveConvId,
             direction: 'outbound',
             sender_type: senderType,
             body: text,
             status: sendRes.success ? 'delivered' : 'failed',
             provider_message_id: sendRes.messageId || null,
-          }]);
+          };
+
+          let { error: msgErr } = await supabase.from('whatsapp_messages').insert([msgPayload]);
+          if (msgErr && msgErr.message && msgErr.message.includes('organization_id')) {
+            delete msgPayload.organization_id;
+            await supabase.from('whatsapp_messages').insert([msgPayload]);
+          }
 
           // Preserve conversation mode based on sender type
-          // CRITICAL: When a human agent sends a message, keep mode as HUMAN ACTIVE
-          // Only revert to AI ACTIVE if message is explicitly from AI
           const newMode = senderType === 'ai' ? 'AI ACTIVE' : 'HUMAN ACTIVE';
           await supabase.from('whatsapp_conversations').update({
             last_message_text: text,
             last_message_at: new Date().toISOString(),
             conversation_mode: newMode,
-            unread_count: 0, // Clear unread when agent replies
-          }).eq('id', conversationId);
+            unread_count: 0,
+          }).eq('id', effectiveConvId);
         }
       } catch (dbErr) {
         console.warn('[Send Message] DB logging warning:', dbErr.message);

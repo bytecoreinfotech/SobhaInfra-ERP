@@ -315,18 +315,21 @@ export async function getCustomer360(leadId) {
   if (leadErr) return { data: null, error: leadErr };
 
   const normPhone = normalizePhone(lead.phone);
+  const digitsOnly = normPhone.replace(/[^\d]/g, '');
+
   const [dealsRes, quotesRes, tasksRes, invoicesRes, activitiesRes, convRes] = await Promise.all([
     supabase.from('deals').select('*').eq('lead_id', leadId),
     supabase.from('quotations').select('*').eq('lead_id', leadId),
     supabase.from('tasks').select('*').eq('related_lead_id', leadId),
-    supabase.from('invoices').select('*').eq('client_phone', normPhone),
+    supabase.from('invoices').select('*').or(`client_phone.eq.${normPhone},client_phone.eq.${digitsOnly},client_phone.eq.+${digitsOnly}`),
     supabase.from('activities').select('*').eq('lead_id', leadId).order('created_at', { ascending: false }),
-    supabase.from('whatsapp_conversations').select('id').eq('contact_phone', normPhone).maybeSingle(),
+    supabase.from('whatsapp_conversations').select('*').or(`lead_id.eq.${leadId},contact_phone.eq.${normPhone},contact_phone.eq.${digitsOnly},contact_phone.eq.+${digitsOnly}`).order('last_message_at', { ascending: false }).limit(1).maybeSingle(),
   ]);
 
   let messages = [];
-  if (convRes?.data?.id) {
-    const { data: msgs } = await supabase.from('whatsapp_messages').select('*').eq('conversation_id', convRes.data.id).order('created_at', { ascending: true });
+  const conv = convRes?.data;
+  if (conv?.id) {
+    const { data: msgs } = await supabase.from('whatsapp_messages').select('*').eq('conversation_id', conv.id).order('created_at', { ascending: true });
     messages = msgs || [];
   }
 
@@ -337,6 +340,7 @@ export async function getCustomer360(leadId) {
   return {
     data: {
       lead,
+      conv,
       deals: dealsRes.data || [],
       quotations: quotesRes.data || [],
       tasks: tasksRes.data || [],
