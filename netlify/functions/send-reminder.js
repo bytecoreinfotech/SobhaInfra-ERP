@@ -131,14 +131,24 @@ exports.handler = async (event) => {
           last_reminder_at: new Date().toISOString(),
         }).eq('id', inv.id);
 
-        // Log to payment_reminders (with organization_id)
-        await supabase.from('payment_reminders').insert([{
-          organization_id: inv.organization_id || DEFAULT_ORG_ID,
-          invoice_id: inv.id,
-          channel: 'WhatsApp',
-          message,
-          status: result.simulated ? 'simulated' : 'sent',
-        }]);
+        // Log to payment_reminders
+        try {
+          const { error: prErr } = await supabase.from('payment_reminders').insert([{
+            invoice_id: inv.id,
+            channel: 'WhatsApp',
+            message,
+            status: result.simulated ? 'simulated' : 'sent',
+          }]);
+          if (prErr) {
+            await supabase.from('payment_reminders').insert([{
+              organization_id: DEFAULT_ORG_ID,
+              invoice_id: inv.id,
+              channel: 'WhatsApp',
+              message,
+              status: result.simulated ? 'simulated' : 'sent',
+            }]);
+          }
+        } catch {}
 
         // Log to activities table (not activity_feed which doesn't exist)
         try {
