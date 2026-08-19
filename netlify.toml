@@ -6,6 +6,18 @@
 [functions]
   node_bundler = "esbuild"
 
+# ─── Scheduled Functions (Cron Jobs) ──────────────────────────────────────────
+
+# Run automations scheduler every hour (overdue invoices, scheduled campaigns)
+[functions.scheduled-automations]
+  schedule = "0 * * * *"
+
+# Run data retention cleanup daily at 3 AM UTC
+[functions.data-retention]
+  schedule = "0 3 * * *"
+
+# ─── Redirects ────────────────────────────────────────────────────────────────
+
 [[redirects]]
   from = "/*"
   to = "/index.html"

@@ -5,9 +5,12 @@
  * Implements:
  *  - Database-backed batch claiming (avoids single-request 5,000 loop timeout)
  *  - Atomic status transitions: 'pending' -> 'claimed' -> 'sent' / 'failed'
+ *  - Meta approved TEMPLATE messages for broadcasts (not plain text)
+ *  - Fallback to text-only within 24h customer-initiated window
  *  - Opt-out exclusions and phone normalization
  *  - Meta API rate pacing (150ms delay between messages)
  *  - Multi-touch attribution logging (last_touch_campaign)
+ *  - Uses increment_campaign_stats RPC for atomic counter updates
  */
 
 const { createClient } = require('@supabase/supabase-js');
@@ -18,9 +21,60 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY;
 const DEFAULT_ORG_ID = '00000000-0000-0000-0000-000000000001';
 
-async function sendWhatsAppMessage(to, text) {
+// ─── 1. Send WhatsApp Template Message (Meta Approved) ───────────────────────
+async function sendWhatsAppTemplate(to, template, params) {
   if (!WA_TOKEN || !PHONE_ID) {
-    // Development fallback
+    return { success: true, messageId: 'mock-wamid-' + Date.now() };
+  }
+  try {
+    const cleanPhone = to.replace(/[^\d+]/g, '').replace(/^\+/, '');
+    const url = `https://graph.facebook.com/v20.0/${PHONE_ID}/messages`;
+
+    // Build template components with parameter substitution
+    const components = [];
+    if (params && params.length > 0) {
+      components.push({
+        type: 'body',
+        parameters: params.map(p => ({ type: 'text', text: String(p) })),
+      });
+    }
+
+    const payload = {
+      messaging_product: 'whatsapp',
+      to: cleanPhone,
+      type: 'template',
+      template: {
+        name: template.name,
+        language: { code: template.language || 'en_US' },
+      },
+    };
+
+    if (components.length > 0) {
+      payload.template.components = components;
+    }
+
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${WA_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    return {
+      success: !data.error,
+      messageId: data.messages?.[0]?.id,
+      error: data.error?.message,
+    };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
+// ─── 2. Send Plain Text Message (Fallback — only within 24h window) ──────────
+async function sendWhatsAppText(to, text) {
+  if (!WA_TOKEN || !PHONE_ID) {
     return { success: true, messageId: 'mock-wamid-' + Date.now() };
   }
   try {
@@ -50,14 +104,35 @@ async function sendWhatsAppMessage(to, text) {
   }
 }
 
+// ─── 3. Personalize template variables ───────────────────────────────────────
+function extractTemplateParams(variablesSchema, recipient) {
+  if (!variablesSchema || variablesSchema.length === 0) return [];
+
+  const lead = recipient.lead || {};
+  const variableMap = {
+    '{name}': lead.name || 'Valued Customer',
+    '{product}': lead.property_interest || 'our products',
+    '{budget}': lead.budget || '',
+    '{amount}': lead.budget || '',
+    '{phone}': lead.phone || '',
+    '{company}': lead.company_name || '',
+  };
+
+  return variablesSchema.map(v => {
+    const placeholder = v.placeholder || v;
+    return variableMap[placeholder] || placeholder;
+  });
+}
+
 function personalize(template, recipient) {
   return template
     .replace(/{name}/g, recipient.name || 'Valued Customer')
-    .replace(/{property}/g, recipient.property_interest || 'our latest properties')
+    .replace(/{product}/g, recipient.property_interest || 'our products')
     .replace(/{budget}/g, recipient.budget || 'special pricing')
     .replace(/{amount}/g, recipient.budget || 'advance');
 }
 
+// ─── 4. Main Handler ─────────────────────────────────────────────────────────
 exports.handler = async (event) => {
   const cors = {
     'Access-Control-Allow-Origin': '*',
@@ -81,13 +156,24 @@ exports.handler = async (event) => {
 
     let pendingRecipients = [];
     let campaign = null;
+    let template = null;
 
     if (supabase) {
       // 1. Fetch Campaign Info
       const { data: cData } = await supabase.from('campaigns').select('*').eq('id', campaignId).single();
       campaign = cData;
 
-      // 2. Atomically Claim Batch of Pending Recipients
+      // 2. Fetch linked WhatsApp template if campaign has template_id
+      if (campaign?.template_id) {
+        const { data: tData } = await supabase
+          .from('whatsapp_templates')
+          .select('*')
+          .eq('id', campaign.template_id)
+          .single();
+        template = tData;
+      }
+
+      // 3. Atomically Claim Batch of Pending Recipients
       const { data: recs } = await supabase
         .from('campaign_recipients')
         .select('*, lead:leads(*)')
@@ -108,8 +194,8 @@ exports.handler = async (event) => {
     } else {
       // Mock mode: generate mock recipients
       pendingRecipients = [
-        { id: 'rec-1', phone: '+919876543210', lead: { name: 'Ravi Mehta', property_interest: '3BHK - Andheri West', budget: '₹80L' } },
-        { id: 'rec-2', phone: '+918765432109', lead: { name: 'Sunita Patel', property_interest: '2BHK - Borivali', budget: '₹55L' } },
+        { id: 'rec-1', phone: '+919876543210', lead: { name: 'Customer A', property_interest: 'Product A', budget: '₹1L' } },
+        { id: 'rec-2', phone: '+918765432109', lead: { name: 'Customer B', property_interest: 'Product B', budget: '₹2L' } },
       ];
     }
 
@@ -120,16 +206,24 @@ exports.handler = async (event) => {
       sent: 0,
       failed: 0,
       errors: [],
+      sendMethod: template ? 'template' : 'text',
     };
 
-    const textToUse = templateText || campaign?.template_name || 'Hello {name}, exciting real estate offers await you!';
-
-    // 3. Process Batch with Rate Limiting (150ms)
+    // 4. Process Batch with Rate Limiting (150ms)
     for (const item of pendingRecipients) {
       const recipientLead = item.lead || {};
-      const personalizedMsg = personalize(textToUse, recipientLead);
+      let sendRes;
 
-      const sendRes = await sendWhatsAppMessage(item.phone, personalizedMsg);
+      if (template && template.status === 'APPROVED') {
+        // ─── Use Meta approved template (required for broadcasts outside 24h window)
+        const params = extractTemplateParams(template.variables_schema || [], item);
+        sendRes = await sendWhatsAppTemplate(item.phone, template, params);
+      } else {
+        // ─── Fallback to text (only works within 24h customer-initiated window)
+        const textToUse = templateText || campaign?.template_name || 'Hello {name}, we have exciting offers for you!';
+        const personalizedMsg = personalize(textToUse, recipientLead);
+        sendRes = await sendWhatsAppText(item.phone, personalizedMsg);
+      }
 
       if (sendRes.success) {
         results.sent++;
@@ -145,6 +239,29 @@ exports.handler = async (event) => {
               last_touch_campaign: campaign.name,
             }).eq('id', item.lead_id);
           }
+
+          // Log WhatsApp message for inbox visibility
+          if (item.lead_id) {
+            try {
+              const { data: conv } = await supabase.from('whatsapp_conversations')
+                .select('id')
+                .eq('contact_phone', item.phone)
+                .maybeSingle();
+
+              if (conv?.id) {
+                await supabase.from('whatsapp_messages').insert([{
+                  organization_id: DEFAULT_ORG_ID,
+                  conversation_id: conv.id,
+                  direction: 'outbound',
+                  sender_type: 'system',
+                  message_type: template ? 'template' : 'text',
+                  body: template ? `[Template: ${template.name}]` : templateText,
+                  status: 'sent',
+                  provider_message_id: sendRes.messageId,
+                }]);
+              }
+            } catch {}
+          }
         }
       } else {
         results.failed++;
@@ -157,32 +274,41 @@ exports.handler = async (event) => {
         }
       }
 
-      // 150ms delay between messages
+      // 150ms delay between messages (Meta rate limiting)
       await new Promise(r => setTimeout(r, 150));
     }
 
-    // 4. Update Aggregated Stats on Campaign Master
+    // 5. Update Aggregated Stats on Campaign Master (atomic RPC)
     if (supabase && campaignId) {
       try {
-        const { error: rpcErr } = await supabase.rpc('increment_campaign_stats', {
+        await supabase.rpc('increment_campaign_stats', {
           c_id: campaignId,
           sent_delta: results.sent,
           failed_delta: results.failed,
         });
-        if (rpcErr) {
-          await supabase.from('campaigns').update({
-            total_sent: (campaign?.total_sent || 0) + results.sent,
-            status: 'Running',
-          }).eq('id', campaignId);
-        }
-      } catch {
+      } catch (rpcErr) {
+        // Fallback to direct update if RPC still fails
+        console.warn('[Campaign] RPC fallback:', rpcErr.message);
         try {
           await supabase.from('campaigns').update({
             total_sent: (campaign?.total_sent || 0) + results.sent,
             status: 'Running',
+            updated_at: new Date().toISOString(),
           }).eq('id', campaignId);
         } catch {}
       }
+
+      // Log business event
+      try {
+        await supabase.from('business_events').insert([{
+          organization_id: DEFAULT_ORG_ID,
+          event_type: 'campaign.batch_processed',
+          entity_type: 'campaign',
+          entity_id: campaignId,
+          actor_type: 'system',
+          payload: { sent: results.sent, failed: results.failed, batchSize: results.processed },
+        }]);
+      } catch {}
     }
 
     return {

@@ -76,10 +76,15 @@ exports.handler = async (event) => {
             provider_message_id: sendRes.messageId || null,
           }]);
 
+          // Preserve conversation mode based on sender type
+          // CRITICAL: When a human agent sends a message, keep mode as HUMAN ACTIVE
+          // Only revert to AI ACTIVE if message is explicitly from AI
+          const newMode = senderType === 'ai' ? 'AI ACTIVE' : 'HUMAN ACTIVE';
           await supabase.from('whatsapp_conversations').update({
             last_message_text: text,
             last_message_at: new Date().toISOString(),
-            conversation_mode: 'AI ACTIVE',
+            conversation_mode: newMode,
+            unread_count: 0, // Clear unread when agent replies
           }).eq('id', conversationId);
         }
       } catch (dbErr) {
