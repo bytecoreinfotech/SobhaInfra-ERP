@@ -4,7 +4,7 @@ import {
   Clock, IndianRupee, Send, AlertTriangle, Shield, Building2,
   TrendingUp, Calendar, Tag, ChevronRight, Plus, RefreshCw, Zap
 } from 'lucide-react';
-import { getCustomer360, addCustomerNote, createDeal, logPaymentReminder, sendWhatsAppMessage } from '../lib/db';
+import { getCustomer360, addCustomerNote, createDeal, logPaymentReminder, sendWhatsAppMessage, updateConversationMode } from '../lib/db';
 import './Customer360Modal.css';
 
 const Customer360Modal = ({ leadId, onClose, onLeadUpdated }) => {
@@ -23,16 +23,51 @@ const Customer360Modal = ({ leadId, onClose, onLeadUpdated }) => {
   const [replyText, setReplyText] = useState('');
   const [msgSent, setMsgSent] = useState(null);
   const [sendingMsg, setSendingMsg] = useState(false);
+  const [togglingMode, setTogglingMode] = useState(false);
 
   useEffect(() => {
     if (leadId) load360Data();
   }, [leadId]);
 
-  const load360Data = async () => {
-    setLoading(true);
+  // Real-time message polling every 3 seconds when WhatsApp tab is active
+  useEffect(() => {
+    if (!leadId || activeTab !== 'whatsapp') return;
+    const interval = setInterval(async () => {
+      const res = await getCustomer360(leadId);
+      if (res.data?.messages) {
+        setData(prev => {
+          if (!prev) return res.data;
+          // Only update if message count changed to prevent flicker
+          if ((prev.messages || []).length !== (res.data.messages || []).length) {
+            return { ...prev, messages: res.data.messages, conv: res.data.conv || prev.conv };
+          }
+          return prev;
+        });
+      }
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [leadId, activeTab]);
+
+  const load360Data = async (silent = false) => {
+    if (!silent) setLoading(true);
     const res = await getCustomer360(leadId);
     if (res.data) setData(res.data);
-    setLoading(false);
+    if (!silent) setLoading(false);
+  };
+
+  const handleToggleMode = async () => {
+    const convId = data?.conv?.id;
+    if (!convId || togglingMode) return;
+    setTogglingMode(true);
+    const currentMode = data?.conv?.conversation_mode || 'AI ACTIVE';
+    const nextMode = currentMode === 'AI ACTIVE' ? 'HUMAN ACTIVE' : 'AI ACTIVE';
+    
+    await updateConversationMode(convId, nextMode);
+    setData(prev => ({
+      ...prev,
+      conv: { ...(prev?.conv || {}), conversation_mode: nextMode }
+    }));
+    setTogglingMode(false);
   };
 
   const handleAddNote = async (e) => {
