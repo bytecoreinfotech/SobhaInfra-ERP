@@ -579,26 +579,20 @@ exports.handler = async (event) => {
           leadId = existingLead.id;
         } else {
           const newLeadPayload = {
-            organization_id: DEFAULT_ORG_ID,
             name: contactName,
             phone: fromPhone.startsWith('+') ? fromPhone : '+' + fromPhone,
             source: 'WhatsApp',
             status: 'New',
             notes: 'Auto-created by webhook',
           };
-          let { data: newLead, error: lErr } = await supabase.from('leads').insert([newLeadPayload]).select('id').maybeSingle();
-          if (lErr && lErr.message && lErr.message.includes('organization_id')) {
-            delete newLeadPayload.organization_id;
-            const fb = await supabase.from('leads').insert([newLeadPayload]).select('id').maybeSingle();
-            newLead = fb.data;
-          }
+          const { data: newLead } = await supabase.from('leads').insert([newLeadPayload]).select('id').maybeSingle();
           leadId = newLead?.id;
         }
 
-        // Conversation upsert with multi-format phone matching
+        // Conversation upsert with multi-format phone matching (no lead_id filter - int/UUID type mismatch)
         const { data: conv } = await supabase.from('whatsapp_conversations')
           .select('id, conversation_mode, unread_count')
-          .or(`contact_phone.eq.${fromPhone},contact_phone.eq.+${fromPhone},contact_phone.eq.${cleanFromDigits},contact_phone.eq.+${cleanFromDigits},lead_id.eq.${leadId}`)
+          .or(`contact_phone.eq.${fromPhone},contact_phone.eq.+${fromPhone},contact_phone.eq.${cleanFromDigits},contact_phone.eq.+${cleanFromDigits}`)
           .maybeSingle();
 
         if (conv) {
@@ -608,7 +602,6 @@ exports.handler = async (event) => {
             last_message_text: messageText,
             last_message_at: new Date().toISOString(),
             unread_count: (conv.unread_count || 0) + 1,
-            lead_id: leadId || conv.lead_id,
           }).eq('id', conv.id);
         } else {
           const newConvPayload = {
@@ -619,12 +612,7 @@ exports.handler = async (event) => {
             last_message_at: new Date().toISOString(),
             unread_count: 1,
           };
-          let { data: newConv, error: cErr } = await supabase.from('whatsapp_conversations').insert([newConvPayload]).select('id').maybeSingle();
-          if (cErr && cErr.message && cErr.message.includes('organization_id')) {
-            delete newConvPayload.organization_id;
-            const fb = await supabase.from('whatsapp_conversations').insert([newConvPayload]).select('id').maybeSingle();
-            newConv = fb.data;
-          }
+          let { data: newConv } = await supabase.from('whatsapp_conversations').insert([newConvPayload]).select('id').maybeSingle();
           conversationId = newConv?.id;
         }
 

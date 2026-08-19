@@ -4,7 +4,7 @@ import {
   Clock, IndianRupee, Send, AlertTriangle, Shield, Building2,
   TrendingUp, Calendar, Tag, ChevronRight, Plus, RefreshCw, Zap
 } from 'lucide-react';
-import { getCustomer360, addCustomerNote, createDeal, logPaymentReminder, sendWhatsAppMessage, updateConversationMode } from '../lib/db';
+import { getCustomer360, addCustomerNote, createDeal, logPaymentReminder, sendWhatsAppMessage, updateConversationMode, deleteWhatsAppMessage, clearWhatsAppChat } from '../lib/db';
 import './Customer360Modal.css';
 
 const Customer360Modal = ({ leadId, onClose, onLeadUpdated }) => {
@@ -24,6 +24,16 @@ const Customer360Modal = ({ leadId, onClose, onLeadUpdated }) => {
   const [msgSent, setMsgSent] = useState(null);
   const [sendingMsg, setSendingMsg] = useState(false);
   const [togglingMode, setTogglingMode] = useState(false);
+
+  // Media attachment
+  const [showMediaInput, setShowMediaInput] = useState(false);
+  const [mediaType, setMediaType] = useState('image');
+  const [mediaUrl, setMediaUrl] = useState('');
+  const [mediaFileName, setMediaFileName] = useState('');
+
+  // Message management
+  const [hoveredMsgId, setHoveredMsgId] = useState(null);
+  const [clearingChat, setClearingChat] = useState(false);
 
   useEffect(() => {
     if (leadId) load360Data();
@@ -107,15 +117,21 @@ const Customer360Modal = ({ leadId, onClose, onLeadUpdated }) => {
 
   const handleSendQuickMsg = async (e) => {
     e.preventDefault();
-    if (!replyText.trim() || sendingMsg) return;
+    const hasText = replyText.trim();
+    const hasMedia = showMediaInput && mediaUrl.trim();
+    if ((!hasText && !hasMedia) || sendingMsg) return;
     setSendingMsg(true);
     const textToSend = replyText;
     const phoneToUse = data?.lead?.phone;
     const convId = data?.conv?.id || null;
+    const mType = hasMedia ? mediaType : 'text';
+    const mUrl = hasMedia ? mediaUrl.trim() : null;
+    const mName = hasMedia ? (mediaFileName.trim() || null) : null;
 
     try {
-      const res = await sendWhatsAppMessage(convId, textToSend, 'human_agent', phoneToUse);
+      const res = await sendWhatsAppMessage(convId, textToSend, 'human_agent', phoneToUse, mType, mUrl, mName);
       setReplyText('');
+      if (hasMedia) { setMediaUrl(''); setMediaFileName(''); setShowMediaInput(false); }
 
       // Immediately reload from DB so message persists after modal close/reopen
       const refreshed = await getCustomer360(leadId);
@@ -131,7 +147,9 @@ const Customer360Modal = ({ leadId, onClose, onLeadUpdated }) => {
           id: 'msg-' + Date.now(),
           direction: 'outbound',
           sender_type: 'human_agent',
+          message_type: mType,
           body: textToSend,
+          media_url: mUrl,
           created_at: new Date().toISOString(),
         };
         setData(prev => ({ ...prev, messages: [...(prev.messages || []), newMsg] }));
@@ -148,6 +166,20 @@ const Customer360Modal = ({ leadId, onClose, onLeadUpdated }) => {
       setTimeout(() => setMsgSent(null), 4000);
     }
     setSendingMsg(false);
+  };
+
+  const handleDeleteMessage = async (messageId) => {
+    await deleteWhatsAppMessage(messageId);
+    setData(prev => ({ ...prev, messages: (prev.messages || []).filter(m => m.id !== messageId) }));
+  };
+
+  const handleClearChat = async () => {
+    if (!data?.conv?.id) return;
+    if (!window.confirm('Clear all messages in this chat? This only removes them from CRM view, not from WhatsApp.')) return;
+    setClearingChat(true);
+    await clearWhatsAppChat(data.conv.id);
+    setData(prev => ({ ...prev, messages: [] }));
+    setClearingChat(false);
   };
 
 
@@ -317,28 +349,43 @@ const Customer360Modal = ({ leadId, onClose, onLeadUpdated }) => {
 
               {/* TAB 2: WHATSAPP THREAD */}
               {activeTab === 'whatsapp' && (
-                <div style={{ display: 'flex', flexDirection: 'column', height: '440px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', height: '460px' }}>
+                  {/* Mode bar + Clear Chat */}
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem', padding: '0.4rem 0.75rem', background: 'var(--bg-tertiary)', borderRadius: 6, fontSize: '0.75rem' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                       <span className={`badge ${data.conv?.conversation_mode === 'AI ACTIVE' ? 'badge-success' : 'badge-neutral'}`} style={{ fontSize: '0.7rem' }}>
                         ● {data.conv?.conversation_mode === 'AI ACTIVE' ? '🤖 AI Bot Active' : '👤 Human Mode Active'}
                       </span>
                       <span style={{ color: 'var(--text-muted)' }}>
-                        {data.conv?.conversation_mode === 'AI ACTIVE' ? '(AI automatically replies to incoming messages)' : '(Human agent has control)'}
+                        {data.conv?.conversation_mode === 'AI ACTIVE' ? '(AI auto-replies)' : '(Human has control)'}
                       </span>
                     </div>
-                    {data.conv?.id && (
-                      <button
-                        className="btn btn-secondary btn-sm"
-                        onClick={handleToggleMode}
-                        disabled={togglingMode}
-                        style={{ fontSize: '0.68rem', padding: '0.2rem 0.5rem' }}
-                      >
-                        {data.conv?.conversation_mode === 'AI ACTIVE' ? 'Switch to Human Mode' : 'Switch to 🤖 AI Auto-Reply'}
-                      </button>
-                    )}
+                    <div style={{ display: 'flex', gap: '0.4rem' }}>
+                      {data.conv?.id && (data.messages?.length > 0) && (
+                        <button
+                          className="btn btn-secondary btn-sm"
+                          onClick={handleClearChat}
+                          disabled={clearingChat}
+                          style={{ fontSize: '0.65rem', padding: '0.18rem 0.45rem', color: 'var(--warning)' }}
+                          title="Clear CRM chat history (does not delete from WhatsApp)"
+                        >
+                          {clearingChat ? '...' : '🗑 Clear Chat'}
+                        </button>
+                      )}
+                      {data.conv?.id && (
+                        <button
+                          className="btn btn-secondary btn-sm"
+                          onClick={handleToggleMode}
+                          disabled={togglingMode}
+                          style={{ fontSize: '0.65rem', padding: '0.18rem 0.45rem' }}
+                        >
+                          {data.conv?.conversation_mode === 'AI ACTIVE' ? '👤 Human Mode' : '🤖 AI Mode'}
+                        </button>
+                      )}
+                    </div>
                   </div>
 
+                  {/* Message list */}
                   <div style={{ flex: 1, overflowY: 'auto', padding: '1rem', background: 'var(--bg-secondary)', borderRadius: 8, display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                     {(!data.messages || data.messages.length === 0) ? (
                       <div style={{ textAlign: 'center', margin: 'auto', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
@@ -348,32 +395,79 @@ const Customer360Modal = ({ leadId, onClose, onLeadUpdated }) => {
                       data.messages.map(m => (
                         <div
                           key={m.id}
-                          style={{
-                            alignSelf: m.direction === 'outbound' ? 'flex-end' : 'flex-start',
-                            maxWidth: '75%',
-                            padding: '0.75rem 1rem',
+                          style={{ alignSelf: m.direction === 'outbound' ? 'flex-end' : 'flex-start', maxWidth: '78%', position: 'relative' }}
+                          onMouseEnter={() => setHoveredMsgId(m.id)}
+                          onMouseLeave={() => setHoveredMsgId(null)}
+                        >
+                          {/* Delete button on hover */}
+                          {hoveredMsgId === m.id && (
+                            <button
+                              onClick={() => handleDeleteMessage(m.id)}
+                              style={{
+                                position: 'absolute', top: -8,
+                                right: m.direction === 'outbound' ? 0 : 'auto',
+                                left: m.direction === 'inbound' ? 0 : 'auto',
+                                background: 'var(--danger, #ef4444)', color: '#fff',
+                                border: 'none', borderRadius: 999, width: 18, height: 18,
+                                cursor: 'pointer', fontSize: '0.6rem', lineHeight: '18px', textAlign: 'center', zIndex: 10,
+                              }}
+                              title="Delete from CRM (not from WhatsApp)"
+                            >✕</button>
+                          )}
+                          <div style={{
+                            padding: '0.6rem 0.9rem',
                             borderRadius: 12,
                             background: m.direction === 'outbound' ? 'rgba(99,102,241,0.2)' : 'var(--bg-tertiary)',
                             border: `1px solid ${m.direction === 'outbound' ? 'var(--accent-primary)' : 'var(--border-color)'}`,
                             fontSize: '0.82rem',
-                          }}
-                        >
-                          <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginBottom: '0.2rem' }}>
-                            {m.sender_type === 'customer' ? data.lead.name : m.sender_type === 'ai' ? '🤖 AI Sales Assistant' : '👤 Sales Agent'} · {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          }}>
+                            <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginBottom: '0.25rem' }}>
+                              {m.sender_type === 'customer' ? data.lead.name : m.sender_type === 'ai' ? '🤖 AI Sales Assistant' : '👤 Sales Agent'}
+                              {' · '}{new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              {m.status === 'failed' && <span style={{ color: 'var(--danger, #ef4444)', marginLeft: 4 }}>✕ Failed</span>}
+                            </div>
+
+                            {/* Media rendering */}
+                            {m.message_type === 'image' && m.media_url && (
+                              <img
+                                src={m.media_url}
+                                alt="Shared image"
+                                style={{ maxWidth: '100%', borderRadius: 8, marginBottom: m.body ? '0.4rem' : 0, display: 'block' }}
+                                onError={e => { e.target.style.display = 'none'; }}
+                              />
+                            )}
+                            {m.message_type === 'video' && m.media_url && (
+                              <video controls style={{ maxWidth: '100%', borderRadius: 8, marginBottom: m.body ? '0.4rem' : 0, display: 'block' }}>
+                                <source src={m.media_url} />
+                              </video>
+                            )}
+                            {m.message_type === 'audio' && m.media_url && (
+                              <audio controls style={{ width: '100%', marginBottom: m.body ? '0.4rem' : 0 }}>
+                                <source src={m.media_url} />
+                              </audio>
+                            )}
+                            {m.message_type === 'document' && m.media_url && (
+                              <a href={m.media_url} target="_blank" rel="noreferrer" style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--accent-primary)', textDecoration: 'none', marginBottom: m.body ? '0.4rem' : 0, fontSize: '0.8rem' }}>
+                                📎 {m.body || 'Document'} (tap to open)
+                              </a>
+                            )}
+
+                            {/* Text body */}
+                            {m.body && m.message_type !== 'document' && (
+                              <div style={{ whiteSpace: 'pre-wrap' }}>{m.body}</div>
+                            )}
                           </div>
-                          <div style={{ whiteSpace: 'pre-wrap' }}>{m.body}</div>
                         </div>
                       ))
                     )}
                   </div>
 
+                  {/* Status bar */}
                   {msgSent && (
                     <div style={{
                       fontSize: '0.78rem',
                       color: msgSent.success ? 'var(--success)' : 'var(--warning)',
-                      marginTop: '0.5rem',
-                      padding: '0.4rem 0.75rem',
-                      borderRadius: 6,
+                      marginTop: '0.4rem', padding: '0.35rem 0.75rem', borderRadius: 6,
                       background: msgSent.success ? 'rgba(16,185,129,0.1)' : 'var(--warning-bg)',
                       border: `1px solid ${msgSent.success ? 'var(--success)' : 'var(--warning)'}`,
                       textAlign: 'center'
@@ -382,21 +476,78 @@ const Customer360Modal = ({ leadId, onClose, onLeadUpdated }) => {
                     </div>
                   )}
 
-                  <form onSubmit={handleSendQuickMsg} style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem' }}>
+                  {/* Media URL input panel */}
+                  {showMediaInput && (
+                    <div style={{ marginTop: '0.5rem', padding: '0.6rem 0.75rem', background: 'var(--bg-tertiary)', borderRadius: 8, display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                        <select
+                          value={mediaType}
+                          onChange={e => setMediaType(e.target.value)}
+                          style={{ padding: '0.3rem 0.5rem', borderRadius: 6, border: '1px solid var(--border-color)', background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: '0.78rem', cursor: 'pointer' }}
+                        >
+                          <option value="image">🖼 Image</option>
+                          <option value="document">📄 Document</option>
+                          <option value="video">🎬 Video</option>
+                          <option value="audio">🎵 Audio</option>
+                        </select>
+                        <input
+                          type="url"
+                          className="input-field"
+                          placeholder="Paste public media URL (e.g. https://...jpg)"
+                          value={mediaUrl}
+                          onChange={e => setMediaUrl(e.target.value)}
+                          style={{ flex: 1, fontSize: '0.78rem' }}
+                        />
+                        {mediaType === 'document' && (
+                          <input
+                            type="text"
+                            className="input-field"
+                            placeholder="Filename (e.g. brochure.pdf)"
+                            value={mediaFileName}
+                            onChange={e => setMediaFileName(e.target.value)}
+                            style={{ width: 130, fontSize: '0.78rem' }}
+                          />
+                        )}
+                        <button type="button" onClick={() => { setShowMediaInput(false); setMediaUrl(''); setMediaFileName(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '1rem' }}>✕</button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Compose bar */}
+                  <form onSubmit={handleSendQuickMsg} style={{ display: 'flex', gap: '0.4rem', marginTop: '0.5rem', alignItems: 'center' }}>
+                    <button
+                      type="button"
+                      onClick={() => setShowMediaInput(v => !v)}
+                      style={{
+                        background: showMediaInput ? 'var(--accent-primary)' : 'var(--bg-tertiary)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: 8, padding: '0.45rem 0.6rem',
+                        cursor: 'pointer', color: showMediaInput ? '#fff' : 'var(--text-muted)',
+                        fontSize: '1rem', lineHeight: 1, flexShrink: 0,
+                      }}
+                      title="Attach image, document, video, or audio"
+                    >📎</button>
                     <input
                       type="text"
                       className="input-field"
-                      placeholder="Type a WhatsApp message to this customer..."
+                      placeholder={showMediaInput ? 'Caption (optional)...' : 'Type a WhatsApp message...'}
                       value={replyText}
                       onChange={e => setReplyText(e.target.value)}
                       disabled={sendingMsg}
+                      style={{ flex: 1 }}
                     />
-                    <button type="submit" className="btn btn-whatsapp" disabled={!replyText.trim() || sendingMsg}>
-                      <Send size={15} className={sendingMsg ? 'animate-spin' : ''} /> {sendingMsg ? 'Sending...' : 'Send'}
+                    <button
+                      type="submit"
+                      className="btn btn-whatsapp"
+                      disabled={sendingMsg || (!replyText.trim() && !(showMediaInput && mediaUrl.trim()))}
+                    >
+                      <Send size={15} className={sendingMsg ? 'animate-spin' : ''} />
+                      {sendingMsg ? 'Sending...' : 'Send'}
                     </button>
                   </form>
                 </div>
               )}
+
 
               {/* TAB 3: DEALS & QUOTATIONS */}
               {activeTab === 'deals' && (

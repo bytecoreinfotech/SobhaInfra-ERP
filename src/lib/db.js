@@ -582,7 +582,10 @@ export async function getWhatsAppMessages(conversationId) {
   return { data: data || [], error: null };
 }
 
-export async function sendWhatsAppMessage(conversationId, text, senderType = 'human_agent', recipientPhone = null) {
+export async function sendWhatsAppMessage(
+  conversationId, text, senderType = 'human_agent', recipientPhone = null,
+  mediaType = 'text', mediaUrl = null, mediaFileName = null
+) {
   let targetPhone = recipientPhone;
   if (!targetPhone && conversationId) {
     if (isSupabaseConfigured) {
@@ -595,13 +598,13 @@ export async function sendWhatsAppMessage(conversationId, text, senderType = 'hu
   }
 
   let apiResult = null;
-  // Dispatch live outbound message via Meta Cloud API Netlify serverless function
+  // Dispatch outbound message via Meta Cloud API (Netlify handles DB persistence)
   if (targetPhone) {
     try {
       const res = await fetch('/.netlify/functions/send-message', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ to: targetPhone, text, conversationId, senderType })
+        body: JSON.stringify({ to: targetPhone, text, conversationId, senderType, mediaType, mediaUrl, mediaFileName })
       });
       apiResult = await res.json();
     } catch (err) {
@@ -614,7 +617,9 @@ export async function sendWhatsAppMessage(conversationId, text, senderType = 'hu
     conversation_id: conversationId,
     direction: 'outbound',
     sender_type: senderType,
+    message_type: mediaType,
     body: text,
+    media_url: mediaUrl || null,
     status: apiResult?.success ? 'delivered' : 'sent',
     created_at: new Date().toISOString(),
   };
@@ -623,7 +628,6 @@ export async function sendWhatsAppMessage(conversationId, text, senderType = 'hu
     if (conversationId) {
       if (!MOCK_STORE.whatsapp_messages[conversationId]) MOCK_STORE.whatsapp_messages[conversationId] = [];
       MOCK_STORE.whatsapp_messages[conversationId].push(newMsg);
-
       const convIdx = MOCK_STORE.whatsapp_conversations.findIndex(c => c.id === conversationId);
       if (convIdx !== -1) {
         MOCK_STORE.whatsapp_conversations[convIdx].last_message_text = text;
@@ -634,36 +638,40 @@ export async function sendWhatsAppMessage(conversationId, text, senderType = 'hu
     return { data: newMsg, error: apiResult?.error || null };
   }
 
-  if (conversationId) {
-    try {
-      let { data, error } = await supabase.from('whatsapp_messages').insert([{
-        organization_id: DEFAULT_ORG_ID,
-        conversation_id: conversationId,
-        direction: 'outbound',
-        sender_type: senderType,
-        body: text,
-        status: apiResult?.success ? 'delivered' : 'sent',
-        provider_message_id: apiResult?.messageId || null
-      }]).select().maybeSingle();
-
-      if (error && error.message && error.message.includes('organization_id')) {
-        const fallback = await supabase.from('whatsapp_messages').insert([{
-          conversation_id: conversationId,
-          direction: 'outbound',
-          sender_type: senderType,
-          body: text,
-          status: apiResult?.success ? 'delivered' : 'sent',
-          provider_message_id: apiResult?.messageId || null
-        }]).select().maybeSingle();
-        data = fallback.data;
-        error = fallback.error;
-      }
-      return { data: data || newMsg, error: apiResult?.error || error };
-    } catch {}
-  }
-
+  // Supabase insert is handled by the Netlify function send-message.js
+  // Return success with the optimistic message object
   return { data: newMsg, error: apiResult?.error || null };
 }
+
+/** Delete a single WhatsApp message from the CRM (does NOT delete from WhatsApp itself) */
+export async function deleteWhatsAppMessage(messageId) {
+  if (!isSupabaseConfigured) {
+    // Remove from mock store
+    for (const convId in MOCK_STORE.whatsapp_messages) {
+      MOCK_STORE.whatsapp_messages[convId] = MOCK_STORE.whatsapp_messages[convId].filter(m => m.id !== messageId);
+    }
+    return { error: null };
+  }
+  const { error } = await supabase.from('whatsapp_messages').delete().eq('id', messageId);
+  return { error };
+}
+
+/** Clear all messages in a conversation from the CRM (does NOT affect WhatsApp) */
+export async function clearWhatsAppChat(conversationId) {
+  if (!isSupabaseConfigured) {
+    MOCK_STORE.whatsapp_messages[conversationId] = [];
+    return { error: null };
+  }
+  const { error } = await supabase.from('whatsapp_messages').delete().eq('conversation_id', conversationId);
+  if (!error) {
+    await supabase.from('whatsapp_conversations').update({
+      last_message_text: null,
+      unread_count: 0,
+    }).eq('id', conversationId);
+  }
+  return { error };
+}
+
 
 export async function updateConversationMode(conversationId, newMode) {
   if (!isSupabaseConfigured) {

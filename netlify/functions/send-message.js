@@ -4,6 +4,8 @@
  *
  * Dispatches live outbound message to customer WhatsApp via Meta Cloud API v20.0
  * and records it into Supabase / CRM activity feed.
+ * 
+ * Supports: text, image (URL), document (URL), video (URL), audio (URL)
  */
 
 const { createClient } = require('@supabase/supabase-js');
@@ -12,14 +14,66 @@ const WA_TOKEN     = process.env.WHATSAPP_TOKEN;
 const PHONE_ID     = process.env.WHATSAPP_PHONE_ID;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY;
-const DEFAULT_ORG_ID = '00000000-0000-0000-0000-000000000001';
 
-async function sendMetaWhatsApp(to, text) {
+/**
+ * Send a message via Meta WhatsApp Cloud API.
+ * Supports: text, image, document, video, audio
+ * 
+ * @param {string} to - Recipient phone number (digits only or with +)
+ * @param {string} text - Message text (used for text type and image/video captions)
+ * @param {string} mediaType - 'text' | 'image' | 'document' | 'video' | 'audio'
+ * @param {string} mediaUrl - Public URL to the media file (required for media types)
+ * @param {string} mediaFileName - Optional filename for documents
+ */
+async function sendMetaWhatsApp(to, text, mediaType = 'text', mediaUrl = null, mediaFileName = null) {
   if (!WA_TOKEN || !PHONE_ID) {
     return { success: true, messageId: 'mock-wamid-' + Date.now() };
   }
   const cleanPhone = String(to).replace(/[^\d+]/g, '').replace(/^\+/, '');
   const url = `https://graph.facebook.com/v20.0/${PHONE_ID}/messages`;
+
+  let payload;
+
+  if (mediaType === 'image' && mediaUrl) {
+    payload = {
+      messaging_product: 'whatsapp',
+      to: cleanPhone,
+      type: 'image',
+      image: { link: mediaUrl, ...(text ? { caption: text } : {}) },
+    };
+  } else if (mediaType === 'document' && mediaUrl) {
+    payload = {
+      messaging_product: 'whatsapp',
+      to: cleanPhone,
+      type: 'document',
+      document: {
+        link: mediaUrl,
+        ...(mediaFileName ? { filename: mediaFileName } : {}),
+        ...(text ? { caption: text } : {}),
+      },
+    };
+  } else if (mediaType === 'video' && mediaUrl) {
+    payload = {
+      messaging_product: 'whatsapp',
+      to: cleanPhone,
+      type: 'video',
+      video: { link: mediaUrl, ...(text ? { caption: text } : {}) },
+    };
+  } else if (mediaType === 'audio' && mediaUrl) {
+    payload = {
+      messaging_product: 'whatsapp',
+      to: cleanPhone,
+      type: 'audio',
+      audio: { link: mediaUrl },
+    };
+  } else {
+    payload = {
+      messaging_product: 'whatsapp',
+      to: cleanPhone,
+      type: 'text',
+      text: { body: text },
+    };
+  }
 
   const res = await fetch(url, {
     method: 'POST',
@@ -27,12 +81,7 @@ async function sendMetaWhatsApp(to, text) {
       'Authorization': `Bearer ${WA_TOKEN}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      messaging_product: 'whatsapp',
-      to: cleanPhone,
-      type: 'text',
-      text: { body: text },
-    }),
+    body: JSON.stringify(payload),
   });
 
   const data = await res.json();
@@ -53,13 +102,16 @@ exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') return { statusCode: 405, headers: cors, body: 'Method Not Allowed' };
 
   try {
-    const { to, text, conversationId, senderType = 'human_agent' } = JSON.parse(event.body || '{}');
+    const {
+      to, text, conversationId, senderType = 'human_agent',
+      mediaType = 'text', mediaUrl = null, mediaFileName = null,
+    } = JSON.parse(event.body || '{}');
 
-    if (!to || !text) {
-      return { statusCode: 400, headers: cors, body: JSON.stringify({ error: 'Both "to" and "text" are required' }) };
+    if (!to || (!text && !mediaUrl)) {
+      return { statusCode: 400, headers: cors, body: JSON.stringify({ error: 'Both "to" and either "text" or "mediaUrl" are required' }) };
     }
 
-    const sendRes = await sendMetaWhatsApp(to, text);
+    const sendRes = await sendMetaWhatsApp(to, text || '', mediaType, mediaUrl, mediaFileName);
 
     let supabase = null;
     let effectiveConvId = conversationId;
@@ -70,7 +122,7 @@ exports.handler = async (event) => {
         const cleanPhone = String(to).replace(/[^\d+]/g, '');
         const digitsOnly = cleanPhone.replace(/[^\d]/g, '');
 
-        // If no conversationId passed, find or create one in Supabase
+        // If no conversationId passed, find or create one
         if (!effectiveConvId) {
           const { data: existingConv } = await supabase.from('whatsapp_conversations')
             .select('id')
@@ -90,7 +142,7 @@ exports.handler = async (event) => {
               contact_name: leadMatch?.name || 'Customer',
               contact_phone: cleanPhone.startsWith('+') ? cleanPhone : '+' + cleanPhone,
               conversation_mode: 'HUMAN ACTIVE',
-              last_message_text: text,
+              last_message_text: text || mediaFileName || 'Media',
               last_message_at: new Date().toISOString(),
               unread_count: 0,
             };
@@ -105,17 +157,19 @@ exports.handler = async (event) => {
             conversation_id: effectiveConvId,
             direction: 'outbound',
             sender_type: senderType,
-            body: text,
+            message_type: mediaType,
+            body: text || '',
+            media_url: mediaUrl || null,
             status: sendRes.success ? 'delivered' : 'failed',
             provider_message_id: sendRes.messageId || null,
           };
 
           await supabase.from('whatsapp_messages').insert([msgPayload]);
 
-          // Preserve conversation mode based on sender type
+          // Update conversation last message
           const newMode = senderType === 'ai' ? 'AI ACTIVE' : 'HUMAN ACTIVE';
           await supabase.from('whatsapp_conversations').update({
-            last_message_text: text,
+            last_message_text: text || (mediaType !== 'text' ? `[${mediaType}]` : ''),
             last_message_at: new Date().toISOString(),
             conversation_mode: newMode,
             unread_count: 0,
@@ -133,10 +187,11 @@ exports.handler = async (event) => {
         success: sendRes.success,
         messageId: sendRes.messageId,
         error: sendRes.error,
+        conversationId: effectiveConvId,
       }),
     };
   } catch (err) {
-    console.error('[Send Message] Fatal error:', err);
+    console.error('[Send Message] Unhandled error:', err.message);
     return { statusCode: 500, headers: cors, body: JSON.stringify({ error: err.message }) };
   }
 };
