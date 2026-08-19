@@ -41,16 +41,18 @@ const ProductCatalogModal = ({ isOpen, onClose }) => {
   if (!isOpen) return null;
 
   return (
-    <div className="modal-overlay">
+    <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="modal-content modal-lg animate-fade-in" style={{ maxWidth: 840 }}>
         <button
-          style={{ position: 'absolute', top: '1.25rem', right: '1.25rem', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}
+          className="modal-close-btn"
           onClick={onClose}
+          title="Close Modal (Esc)"
+          aria-label="Close"
         >
-          <X size={20} />
+          <X size={18} />
         </button>
 
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', paddingRight: '2.5rem' }}>
           <div>
             <h2 style={{ fontSize: '1.15rem', fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <Building2 size={20} color="var(--accent-primary)" /> Product Master & Pricing Guardrails

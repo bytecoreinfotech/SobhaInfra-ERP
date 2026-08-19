@@ -93,7 +93,7 @@ const Customer360Modal = ({ leadId, onClose, onLeadUpdated }) => {
   if (!leadId) return null;
 
   return (
-    <div className="c360-overlay">
+    <div className="c360-overlay" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="c360-container animate-fade-in">
         {/* Top bar */}
         <div className="c360-header">
@@ -122,12 +122,27 @@ const Customer360Modal = ({ leadId, onClose, onLeadUpdated }) => {
               </div>
             </div>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
             <button className="btn btn-secondary btn-sm" onClick={load360Data} title="Refresh 360 Profile">
               <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
             </button>
-            <button className="btn-icon" onClick={onClose}>
-              <X size={20} />
+            <button
+              onClick={onClose}
+              title="Close Customer 360"
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: '50%',
+                background: 'var(--bg-tertiary)',
+                border: '1px solid var(--border-color)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+                color: 'var(--text-secondary)'
+              }}
+            >
+              <X size={18} />
             </button>
           </div>
         </div>

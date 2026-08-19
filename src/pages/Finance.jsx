@@ -500,12 +500,12 @@ const Finance = () => {
 
       {/* Manual Ledger Mapping Modal */}
       {showMapModal && selectedMapping && (
-        <div className="modal-overlay">
+        <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) setShowMapModal(false); }}>
           <div className="modal-content animate-fade-in" style={{ maxWidth: 500 }}>
-            <button style={{ position: 'absolute', top: '1.25rem', right: '1.25rem', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }} onClick={() => setShowMapModal(false)}>
-              <X size={20} />
+            <button className="modal-close-btn" onClick={() => setShowMapModal(false)} title="Close Modal (Esc)" aria-label="Close">
+              <X size={18} />
             </button>
-            <h2 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '1.25rem' }}>
+            <h2 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '1.25rem', paddingRight: '2.5rem' }}>
               Map Tally Ledger to CRM Customer
             </h2>
             <form onSubmit={handleSaveMapping} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>

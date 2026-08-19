@@ -504,6 +504,7 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .modal-content {
+  position: relative;
   width: 100%;
   max-width: 520px;
   padding: 2rem;
@@ -514,6 +515,31 @@ h1, h2, h3, h4, h5, h6 {
   animation: slideUp 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   max-height: 90vh;
   overflow-y: auto;
+}
+
+.modal-close-btn {
+  position: absolute;
+  top: 1.25rem;
+  right: 1.25rem;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--text-secondary);
+  transition: all 0.2s ease;
+  z-index: 20;
+}
+
+.modal-close-btn:hover {
+  background: var(--danger-bg, rgba(239, 68, 68, 0.15));
+  border-color: var(--danger, #ef4444);
+  color: var(--danger, #ef4444);
+  transform: scale(1.08);
 }
 
 .modal-lg {

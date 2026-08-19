@@ -158,10 +158,12 @@ const Tasks = () => {
 
       {/* Create Task Modal */}
       {showAdd && (
-        <div className="modal-overlay">
-          <div className="modal-content">
-            <button style={{ position: 'absolute', top: '1.25rem', right: '1.25rem', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }} onClick={() => setShowAdd(false)}><X size={20} /></button>
-            <h2 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '1.5rem' }}>Create New Task</h2>
+        <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) setShowAdd(false); }}>
+          <div className="modal-content animate-fade-in">
+            <button className="modal-close-btn" onClick={() => setShowAdd(false)} title="Close Modal (Esc)" aria-label="Close">
+              <X size={18} />
+            </button>
+            <h2 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '1.5rem', paddingRight: '2.5rem' }}>Create New Task</h2>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div>
                 <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Task Title *</label>

@@ -65,13 +65,15 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued }) => {
   if (!isOpen) return null;
 
   return (
-    <div className="modal-overlay">
+    <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="modal-content modal-lg animate-fade-in" style={{ maxWidth: 880 }}>
         <button
-          style={{ position: 'absolute', top: '1.25rem', right: '1.25rem', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}
+          className="modal-close-btn"
           onClick={onClose}
+          title="Close Modal (Esc)"
+          aria-label="Close"
         >
-          <X size={20} />
+          <X size={18} />
         </button>
 
         <div style={{ marginBottom: '1.25rem' }}>

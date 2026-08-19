@@ -78,20 +78,47 @@ const CRM = () => {
     setShowForm(true);
   };
 
+  const [toastMessage, setToastMessage] = useState(null);
+
+  const showToast = (msg, isError = false) => {
+    setToastMessage({ text: msg, isError });
+    setTimeout(() => setToastMessage(null), 4000);
+  };
+
   const handleSave = async (e) => {
     e.preventDefault();
-    if (!form.name.trim() || !form.phone.trim()) return;
+    if (!form.name.trim() || !form.phone.trim()) {
+      showToast('Name and Phone number are required', true);
+      return;
+    }
     setSaving(true);
-    if (editLead) {
-      const { data } = await updateLead(editLead.id, form);
-      if (data) setLeads(prev => prev.map(l => l.id === editLead.id ? { ...l, ...data } : l));
-    } else {
-      const { data } = await createLead(form);
-      if (data) setLeads(prev => [data, ...prev]);
+    try {
+      if (editLead) {
+        const { data, error } = await updateLead(editLead.id, form);
+        if (error) {
+          showToast('Failed to update lead: ' + error.message, true);
+        } else {
+          showToast('Lead updated successfully!');
+          await loadLeads();
+          setShowForm(false);
+          setEditLead(null);
+        }
+      } else {
+        const { data, error } = await createLead(form);
+        if (error) {
+          showToast('Failed to create lead: ' + error.message, true);
+        } else {
+          showToast('Lead added successfully!');
+          await loadLeads();
+          setShowForm(false);
+          setEditLead(null);
+          setForm(EMPTY_LEAD);
+        }
+      }
+    } catch (err) {
+      showToast('Error: ' + err.message, true);
     }
     setSaving(false);
-    setShowForm(false);
-    setEditLead(null);
   };
 
   const handleDelete = async (id, e) => {
@@ -371,39 +398,64 @@ const CRM = () => {
         />
       )}
 
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div style={{
+          position: 'fixed',
+          top: '1.5rem',
+          right: '1.5rem',
+          zIndex: 9999,
+          background: toastMessage.isError ? 'var(--danger, #ef4444)' : 'var(--success, #10b981)',
+          color: 'white',
+          padding: '0.75rem 1.25rem',
+          borderRadius: 'var(--radius-md)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '0.5rem',
+          boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
+          animation: 'fadeIn 0.2s ease',
+          fontSize: '0.85rem',
+          fontWeight: 600
+        }}>
+          <CheckCircle2 size={16} /> {toastMessage.text}
+        </div>
+      )}
+
       {/* Add / Edit Lead Modal */}
       {showForm && (
-        <div className="modal-overlay">
-          <div className="modal-content modal-lg">
+        <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) setShowForm(false); }}>
+          <div className="modal-content modal-lg animate-fade-in">
             <button
-              style={{ position: 'absolute', top: '1.25rem', right: '1.25rem', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}
+              className="modal-close-btn"
               onClick={() => setShowForm(false)}
+              title="Close Modal (Esc)"
+              aria-label="Close"
             >
-              <X size={20} />
+              <X size={18} />
             </button>
-            <h2 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '1.5rem' }}>
+            <h2 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '1.5rem', paddingRight: '2.5rem' }}>
               {editLead ? 'Edit Lead Profile' : 'Add New Lead to CRM'}
             </h2>
             <form onSubmit={handleSave} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
               <div>
                 <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Full Name *</label>
-                <input type="text" className="input-field" placeholder="e.g. Ravi Mehta" value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} required />
+                <input type="text" className="input-field" placeholder="e.g. Rajesh Kumar" value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} required />
               </div>
               <div>
                 <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Phone (Auto-Normalized) *</label>
-                <input type="text" className="input-field" placeholder="+91 98765 43210" value={form.phone} onChange={e => setForm(p => ({ ...p, phone: e.target.value }))} required />
+                <input type="text" className="input-field" placeholder="9876543210 (or +91...)" value={form.phone} onChange={e => setForm(p => ({ ...p, phone: e.target.value }))} required />
               </div>
               <div>
                 <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Email Address</label>
-                <input type="email" className="input-field" placeholder="ravi.mehta@gmail.com" value={form.email} onChange={e => setForm(p => ({ ...p, email: e.target.value }))} />
+                <input type="email" className="input-field" placeholder="customer@example.com" value={form.email} onChange={e => setForm(p => ({ ...p, email: e.target.value }))} />
               </div>
               <div>
                 <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Target Budget</label>
-                <input type="text" className="input-field" placeholder="₹80L - ₹1Cr" value={form.budget} onChange={e => setForm(p => ({ ...p, budget: e.target.value }))} />
+                <input type="text" className="input-field" placeholder="₹1,00,000" value={form.budget} onChange={e => setForm(p => ({ ...p, budget: e.target.value }))} />
               </div>
               <div>
-                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Property Interest</label>
-                <input type="text" className="input-field" placeholder="3BHK - Andheri West" value={form.property_interest} onChange={e => setForm(p => ({ ...p, property_interest: e.target.value }))} />
+                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Product / Interest</label>
+                <input type="text" className="input-field" placeholder="e.g. Premium Adhesive" value={form.property_interest} onChange={e => setForm(p => ({ ...p, property_interest: e.target.value }))} />
               </div>
               <div>
                 <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Lead Source</label>

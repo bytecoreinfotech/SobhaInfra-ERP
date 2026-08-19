@@ -244,7 +244,12 @@ export async function createLead(lead) {
     logAuditEvent('lead.create', 'leads', newLead.id, newLead);
     return { data: newLead, error: null };
   }
-  const { data, error } = await supabase.from('leads').insert([{ ...cleanLead, organization_id: DEFAULT_ORG_ID }]).select().single();
+  let { data, error } = await supabase.from('leads').insert([{ ...cleanLead, organization_id: DEFAULT_ORG_ID }]).select().single();
+  if (error && error.message && error.message.includes('organization_id')) {
+    const fallback = await supabase.from('leads').insert([cleanLead]).select().single();
+    data = fallback.data;
+    error = fallback.error;
+  }
   if (data) logAuditEvent('lead.create', 'leads', data.id, data);
   return { data, error };
 }
@@ -358,7 +363,12 @@ export async function addCustomerNote(leadId, noteText) {
     MOCK_STORE.activities.unshift(newAct);
     return { data: newAct, error: null };
   }
-  const { data, error } = await supabase.from('activities').insert([{ organization_id: DEFAULT_ORG_ID, lead_id: leadId, activity_type: 'note', title: 'Internal Note', content: noteText }]).select().single();
+  let { data, error } = await supabase.from('activities').insert([{ organization_id: DEFAULT_ORG_ID, lead_id: leadId, activity_type: 'note', title: 'Internal Note', content: noteText }]).select().single();
+  if (error && error.message && error.message.includes('organization_id')) {
+    const fb = await supabase.from('activities').insert([{ lead_id: leadId, activity_type: 'note', title: 'Internal Note', content: noteText }]).select().single();
+    data = fb.data;
+    error = fb.error;
+  }
   return { data, error };
 }
 
@@ -375,7 +385,12 @@ export async function createProduct(productData) {
     logAuditEvent('product.create', 'products', newP.id, newP);
     return { data: newP, error: null };
   }
-  const { data, error } = await supabase.from('products').insert([{ ...productData, organization_id: DEFAULT_ORG_ID }]).select().single();
+  let { data, error } = await supabase.from('products').insert([{ ...productData, organization_id: DEFAULT_ORG_ID }]).select().single();
+  if (error && error.message && error.message.includes('organization_id')) {
+    const fb = await supabase.from('products').insert([productData]).select().single();
+    data = fb.data;
+    error = fb.error;
+  }
   if (data) logAuditEvent('product.create', 'products', data.id, data);
   return { data, error };
 }
@@ -393,7 +408,12 @@ export async function createDeal(dealData) {
     logAuditEvent('deal.create', 'deals', newDeal.id, newDeal);
     return { data: newDeal, error: null };
   }
-  const { data, error } = await supabase.from('deals').insert([{ ...dealData, organization_id: DEFAULT_ORG_ID }]).select().single();
+  let { data, error } = await supabase.from('deals').insert([{ ...dealData, organization_id: DEFAULT_ORG_ID }]).select().single();
+  if (error && error.message && error.message.includes('organization_id')) {
+    const fb = await supabase.from('deals').insert([dealData]).select().single();
+    data = fb.data;
+    error = fb.error;
+  }
   if (data) logAuditEvent('deal.create', 'deals', data.id, data);
   return { data, error };
 }
@@ -411,7 +431,12 @@ export async function createTask(task) {
     logAuditEvent('task.create', 'tasks', newTask.id, newTask);
     return { data: newTask, error: null };
   }
-  const { data, error } = await supabase.from('tasks').insert([{ ...task, organization_id: DEFAULT_ORG_ID }]).select().single();
+  let { data, error } = await supabase.from('tasks').insert([{ ...task, organization_id: DEFAULT_ORG_ID }]).select().single();
+  if (error && error.message && error.message.includes('organization_id')) {
+    const fb = await supabase.from('tasks').insert([task]).select().single();
+    data = fb.data;
+    error = fb.error;
+  }
   if (data) logAuditEvent('task.create', 'tasks', data.id, data);
   return { data, error };
 }

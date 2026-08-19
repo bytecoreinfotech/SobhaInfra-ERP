@@ -247,12 +247,12 @@ const Roles = () => {
 
       {/* Invite Member Modal */}
       {showAddUser && (
-        <div className="modal-overlay">
-          <div className="modal-content">
-            <button style={{ position: 'absolute', top: '1.25rem', right: '1.25rem', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }} onClick={() => setShowAddUser(false)}>
-              <X size={20} />
+        <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) setShowAddUser(false); }}>
+          <div className="modal-content animate-fade-in">
+            <button className="modal-close-btn" onClick={() => setShowAddUser(false)} title="Close Modal (Esc)" aria-label="Close">
+              <X size={18} />
             </button>
-            <h2 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '1.5rem' }}>Invite Team Member</h2>
+            <h2 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '1.5rem', paddingRight: '2.5rem' }}>Invite Team Member</h2>
             <form onSubmit={handleInviteUser} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div>
                 <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Full Name *</label>
@@ -285,12 +285,12 @@ const Roles = () => {
 
       {/* Create Role Modal */}
       {showAddRole && (
-        <div className="modal-overlay">
-          <div className="modal-content">
-            <button style={{ position: 'absolute', top: '1.25rem', right: '1.25rem', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }} onClick={() => setShowAddRole(false)}>
-              <X size={20} />
+        <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) setShowAddRole(false); }}>
+          <div className="modal-content animate-fade-in">
+            <button className="modal-close-btn" onClick={() => setShowAddRole(false)} title="Close Modal (Esc)" aria-label="Close">
+              <X size={18} />
             </button>
-            <h2 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '1.5rem' }}>Create Custom Role</h2>
+            <h2 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '1.5rem', paddingRight: '2.5rem' }}>Create Custom Role</h2>
             <form onSubmit={handleCreateRole} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div>
                 <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Role Name *</label>
