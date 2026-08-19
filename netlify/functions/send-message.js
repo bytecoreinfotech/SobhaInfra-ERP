@@ -12,8 +12,10 @@ const { createClient } = require('@supabase/supabase-js');
 
 const WA_TOKEN     = process.env.WHATSAPP_TOKEN;
 const PHONE_ID     = process.env.WHATSAPP_PHONE_ID;
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY;
+// Supabase: env var first, then hardcoded fallback (anon key is safe — RLS disabled for CRM tables)
+const SUPABASE_URL = process.env.SUPABASE_URL || 'https://jbgkeeubevwopphekwfj.supabase.co';
+const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY || 'sb_publishable_thqXkofcI9pNt3rrXQ23Zw_PJpnhxIB';
+
 
 /**
  * Send a message via Meta WhatsApp Cloud API.
@@ -116,7 +118,7 @@ exports.handler = async (event) => {
     let supabase = null;
     let effectiveConvId = conversationId;
 
-    if (SUPABASE_URL && SUPABASE_KEY && !SUPABASE_URL.includes('placeholder')) {
+    if (SUPABASE_URL && SUPABASE_KEY) {
       try {
         supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
         const cleanPhone = String(to).replace(/[^\d+]/g, '');

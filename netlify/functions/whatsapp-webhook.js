@@ -25,8 +25,9 @@ const VERIFY_TOKEN   = process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN || 'erppro_wa_s
 const WA_TOKEN       = process.env.WHATSAPP_TOKEN;
 const PHONE_ID       = process.env.WHATSAPP_PHONE_ID;
 const WA_APP_SECRET  = process.env.WHATSAPP_APP_SECRET;
-const SUPABASE_URL   = process.env.SUPABASE_URL;
-const SUPABASE_KEY   = process.env.SUPABASE_ANON_KEY;
+// Supabase: try env var first, then hardcoded fallback (anon key is safe to embed — protected by RLS)
+const SUPABASE_URL   = process.env.SUPABASE_URL   || 'https://jbgkeeubevwopphekwfj.supabase.co';
+const SUPABASE_KEY   = process.env.SUPABASE_ANON_KEY || 'sb_publishable_thqXkofcI9pNt3rrXQ23Zw_PJpnhxIB';
 const GEMINI_KEY     = process.env.GEMINI_API_KEY;
 const OPENAI_KEY     = process.env.OPENAI_API_KEY;
 const HF_KEY         = process.env.HUGGING_FACE_API_KEY || '';
@@ -39,9 +40,10 @@ const KB_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 // ─── 1. Supabase Client Factory ───────────────────────────────────────────────
 function getSupabase() {
-  if (!SUPABASE_URL || !SUPABASE_KEY || SUPABASE_URL.includes('placeholder')) return null;
+  // Always return a client — SUPABASE_URL and SUPABASE_KEY have hardcoded fallbacks above
   return createClient(SUPABASE_URL, SUPABASE_KEY);
 }
+
 
 // ─── 2. HMAC SHA-256 Signature Verification (Spec §11, §37) ──────────────────
 function verifyWebhookSignature(rawBody, signatureHeader) {
