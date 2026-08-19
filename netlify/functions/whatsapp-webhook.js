@@ -624,17 +624,16 @@ exports.handler = async (event) => {
           provider_message_id: providerEventId,
           direction: 'inbound',
           sender_type: 'customer',
-          message_type: msg.type || 'text',
           body: messageText,
           status: 'delivered',
           raw_payload: msg,
         };
 
-        // Handle media attachments
+        // Handle media attachments - store provider media ID in body if no text
         if (['image', 'document', 'audio', 'video', 'sticker'].includes(msg.type)) {
           const mediaObj = msg[msg.type];
-          if (mediaObj?.id) {
-            messageInsert.media_url = mediaObj.id;
+          if (mediaObj?.id && !messageInsert.body) {
+            messageInsert.body = `[${msg.type}] Media received (ID: ${mediaObj.id})`;
           }
         }
 

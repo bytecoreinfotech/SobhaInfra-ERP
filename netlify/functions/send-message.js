@@ -155,13 +155,15 @@ exports.handler = async (event) => {
         }
 
         if (effectiveConvId) {
+          // Only use columns that actually exist in the DB schema
+          const msgBody = mediaUrl
+            ? (text ? `${text}\n[${mediaType}: ${mediaUrl}]` : `[${mediaType}: ${mediaUrl}]`)
+            : (text || '');
           const msgPayload = {
             conversation_id: effectiveConvId,
             direction: 'outbound',
             sender_type: senderType,
-            message_type: mediaType,
-            body: text || '',
-            media_url: mediaUrl || null,
+            body: msgBody,
             status: sendRes.success ? 'delivered' : 'failed',
             provider_message_id: sendRes.messageId || null,
           };
