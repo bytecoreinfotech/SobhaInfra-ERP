@@ -473,13 +473,31 @@ export async function estimateCampaignAudience(filters = {}) {
   const targeted = matching.length;
   const optedOut = matching.filter(l => l.marketing_opt_out).length;
   const invalidPhone = matching.filter(l => !l.phone || normalizePhone(l.phone).length < 10).length;
-  const eligible = matching.filter(l => !l.marketing_opt_out && l.phone && normalizePhone(l.phone).length >= 10);
+
+  // Strict Phone Deduplication & Opt-out Filtering
+  const seenPhones = new Set();
+  const eligible = [];
+  let duplicates = 0;
+
+  for (const l of matching) {
+    if (l.marketing_opt_out) continue;
+    if (!l.phone) continue;
+    const norm = normalizePhone(l.phone);
+    if (norm.length < 10) continue;
+    if (seenPhones.has(norm)) {
+      duplicates++;
+      continue;
+    }
+    seenPhones.add(norm);
+    eligible.push(l);
+  }
 
   return {
     totalRaw,
     targeted,
     optedOut,
     invalidPhone,
+    duplicatePhones: duplicates,
     finalAudienceCount: eligible.length,
     eligibleLeads: eligible,
   };
@@ -550,47 +568,85 @@ export async function getWhatsAppMessages(conversationId) {
 
 export async function sendWhatsAppMessage(conversationId, text, senderType = 'human_agent', recipientPhone = null) {
   let targetPhone = recipientPhone;
-  if (!targetPhone) {
-    const mockConv = MOCK_STORE.whatsapp_conversations.find(c => c.id === conversationId);
-    if (mockConv) targetPhone = mockConv.contact_phone;
+  if (!targetPhone && conversationId) {
+    if (isSupabaseConfigured) {
+      const { data: convData } = await supabase.from('whatsapp_conversations').select('contact_phone').eq('id', conversationId).maybeSingle();
+      if (convData) targetPhone = convData.contact_phone;
+    } else {
+      const mockConv = MOCK_STORE.whatsapp_conversations.find(c => c.id === conversationId);
+      if (mockConv) targetPhone = mockConv.contact_phone;
+    }
   }
 
-  // Attempt live outbound dispatch via Meta Cloud API Netlify function
+  let apiResult = null;
+  // Dispatch live outbound message via Meta Cloud API Netlify serverless function
   if (targetPhone) {
     try {
-      fetch('/.netlify/functions/send-message', {
+      const res = await fetch('/.netlify/functions/send-message', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ to: targetPhone, text, conversationId, senderType })
-      }).catch(() => {});
-    } catch {}
+      });
+      apiResult = await res.json();
+    } catch (err) {
+      console.warn('[db] sendWhatsAppMessage fetch error:', err.message);
+    }
   }
 
   const newMsg = {
-    id: 'msg-' + Date.now(),
+    id: apiResult?.messageId || 'msg-' + Date.now(),
     conversation_id: conversationId,
     direction: 'outbound',
     sender_type: senderType,
     body: text,
-    status: 'delivered',
+    status: apiResult?.success ? 'delivered' : 'sent',
     created_at: new Date().toISOString(),
   };
 
   if (!isSupabaseConfigured) {
-    if (!MOCK_STORE.whatsapp_messages[conversationId]) MOCK_STORE.whatsapp_messages[conversationId] = [];
-    MOCK_STORE.whatsapp_messages[conversationId].push(newMsg);
+    if (conversationId) {
+      if (!MOCK_STORE.whatsapp_messages[conversationId]) MOCK_STORE.whatsapp_messages[conversationId] = [];
+      MOCK_STORE.whatsapp_messages[conversationId].push(newMsg);
 
-    const convIdx = MOCK_STORE.whatsapp_conversations.findIndex(c => c.id === conversationId);
-    if (convIdx !== -1) {
-      MOCK_STORE.whatsapp_conversations[convIdx].last_message_text = text;
-      MOCK_STORE.whatsapp_conversations[convIdx].last_message_at = newMsg.created_at;
-      MOCK_STORE.whatsapp_conversations[convIdx].unread_count = 0;
+      const convIdx = MOCK_STORE.whatsapp_conversations.findIndex(c => c.id === conversationId);
+      if (convIdx !== -1) {
+        MOCK_STORE.whatsapp_conversations[convIdx].last_message_text = text;
+        MOCK_STORE.whatsapp_conversations[convIdx].last_message_at = newMsg.created_at;
+        MOCK_STORE.whatsapp_conversations[convIdx].unread_count = 0;
+      }
     }
-    return { data: newMsg, error: null };
+    return { data: newMsg, error: apiResult?.error || null };
   }
 
-  const { data, error } = await supabase.from('whatsapp_messages').insert([{ organization_id: DEFAULT_ORG_ID, conversation_id: conversationId, direction: 'outbound', sender_type: senderType, body: text, status: 'sent' }]).select().single();
-  return { data: data || newMsg, error };
+  if (conversationId) {
+    try {
+      let { data, error } = await supabase.from('whatsapp_messages').insert([{
+        organization_id: DEFAULT_ORG_ID,
+        conversation_id: conversationId,
+        direction: 'outbound',
+        sender_type: senderType,
+        body: text,
+        status: apiResult?.success ? 'delivered' : 'sent',
+        provider_message_id: apiResult?.messageId || null
+      }]).select().maybeSingle();
+
+      if (error && error.message && error.message.includes('organization_id')) {
+        const fallback = await supabase.from('whatsapp_messages').insert([{
+          conversation_id: conversationId,
+          direction: 'outbound',
+          sender_type: senderType,
+          body: text,
+          status: apiResult?.success ? 'delivered' : 'sent',
+          provider_message_id: apiResult?.messageId || null
+        }]).select().maybeSingle();
+        data = fallback.data;
+        error = fallback.error;
+      }
+      return { data: data || newMsg, error: apiResult?.error || error };
+    } catch {}
+  }
+
+  return { data: newMsg, error: apiResult?.error || null };
 }
 
 export async function updateConversationMode(conversationId, newMode) {

@@ -27,7 +27,7 @@ const Chatbot = () => {
   
   // Simulator State
   const [messages, setMessages] = useState([
-    { id: 1, sender: 'bot', text: '👋 Hello! I am your Bounded AI Sales Assistant for ERPPro Real Estate. How can I help you with our properties today?', toolCalls: [] }
+    { id: 1, sender: 'bot', text: '👋 Hello! I am your Bounded AI Sales Assistant. How can I assist you with our product catalog, specifications, or official pricing today?', toolCalls: [] }
   ]);
   const [userInput, setUserInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -199,10 +199,11 @@ const Chatbot = () => {
             {/* Quick Test Prompts */}
             <div style={{ padding: '0.5rem 1rem', background: 'var(--bg-tertiary)', borderBottom: '1px solid var(--border-color)', display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
               {[
-                'What is the price of 3BHK Andheri?',
-                'Rate thoda kam hoga kya?',
-                'Send me brochure PDF',
-                'What time is the site office open?',
+                'What is the price of Tile Adhesive?',
+                'Can I get a 20% discount on bulk order?',
+                'Send me the product brochure PDF',
+                'Connect me with a human sales representative',
+                'Ready to place an order for 50 bags',
               ].map(q => (
                 <button
                   key={q}

@@ -4,7 +4,7 @@ import {
   Clock, IndianRupee, Send, AlertTriangle, Shield, Building2,
   TrendingUp, Calendar, Tag, ChevronRight, Plus, RefreshCw, Zap
 } from 'lucide-react';
-import { getCustomer360, addCustomerNote, createDeal, logPaymentReminder } from '../lib/db';
+import { getCustomer360, addCustomerNote, createDeal, logPaymentReminder, sendWhatsAppMessage } from '../lib/db';
 import './Customer360Modal.css';
 
 const Customer360Modal = ({ leadId, onClose, onLeadUpdated }) => {
@@ -21,7 +21,8 @@ const Customer360Modal = ({ leadId, onClose, onLeadUpdated }) => {
 
   // Quick Message
   const [replyText, setReplyText] = useState('');
-  const [msgSent, setMsgSent] = useState(false);
+  const [msgSent, setMsgSent] = useState(null);
+  const [sendingMsg, setSendingMsg] = useState(false);
 
   useEffect(() => {
     if (leadId) load360Data();
@@ -69,23 +70,39 @@ const Customer360Modal = ({ leadId, onClose, onLeadUpdated }) => {
     setSavingDeal(false);
   };
 
-  const handleSendQuickMsg = (e) => {
+  const handleSendQuickMsg = async (e) => {
     e.preventDefault();
-    if (!replyText.trim()) return;
-    const newMsg = {
-      id: 'msg-' + Date.now(),
-      direction: 'outbound',
-      sender_type: 'human_agent',
-      body: replyText,
-      created_at: new Date().toISOString(),
-    };
-    setData(prev => ({
-      ...prev,
-      messages: [...(prev.messages || []), newMsg],
-    }));
-    setReplyText('');
-    setMsgSent(true);
-    setTimeout(() => setMsgSent(false), 2500);
+    if (!replyText.trim() || sendingMsg) return;
+    setSendingMsg(true);
+    const textToSend = replyText;
+    const phoneToUse = data?.lead?.phone;
+    const convId = data?.conv?.id || null;
+
+    try {
+      const res = await sendWhatsAppMessage(convId, textToSend, 'human_agent', phoneToUse);
+      const newMsg = {
+        id: res.data?.id || 'msg-' + Date.now(),
+        direction: 'outbound',
+        sender_type: 'human_agent',
+        body: textToSend,
+        created_at: new Date().toISOString(),
+      };
+      setData(prev => ({
+        ...prev,
+        messages: [...(prev.messages || []), newMsg],
+      }));
+      setReplyText('');
+      if (res.error) {
+        setMsgSent({ success: false, text: 'Logged to thread (WhatsApp API warning: ' + (res.error.message || 'Check credentials') + ')' });
+      } else {
+        setMsgSent({ success: true, text: `✓ Message dispatched to WhatsApp (${phoneToUse})` });
+      }
+      setTimeout(() => setMsgSent(null), 4000);
+    } catch (err) {
+      setMsgSent({ success: false, text: 'Failed to dispatch: ' + err.message });
+      setTimeout(() => setMsgSent(null), 4000);
+    }
+    setSendingMsg(false);
   };
 
   const fmtCurrency = (n) => '₹' + Number(n || 0).toLocaleString('en-IN');
@@ -284,8 +301,17 @@ const Customer360Modal = ({ leadId, onClose, onLeadUpdated }) => {
                   </div>
 
                   {msgSent && (
-                    <div style={{ fontSize: '0.75rem', color: 'var(--success)', marginTop: '0.5rem', textAlign: 'center' }}>
-                      ✓ Message queued and logged to WhatsApp thread.
+                    <div style={{
+                      fontSize: '0.78rem',
+                      color: msgSent.success ? 'var(--success)' : 'var(--warning)',
+                      marginTop: '0.5rem',
+                      padding: '0.4rem 0.75rem',
+                      borderRadius: 6,
+                      background: msgSent.success ? 'rgba(16,185,129,0.1)' : 'var(--warning-bg)',
+                      border: `1px solid ${msgSent.success ? 'var(--success)' : 'var(--warning)'}`,
+                      textAlign: 'center'
+                    }}>
+                      {msgSent.text}
                     </div>
                   )}
 
@@ -296,9 +322,10 @@ const Customer360Modal = ({ leadId, onClose, onLeadUpdated }) => {
                       placeholder="Type a WhatsApp message to this customer..."
                       value={replyText}
                       onChange={e => setReplyText(e.target.value)}
+                      disabled={sendingMsg}
                     />
-                    <button type="submit" className="btn btn-whatsapp" disabled={!replyText.trim()}>
-                      <Send size={15} /> Send
+                    <button type="submit" className="btn btn-whatsapp" disabled={!replyText.trim() || sendingMsg}>
+                      <Send size={15} className={sendingMsg ? 'animate-spin' : ''} /> {sendingMsg ? 'Sending...' : 'Send'}
                     </button>
                   </form>
                 </div>
