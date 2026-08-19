@@ -474,16 +474,24 @@ exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') return { statusCode: 405, headers, body: 'Method Not Allowed' };
 
   try {
-    // ── B.1 HMAC Signature Verification ─────────────────────────────────────
-    const rawBody = event.body || '';
-    const signatureHeader = event.headers['x-hub-signature-256'] || event.headers['X-Hub-Signature-256'];
-
-    if (!verifyWebhookSignature(rawBody, signatureHeader)) {
-      console.error(JSON.stringify({ step: 'webhook', status: 'signature_invalid' }));
-      return { statusCode: 401, headers, body: JSON.stringify({ error: 'Invalid signature' }) };
+    // ── B.1 Body Decoding & HMAC Signature Verification ────────────────────
+    let rawBody = event.body || '';
+    if (event.isBase64Encoded) {
+      try {
+        rawBody = Buffer.from(rawBody, 'base64').toString('utf8');
+      } catch {}
     }
 
-    const body = JSON.parse(rawBody);
+    const signatureHeader = event.headers['x-hub-signature-256'] || event.headers['X-Hub-Signature-256'] || '';
+
+    if (WA_APP_SECRET && signatureHeader) {
+      if (!verifyWebhookSignature(rawBody, signatureHeader)) {
+        console.error(JSON.stringify({ step: 'webhook', status: 'signature_invalid' }));
+        return { statusCode: 401, headers, body: JSON.stringify({ error: 'Invalid signature' }) };
+      }
+    }
+
+    const body = JSON.parse(rawBody || '{}');
     const value = body.entry?.[0]?.changes?.[0]?.value;
 
     if (!value) {

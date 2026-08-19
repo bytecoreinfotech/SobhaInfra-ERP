@@ -306,7 +306,28 @@ const Customer360Modal = ({ leadId, onClose, onLeadUpdated }) => {
 
               {/* TAB 2: WHATSAPP THREAD */}
               {activeTab === 'whatsapp' && (
-                <div style={{ display: 'flex', flexDirection: 'column', height: '420px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', height: '440px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem', padding: '0.4rem 0.75rem', background: 'var(--bg-tertiary)', borderRadius: 6, fontSize: '0.75rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <span className={`badge ${data.conv?.conversation_mode === 'AI ACTIVE' ? 'badge-success' : 'badge-neutral'}`} style={{ fontSize: '0.7rem' }}>
+                        ● {data.conv?.conversation_mode === 'AI ACTIVE' ? '🤖 AI Bot Active' : '👤 Human Mode Active'}
+                      </span>
+                      <span style={{ color: 'var(--text-muted)' }}>
+                        {data.conv?.conversation_mode === 'AI ACTIVE' ? '(AI automatically replies to incoming messages)' : '(Human agent has control)'}
+                      </span>
+                    </div>
+                    {data.conv?.id && (
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        onClick={handleToggleMode}
+                        disabled={togglingMode}
+                        style={{ fontSize: '0.68rem', padding: '0.2rem 0.5rem' }}
+                      >
+                        {data.conv?.conversation_mode === 'AI ACTIVE' ? 'Switch to Human Mode' : 'Switch to 🤖 AI Auto-Reply'}
+                      </button>
+                    )}
+                  </div>
+
                   <div style={{ flex: 1, overflowY: 'auto', padding: '1rem', background: 'var(--bg-secondary)', borderRadius: 8, display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                     {(!data.messages || data.messages.length === 0) ? (
                       <div style={{ textAlign: 'center', margin: 'auto', color: 'var(--text-muted)', fontSize: '0.85rem' }}>

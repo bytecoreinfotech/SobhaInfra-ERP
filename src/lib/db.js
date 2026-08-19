@@ -137,8 +137,8 @@ export async function triggerTallySyncNow() {
 
 export async function getLedgerMappings() {
   if (!isSupabaseConfigured) return { data: MOCK_STORE.ledger_mappings, error: null };
-  const { data, error } = await supabase.from('ledger_mappings').select('*, lead:leads(*)').order('tally_ledger_name', { ascending: true });
-  return { data, error };
+  const { data, error } = await supabase.from('ledger_mappings').select('*').order('tally_ledger_name', { ascending: true });
+  return { data: data || [], error };
 }
 
 export async function updateLedgerMapping(mappingId, leadId, tallyLedgerName) {
@@ -552,12 +552,24 @@ export async function processCampaignBatch(campaignId, batchSize = 50) {
 
 export async function getWhatsAppConversations() {
   if (!isSupabaseConfigured) return { data: MOCK_STORE.whatsapp_conversations, error: null };
-  const { data, error } = await supabase.from('whatsapp_conversations').select('*, lead:leads(*)').order('last_message_at', { ascending: false });
-  if (error) {
-    console.warn('[db] getWhatsAppConversations error:', error.message);
-    return { data: [], error };
+  try {
+    let { data, error } = await supabase.from('whatsapp_conversations').select('*').order('last_message_at', { ascending: false });
+    if (!error && data) {
+      // Enrich with matching lead if available
+      const { data: leads } = await supabase.from('leads').select('id, name, phone, status, lead_score');
+      if (leads) {
+        const leadMap = new Map(leads.map(l => [l.id, l]));
+        data = data.map(c => ({
+          ...c,
+          lead: c.lead_id ? leadMap.get(c.lead_id) || null : null
+        }));
+      }
+      return { data, error: null };
+    }
+  } catch (err) {
+    console.warn('[db] getWhatsAppConversations error:', err.message);
   }
-  return { data: data || [], error: null };
+  return { data: [], error: null };
 }
 
 export async function getWhatsAppMessages(conversationId) {
@@ -912,8 +924,8 @@ export async function deleteAutomationRule(ruleId) {
 
 export async function getAutomationRuns() {
   if (!isSupabaseConfigured) return { data: MOCK_STORE.automation_runs, error: null };
-  const { data, error } = await supabase.from('automation_runs').select('*, rule:automation_rules(name)').order('created_at', { ascending: false }).limit(50);
-  return { data, error };
+  const { data, error } = await supabase.from('automation_runs').select('*').order('created_at', { ascending: false }).limit(50);
+  return { data: data || [], error };
 }
 
 export async function logBusinessEvent(eventType, entityType, entityId, actorType = 'system', payload = {}) {
