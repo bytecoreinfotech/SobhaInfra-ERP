@@ -16,6 +16,8 @@ const { createClient } = require('@supabase/supabase-js');
 const EXPECTED_TOKEN = process.env.TALLY_CONNECTOR_TOKEN || 'erppro_tally_sec_token_2026';
 const SUPABASE_URL   = process.env.SUPABASE_URL;
 const SUPABASE_KEY   = process.env.SUPABASE_ANON_KEY;
+// Service role key bypasses RLS — required for server-to-server inserts
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const DEFAULT_ORG_ID = '00000000-0000-0000-0000-000000000001';
 
 function normalizePhone(phone) {
@@ -49,8 +51,14 @@ exports.handler = async (event) => {
     const { organizationId = DEFAULT_ORG_ID, vouchers = [], connectorStatus = 'Connected' } = payload;
 
     let supabase = null;
-    if (SUPABASE_URL && SUPABASE_KEY && !SUPABASE_URL.includes('placeholder')) {
-      supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+    if (SUPABASE_URL && !SUPABASE_URL.includes('placeholder')) {
+      // Use service role key (bypasses RLS) if available, else anon key
+      const key = SUPABASE_SERVICE_KEY || SUPABASE_KEY;
+      if (key) {
+        supabase = createClient(SUPABASE_URL, key, {
+          auth: { autoRefreshToken: false, persistSession: false }
+        });
+      }
     }
 
     const results = {
@@ -115,6 +123,9 @@ exports.handler = async (event) => {
 
           if (!invErr) {
             results.upsertedInvoices++;
+          } else {
+            console.error(`[Tally] Invoice upsert failed for ${v.invoice_number}:`, invErr.message);
+            results.errors.push({ voucher: v.invoice_number, error: invErr.message, code: invErr.code });
           }
 
           // Ledger Mapping Record
