@@ -115,30 +115,41 @@ const Customer360Modal = ({ leadId, onClose, onLeadUpdated }) => {
 
     try {
       const res = await sendWhatsAppMessage(convId, textToSend, 'human_agent', phoneToUse);
-      const newMsg = {
-        id: res.data?.id || 'msg-' + Date.now(),
-        direction: 'outbound',
-        sender_type: 'human_agent',
-        body: textToSend,
-        created_at: new Date().toISOString(),
-      };
-      setData(prev => ({
-        ...prev,
-        messages: [...(prev.messages || []), newMsg],
-      }));
       setReplyText('');
+
+      // Immediately reload from DB so message persists after modal close/reopen
+      const refreshed = await getCustomer360(leadId);
+      if (refreshed.data) {
+        setData(prev => ({
+          ...prev,
+          conv: refreshed.data.conv || prev?.conv,
+          messages: refreshed.data.messages || prev?.messages || [],
+        }));
+      } else {
+        // Fallback: optimistically add to local state
+        const newMsg = {
+          id: 'msg-' + Date.now(),
+          direction: 'outbound',
+          sender_type: 'human_agent',
+          body: textToSend,
+          created_at: new Date().toISOString(),
+        };
+        setData(prev => ({ ...prev, messages: [...(prev.messages || []), newMsg] }));
+      }
+
       if (res.error) {
-        setMsgSent({ success: false, text: 'Logged to thread (WhatsApp API warning: ' + (res.error.message || 'Check credentials') + ')' });
+        setMsgSent({ success: false, text: 'Logged (WhatsApp API warning: ' + (res.error.message || 'Check credentials') + ')' });
       } else {
         setMsgSent({ success: true, text: `✓ Message dispatched to WhatsApp (${phoneToUse})` });
       }
       setTimeout(() => setMsgSent(null), 4000);
     } catch (err) {
-      setMsgSent({ success: false, text: 'Failed to dispatch: ' + err.message });
+      setMsgSent({ success: false, text: 'Failed: ' + err.message });
       setTimeout(() => setMsgSent(null), 4000);
     }
     setSendingMsg(false);
   };
+
 
   const fmtCurrency = (n) => '₹' + Number(n || 0).toLocaleString('en-IN');
 

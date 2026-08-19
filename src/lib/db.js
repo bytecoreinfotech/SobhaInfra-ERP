@@ -323,7 +323,7 @@ export async function getCustomer360(leadId) {
     supabase.from('tasks').select('*').eq('related_lead_id', leadId),
     supabase.from('invoices').select('*').or(`client_phone.eq.${normPhone},client_phone.eq.${digitsOnly},client_phone.eq.+${digitsOnly}`),
     supabase.from('activities').select('*').eq('lead_id', leadId).order('created_at', { ascending: false }),
-    supabase.from('whatsapp_conversations').select('*').or(`lead_id.eq.${leadId},contact_phone.eq.${normPhone},contact_phone.eq.${digitsOnly},contact_phone.eq.+${digitsOnly}`).order('last_message_at', { ascending: false }).limit(1).maybeSingle(),
+    supabase.from('whatsapp_conversations').select('*').or(`contact_phone.eq.${normPhone},contact_phone.eq.${digitsOnly},contact_phone.eq.+${digitsOnly}`).order('last_message_at', { ascending: false }).limit(1).maybeSingle(),
   ]);
 
   let messages = [];
