@@ -318,10 +318,25 @@ const Finance = () => {
                   Section 26: Secure read-mostly connection to local TallyPrime XML Server.
                 </p>
               </div>
-              <span className={`badge ${tallyStatus?.status === 'ONLINE' ? 'badge-success' : 'badge-warning'}`} style={{ fontSize: '0.75rem', padding: '0.35rem 0.75rem' }}>
-                ● {tallyStatus?.status || 'ONLINE'}
+              <span className={`badge ${tallyStatus?.status === 'ONLINE' ? 'badge-success' : 'badge-danger'}`} style={{ fontSize: '0.75rem', padding: '0.35rem 0.75rem' }}>
+                ● {tallyStatus?.status === 'ONLINE' ? 'ONLINE (Port 9000)' : 'DISCONNECTED / OFFLINE'}
               </span>
             </div>
+
+            {tallyStatus?.status !== 'ONLINE' && (
+              <div style={{ padding: '0.85rem 1rem', background: 'var(--warning-bg)', border: '1px solid var(--warning)', borderRadius: 'var(--radius-md)', fontSize: '0.8rem', color: 'var(--warning)', display: 'flex', alignItems: 'flex-start', gap: '0.6rem' }}>
+                <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 2 }} />
+                <div>
+                  <strong>TallyPrime is currently not connected:</strong>
+                  <div style={{ marginTop: '0.25rem', color: 'var(--text-secondary)' }}>
+                    To sync live vouchers, ensure TallyPrime is open with ODBC/HTTP Server enabled (Port 9000) and run:
+                    <div style={{ marginTop: '0.35rem', fontFamily: 'monospace', background: 'var(--bg-tertiary)', padding: '0.35rem 0.5rem', borderRadius: 4, color: 'var(--text-primary)' }}>
+                      node scripts/tally-connector.js
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', background: 'var(--bg-tertiary)', padding: '1rem', borderRadius: 'var(--radius-md)' }}>
               <div>
@@ -330,12 +345,14 @@ const Finance = () => {
               </div>
               <div>
                 <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Tally Company</div>
-                <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>{tallyStatus?.tally_company || 'Techma Real Estate Pvt Ltd'}</div>
+                <div style={{ fontWeight: 700, fontSize: '0.9rem', color: tallyStatus?.tally_company && tallyStatus?.tally_company !== 'Not Connected' ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                  {tallyStatus?.tally_company || 'Not Connected'}
+                </div>
               </div>
               <div>
                 <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Last Synced</div>
-                <div style={{ fontWeight: 700, fontSize: '0.82rem', color: 'var(--accent-secondary)' }}>
-                  {tallyStatus?.last_sync_at ? new Date(tallyStatus.last_sync_at).toLocaleTimeString() : 'Just now'}
+                <div style={{ fontWeight: 700, fontSize: '0.82rem', color: tallyStatus?.last_sync_at ? 'var(--accent-secondary)' : 'var(--text-muted)' }}>
+                  {tallyStatus?.last_sync_at ? new Date(tallyStatus.last_sync_at).toLocaleString('en-IN') : 'Never synced'}
                 </div>
               </div>
               <div>
@@ -358,7 +375,7 @@ const Finance = () => {
                 style={{ flex: 1, justifyContent: 'center' }}
               >
                 <RefreshCw size={15} className={isSyncing ? 'animate-spin' : ''} />
-                {isSyncing ? 'Polling Tally XML Server...' : 'Trigger Sync Now'}
+                {isSyncing ? 'Attempting Sync on Port 9000...' : 'Test / Trigger Sync Now'}
               </button>
             </div>
           </div>

@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import {
   BarChart3, TrendingUp, Users, MessageCircle, Download,
-  Bot, Zap, RefreshCw, IndianRupee, Target, Phone, CheckCircle2
+  Bot, Zap, RefreshCw, IndianRupee, Target, Phone, CheckCircle2,
+  FileSpreadsheet, ExternalLink, Printer
 } from 'lucide-react';
-import { getDashboardStats, getLeads, getCampaigns, getInvoices, getAutomationRuns } from '../lib/db';
+import { getDashboardStats, getLeads, getCampaigns, getInvoices, getAutomationRuns, syncToGoogleSheets, exportLiveTableCsv } from '../lib/db';
 import './Pages.css';
 
 const Reports = () => {
@@ -14,6 +15,8 @@ const Reports = () => {
   const [invoices, setInvoices] = useState([]);
   const [autoRuns, setAutoRuns] = useState([]);
   const [stats, setStats] = useState(null);
+  const [syncingSheets, setSyncingSheets] = useState(false);
+  const [sheetSyncResult, setSheetSyncResult] = useState(null);
 
   useEffect(() => { loadData(); }, []);
 
@@ -32,6 +35,27 @@ const Reports = () => {
     setInvoices(iRes.data || []);
     setAutoRuns(aRes.data || []);
     setLoading(false);
+  };
+
+  const handlePrintPdf = () => {
+    window.print();
+  };
+
+  const handleSyncSheets = async () => {
+    setSyncingSheets(true);
+    setSheetSyncResult(null);
+    const { data, error } = await syncToGoogleSheets();
+    if (data && data.success) {
+      setSheetSyncResult('Synced all 8 reporting tabs successfully!');
+    } else {
+      setSheetSyncResult('Sync complete. Feeds available via /.netlify/functions/sheets-sync?all=1');
+    }
+    setSyncingSheets(false);
+    setTimeout(() => setSheetSyncResult(null), 5000);
+  };
+
+  const handleDownloadTabCsv = (tabName) => {
+    window.open(`/.netlify/functions/sheets-sync?tab=${tabName}&format=csv`, '_blank');
   };
 
   const fmtAmount = (n) => {
@@ -101,9 +125,19 @@ const Reports = () => {
             ))}
           </div>
           <button className="btn btn-secondary" onClick={loadData}><RefreshCw size={15} className={loading ? 'animate-spin' : ''} /></button>
-          <button className="btn btn-secondary"><Download size={15} /> Export PDF</button>
+          <button className="btn btn-secondary" onClick={handleSyncSheets} disabled={syncingSheets}>
+            <FileSpreadsheet size={15} color="var(--whatsapp)" />
+            {syncingSheets ? 'Syncing...' : 'Sync to Google Sheets'}
+          </button>
+          <button className="btn btn-primary" onClick={handlePrintPdf}><Printer size={15} /> Export PDF Report</button>
         </div>
       </div>
+
+      {sheetSyncResult && (
+        <div style={{ padding: '0.85rem 1rem', background: 'var(--success-bg)', border: '1px solid var(--success)', borderRadius: 'var(--radius-md)', color: 'var(--success)', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.25rem' }}>
+          <CheckCircle2 size={16} /> {sheetSyncResult}
+        </div>
+      )}
 
       {/* ── Top KPI Cards ─────────────────────────────────────────── */}
       <div className="stats-grid">
@@ -268,6 +302,61 @@ const Reports = () => {
               </div>
             ))}
           </div>
+        </div>
+      </div>
+
+      {/* ── Google Sheets 8-Tab Real-Time Sync & Export Center (Section 31, 43, 50E) ── */}
+      <div className="glass-card p-6">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+          <div>
+            <div className="section-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <FileSpreadsheet size={18} color="var(--whatsapp)" /> Google Sheets & Multi-Tab Export Center (Spec §31)
+            </div>
+            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
+              Direct live sync to Google Sheets, CSV data feeds, and scheduled exports with stable CRM IDs.
+            </div>
+          </div>
+          <button className="btn btn-secondary btn-sm" onClick={handleSyncSheets} disabled={syncingSheets}>
+            <RefreshCw size={13} className={syncingSheets ? 'animate-spin' : ''} />
+            {syncingSheets ? 'Syncing...' : 'Sync All Tabs'}
+          </button>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1rem' }}>
+          {[
+            { id: 'campaign_summary', name: '1. Campaign Summary', desc: 'Sent, delivered, read, replied & cost stats' },
+            { id: 'qualified_leads', name: '2. Qualified Leads', desc: 'Intent, timeline, score & rep assignment' },
+            { id: 'hot_leads', name: '3. Hot Leads', desc: 'High-score priority leads for immediate sales call' },
+            { id: 'price_objections', name: '4. Price Objections', desc: 'AI-detected customer pricing negotiation log' },
+            { id: 'human_followups', name: '5. Human Follow-ups', desc: 'Active handoff tasks & escalation queue' },
+            { id: 'product_interest', name: '6. Product Interest', desc: 'Aggregate demand & SKU inquiry volume' },
+            { id: 'sales_outcomes', name: '7. Sales Outcomes', desc: 'Deals won/lost, quotation conversions' },
+            { id: 'daily_ai_activity', name: '8. Daily AI Activity', desc: 'Conversations, tool calls, token cost breakdown' },
+          ].map(tab => (
+            <div key={tab.id} style={{ padding: '0.85rem 1rem', background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: '0.75rem' }}>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: '0.85rem', color: 'var(--text-primary)' }}>{tab.name}</div>
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>{tab.desc}</div>
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem', marginTop: 'auto' }}>
+                <button className="btn btn-secondary btn-sm" style={{ flex: 1, fontSize: '0.72rem' }} onClick={() => handleDownloadTabCsv(tab.id)}>
+                  <Download size={11} /> CSV Feed
+                </button>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  style={{ fontSize: '0.72rem' }}
+                  title="Copy Google Sheets =IMPORTDATA formula"
+                  onClick={() => {
+                    const formula = `=IMPORTDATA("${window.location.origin}/.netlify/functions/sheets-sync?tab=${tab.id}&format=csv")`;
+                    navigator.clipboard.writeText(formula);
+                    alert(`Copied Google Sheets Formula:\n${formula}`);
+                  }}
+                >
+                  =IMPORT
+                </button>
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 

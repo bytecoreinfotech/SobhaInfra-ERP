@@ -3,10 +3,10 @@ import { X, Send, Users, Filter, CheckCircle2, AlertTriangle, Shield, Clock, Ref
 import { estimateCampaignAudience, queueCampaign, processCampaignBatch } from '../lib/db';
 
 const TEMPLATES = [
-  { id: 1, tag: 'Launch', name: 'New Property Launch', text: 'Hi {name}! 🏠 We have an exciting new 3BHK launch in Andheri. Prices start at ₹85L. Interested in a site visit?' },
-  { id: 2, tag: 'Site Visit', name: 'Site Visit Invite', text: 'Dear {name}, our site visits are open this weekend for {property}! Book your slot today and get ₹50K off on booking.' },
-  { id: 3, tag: 'Payment', name: 'Payment Reminder', text: 'Dear {name}, your payment for {property} is due soon. Please clear at the earliest to avoid transaction delay.' },
-  { id: 4, tag: 'Festival', name: 'Festival Offer', text: '🎉 {name}, this festive season get special pricing ({budget}) on our 2BHK & 3BHK properties! Limited period offer.' },
+  { id: 1, tag: 'Announcement', name: 'New Product Launch', text: 'Hi {name}! 👋 We have introduced our new {product}. Would you like the official rate chart and brochure?' },
+  { id: 2, tag: 'Inquiry Offer', name: 'Special Inquiry Offer', text: 'Dear {name}, thank you for inquiring about {product}! We are offering exclusive pricing this week. Would you like a callback?' },
+  { id: 3, tag: 'Payment', name: 'Payment Reminder', text: 'Dear {name}, gentle reminder regarding your outstanding invoice for {product}. Please clear at the earliest.' },
+  { id: 4, tag: 'Follow-up', name: 'Customer Follow-up', text: 'Hello {name}, following up on your inquiry for {product}. Let us know if you would like to schedule a call with our team.' },
 ];
 
 const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued }) => {
@@ -194,12 +194,12 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued }) => {
                 </div>
                 <div style={{ padding: '0.85rem', background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: 8, fontSize: '0.82rem', lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>
                   {selectedTemplate.text
-                    .replace('{name}', 'Ravi Mehta')
-                    .replace('{property}', '3BHK Andheri West')
-                    .replace('{budget}', '₹80L - ₹1Cr')}
+                    .replace('{name}', 'Valued Customer')
+                    .replace('{product}', 'Tile Adhesive / Industrial Goods')
+                    .replace('{budget}', '₹1,00,000')}
                 </div>
                 <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '0.4rem' }}>
-                  Variables <code>{'{name}'}</code> and <code>{'{property}'}</code> are dynamically injected per lead.
+                  Variables <code>{'{name}'}</code> and <code>{'{product}'}</code> are dynamically injected per recipient lead.
                 </div>
               </div>
 

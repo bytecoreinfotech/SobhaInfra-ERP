@@ -645,3 +645,57 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* =====================
+   PRINT STYLES FOR PDF REPORT (Section 43)
+   ===================== */
+@media print {
+  /* Hide UI chrome */
+  .sidebar,
+  .topbar,
+  .page-actions,
+  .btn,
+  button,
+  .modal-overlay {
+    display: none !important;
+  }
+
+  body, .main-layout, .content-area, .page-container {
+    background: #ffffff !important;
+    color: #0f172a !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .glass-card, .stat-card {
+    background: #ffffff !important;
+    border: 1px solid #e2e8f0 !important;
+    box-shadow: none !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+    color: #0f172a !important;
+  }
+
+  .page-title {
+    color: #0f172a !important;
+    font-size: 1.8rem !important;
+  }
+
+  .page-subtitle {
+    color: #64748b !important;
+  }
+
+  .stat-value {
+    color: #0f172a !important;
+  }
+
+  .stat-label {
+    color: #64748b !important;
+  }
+
+  .progress-bar-wrap {
+    background: #f1f5f9 !important;
+  }
+}
+

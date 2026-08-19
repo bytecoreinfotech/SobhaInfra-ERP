@@ -133,22 +133,19 @@ const Settings = () => {
     setDownloading(false);
   };
 
-  const handleDownloadCsv = (type) => {
-    const headers = type === 'leads'
-      ? 'ID,Name,Phone,Source,Status,Property Interest,Budget\n'
-      : 'ID,Voucher Number,Client Name,Phone,Amount,Status,Due Date\n';
-    const sampleRows = type === 'leads'
-      ? 'lead-1,Ravi Mehta,+919876543210,WhatsApp,Hot,3BHK - Andheri West,₹95L\nlead-2,Priya Kapoor,+916543210987,Website,Warm,2BHK - Borivali,₹62L'
-      : 'inv-1,INV-2026-041,Ravi Mehta,+919876543210,250000,Overdue,2026-08-04\ninv-2,INV-2026-045,Priya Kapoor,+916543210987,450000,Pending,2026-08-23';
-    const blob = new Blob([headers + sampleRows], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `erppro_${type}_export.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+  const handleDownloadCsv = async (type) => {
+    const { data: csvText } = await exportLiveTableCsv(type);
+    if (csvText) {
+      const blob = new Blob([csvText], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `erppro_${type}_${new Date().toISOString().split('T')[0]}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
   };
 
   const tabs = [
@@ -455,28 +452,52 @@ const Settings = () => {
               {/* Individual Table CSVs */}
               <div>
                 <div style={{ fontWeight: 600, fontSize: '0.85rem', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                  <FileSpreadsheet size={16} color="var(--whatsapp)" /> Modular CSV Exports (Spreadsheet Friendly)
+                  <FileSpreadsheet size={16} color="var(--whatsapp)" /> Modular Live CSV Exports (Spreadsheet Friendly)
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.75rem' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.85rem', background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
-                    <div>
-                      <div style={{ fontWeight: 600, fontSize: '0.82rem' }}>CRM Leads & Contacts</div>
-                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Name, phone, status, budget, interest</div>
+                  {[
+                    { id: 'leads', label: 'CRM Leads & Contacts', desc: 'Name, phone, score, status, budget, intent' },
+                    { id: 'customers', label: 'Customers Master', desc: 'Converted customer accounts & GST details' },
+                    { id: 'deals', label: 'Deals & Pipeline', desc: 'Deal stages, quotation values, close dates' },
+                    { id: 'invoices', label: 'Invoices & Financials', desc: 'Vouchers, amounts, due dates, statuses' },
+                    { id: 'campaigns', label: 'WhatsApp Campaigns', desc: 'Broadcast performance & attribution logs' },
+                    { id: 'tally_mappings', label: 'Tally Ledger Mappings', desc: 'Ledger names, confidence scores, customer IDs' },
+                  ].map(t => (
+                    <div key={t.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.85rem', background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
+                      <div>
+                        <div style={{ fontWeight: 600, fontSize: '0.82rem' }}>{t.label}</div>
+                        <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{t.desc}</div>
+                      </div>
+                      <button className="btn btn-secondary btn-sm" onClick={() => handleDownloadCsv(t.id)}>
+                        <Download size={12} /> CSV
+                      </button>
                     </div>
-                    <button className="btn btn-secondary btn-sm" onClick={() => handleDownloadCsv('leads')}>
-                      <Download size={12} /> CSV
-                    </button>
-                  </div>
+                  ))}
+                </div>
+              </div>
 
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.85rem', background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
-                    <div>
-                      <div style={{ fontWeight: 600, fontSize: '0.82rem' }}>Invoices & Financials</div>
-                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Vouchers, client names, overdue amounts</div>
+              {/* Google Sheets Formula Feed Guide */}
+              <div style={{ padding: '1rem', background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
+                <div style={{ fontWeight: 700, fontSize: '0.85rem', marginBottom: '0.35rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                  <FileSpreadsheet size={16} color="var(--whatsapp)" /> Google Sheets =IMPORTDATA Direct Live Sync
+                </div>
+                <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>
+                  You can paste these formulas into any Google Sheet to create live auto-refreshing tabs without writing scripts:
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                  {[
+                    { tab: 'campaign_summary', name: 'Campaign Summary Tab' },
+                    { tab: 'qualified_leads', name: 'Qualified Leads Tab' },
+                    { tab: 'hot_leads', name: 'Hot Leads Tab' },
+                    { tab: 'daily_ai_activity', name: 'Daily AI Activity Tab' },
+                  ].map(item => (
+                    <div key={item.tab} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.4rem 0.65rem', background: 'var(--bg-secondary)', borderRadius: 'var(--radius-sm)', fontSize: '0.74rem' }}>
+                      <span style={{ fontWeight: 600 }}>{item.name}:</span>
+                      <code style={{ background: 'none', padding: 0, color: 'var(--accent-primary)', fontSize: '0.7rem' }}>
+                        =IMPORTDATA("{window.location.origin}/.netlify/functions/sheets-sync?tab={item.tab}&format=csv")
+                      </code>
                     </div>
-                    <button className="btn btn-secondary btn-sm" onClick={() => handleDownloadCsv('invoices')}>
-                      <Download size={12} /> CSV
-                    </button>
-                  </div>
+                  ))}
                 </div>
               </div>
             </div>

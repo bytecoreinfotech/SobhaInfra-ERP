@@ -42,10 +42,10 @@ const MOCK_STORE = {
   ai_knowledge: [],
   invoices: [],
   tally_connection: {
-    status: 'ONLINE',
+    status: 'DISCONNECTED',
     tally_host: '127.0.0.1:9000',
-    tally_company: 'Techma Real Estate Pvt Ltd',
-    last_sync_at: new Date().toISOString(),
+    tally_company: 'Not Connected',
+    last_sync_at: null,
     sync_frequency: '15m',
     total_synced_vouchers: 0,
   },
@@ -58,86 +58,22 @@ const MOCK_STORE = {
   deals: [],
   quotations: [],
   audit_logs: [],
-  automation_rules: [
-    {
-      id: 'rule-1',
-      name: 'Hot Lead → Auto-Create Follow-Up Task',
-      description: 'When a lead is qualified as HOT by AI, automatically create a high-priority follow-up call task for the assigned salesperson.',
-      trigger_event: 'lead.qualified_hot',
-      conditions: [{ field: 'interest_level', op: '==', val: 'HOT' }],
-      actions: [{ action: 'create_task', params: { title: 'Follow-up call with {lead_name}', priority: 'High', assigned_to: 'Rajesh Kumar' } }],
-      is_active: true,
-      last_triggered_at: new Date(Date.now() - 2 * 3600000).toISOString(),
-      created_at: new Date(Date.now() - 7 * 86400000).toISOString(),
-    },
-    {
-      id: 'rule-2',
-      name: 'Invoice Overdue 7d → WhatsApp Payment Reminder',
-      description: 'When a Tally invoice becomes 7+ days overdue, send an automated WhatsApp payment reminder to the client.',
-      trigger_event: 'tally.invoice_overdue_7d',
-      conditions: [{ field: 'days_overdue', op: '>=', val: 7 }],
-      actions: [{ action: 'send_whatsapp', params: { template: 'payment_reminder', message: 'Dear {client_name}, your payment of {amount} is overdue. Please settle at the earliest.' } }],
-      is_active: true,
-      last_triggered_at: new Date(Date.now() - 5 * 3600000).toISOString(),
-      created_at: new Date(Date.now() - 14 * 86400000).toISOString(),
-    },
-    {
-      id: 'rule-3',
-      name: 'Invoice Overdue 30d → Escalate to Manager',
-      description: 'When a Tally invoice becomes 30+ days overdue, escalate to manager and send a second stronger WhatsApp reminder.',
-      trigger_event: 'tally.invoice_overdue_30d',
-      conditions: [{ field: 'days_overdue', op: '>=', val: 30 }],
-      actions: [
-        { action: 'send_whatsapp', params: { template: 'payment_escalation', message: 'URGENT: Dear {client_name}, payment of {amount} is significantly overdue. Please contact us immediately.' } },
-        { action: 'notify_salesperson', params: { salesperson: 'Manager', priority: 'Urgent' } },
-      ],
-      is_active: true,
-      last_triggered_at: null,
-      created_at: new Date(Date.now() - 14 * 86400000).toISOString(),
-    },
-    {
-      id: 'rule-4',
-      name: 'AI Handoff → Create Urgent Task',
-      description: 'When the AI Sales Assistant requests a human handoff, automatically create an urgent task for the assigned representative.',
-      trigger_event: 'ai.handoff_requested',
-      conditions: [],
-      actions: [{ action: 'create_task', params: { title: 'AI Handoff: Call {lead_name} immediately', priority: 'High' } }],
-      is_active: true,
-      last_triggered_at: new Date(Date.now() - 1 * 3600000).toISOString(),
-      created_at: new Date(Date.now() - 10 * 86400000).toISOString(),
-    },
-    {
-      id: 'rule-5',
-      name: 'Campaign Reply → Auto-Qualify Lead +10',
-      description: 'When a lead replies to a broadcast campaign, automatically boost their lead score by +10 points.',
-      trigger_event: 'campaign.reply_received',
-      conditions: [],
-      actions: [{ action: 'update_lead_status', params: { score_delta: 10 } }],
-      is_active: false,
-      last_triggered_at: null,
-      created_at: new Date(Date.now() - 5 * 86400000).toISOString(),
-    },
-  ],
-  automation_runs: [
-    { id: 'run-1', rule_id: 'rule-1', rule_name: 'Hot Lead → Auto-Create Follow-Up Task', trigger_event: 'lead.qualified_hot', status: 'success', actions_executed: [{ action: 'create_task', result: 'Task created: Follow-up call with Ravi Mehta' }], execution_duration_ms: 120, created_at: new Date(Date.now() - 2 * 3600000).toISOString() },
-    { id: 'run-2', rule_id: 'rule-2', rule_name: 'Invoice Overdue 7d → WhatsApp Payment Reminder', trigger_event: 'tally.invoice_overdue_7d', status: 'success', actions_executed: [{ action: 'send_whatsapp', result: 'WhatsApp sent to Ravi Mehta (+919876543210)' }], execution_duration_ms: 340, created_at: new Date(Date.now() - 5 * 3600000).toISOString() },
-    { id: 'run-3', rule_id: 'rule-4', rule_name: 'AI Handoff → Create Urgent Task', trigger_event: 'ai.handoff_requested', status: 'success', actions_executed: [{ action: 'create_task', result: 'Task created: AI Handoff - Call customer immediately' }], execution_duration_ms: 95, created_at: new Date(Date.now() - 1 * 3600000).toISOString() },
-    { id: 'run-4', rule_id: 'rule-2', rule_name: 'Invoice Overdue 7d → WhatsApp Payment Reminder', trigger_event: 'tally.invoice_overdue_7d', status: 'failed', actions_executed: [], error_message: 'WhatsApp API rate limit exceeded. Retrying in 60s.', execution_duration_ms: 5200, created_at: new Date(Date.now() - 8 * 3600000).toISOString() },
-  ],
+  automation_rules: [],
+  automation_runs: [],
   business_events: [],
   system_safety: {
     daily_request_limit: 100000,
-    daily_requests_used: 1420,
+    daily_requests_used: 0,
     ai_monthly_budget_usd: 50.0,
-    ai_month_spent_usd: 4.82,
+    ai_month_spent_usd: 0.00,
     max_campaign_batch_size: 50,
     ai_messages_per_contact_day: 15,
     circuit_breaker_mode: 'Normal', // 'Normal' | 'Warning' | 'Degraded' | 'Paused'
     services: {
-      database: { name: 'Supabase PostgreSQL (RLS)', status: 'Healthy', latency_ms: 42, quota_pct: 8 },
-      whatsapp_api: { name: 'Meta WhatsApp Cloud API v20.0', status: 'Healthy', latency_ms: 175, quota_pct: 24 },
-      ai_engine: { name: 'OpenAI GPT-4o Bounded Agent', status: 'Healthy', latency_ms: 310, quota_pct: 10 },
-      tally_connector: { name: 'Local TallyPrime Bridge (Port 9000)', status: 'Connected', latency_ms: 14, quota_pct: 0 },
+      database: { name: 'Supabase PostgreSQL (RLS)', status: 'Healthy', latency_ms: 42, quota_pct: 1 },
+      whatsapp_api: { name: 'Meta WhatsApp Cloud API v20.0', status: 'Healthy', latency_ms: 175, quota_pct: 0 },
+      ai_engine: { name: 'OpenAI GPT-4o Bounded Agent', status: 'Healthy', latency_ms: 310, quota_pct: 0 },
+      tally_connector: { name: 'Local TallyPrime Bridge (Port 9000)', status: 'Standby / Offline', latency_ms: 0, quota_pct: 0 },
     },
   },
 };
@@ -169,8 +105,11 @@ export async function logAuditEvent(action, resource, resourceId = null, payload
 // ─────────────────────────────────────────────────────────────────────────────
 export async function getTallyConnectionStatus() {
   if (!isSupabaseConfigured) return { data: MOCK_STORE.tally_connection, error: null };
-  const { data, error } = await supabase.from('tally_connections').select('*').single();
-  return { data: data || MOCK_STORE.tally_connection, error };
+  try {
+    const { data, error } = await supabase.from('tally_connections').select('*').limit(1).maybeSingle();
+    if (!error && data) return { data, error: null };
+  } catch {}
+  return { data: MOCK_STORE.tally_connection, error: null };
 }
 
 export async function triggerTallySyncNow() {
@@ -1001,31 +940,99 @@ export async function toggleCircuitBreaker(newMode) {
 }
 
 export async function exportAllData() {
+  if (isSupabaseConfigured) {
+    try {
+      const [
+        { data: leads },
+        { data: customers },
+        { data: invoices },
+        { data: tasks },
+        { data: deals },
+        { data: campaigns },
+        { data: products },
+        { data: tally_mappings },
+        { data: automation_rules },
+        { data: ai_knowledge },
+        { data: audit_logs },
+      ] = await Promise.all([
+        supabase.from('leads').select('*'),
+        supabase.from('customers').select('*'),
+        supabase.from('invoices').select('*'),
+        supabase.from('tasks').select('*'),
+        supabase.from('deals').select('*'),
+        supabase.from('campaigns').select('*'),
+        supabase.from('products').select('*'),
+        supabase.from('tally_mappings').select('*'),
+        supabase.from('automation_rules').select('*'),
+        supabase.from('ai_knowledge').select('*'),
+        supabase.from('audit_logs').select('*').limit(500),
+      ]);
+
+      const snapshot = {
+        exported_at: new Date().toISOString(),
+        version: '4.0.0',
+        platform: 'Techma ERPPro Multi-Tenant Suite',
+        source: 'Supabase PostgreSQL (Live)',
+        organization_id: DEFAULT_ORG_ID,
+        summary: {
+          leads_count: (leads || []).length,
+          customers_count: (customers || []).length,
+          invoices_count: (invoices || []).length,
+          tasks_count: (tasks || []).length,
+          deals_count: (deals || []).length,
+          campaigns_count: (campaigns || []).length,
+          products_count: (products || []).length,
+          mappings_count: (tally_mappings || []).length,
+          automation_rules_count: (automation_rules || []).length,
+        },
+        data: {
+          leads: leads || [],
+          customers: customers || [],
+          invoices: invoices || [],
+          tasks: tasks || [],
+          deals: deals || [],
+          campaigns: campaigns || [],
+          products: products || [],
+          tally_mappings: tally_mappings || [],
+          automation_rules: automation_rules || [],
+          ai_knowledge: ai_knowledge || [],
+          audit_logs: audit_logs || [],
+        },
+      };
+
+      logAuditEvent('data.full_export', 'backup', 'all', { count: snapshot.summary.leads_count, source: 'supabase' });
+      return { data: snapshot, error: null };
+    } catch (e) {
+      console.warn('Live DB export fallback:', e.message);
+    }
+  }
+
   const snapshot = {
     exported_at: new Date().toISOString(),
     version: '4.0.0',
-    platform: 'Techma ERPPro Real Estate Suite',
+    platform: 'Techma ERPPro Suite',
+    source: 'In-Memory Store',
     organization_id: DEFAULT_ORG_ID,
     summary: {
       leads_count: MOCK_STORE.leads.length,
-      customers_count: MOCK_STORE.customers.length,
+      customers_count: (MOCK_STORE.customers || []).length,
       invoices_count: MOCK_STORE.invoices.length,
       tasks_count: MOCK_STORE.tasks.length,
       deals_count: MOCK_STORE.deals.length,
       campaigns_count: MOCK_STORE.campaigns.length,
       products_count: MOCK_STORE.products.length,
-      mappings_count: MOCK_STORE.tally_mappings.length,
+      mappings_count: (MOCK_STORE.tally_mappings || MOCK_STORE.ledger_mappings || []).length,
       automation_rules_count: MOCK_STORE.automation_rules.length,
     },
     data: {
       leads: MOCK_STORE.leads,
-      customers: MOCK_STORE.customers,
+      customers: MOCK_STORE.customers || [],
       invoices: MOCK_STORE.invoices,
       tasks: MOCK_STORE.tasks,
       deals: MOCK_STORE.deals,
       campaigns: MOCK_STORE.campaigns,
       products: MOCK_STORE.products,
-      tally_mappings: MOCK_STORE.tally_mappings,
+      tally_mappings: MOCK_STORE.tally_mappings || MOCK_STORE.ledger_mappings || [],
       automation_rules: MOCK_STORE.automation_rules,
       ai_knowledge: MOCK_STORE.ai_knowledge,
       audit_logs: MOCK_STORE.audit_logs,
@@ -1035,4 +1042,59 @@ export async function exportAllData() {
   logAuditEvent('data.full_export', 'backup', 'all', { count: snapshot.summary.leads_count });
   return { data: snapshot, error: null };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MODULAR CSV EXPORTER (Section 43 & 50E)
+// ─────────────────────────────────────────────────────────────────────────────
+export async function exportLiveTableCsv(tableName) {
+  let rows = [];
+
+  if (isSupabaseConfigured) {
+    try {
+      const { data } = await supabase.from(tableName).select('*').limit(1000);
+      if (data) rows = data;
+    } catch {}
+  }
+
+  if (rows.length === 0 && MOCK_STORE[tableName]) {
+    rows = MOCK_STORE[tableName];
+  }
+
+  if (rows.length === 0) {
+    // Generate fallback rows
+    return { data: 'ID,Created At,Status\n', error: null };
+  }
+
+  const keys = Object.keys(rows[0]);
+  const headerLine = keys.join(',');
+  const rowLines = rows.map(r =>
+    keys.map(k => {
+      let val = r[k] === null || r[k] === undefined ? '' : typeof r[k] === 'object' ? JSON.stringify(r[k]) : String(r[k]);
+      if (val.includes(',') || val.includes('"') || val.includes('\n')) {
+        val = `"${val.replace(/"/g, '""')}"`;
+      }
+      return val;
+    }).join(',')
+  );
+
+  return { data: [headerLine, ...rowLines].join('\n'), error: null };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GOOGLE SHEETS LIVE SYNC (Section 31 & 43)
+// ─────────────────────────────────────────────────────────────────────────────
+export async function syncToGoogleSheets(webhookUrl = '') {
+  try {
+    const res = await fetch('/.netlify/functions/sheets-sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ webhookUrl }),
+    });
+    const data = await res.json();
+    return { data, error: null };
+  } catch (err) {
+    return { data: null, error: err.message };
+  }
+}
+
 
