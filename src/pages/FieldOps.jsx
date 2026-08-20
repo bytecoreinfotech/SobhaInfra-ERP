@@ -5,11 +5,13 @@ import {
   ExternalLink, MessageCircle, AlertCircle, Eye, ShieldCheck, Check
 } from 'lucide-react';
 import { getSiteVisits, createSiteVisit, updateSiteVisit, getLeads, getTeamMembers } from '../lib/db';
+import { useAuth } from '../context/AuthContext';
 import FieldMap from '../components/FieldMap';
 import GeotaggedCameraModal from '../components/GeotaggedCameraModal';
 import './Pages.css';
 
 const FieldOps = () => {
+  const { user } = useAuth();
   const [visits, setVisits] = useState([]);
   const [leads, setLeads] = useState([]);
   const [teamMembers, setTeamMembers] = useState([]);
@@ -26,8 +28,8 @@ const FieldOps = () => {
 
   // Form State
   const [checkInForm, setCheckInForm] = useState({
-    employee_name: 'Anand Sharma',
-    employee_id: 'usr-3',
+    employee_name: user?.name || 'Anand Sharma',
+    employee_id: user?.id || 'usr-3',
     site_name: 'Grand Palm Residency - Tower B',
     client_name: '',
     lead_phone: '',

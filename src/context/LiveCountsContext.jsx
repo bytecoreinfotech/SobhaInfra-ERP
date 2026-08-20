@@ -33,8 +33,8 @@ export function LiveCountsProvider({ children }) {
         supabase.from('whatsapp_conversations').select('id', { count: 'exact', head: true }).gt('unread_count', 0),
         // New / Hot leads not yet contacted
         supabase.from('leads').select('id', { count: 'exact', head: true }).in('status', ['New', 'Hot']),
-        // Open tasks
-        supabase.from('tasks').select('id', { count: 'exact', head: true }).eq('status', 'open'),
+        // Open tasks (To Do, In Progress, Under Review)
+        supabase.from('tasks').select('id', { count: 'exact', head: true }).neq('status', 'Done'),
         // Overdue invoices
         supabase.from('invoices').select('id', { count: 'exact', head: true }).eq('status', 'Overdue'),
       ]);

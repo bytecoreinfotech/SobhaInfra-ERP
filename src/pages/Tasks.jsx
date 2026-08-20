@@ -2,9 +2,10 @@ import React, { useState, useEffect } from 'react';
 import {
   CheckSquare, Clock, AlertCircle, CheckCircle2,
   Plus, Search, Filter, Calendar, List, Columns, X, RefreshCw,
-  MessageSquare, Send, User, Tag, Check, ChevronRight
+  MessageSquare, Send, User, Tag, Check, ChevronRight, UserCheck
 } from 'lucide-react';
-import { getTasks, createTask, updateTask, addTaskComment } from '../lib/db';
+import { getTasks, createTask, updateTask, addTaskComment, getTeamMembers } from '../lib/db';
+import { useAuth } from '../context/AuthContext';
 import './Pages.css';
 
 const priorityColors = { High: 'var(--danger)', Medium: 'var(--warning)', Low: 'var(--success)' };
@@ -13,26 +14,32 @@ const COLUMNS = ['To Do', 'In Progress', 'Under Review', 'Done'];
 const EMPTY_TASK = { title: '', description: '', status: 'To Do', priority: 'Medium', due_date: '', tags: [], assigned_to: '' };
 
 const Tasks = () => {
+  const { user } = useAuth();
   const [tasks, setTasks] = useState([]);
+  const [teamMembers, setTeamMembers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState('kanban');
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState(EMPTY_TASK);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');
+  const [assigneeFilter, setAssigneeFilter] = useState('All');
 
   // Task Details & Comment Drawer / Modal
   const [selectedTask, setSelectedTask] = useState(null);
   const [newComment, setNewComment] = useState('');
-  const [commentAuthor, setCommentAuthor] = useState('Anand Sharma');
   const [addingComment, setAddingComment] = useState(false);
 
   useEffect(() => { loadTasks(); }, []);
 
   const loadTasks = async () => {
     setLoading(true);
-    const { data } = await getTasks();
-    setTasks(data || []);
+    const [taskRes, membersRes] = await Promise.all([
+      getTasks(),
+      getTeamMembers(),
+    ]);
+    setTasks(taskRes.data || []);
+    setTeamMembers(membersRes.data || []);
     setLoading(false);
   };
 
@@ -59,7 +66,8 @@ const Tasks = () => {
     if (!newComment.trim() || !selectedTask) return;
 
     setAddingComment(true);
-    const { data: createdComment } = await addTaskComment(selectedTask.id, newComment.trim(), commentAuthor);
+    const authorName = user?.name || 'Team Member';
+    const { data: createdComment } = await addTaskComment(selectedTask.id, newComment.trim(), authorName);
 
     if (createdComment) {
       const updatedComments = [...(selectedTask.comments || []), createdComment];
@@ -80,8 +88,17 @@ const Tasks = () => {
     setAddingComment(false);
   };
 
-  const tasksByCol = (col) => tasks.filter(t => t.status === col && (!search || t.title.toLowerCase().includes(search.toLowerCase())));
-  const filteredFlat = tasks.filter(t => !search || t.title.toLowerCase().includes(search.toLowerCase()));
+  const matchesAssignee = (t) => {
+    if (assigneeFilter === 'All') return true;
+    if (assigneeFilter === 'My Tasks') {
+      const uName = (user?.name || '').toLowerCase();
+      return (t.assigned_to || '').toLowerCase().includes(uName);
+    }
+    return t.assigned_to === assigneeFilter;
+  };
+
+  const tasksByCol = (col) => tasks.filter(t => t.status === col && matchesAssignee(t) && (!search || t.title.toLowerCase().includes(search.toLowerCase())));
+  const filteredFlat = tasks.filter(t => matchesAssignee(t) && (!search || t.title.toLowerCase().includes(search.toLowerCase())));
 
   const statusBadge = { 'To Do': 'badge-neutral', 'In Progress': 'badge-warning', 'Under Review': 'badge-accent', 'Done': 'badge-success' };
 
@@ -90,7 +107,7 @@ const Tasks = () => {
       <div className="page-header">
         <div className="page-title-group">
           <h1 className="page-title">Task Management</h1>
-          <p className="page-subtitle">Track team productivity, assignments, site visits & task comments.</p>
+          <p className="page-subtitle">Assign daily site visits, client inspections, and track team execution.</p>
         </div>
         <div className="page-actions">
           <div style={{ display: 'flex', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
@@ -100,16 +117,32 @@ const Tasks = () => {
               </button>
             ))}
           </div>
-          <button className="btn btn-secondary" onClick={loadTasks}><RefreshCw size={15} className={loading ? 'animate-spin' : ''} /></button>
+          <button className="btn btn-secondary" onClick={loadTasks} title="Refresh tasks"><RefreshCw size={15} className={loading ? 'animate-spin' : ''} /></button>
           <button className="btn btn-primary" onClick={() => setShowAdd(true)}><Plus size={15} /> Create Task</button>
         </div>
       </div>
 
-      {/* Search */}
-      <div style={{ display: 'flex', gap: '0.75rem' }}>
-        <div className="input-group" style={{ maxWidth: 300 }}>
+      {/* Search & Assignee Filter Bar */}
+      <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
+        <div className="input-group" style={{ maxWidth: 280, flex: 1 }}>
           <Search size={15} className="input-icon" />
           <input type="text" className="input-field" placeholder="Search tasks..." value={search} onChange={e => setSearch(e.target.value)} />
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <select
+            className="input-field"
+            style={{ width: 'auto', minWidth: 200, fontSize: '0.8rem', padding: '0.45rem 0.75rem' }}
+            value={assigneeFilter}
+            onChange={e => setAssigneeFilter(e.target.value)}
+          >
+            <option value="All">👥 All Team Tasks ({tasks.length})</option>
+            {user?.name && <option value="My Tasks">⭐ Assigned to Me ({user.name})</option>}
+            {teamMembers.map(m => (
+              <option key={m.id} value={m.full_name}>👤 {m.full_name} ({m.role})</option>
+            ))}
+            {teamMembers.length === 0 && <option value="Anand Sharma">👤 Anand Sharma (Sales Executive)</option>}
+          </select>
         </div>
       </div>
 
@@ -341,14 +374,24 @@ const Tasks = () => {
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                 <div>
-                  <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Assign To</label>
-                  <input
-                    type="text"
+                  <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Assign To Field Agent / Employee</label>
+                  <select
                     className="input-field"
-                    placeholder="e.g. Anand Sharma (Field Agent)"
                     value={form.assigned_to || ''}
                     onChange={e => setForm(p => ({ ...p, assigned_to: e.target.value }))}
-                  />
+                  >
+                    <option value="">-- Select Field Agent --</option>
+                    {teamMembers.map(m => (
+                      <option key={m.id} value={m.full_name}>{m.full_name} ({m.role})</option>
+                    ))}
+                    {teamMembers.length === 0 && (
+                      <>
+                        <option value="Anand Sharma">Anand Sharma (Sales Executive)</option>
+                        <option value="Rajesh Kumar">Rajesh Kumar (Sales Executive)</option>
+                        <option value="Priya Sharma">Priya Sharma (Manager)</option>
+                      </>
+                    )}
+                  </select>
                 </div>
                 <div>
                   <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Category / Tag</label>
