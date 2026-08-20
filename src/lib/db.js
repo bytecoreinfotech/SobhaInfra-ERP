@@ -59,6 +59,44 @@ const MOCK_STORE = {
   automation_rules: [],
   automation_runs: [],
   business_events: [],
+  site_visits: [
+    {
+      id: 'visit-101',
+      employee_name: 'Anand Sharma',
+      employee_id: 'usr-3',
+      site_name: 'Grand Palm Residency - Tower B',
+      client_name: 'Vikram Malhotra',
+      lead_phone: '+919876543210',
+      purpose: 'Client Site Visit & Floor Plan Walkthrough',
+      lat: 28.5355,
+      lng: 77.3910,
+      address: 'Sector 62, Noida, Uttar Pradesh 201309',
+      accuracy: 6,
+      status: 'In Progress',
+      check_in_time: new Date(Date.now() - 35 * 60 * 1000).toISOString(),
+      photo_url: 'https://images.unsplash.com/photo-1545324418-cc1a3fa10c00?auto=format&fit=crop&w=600&q=80',
+      notes: 'Client liked the 3BHK East-facing unit. Requested quotation for 4th floor.',
+      created_at: new Date(Date.now() - 35 * 60 * 1000).toISOString(),
+    },
+    {
+      id: 'visit-102',
+      employee_name: 'Priya Verma',
+      employee_id: 'usr-4',
+      site_name: 'Skyline Royal Heights',
+      client_name: 'Sunil Mehta',
+      lead_phone: '+919812345678',
+      purpose: 'Construction Milestone Inspection',
+      lat: 28.4595,
+      lng: 77.0266,
+      address: 'Golf Course Road, Sector 54, Gurugram, Haryana 122002',
+      accuracy: 4,
+      status: 'Completed',
+      check_in_time: new Date(Date.now() - 120 * 60 * 1000).toISOString(),
+      photo_url: 'https://images.unsplash.com/photo-1503387762-592deb58ef4e?auto=format&fit=crop&w=600&q=80',
+      notes: 'Rooftop casting completed. Safety nets installed as per standard.',
+      created_at: new Date(Date.now() - 120 * 60 * 1000).toISOString(),
+    }
+  ],
   system_safety: {
     daily_request_limit: 100000,
     daily_requests_used: 0,
@@ -1430,5 +1468,114 @@ export async function syncToGoogleSheets(webhookUrl = '') {
     return { data: null, error: err.message };
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// REAL ESTATE FIELD OPERATIONS & SITE VISITS (Free GPS & Geotag Photo Engine)
+// ─────────────────────────────────────────────────────────────────────────────
+export async function getSiteVisits() {
+  if (isSupabaseConfigured) {
+    try {
+      const { data, error } = await supabase
+        .from('site_visits')
+        .select('*')
+        .order('check_in_time', { ascending: false });
+      if (!error && data && data.length > 0) return { data, error: null };
+    } catch (err) {
+      console.warn('[db] getSiteVisits fallback:', err.message);
+    }
+  }
+  try {
+    const local = localStorage.getItem('erppro_site_visits');
+    if (local) {
+      const parsed = JSON.parse(local);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return { data: parsed, error: null };
+      }
+    }
+  } catch {}
+  return { data: MOCK_STORE.site_visits, error: null };
+}
+
+export async function createSiteVisit(visitData) {
+  const newVisit = {
+    id: 'visit-' + Date.now(),
+    organization_id: DEFAULT_ORG_ID,
+    employee_name: visitData.employee_name || 'Field Agent',
+    employee_id: visitData.employee_id || 'usr-1',
+    site_name: visitData.site_name || 'Site Inspection',
+    client_name: visitData.client_name || '',
+    lead_id: visitData.lead_id || null,
+    lead_phone: visitData.lead_phone || '',
+    purpose: visitData.purpose || 'Site Inspection',
+    lat: Number(visitData.lat || 0),
+    lng: Number(visitData.lng || 0),
+    address: visitData.address || 'Detected Location',
+    accuracy: Number(visitData.accuracy || 10),
+    status: visitData.status || 'In Progress',
+    check_in_time: visitData.check_in_time || new Date().toISOString(),
+    photo_url: visitData.photo_url || null,
+    notes: visitData.notes || '',
+    created_at: new Date().toISOString(),
+  };
+
+  if (isSupabaseConfigured) {
+    try {
+      const { data, error } = await supabase.from('site_visits').insert([newVisit]).select().single();
+      if (!error && data) return { data, error: null };
+    } catch (e) {
+      console.warn('[db] createSiteVisit fallback:', e.message);
+    }
+  }
+
+  MOCK_STORE.site_visits.unshift(newVisit);
+  try {
+    localStorage.setItem('erppro_site_visits', JSON.stringify(MOCK_STORE.site_visits));
+  } catch {}
+  logAuditEvent('field.check_in', 'site_visits', newVisit.id, {
+    site_name: newVisit.site_name,
+    employee: newVisit.employee_name,
+    coords: `${newVisit.lat}, ${newVisit.lng}`
+  });
+  return { data: newVisit, error: null };
+}
+
+export async function updateSiteVisit(visitId, updates) {
+  if (isSupabaseConfigured) {
+    try {
+      const { data, error } = await supabase.from('site_visits').update(updates).eq('id', visitId).select().single();
+      if (!error && data) return { data, error: null };
+    } catch {}
+  }
+  const idx = MOCK_STORE.site_visits.findIndex(v => v.id === visitId);
+  if (idx !== -1) {
+    MOCK_STORE.site_visits[idx] = { ...MOCK_STORE.site_visits[idx], ...updates };
+    try {
+      localStorage.setItem('erppro_site_visits', JSON.stringify(MOCK_STORE.site_visits));
+    } catch {}
+    return { data: MOCK_STORE.site_visits[idx], error: null };
+  }
+  return { data: null, error: { message: 'Visit not found' } };
+}
+
+// Free reverse geocoder using OpenStreetMap Nominatim
+export async function reverseGeocode(lat, lng) {
+  try {
+    const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`, {
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'ERPPro-RealEstate-CRM/4.0',
+      }
+    });
+    if (!res.ok) throw new Error('Geocoding response not ok');
+    const json = await res.json();
+    if (json && json.display_name) {
+      return json.display_name;
+    }
+  } catch (err) {
+    console.warn('Reverse geocode fallback:', err.message);
+  }
+  return `GPS: ${Number(lat).toFixed(4)}°, ${Number(lng).toFixed(4)}°`;
+}
+
 
 

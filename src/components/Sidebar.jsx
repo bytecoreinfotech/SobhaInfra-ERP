@@ -3,7 +3,7 @@ import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, Users, CheckSquare, IndianRupee,
   MessageCircle, Bot, CreditCard, Shield, BarChart3,
-  Settings, ChevronLeft, ChevronRight
+  Settings, ChevronLeft, ChevronRight, MapPin
 } from 'lucide-react';
 import { useLiveCounts } from '../context/LiveCountsContext';
 import './Sidebar.css';
@@ -33,6 +33,7 @@ const Sidebar = ({ collapsed, onToggle, mobileOpen, onMobileClose }) => {
     {
       label: 'Operations',
       items: [
+        { name: 'Field Ops & GPS Live', path: '/field-ops', icon: <MapPin size={18} /> },
         { name: 'Task Management',   path: '/tasks',       icon: <CheckSquare size={18} />, badge: badge(tasks) },
         { name: 'Automation Rules',  path: '/automations', icon: <Settings size={18} /> },
         { name: 'Payment Follow-up', path: '/payments',    icon: <CreditCard size={18} />,  badge: badge(payments) },

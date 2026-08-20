@@ -17,6 +17,7 @@ import Roles from './pages/Roles';
 import Reports from './pages/Reports';
 import Settings from './pages/Settings';
 import Automations from './pages/Automations';
+import FieldOps from './pages/FieldOps';
 import './index.css';
 import './App.css';
 
@@ -65,6 +66,7 @@ function AppInner() {
             <Route path="/chatbot"   element={<Chatbot />} />
             <Route path="/crm"       element={<CRM />} />
             <Route path="/tasks"     element={<Tasks />} />
+            <Route path="/field-ops" element={<FieldOps />} />
             <Route path="/payments"  element={<Payments />} />
             <Route path="/finance"   element={<Finance />} />
             <Route path="/automations" element={<Automations />} />
