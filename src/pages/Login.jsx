@@ -3,9 +3,11 @@ import { useAuth } from '../context/AuthContext';
 import { Building2, Eye, EyeOff, ArrowRight, MessageCircle } from 'lucide-react';
 
 const demoCredentials = [
-  { role: 'Super Admin', email: 'admin@erppro.in', password: 'demo1234', badge: 'danger' },
-  { role: 'Manager', email: 'manager@erppro.in', password: 'demo1234', badge: 'accent' },
-  { role: 'Sales Executive', email: 'sales@erppro.in', password: 'demo1234', badge: 'success' },
+  { role: 'Super Admin', email: 'admin@erppro.in', password: 'demo1234', name: 'Admin User', badge: 'danger' },
+  { role: 'Manager', email: 'manager@erppro.in', password: 'demo1234', name: 'Priya Sharma', badge: 'accent' },
+  { role: 'Field Employee / Agent', email: 'field@erppro.in', password: 'demo1234', name: 'Anand Sharma', badge: 'warning' },
+  { role: 'Sales Executive', email: 'sales@erppro.in', password: 'demo1234', name: 'Rajesh Kumar', badge: 'success' },
+  { role: 'Accounts & Billing', email: 'accounts@erppro.in', password: 'demo1234', name: 'Sunita Patel', badge: 'neutral' },
 ];
 
 const Login = () => {
@@ -187,8 +189,8 @@ const Login = () => {
                   onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,0.03)'}
                 >
                   <div>
-                    <div style={{ color: 'white', fontSize: '0.82rem', fontWeight: 600 }}>{cred.role}</div>
-                    <div style={{ color: '#64748b', fontSize: '0.72rem' }}>{cred.email} · demo1234</div>
+                    <div style={{ color: 'white', fontSize: '0.82rem', fontWeight: 600 }}>{cred.role} <span style={{ color: '#94a3b8', fontWeight: 400, fontSize: '0.75rem' }}>({cred.name})</span></div>
+                    <div style={{ color: '#64748b', fontSize: '0.72rem' }}>{cred.email} · {cred.password}</div>
                   </div>
                   <ArrowRight size={14} color="#6366f1" />
                 </button>

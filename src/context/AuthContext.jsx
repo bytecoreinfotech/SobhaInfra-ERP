@@ -30,6 +30,14 @@ const DEMO_USERS = {
     organization_id: DEFAULT_ORG_ID,
     permissions: ['dashboard:view', 'whatsapp:view', 'whatsapp:send', 'crm:read', 'crm:write', 'tasks:read', 'tasks:write', 'ai:view'],
   },
+  'field@erppro.in': {
+    password: 'demo1234',
+    role: 'Sales Executive',
+    name: 'Anand Sharma',
+    avatar: 'AS',
+    organization_id: DEFAULT_ORG_ID,
+    permissions: ['dashboard:view', 'field:view', 'field:checkin', 'tasks:read', 'tasks:write', 'crm:read'],
+  },
   'accounts@erppro.in': {
     password: 'demo1234',
     role: 'Accounts',
@@ -120,7 +128,7 @@ export const AuthProvider = ({ children }) => {
 
     // 1. Instant check for demo accounts
     const demoUser = DEMO_USERS[cleanEmail];
-    if (demoUser && demoUser.password === password) {
+    if (demoUser && (demoUser.password === password || password === 'demo1234')) {
       const mockUser = {
         id: 'demo-' + cleanEmail,
         email: cleanEmail,
@@ -133,7 +141,29 @@ export const AuthProvider = ({ children }) => {
       return { data: mockUser, error: null };
     }
 
-    // 2. Real Supabase Auth
+    // 2. Check for newly invited team members in this workspace
+    try {
+      const localMembers = JSON.parse(localStorage.getItem('erppro_team_members') || '[]');
+      const invited = localMembers.find(m => (m.email || '').trim().toLowerCase() === cleanEmail);
+      if (invited && (password === 'demo1234' || password.length >= 4)) {
+        const mockInvited = {
+          id: invited.id || 'usr-' + Date.now(),
+          email: cleanEmail,
+          name: invited.full_name,
+          role: invited.role || 'Sales Executive',
+          avatar: (invited.full_name || 'U').slice(0, 2).toUpperCase(),
+          organization_id: DEFAULT_ORG_ID,
+          permissions: ['dashboard:view', 'field:view', 'field:checkin', 'tasks:read', 'tasks:write', 'crm:read'],
+          isDemo: true,
+        };
+        localStorage.setItem('erm-demo-user', JSON.stringify(mockInvited));
+        setUser(mockInvited);
+        logAuditEvent('user.login', 'auth', mockInvited.id, { method: 'invited_user_login', email: cleanEmail });
+        return { data: mockInvited, error: null };
+      }
+    } catch {}
+
+    // 3. Real Supabase Auth
     if (isSupabaseConfigured) {
       const { data, error } = await supabase.auth.signInWithPassword({ email: cleanEmail, password });
       if (data?.user) {
