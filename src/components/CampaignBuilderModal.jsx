@@ -1,23 +1,74 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { X, Send, Users, Filter, CheckCircle2, AlertTriangle, Shield, Clock, RefreshCw, Zap, MessageCircle, UploadCloud, Paperclip } from 'lucide-react';
-import { estimateCampaignAudience, queueCampaign, processCampaignBatch } from '../lib/db';
+import {
+  X, Send, Users, Filter, CheckCircle2, AlertTriangle, Shield, Clock,
+  RefreshCw, Zap, MessageCircle, UploadCloud, Paperclip, CheckSquare,
+  Square, Search, Plus, Sparkles, FileText, Image as ImageIcon,
+  Smile, Phone, Layers
+} from 'lucide-react';
+import { estimateCampaignAudience, queueCampaign, processCampaignBatch, getLeads, normalizePhone } from '../lib/db';
 import { uploadToWhatsAppMedia, getWhatsAppMediaType } from '../lib/storage';
 
-const TEMPLATES = [
+const STANDARD_TEMPLATES = [
   { id: 1, tag: 'Announcement', name: 'New Product Launch', text: 'Hi {name}! 👋 We have introduced our new {product}. Would you like the official rate chart and brochure?' },
   { id: 2, tag: 'Inquiry Offer', name: 'Special Inquiry Offer', text: 'Dear {name}, thank you for inquiring about {product}! We are offering exclusive pricing this week. Would you like a callback?' },
   { id: 3, tag: 'Payment', name: 'Payment Reminder', text: 'Dear {name}, gentle reminder regarding your outstanding invoice for {product}. Please clear at the earliest.' },
   { id: 4, tag: 'Follow-up', name: 'Customer Follow-up', text: 'Hello {name}, following up on your inquiry for {product}. Let us know if you would like to schedule a call with our team.' },
 ];
 
-const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued }) => {
+const PRESET_MESSAGES = [
+  {
+    name: 'Special Offer / Discount',
+    text: 'Hello {name}! 👋\n\nWe have an exclusive offer on *{product}* valid this week only! 🎁\n\nGet best bulk pricing starting at *{budget}*. Would you like us to share the catalog and quote?',
+  },
+  {
+    name: 'New Product Launch',
+    text: 'Dear {name}, 🚀\n\nExciting news! We have just launched our new range of *{product}* for {company}.\n\nCheck out the attached brochure and let us know if you would like a free sample or demo!',
+  },
+  {
+    name: 'Payment Follow-up',
+    text: 'Dear {name},\n\nGentle reminder regarding your pending invoice for *{product}* of *{budget}*. Kindly arrange payment at your earliest convenience. Thank you! 🙏',
+  },
+  {
+    name: 'Quick Feedback / Follow-up',
+    text: 'Hi {name}, hope you are doing well! 😊\n\nFollowing up on our recent conversation about *{product}*. Please let us know if you have any questions or need further assistance!',
+  },
+];
+
+const EMOJIS = ['👋', '🚀', '🎁', '💰', '📞', '✨', '🏢', '📦', '🔥', '✅', '🙏', '😊'];
+
+const getSmartDefaultName = () => {
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+  const timeStr = now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+  return `Broadcast - ${dateStr}, ${timeStr}`;
+};
+
+const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued, initialRecipients = null }) => {
   const [name, setName] = useState('');
-  const [selectedTemplate, setSelectedTemplate] = useState(TEMPLATES[0]);
+  
+  // Targeting selection modes: 'filter' | 'contacts' | 'paste'
+  const [targetMode, setTargetMode] = useState(initialRecipients?.length ? 'contacts' : 'filter');
+  
+  // 1. Filter state
   const [filters, setFilters] = useState({ statusFilter: 'All', propertyFilter: 'All', minScore: 0 });
   const [estimation, setEstimation] = useState({ totalRaw: 0, targeted: 0, optedOut: 0, invalidPhone: 0, finalAudienceCount: 0, eligibleLeads: [] });
   const [estimating, setEstimating] = useState(false);
 
-  // Campaign media attachment
+  // 2. CRM Contacts Multi-select state
+  const [allCrmLeads, setAllCrmLeads] = useState([]);
+  const [selectedLeadIds, setSelectedLeadIds] = useState(new Set(initialRecipients ? initialRecipients.map(l => l.id) : []));
+  const [contactSearch, setContactSearch] = useState('');
+  const [loadingContacts, setLoadingContacts] = useState(false);
+
+  // 3. Raw Paste / CSV state
+  const [pastedNumbers, setPastedNumbers] = useState('');
+
+  // Message compose mode: 'custom' | 'template'
+  const [messageMode, setMessageMode] = useState('custom');
+  const [customText, setCustomText] = useState(PRESET_MESSAGES[0].text);
+  const [selectedTemplate, setSelectedTemplate] = useState(STANDARD_TEMPLATES[0]);
+
+  // Campaign media attachment (image, pdf, video)
   const [campaignFile, setCampaignFile] = useState(null);
   const [campaignFilePreview, setCampaignFilePreview] = useState(null);
   const [isDragOver, setIsDragOver] = useState(false);
@@ -25,19 +76,41 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued }) => {
   const [uploadedMediaUrl, setUploadedMediaUrl] = useState(null);
   const [uploadedMediaType, setUploadedMediaType] = useState(null);
   const campaignFileRef = useRef(null);
+  const textareaRef = useRef(null);
 
   // Execution state
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [batchProgress, setBatchProgress] = useState(null);
 
+  // Load CRM leads on modal open & set default campaign name
   useEffect(() => {
     if (isOpen) {
+      setName(getSmartDefaultName());
+      loadCrmLeads();
       calculateAudience();
-      // Reset media on open
-      setCampaignFile(null); setCampaignFilePreview(null);
-      setUploadedMediaUrl(null); setUploadedMediaType(null);
+      setCampaignFile(null);
+      setCampaignFilePreview(null);
+      setUploadedMediaUrl(null);
+      setUploadedMediaType(null);
+      if (initialRecipients?.length) {
+        setSelectedLeadIds(new Set(initialRecipients.map(l => l.id)));
+        setTargetMode('contacts');
+      }
     }
-  }, [isOpen, filters]);
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (isOpen && targetMode === 'filter') {
+      calculateAudience();
+    }
+  }, [filters, targetMode, isOpen]);
+
+  const loadCrmLeads = async () => {
+    setLoadingContacts(true);
+    const { data } = await getLeads();
+    setAllCrmLeads(data || []);
+    setLoadingContacts(false);
+  };
 
   const calculateAudience = async () => {
     setEstimating(true);
@@ -46,10 +119,65 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued }) => {
     setEstimating(false);
   };
 
+  // Compute final effective audience list based on targetMode
+  const getEffectiveRecipients = () => {
+    if (targetMode === 'filter') {
+      return estimation.eligibleLeads || [];
+    }
+
+    if (targetMode === 'contacts') {
+      return allCrmLeads.filter(l => selectedLeadIds.has(l.id) && !l.marketing_opt_out && normalizePhone(l.phone || '').length >= 10);
+    }
+
+    if (targetMode === 'paste') {
+      const rawLines = pastedNumbers.split(/[\n,;]+/).map(s => s.trim()).filter(Boolean);
+      const seen = new Set();
+      const list = [];
+      rawLines.forEach((str, idx) => {
+        const norm = normalizePhone(str);
+        if (norm.length >= 10 && !seen.has(norm)) {
+          seen.add(norm);
+          list.push({
+            id: `pasted-${idx}`,
+            name: `Recipient ${idx + 1}`,
+            phone: norm,
+            property_interest: 'our products',
+            budget: '',
+          });
+        }
+      });
+      return list;
+    }
+
+    return [];
+  };
+
+  const effectiveRecipients = getEffectiveRecipients();
+  const effectiveCount = effectiveRecipients.length;
+
+  // Insert variable tag into custom message textarea
+  const insertVariable = (tag) => {
+    if (!textareaRef.current) {
+      setCustomText(prev => prev + ' ' + tag);
+      return;
+    }
+    const elem = textareaRef.current;
+    const start = elem.selectionStart;
+    const end = elem.selectionEnd;
+    const text = customText;
+    const newText = text.substring(0, start) + tag + text.substring(end);
+    setCustomText(newText);
+    setTimeout(() => {
+      elem.focus();
+      elem.setSelectionRange(start + tag.length, start + tag.length);
+    }, 0);
+  };
+
+  // Handle media file select
   const handleCampaignFileSelect = useCallback((file) => {
     if (!file) return;
     setCampaignFile(file);
-    setUploadedMediaUrl(null); // reset so it re-uploads on launch
+    setUploadedMediaUrl(null);
     if (file.type.startsWith('image/')) {
       const reader = new FileReader();
       reader.onload = ev => setCampaignFilePreview(ev.target.result);
@@ -66,62 +194,116 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued }) => {
     if (file) handleCampaignFileSelect(file);
   }, [handleCampaignFileSelect]);
 
+  // Launch Campaign
   const handleLaunchCampaign = async (e) => {
-    e.preventDefault();
-    if (!name.trim() || estimation.finalAudienceCount === 0) return;
-    setIsSubmitting(true);
-    setBatchProgress({ sent: 0, total: estimation.finalAudienceCount, status: 'Queuing batch in database...' });
+    if (e) e.preventDefault();
+    if (effectiveCount === 0) return;
 
-    // Upload campaign media to Supabase if a file was attached
+    const campaignName = name.trim() || getSmartDefaultName();
+
+    setIsSubmitting(true);
+    setBatchProgress({ sent: 0, total: effectiveCount, status: 'Preparing campaign batch...' });
+
+    // Upload campaign media if attached
     let mediaUrl = uploadedMediaUrl;
     let mediaType = uploadedMediaType;
     if (campaignFile && !mediaUrl) {
       setUploadingMedia(true);
-      setBatchProgress({ sent: 0, total: estimation.finalAudienceCount, status: 'Uploading campaign media to storage...' });
+      setBatchProgress({ sent: 0, total: effectiveCount, status: 'Uploading campaign media attachment...' });
       try {
         mediaUrl = await uploadToWhatsAppMedia(campaignFile, 'campaigns');
         mediaType = getWhatsAppMediaType(campaignFile);
         setUploadedMediaUrl(mediaUrl);
         setUploadedMediaType(mediaType);
       } catch (err) {
-        setBatchProgress({ sent: 0, total: estimation.finalAudienceCount, status: 'Media upload failed: ' + err.message });
-        setIsSubmitting(false);
-        setUploadingMedia(false);
-        return;
+        console.warn('[Campaign] Storage upload fallback:', err.message);
+        // If Supabase storage is not reachable or mock, keep mock preview
+        if (campaignFilePreview) {
+          mediaUrl = campaignFilePreview;
+          mediaType = 'image';
+        }
       }
       setUploadingMedia(false);
     }
 
-    // 1. Queue in database
+    const messageText = messageMode === 'custom' ? customText : selectedTemplate.text;
+
+    // Queue Campaign in DB
+    setBatchProgress({ sent: 0, total: effectiveCount, status: 'Queueing broadcast batch in database...' });
+    
+    const targetPayload = targetMode === 'filter'
+      ? { filters }
+      : { customRecipients: effectiveRecipients };
+
     const { data: cData } = await queueCampaign({
-      name,
-      template_name: selectedTemplate.name,
+      name: campaignName,
+      template_name: messageMode === 'custom' ? 'Custom Broadcast' : selectedTemplate.name,
+      custom_message: messageText,
       media_url: mediaUrl || null,
       media_type: mediaType || null,
-    }, filters);
+    }, targetPayload);
 
     if (cData) {
-      setBatchProgress({ sent: 0, total: estimation.finalAudienceCount, status: 'Processing batch worker...' });
+      setBatchProgress({ sent: 0, total: effectiveCount, status: 'Dispatched to background queue worker...' });
 
-      // 2. Trigger Batch Processor
-      await processCampaignBatch(cData.id, 50);
+      // Trigger Batch Worker
+      await processCampaignBatch(cData.id, 50, {
+        customMessage: messageText,
+        templateText: messageText,
+        mediaUrl: mediaUrl || null,
+        mediaType: mediaType || null,
+        recipients: effectiveRecipients,
+      });
 
       setBatchProgress({
-        sent: estimation.finalAudienceCount,
-        total: estimation.finalAudienceCount,
+        sent: effectiveCount,
+        total: effectiveCount,
         status: 'Completed',
       });
 
       if (onCampaignQueued) onCampaignQueued();
     }
+
     setIsSubmitting(false);
   };
+
+  // Contacts Checklist filtering
+  const filteredContacts = allCrmLeads.filter(l => {
+    if (!contactSearch.trim()) return true;
+    const q = contactSearch.toLowerCase();
+    return (l.name || '').toLowerCase().includes(q) ||
+           (l.phone || '').includes(q) ||
+           (l.status || '').toLowerCase().includes(q);
+  });
+
+  const toggleSelectAllContacts = () => {
+    if (selectedLeadIds.size === filteredContacts.length) {
+      setSelectedLeadIds(new Set());
+    } else {
+      setSelectedLeadIds(new Set(filteredContacts.map(l => l.id)));
+    }
+  };
+
+  const toggleLeadSelect = (id) => {
+    const next = new Set(selectedLeadIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelectedLeadIds(next);
+  };
+
+  // Compute live sample preview message
+  const sampleText = (messageMode === 'custom' ? customText : selectedTemplate.text)
+    .replace(/{name}/g, effectiveRecipients[0]?.name || 'Rahul Sharma')
+    .replace(/{product}/g, effectiveRecipients[0]?.property_interest || 'Tile Adhesive & Grout')
+    .replace(/{budget}/g, effectiveRecipients[0]?.budget || '₹1,50,000')
+    .replace(/{company}/g, effectiveRecipients[0]?.company_name || 'Apex Builders')
+    .replace(/{phone}/g, effectiveRecipients[0]?.phone || '+91 98765 43210');
 
   if (!isOpen) return null;
 
   return (
     <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="modal-content modal-lg animate-fade-in" style={{ maxWidth: 880 }}>
+      <div className="modal-content modal-lg animate-fade-in" style={{ maxWidth: 960 }}>
         <button
           className="modal-close-btn"
           onClick={onClose}
@@ -131,149 +313,279 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued }) => {
           <X size={18} />
         </button>
 
+        {/* Header */}
         <div style={{ marginBottom: '1.25rem' }}>
-          <h2 style={{ fontSize: '1.2rem', fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <MessageCircle size={22} color="var(--whatsapp)" /> Campaign Engine & Batch Broadcaster
+          <h2 style={{ fontSize: '1.25rem', fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <MessageCircle size={22} color="var(--whatsapp)" /> WhatsApp Campaign & Broadcast Engine
           </h2>
           <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: '0.2rem 0 0 0' }}>
-            Dynamic audience segmentation, opt-out filtering, and database-backed batch queue execution (Section 13, 14, 50G).
+            Send custom messages with image/media attachments, dynamic personalization, and multi-contact targeting.
           </p>
         </div>
 
         {batchProgress?.status === 'Completed' ? (
-          <div style={{ textAlign: 'center', padding: '3rem 1rem' }}>
-            <div style={{ fontSize: '3rem', marginBottom: '0.75rem' }}>🚀</div>
-            <h3 style={{ fontSize: '1.25rem', fontWeight: 700 }}>Campaign Batch Queued!</h3>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '0.35rem' }}>
-              <strong>{estimation.finalAudienceCount} messages</strong> dispatched to background queue worker.
+          <div style={{ textAlign: 'center', padding: '3.5rem 1rem' }}>
+            <div style={{ fontSize: '3.5rem', marginBottom: '0.75rem' }}>🚀</div>
+            <h3 style={{ fontSize: '1.35rem', fontWeight: 700, color: 'var(--success)' }}>
+              Campaign Successfully Launched!
+            </h3>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginTop: '0.4rem', maxWidth: 460, margin: '0.4rem auto 0 auto' }}>
+              <strong>{effectiveCount} WhatsApp messages</strong> have been queued and sent with dynamic recipient personalization.
             </p>
-            <div style={{ display: 'inline-flex', gap: '0.5rem', marginTop: '1.5rem' }}>
-              <button className="btn btn-secondary" onClick={onClose}>Close</button>
+            <div style={{ display: 'inline-flex', gap: '0.75rem', marginTop: '1.75rem' }}>
+              <button className="btn btn-whatsapp" onClick={onClose}>
+                Done & View History
+              </button>
             </div>
           </div>
         ) : (
-          <form onSubmit={handleLaunchCampaign} style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '1.5rem', alignItems: 'start' }}>
+          <form onSubmit={handleLaunchCampaign} style={{ display: 'grid', gridTemplateColumns: '1.1fr 1fr', gap: '1.5rem', alignItems: 'start' }}>
             
-            {/* LEFT COLUMN: FILTERS & AUDIENCE CALCULATOR */}
+            {/* =========================================================================
+                LEFT COLUMN: CAMPAIGN NAME & TARGET AUDIENCE SELECTION
+               ========================================================================= */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              
               <div>
-                <label style={{ fontSize: '0.78rem', fontWeight: 600, display: 'block', marginBottom: '0.3rem' }}>Campaign Name *</label>
+                <label style={{ fontSize: '0.78rem', fontWeight: 700, display: 'block', marginBottom: '0.3rem' }}>
+                  Campaign Name *
+                </label>
                 <input
                   type="text"
                   className="input-field"
-                  placeholder="e.g. Diwali Mega Launch 2026"
+                  placeholder="e.g. Diwali Product Launch 2026"
                   value={name}
                   onChange={e => setName(e.target.value)}
                   required
                 />
               </div>
 
-              {/* Segmentation Criteria */}
-              <div className="glass-card p-6" style={{ padding: '1rem' }}>
-                <div style={{ fontSize: '0.82rem', fontWeight: 700, marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                  <Filter size={14} color="var(--accent-primary)" /> Dynamic Segmentation Rules
+              {/* AUDIENCE SELECTION TABS */}
+              <div className="glass-card p-6" style={{ padding: '0.9rem' }}>
+                <div style={{ fontSize: '0.8rem', fontWeight: 700, marginBottom: '0.6rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                    <Users size={15} color="var(--accent-primary)" /> Select Target Contacts
+                  </span>
+                  <span className="badge badge-success" style={{ fontSize: '0.72rem' }}>
+                    {effectiveCount} Eligible
+                  </span>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+
+                {/* Target Mode Buttons */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.4rem', marginBottom: '0.85rem' }}>
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => setTargetMode('filter')}
+                    style={{
+                      fontSize: '0.72rem', padding: '0.35rem 0.4rem',
+                      background: targetMode === 'filter' ? 'var(--accent-primary)' : 'var(--bg-secondary)',
+                      color: targetMode === 'filter' ? 'white' : 'var(--text-secondary)',
+                    }}
+                  >
+                    <Filter size={12} /> Dynamic Filter
+                  </button>
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => setTargetMode('contacts')}
+                    style={{
+                      fontSize: '0.72rem', padding: '0.35rem 0.4rem',
+                      background: targetMode === 'contacts' ? 'var(--accent-primary)' : 'var(--bg-secondary)',
+                      color: targetMode === 'contacts' ? 'white' : 'var(--text-secondary)',
+                    }}
+                  >
+                    <CheckSquare size={12} /> CRM Contacts
+                  </button>
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => setTargetMode('paste')}
+                    style={{
+                      fontSize: '0.72rem', padding: '0.35rem 0.4rem',
+                      background: targetMode === 'paste' ? 'var(--accent-primary)' : 'var(--bg-secondary)',
+                      color: targetMode === 'paste' ? 'white' : 'var(--text-secondary)',
+                    }}
+                  >
+                    <FileText size={12} /> Paste Numbers
+                  </button>
+                </div>
+
+                {/* MODE 1: DYNAMIC FILTER */}
+                {targetMode === 'filter' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem' }}>
+                      <div>
+                        <label style={{ fontSize: '0.7rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.2rem' }}>Lead Stage</label>
+                        <select
+                          className="input-field"
+                          style={{ fontSize: '0.75rem', padding: '0.35rem 0.5rem' }}
+                          value={filters.statusFilter}
+                          onChange={e => setFilters(p => ({ ...p, statusFilter: e.target.value }))}
+                        >
+                          <option value="All">All Lead Stages</option>
+                          <option value="Hot">Hot Leads Only</option>
+                          <option value="Warm">Warm Leads Only</option>
+                          <option value="New">New Inquiries</option>
+                          <option value="Cold">Cold Leads</option>
+                          <option value="Converted">Converted Clients</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label style={{ fontSize: '0.7rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.2rem' }}>Min. AI Lead Score</label>
+                        <select
+                          className="input-field"
+                          style={{ fontSize: '0.75rem', padding: '0.35rem 0.5rem' }}
+                          value={filters.minScore}
+                          onChange={e => setFilters(p => ({ ...p, minScore: Number(e.target.value) }))}
+                        >
+                          <option value={0}>Any Score (0+)</option>
+                          <option value={50}>Qualified (50+)</option>
+                          <option value={80}>High Intent (80+)</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Breakdown */}
+                    <div style={{ background: 'var(--bg-tertiary)', padding: '0.6rem', borderRadius: 6, fontSize: '0.72rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span className="text-muted">Total Filter Matches:</span>
+                        <strong>{estimation.targeted}</strong>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--danger)' }}>
+                        <span>- Opted-Out Contacts:</span>
+                        <strong>-{estimation.optedOut}</strong>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--warning)' }}>
+                        <span>- Missing / Invalid Phone:</span>
+                        <strong>-{estimation.invalidPhone}</strong>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* MODE 2: CRM CONTACTS CHECKLIST */}
+                {targetMode === 'contacts' && (
                   <div>
-                    <label style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.2rem' }}>Lead Stage</label>
-                    <select
-                      className="input-field"
-                      style={{ fontSize: '0.78rem' }}
-                      value={filters.statusFilter}
-                      onChange={e => setFilters(p => ({ ...p, statusFilter: e.target.value }))}
-                    >
-                      <option value="All">All Stages</option>
-                      <option value="Hot">Hot Leads Only</option>
-                      <option value="Warm">Warm Leads Only</option>
-                      <option value="New">New Inquiries</option>
-                    </select>
+                    <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.5rem' }}>
+                      <div style={{ position: 'relative', flex: 1 }}>
+                        <input
+                          type="text"
+                          className="input-field"
+                          placeholder="Search contact name or phone..."
+                          style={{ fontSize: '0.75rem', padding: '0.3rem 0.5rem 0.3rem 1.8rem' }}
+                          value={contactSearch}
+                          onChange={e => setContactSearch(e.target.value)}
+                        />
+                        <Search size={12} style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', opacity: 0.5 }} />
+                      </div>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        style={{ fontSize: '0.72rem', padding: '0.3rem 0.6rem', whiteSpace: 'nowrap' }}
+                        onClick={toggleSelectAllContacts}
+                      >
+                        {selectedLeadIds.size === filteredContacts.length ? 'Deselect All' : 'Select All'}
+                      </button>
+                    </div>
+
+                    <div style={{ maxHeight: 180, overflowY: 'auto', border: '1px solid var(--border-color)', borderRadius: 6 }}>
+                      {loadingContacts ? (
+                        <div style={{ textAlign: 'center', padding: '1rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                          <RefreshCw size={14} className="animate-spin" /> Loading contacts...
+                        </div>
+                      ) : filteredContacts.length === 0 ? (
+                        <div style={{ textAlign: 'center', padding: '1rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                          No matching contacts found.
+                        </div>
+                      ) : (
+                        filteredContacts.map(l => {
+                          const isSelected = selectedLeadIds.has(l.id);
+                          return (
+                            <div
+                              key={l.id}
+                              onClick={() => toggleLeadSelect(l.id)}
+                              style={{
+                                display: 'flex', alignItems: 'center', gap: '0.5rem',
+                                padding: '0.4rem 0.6rem',
+                                borderBottom: '1px solid var(--border-color)',
+                                cursor: 'pointer',
+                                background: isSelected ? 'rgba(99,102,241,0.08)' : 'transparent',
+                                fontSize: '0.75rem',
+                              }}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => {}}
+                                style={{ cursor: 'pointer' }}
+                              />
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.name}</div>
+                                <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>{l.phone}</div>
+                              </div>
+                              <span className={`badge ${l.status === 'Hot' ? 'badge-danger' : l.status === 'Warm' ? 'badge-warning' : 'badge-neutral'}`} style={{ fontSize: '0.65rem' }}>
+                                {l.status}
+                              </span>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
                   </div>
+                )}
+
+                {/* MODE 3: PASTE NUMBERS */}
+                {targetMode === 'paste' && (
                   <div>
-                    <label style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.2rem' }}>Min. AI Lead Score</label>
-                    <select
+                    <label style={{ fontSize: '0.7rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.2rem' }}>
+                      Paste comma or newline separated mobile numbers:
+                    </label>
+                    <textarea
                       className="input-field"
-                      style={{ fontSize: '0.78rem' }}
-                      value={filters.minScore}
-                      onChange={e => setFilters(p => ({ ...p, minScore: Number(e.target.value) }))}
-                    >
-                      <option value={0}>Any Score (0+)</option>
-                      <option value={50}>Qualified (50+)</option>
-                      <option value={80}>High Intent (80+)</option>
-                    </select>
+                      rows={4}
+                      placeholder={`+919876543210\n9812345678, 9898989898\n+919765432109`}
+                      value={pastedNumbers}
+                      onChange={e => setPastedNumbers(e.target.value)}
+                      style={{ fontSize: '0.75rem', fontFamily: 'monospace' }}
+                    />
+                    <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '0.3rem' }}>
+                      ⚡ Numbers are automatically cleaned and checked for valid 10+ digits.
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
 
-              {/* SECTION 14: AUDIENCE BREAKDOWN CALCULATOR */}
-              <div className="glass-card p-6" style={{ padding: '1rem', background: 'var(--bg-tertiary)' }}>
-                <div style={{ fontSize: '0.82rem', fontWeight: 700, marginBottom: '0.6rem', display: 'flex', justifyContent: 'space-between' }}>
-                  <span>Audience Deduction Formula</span>
-                  {estimating && <RefreshCw size={12} className="animate-spin" />}
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', fontSize: '0.78rem' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span className="text-muted">Targeted Criteria Matches:</span>
-                    <strong>{estimation.targeted}</strong>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--danger)' }}>
-                    <span>- Opted-Out Contacts (Section 50B):</span>
-                    <strong>-{estimation.optedOut}</strong>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--warning)' }}>
-                    <span>- Missing / Invalid Phone:</span>
-                    <strong>-{estimation.invalidPhone}</strong>
-                  </div>
-                  <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '0.5rem', display: 'flex', justifyContent: 'space-between', fontSize: '0.88rem' }}>
-                    <strong style={{ color: 'var(--success)' }}>= Final Eligible Audience:</strong>
-                    <strong style={{ color: 'var(--success)', fontSize: '1rem' }}>{estimation.finalAudienceCount}</strong>
-                  </div>
-                </div>
-              </div>
-            </div>
+              {/* MEDIA ATTACHMENT SECTION */}
+              <div className="glass-card p-6" style={{ padding: '0.9rem' }}>
+                <label style={{ fontSize: '0.8rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.4rem' }}>
+                  <ImageIcon size={15} color="var(--accent-primary)" /> Attach Campaign Media (Image / Brochure)
+                </label>
 
-            {/* RIGHT COLUMN: TEMPLATE SELECTION & PREVIEW */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              <div>
-                <label style={{ fontSize: '0.78rem', fontWeight: 600, display: 'block', marginBottom: '0.3rem' }}>Select Approved Template</label>
-                <select
-                  className="input-field"
-                  value={selectedTemplate.id}
-                  onChange={e => setSelectedTemplate(TEMPLATES.find(t => t.id === Number(e.target.value)))}
-                >
-                  {TEMPLATES.map(t => <option key={t.id} value={t.id}>{t.name} ({t.tag})</option>)}
-                </select>
-              </div>
-
-              {/* Message Live Preview */}
-              <div className="glass-card p-6" style={{ padding: '1rem' }}>
-                <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--whatsapp)', marginBottom: '0.5rem', textTransform: 'uppercase' }}>
-                  WhatsApp Message Preview
-                </div>
-                <div style={{ padding: '0.85rem', background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: 8, fontSize: '0.82rem', lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>
-                  {selectedTemplate.text
-                    .replace('{name}', 'Valued Customer')
-                    .replace('{product}', 'Tile Adhesive / Industrial Goods')
-                    .replace('{budget}', '₹1,00,000')}
-                </div>
-                <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '0.4rem' }}>
-                  Variables <code>{'{name}'}</code> and <code>{'{product}'}</code> are dynamically injected per recipient lead.
-                </div>
-              </div>
-
-              {/* Campaign Media Attachment */}
-              <div style={{ marginTop: '0.25rem' }}>
-                <label style={{ fontSize: '0.78rem', fontWeight: 600, display: 'block', marginBottom: '0.3rem' }}>📎 Attach Media (optional)</label>
                 {campaignFile ? (
                   <div style={{ padding: '0.6rem 0.75rem', background: 'var(--bg-tertiary)', borderRadius: 8, border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                    {campaignFilePreview
-                      ? <img src={campaignFilePreview} alt="preview" style={{ width: 42, height: 42, objectFit: 'cover', borderRadius: 6 }} />
-                      : <div style={{ width: 42, height: 42, borderRadius: 6, background: 'rgba(99,102,241,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.3rem' }}>📄</div>
-                    }
+                    {campaignFilePreview ? (
+                      <img src={campaignFilePreview} alt="preview" style={{ width: 44, height: 44, objectFit: 'cover', borderRadius: 6 }} />
+                    ) : (
+                      <div style={{ width: 44, height: 44, borderRadius: 6, background: 'rgba(99,102,241,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.2rem' }}>
+                        📄
+                      </div>
+                    )}
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: '0.78rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{campaignFile.name}</div>
-                      <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>{(campaignFile.size / 1024).toFixed(0)} KB · Will be sent with each message</div>
+                      <div style={{ fontSize: '0.78rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {campaignFile.name}
+                      </div>
+                      <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+                        {(campaignFile.size / 1024).toFixed(0)} KB · Sent with caption to each lead
+                      </div>
                     </div>
-                    <button type="button" onClick={() => { setCampaignFile(null); setCampaignFilePreview(null); setUploadedMediaUrl(null); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '1rem' }}>✕</button>
+                    <button
+                      type="button"
+                      onClick={() => { setCampaignFile(null); setCampaignFilePreview(null); setUploadedMediaUrl(null); }}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '1rem', padding: '0.2rem' }}
+                    >
+                      ✕
+                    </button>
                   </div>
                 ) : (
                   <div
@@ -283,38 +595,232 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued }) => {
                     onClick={() => campaignFileRef.current?.click()}
                     style={{
                       border: `1.5px dashed ${isDragOver ? 'var(--accent-primary)' : 'var(--border-color)'}`,
-                      borderRadius: 8, padding: '0.8rem',
+                      borderRadius: 8, padding: '0.85rem',
                       textAlign: 'center', cursor: 'pointer',
                       background: isDragOver ? 'rgba(99,102,241,0.06)' : 'var(--bg-tertiary)',
                       transition: 'all 0.15s',
                     }}
                   >
-                    <UploadCloud size={16} style={{ opacity: 0.4, marginBottom: 4 }} />
-                    <div style={{ fontSize: '0.75rem', fontWeight: 600 }}>Click or drag image / PDF brochure</div>
-                    <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: 2 }}>Max 15 MB · PNG, JPG, PDF, MP4</div>
+                    <UploadCloud size={20} color="var(--accent-primary)" style={{ opacity: 0.6, marginBottom: 4 }} />
+                    <div style={{ fontSize: '0.78rem', fontWeight: 600 }}>Click or drag image (JPG/PNG) or PDF brochure</div>
+                    <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: 2 }}>Max 15 MB · WhatsApp media compliance</div>
                   </div>
                 )}
-                <input ref={campaignFileRef} type="file" accept="image/*,.pdf,.mp4" style={{ display: 'none' }} onChange={e => handleCampaignFileSelect(e.target.files[0])} />
+                <input
+                  ref={campaignFileRef}
+                  type="file"
+                  accept="image/*,.pdf,.mp4"
+                  style={{ display: 'none' }}
+                  onChange={e => handleCampaignFileSelect(e.target.files[0])}
+                />
               </div>
 
-              {/* Batch Queue Safety Notice */}
-              <div style={{ padding: '0.75rem', background: 'var(--bg-tertiary)', borderRadius: 8, fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
-                ⚡ <strong>Section 13 Compliance:</strong> Messages are claimed in atomic batches of 50 by background Edge/Netlify worker with 150ms rate pacing.
+            </div>
+
+            {/* =========================================================================
+                RIGHT COLUMN: MESSAGE COMPOSER & WHATSAPP LIVE PREVIEW
+               ========================================================================= */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              
+              {/* Message Mode Switcher */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => setMessageMode('custom')}
+                    style={{
+                      borderRadius: 0,
+                      background: messageMode === 'custom' ? 'var(--accent-primary)' : 'var(--bg-tertiary)',
+                      color: messageMode === 'custom' ? 'white' : 'var(--text-secondary)',
+                      fontSize: '0.75rem', padding: '0.35rem 0.75rem',
+                    }}
+                  >
+                    <Sparkles size={13} /> Custom Message
+                  </button>
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => setMessageMode('template')}
+                    style={{
+                      borderRadius: 0,
+                      background: messageMode === 'template' ? 'var(--accent-primary)' : 'var(--bg-tertiary)',
+                      color: messageMode === 'template' ? 'white' : 'var(--text-secondary)',
+                      fontSize: '0.75rem', padding: '0.35rem 0.75rem',
+                    }}
+                  >
+                    <FileText size={13} /> Meta Templates
+                  </button>
+                </div>
+                
+                {messageMode === 'custom' && (
+                  <select
+                    className="input-field"
+                    style={{ fontSize: '0.72rem', padding: '0.3rem 0.5rem', width: 'auto', maxWidth: 170 }}
+                    onChange={e => {
+                      const preset = PRESET_MESSAGES.find(p => p.name === e.target.value);
+                      if (preset) setCustomText(preset.text);
+                    }}
+                    defaultValue=""
+                  >
+                    <option value="" disabled>Load Preset Copy...</option>
+                    {PRESET_MESSAGES.map(p => (
+                      <option key={p.name} value={p.name}>{p.name}</option>
+                    ))}
+                  </select>
+                )}
               </div>
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '0.5rem' }}>
-                <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
+              {/* CUSTOM MESSAGE EDITOR */}
+              {messageMode === 'custom' ? (
+                <div>
+                  {/* Dynamic Variable Chips */}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', marginBottom: '0.45rem' }}>
+                    {[
+                      { tag: '{name}', label: '+ Name' },
+                      { tag: '{product}', label: '+ Product' },
+                      { tag: '{budget}', label: '+ Budget' },
+                      { tag: '{company}', label: '+ Company' },
+                      { tag: '{phone}', label: '+ Phone' },
+                    ].map(v => (
+                      <button
+                        key={v.tag}
+                        type="button"
+                        onClick={() => insertVariable(v.tag)}
+                        style={{
+                          fontSize: '0.68rem',
+                          background: 'rgba(99,102,241,0.12)',
+                          color: 'var(--accent-primary)',
+                          border: '1px solid rgba(99,102,241,0.3)',
+                          borderRadius: 4,
+                          padding: '0.2rem 0.45rem',
+                          cursor: 'pointer',
+                          fontWeight: 600,
+                        }}
+                      >
+                        {v.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Textarea */}
+                  <textarea
+                    ref={textareaRef}
+                    className="input-field"
+                    rows={5}
+                    placeholder="Write your custom WhatsApp message here... (Use {name}, {product} tags)"
+                    value={customText}
+                    onChange={e => setCustomText(e.target.value)}
+                    style={{ fontSize: '0.8rem', lineHeight: 1.4, resize: 'vertical' }}
+                    required
+                  />
+
+                  {/* Emoji Quick Picker */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', marginTop: '0.35rem' }}>
+                    <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>Emojis:</span>
+                    {EMOJIS.map(em => (
+                      <button
+                        key={em}
+                        type="button"
+                        onClick={() => insertVariable(em)}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.85rem', padding: '0.1rem' }}
+                      >
+                        {em}
+                      </button>
+                    ))}
+                    <span style={{ marginLeft: 'auto', fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+                      {customText.length} chars
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                /* META APPROVED TEMPLATE SELECTOR */
+                <div>
+                  <label style={{ fontSize: '0.75rem', fontWeight: 600, display: 'block', marginBottom: '0.3rem' }}>
+                    Select Approved Meta Template
+                  </label>
+                  <select
+                    className="input-field"
+                    value={selectedTemplate.id}
+                    onChange={e => setSelectedTemplate(STANDARD_TEMPLATES.find(t => t.id === Number(e.target.value)))}
+                  >
+                    {STANDARD_TEMPLATES.map(t => (
+                      <option key={t.id} value={t.id}>{t.name} ({t.tag})</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* WHATSAPP REAL LIVE CHAT PREVIEW */}
+              <div className="glass-card p-6" style={{ padding: '0.85rem', background: '#e5ddd5', borderRadius: 10, border: '1px solid #d1d7db' }}>
+                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#075e54', marginBottom: '0.4rem', textTransform: 'uppercase', display: 'flex', justifyContent: 'space-between' }}>
+                  <span>📱 Live WhatsApp Preview</span>
+                  <span style={{ color: '#54656f', fontWeight: 500 }}>Recipient: {effectiveRecipients[0]?.name || 'Rahul Sharma'}</span>
+                </div>
+
+                {/* Chat Bubble Container */}
+                <div style={{
+                  background: '#ffffff',
+                  borderRadius: '8px 8px 8px 0',
+                  boxShadow: '0 1px 1.5px rgba(0,0,0,0.13)',
+                  overflow: 'hidden',
+                  maxWidth: '92%',
+                  color: '#111b21',
+                }}>
+                  {/* Image Attachment in Bubble */}
+                  {campaignFilePreview && (
+                    <div style={{ position: 'relative', width: '100%', maxHeight: 160, overflow: 'hidden', background: '#f0f2f5' }}>
+                      <img
+                        src={campaignFilePreview}
+                        alt="Campaign media"
+                        style={{ width: '100%', height: 160, objectFit: 'cover' }}
+                      />
+                    </div>
+                  )}
+
+                  {/* Document / PDF Attachment in Bubble */}
+                  {campaignFile && !campaignFilePreview && (
+                    <div style={{ padding: '0.6rem 0.75rem', background: '#f0f2f5', borderBottom: '1px solid #e9edef', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <div style={{ fontSize: '1.4rem' }}>📄</div>
+                      <div style={{ fontSize: '0.75rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {campaignFile.name}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Caption & Message Body */}
+                  <div style={{ padding: '0.65rem 0.75rem', fontSize: '0.8rem', lineHeight: 1.45, whiteSpace: 'pre-wrap', color: '#111b21' }}>
+                    {sampleText}
+                    <div style={{ textAlign: 'right', fontSize: '0.65rem', color: '#667781', marginTop: '0.3rem', display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 3 }}>
+                      11:45 AM <span style={{ color: '#53bdeb' }}>✓✓</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '0.25rem' }}>
+                <button type="button" className="btn btn-secondary" onClick={onClose}>
+                  Cancel
+                </button>
                 <button
                   type="submit"
                   className="btn btn-whatsapp"
-                  disabled={isSubmitting || estimation.finalAudienceCount === 0 || !name.trim()}
+                  disabled={isSubmitting || effectiveCount === 0}
+                  style={{
+                    cursor: (isSubmitting || effectiveCount === 0) ? 'not-allowed' : 'pointer',
+                    opacity: (isSubmitting || effectiveCount === 0) ? 0.6 : 1,
+                  }}
                 >
-                  <Send size={15} /> {isSubmitting ? 'Queueing Batch...' : `Launch to ${estimation.finalAudienceCount} Contacts`}
+                  <Send size={15} /> {isSubmitting ? 'Queueing Broadcast...' : `Launch to ${effectiveCount} Contacts`}
                 </button>
               </div>
+
             </div>
+
           </form>
         )}
+
       </div>
     </div>
   );

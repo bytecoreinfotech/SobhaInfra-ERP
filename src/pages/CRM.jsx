@@ -3,11 +3,14 @@ import {
   MessageCircle, Mail, Phone, Plus, Search, Filter,
   X, CheckCircle2, Send, User, Building2, Star,
   ChevronRight, MoreVertical, RefreshCw, Trash2, Edit2,
-  Columns, List, Eye, Zap, ArrowRight
+  Columns, List, Eye, Zap, ArrowRight, FileSpreadsheet,
+  CheckSquare, Square, Download
 } from 'lucide-react';
 import { getLeads, createLead, updateLead, deleteLead, normalizePhone } from '../lib/db';
 import Customer360Modal from '../components/Customer360Modal';
 import ProductCatalogModal from '../components/ProductCatalogModal';
+import BulkImportModal from '../components/BulkImportModal';
+import CampaignBuilderModal from '../components/CampaignBuilderModal';
 import './Pages.css';
 
 const statusConfig = {
@@ -22,6 +25,7 @@ const statusConfig = {
 const sourceColors = {
   WhatsApp:  '#25d366', Facebook: '#1877f2', Instagram: '#e1306c',
   Website:   '#6366f1', Referral: '#f59e0b', 'Walk-in': '#10b981',
+  'Import / CSV': '#8b5cf6',
 };
 
 const STAGES = ['New', 'Hot', 'Warm', 'Cold', 'Converted', 'Lost'];
@@ -34,13 +38,20 @@ const CRM = () => {
   const [activeFilter, setActiveFilter] = useState('All');
   const [viewMode, setViewMode] = useState('table'); // 'table' | 'kanban'
   
+  // Multi-select for bulk actions
+  const [selectedLeadIds, setSelectedLeadIds] = useState(new Set());
+
   // Modals
   const [selected360LeadId, setSelected360LeadId] = useState(null);
   const [showCatalog, setShowCatalog] = useState(false);
   const [showForm, setShowForm] = useState(false);
+  const [showBulkImport, setShowBulkImport] = useState(false);
+  const [showCampaignBuilder, setShowCampaignBuilder] = useState(false);
+  const [campaignRecipients, setCampaignRecipients] = useState(null);
   const [editLead, setEditLead] = useState(null);
   const [form, setForm] = useState(EMPTY_LEAD);
   const [saving, setSaving] = useState(false);
+  const [toastMessage, setToastMessage] = useState(null);
 
   useEffect(() => { loadLeads(); }, []);
 
@@ -51,11 +62,16 @@ const CRM = () => {
     setLoading(false);
   };
 
+  const showToast = (msg, isError = false) => {
+    setToastMessage({ text: msg, isError });
+    setTimeout(() => setToastMessage(null), 4000);
+  };
+
   const normSearch = search.trim().toLowerCase();
   const filtered = leads.filter(l => {
     const matchFilter = activeFilter === 'All' || l.status === activeFilter;
     const matchSearch = !normSearch ||
-      l.name.toLowerCase().includes(normSearch) ||
+      (l.name && l.name.toLowerCase().includes(normSearch)) ||
       (l.phone && l.phone.includes(normSearch)) ||
       (l.property_interest && l.property_interest.toLowerCase().includes(normSearch));
     return matchFilter && matchSearch;
@@ -78,13 +94,6 @@ const CRM = () => {
     setShowForm(true);
   };
 
-  const [toastMessage, setToastMessage] = useState(null);
-
-  const showToast = (msg, isError = false) => {
-    setToastMessage({ text: msg, isError });
-    setTimeout(() => setToastMessage(null), 4000);
-  };
-
   const handleSave = async (e) => {
     e.preventDefault();
     if (!form.name.trim() || !form.phone.trim()) {
@@ -94,7 +103,7 @@ const CRM = () => {
     setSaving(true);
     try {
       if (editLead) {
-        const { data, error } = await updateLead(editLead.id, form);
+        const { error } = await updateLead(editLead.id, form);
         if (error) {
           showToast('Failed to update lead: ' + error.message, true);
         } else {
@@ -104,7 +113,7 @@ const CRM = () => {
           setEditLead(null);
         }
       } else {
-        const { data, error } = await createLead(form);
+        const { error } = await createLead(form);
         if (error) {
           showToast('Failed to create lead: ' + error.message, true);
         } else {
@@ -125,6 +134,12 @@ const CRM = () => {
     e?.stopPropagation();
     await deleteLead(id);
     setLeads(prev => prev.filter(l => l.id !== id));
+    setSelectedLeadIds(prev => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+    showToast('Lead deleted.');
   };
 
   const handleStageChange = async (leadId, newStatus) => {
@@ -132,15 +147,76 @@ const CRM = () => {
     await updateLead(leadId, { status: newStatus });
   };
 
+  // Multi-select handlers
+  const toggleSelectAll = () => {
+    if (selectedLeadIds.size === filtered.length) {
+      setSelectedLeadIds(new Set());
+    } else {
+      setSelectedLeadIds(new Set(filtered.map(l => l.id)));
+    }
+  };
+
+  const toggleLeadCheckbox = (id, e) => {
+    e?.stopPropagation();
+    setSelectedLeadIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  // Bulk Actions
+  const handleLaunchCampaignWithSelected = () => {
+    const selectedLeads = leads.filter(l => selectedLeadIds.has(l.id));
+    if (selectedLeads.length === 0) return;
+    setCampaignRecipients(selectedLeads);
+    setShowCampaignBuilder(true);
+  };
+
+  const handleBulkStageChange = async (newStatus) => {
+    const ids = Array.from(selectedLeadIds);
+    setLeads(prev => prev.map(l => selectedLeadIds.has(l.id) ? { ...l, status: newStatus } : l));
+    for (const id of ids) {
+      await updateLead(id, { status: newStatus });
+    }
+    showToast(`Updated ${ids.length} leads to ${newStatus}`);
+    setSelectedLeadIds(new Set());
+  };
+
+  const handleExportSelectedCSV = () => {
+    const selected = leads.filter(l => selectedLeadIds.has(l.id));
+    if (selected.length === 0) return;
+
+    const headers = ['Name', 'Phone', 'Email', 'Status', 'Product', 'Budget', 'Source'];
+    const rows = selected.map(l => [
+      `"${l.name || ''}"`,
+      `"${normalizePhone(l.phone || '')}"`,
+      `"${l.email || ''}"`,
+      `"${l.status || ''}"`,
+      `"${l.property_interest || ''}"`,
+      `"${l.budget || ''}"`,
+      `"${l.source || ''}"`,
+    ]);
+
+    const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `crm_export_${Date.now()}.csv`;
+    link.click();
+  };
+
   const counts = STAGES.reduce((acc, f) => ({ ...acc, [f]: leads.filter(l => l.status === f).length }), {});
 
   return (
-    <div className="page-container animate-fade-in">
+    <div className="page-container animate-fade-in" style={{ position: 'relative', paddingBottom: selectedLeadIds.size > 0 ? '5rem' : '2rem' }}>
       {/* Header */}
       <div className="page-header">
         <div className="page-title-group">
           <h1 className="page-title">CRM & Customer 360</h1>
-          <p className="page-subtitle">Unified sales pipeline, WhatsApp lead qualification, and customer master.</p>
+          <p className="page-subtitle">Unified sales pipeline, WhatsApp lead qualification, and bulk contact management.</p>
         </div>
         <div className="page-actions">
           {/* View toggle */}
@@ -172,11 +248,17 @@ const CRM = () => {
           </div>
 
           <button className="btn btn-secondary" onClick={() => setShowCatalog(true)}>
-            <Building2 size={15} /> Product Catalog
+            <Building2 size={15} /> Catalog
           </button>
+
+          <button className="btn btn-secondary" onClick={() => setShowBulkImport(true)} style={{ color: 'var(--whatsapp)' }}>
+            <FileSpreadsheet size={15} /> Import CSV / Excel
+          </button>
+
           <button className="btn btn-secondary" onClick={loadLeads}>
             <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
           </button>
+          
           <button className="btn btn-primary" onClick={openAdd}>
             <Plus size={15} /> Add Lead
           </button>
@@ -207,7 +289,7 @@ const CRM = () => {
       </div>
 
       {/* Search and Filters */}
-      <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
+      <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '1rem', alignItems: 'center' }}>
         <div className="input-group" style={{ flex: 1, minWidth: 240 }}>
           <Search size={15} className="input-icon" />
           <input
@@ -236,6 +318,15 @@ const CRM = () => {
           <table className="data-table">
             <thead>
               <tr>
+                <th style={{ width: 36, textAlign: 'center' }}>
+                  <input
+                    type="checkbox"
+                    checked={filtered.length > 0 && selectedLeadIds.size === filtered.length}
+                    onChange={toggleSelectAll}
+                    style={{ cursor: 'pointer' }}
+                    title="Select / Deselect All"
+                  />
+                </th>
                 <th>Lead / Contact</th>
                 <th>Phone (Normalized)</th>
                 <th>Status</th>
@@ -248,72 +339,86 @@ const CRM = () => {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={8} style={{ textAlign: 'center', padding: '3rem' }}><RefreshCw size={24} className="animate-spin" style={{ color: 'var(--text-muted)' }} /></td></tr>
+                <tr><td colSpan={9} style={{ textAlign: 'center', padding: '3rem' }}><RefreshCw size={24} className="animate-spin" style={{ color: 'var(--text-muted)' }} /></td></tr>
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={8} style={{ textAlign: 'center', padding: '3.5rem 1rem' }}>
+                  <td colSpan={9} style={{ textAlign: 'center', padding: '3.5rem 1rem' }}>
                     <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: '0.75rem' }}>
                       {leads.length === 0 ? 'No leads in your database yet.' : 'No leads match your search criteria.'}
                     </div>
-                    {leads.length === 0 && (
+                    <div style={{ display: 'inline-flex', gap: '0.5rem' }}>
                       <button className="btn btn-primary btn-sm" onClick={openAdd}>
                         <Plus size={14} /> Add First Lead
                       </button>
-                    )}
+                      <button className="btn btn-secondary btn-sm" onClick={() => setShowBulkImport(true)}>
+                        <FileSpreadsheet size={14} /> Import CSV
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ) : (
-                filtered.map(lead => (
-                  <tr
-                    key={lead.id}
-                    onClick={() => setSelected360LeadId(lead.id)}
-                    style={{ cursor: 'pointer' }}
-                    className="hover-row"
-                  >
-                    <td>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
-                        <div className="mini-avatar" style={{ background: `${statusConfig[lead.status]?.dot}22`, color: statusConfig[lead.status]?.dot, border: `1.5px solid ${statusConfig[lead.status]?.dot}` }}>
-                          {lead.name.slice(0, 2).toUpperCase()}
+                filtered.map(lead => {
+                  const isSelected = selectedLeadIds.has(lead.id);
+                  return (
+                    <tr
+                      key={lead.id}
+                      onClick={() => setSelected360LeadId(lead.id)}
+                      style={{ cursor: 'pointer', background: isSelected ? 'rgba(99,102,241,0.06)' : undefined }}
+                      className="hover-row"
+                    >
+                      <td style={{ textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={(e) => toggleLeadCheckbox(lead.id, e)}
+                          style={{ cursor: 'pointer' }}
+                        />
+                      </td>
+                      <td>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+                          <div className="mini-avatar" style={{ background: `${statusConfig[lead.status]?.dot}22`, color: statusConfig[lead.status]?.dot, border: `1.5px solid ${statusConfig[lead.status]?.dot}` }}>
+                            {lead.name ? lead.name.slice(0, 2).toUpperCase() : 'LE'}
+                          </div>
+                          <div>
+                            <div style={{ fontWeight: 700, fontSize: '0.875rem' }}>{lead.name}</div>
+                            {lead.notes && <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lead.notes}</div>}
+                          </div>
                         </div>
-                        <div>
-                          <div style={{ fontWeight: 700, fontSize: '0.875rem' }}>{lead.name}</div>
-                          {lead.notes && <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lead.notes}</div>}
+                      </td>
+                      <td>
+                        <div style={{ fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: '0.3rem', fontFamily: 'monospace' }}>
+                          <Phone size={11} color="var(--text-muted)" />{normalizePhone(lead.phone)}
                         </div>
-                      </div>
-                    </td>
-                    <td>
-                      <div style={{ fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: '0.3rem', fontFamily: 'monospace' }}>
-                        <Phone size={11} color="var(--text-muted)" />{normalizePhone(lead.phone)}
-                      </div>
-                    </td>
-                    <td><span className={`badge ${statusConfig[lead.status]?.badge}`}>{lead.status}</span></td>
-                    <td>
-                      <span className="badge badge-neutral" style={{ fontWeight: 700, color: lead.lead_score >= 80 ? 'var(--danger)' : lead.lead_score >= 50 ? 'var(--warning)' : 'var(--text-muted)' }}>
-                        ⚡ {lead.lead_score || 0}
-                      </span>
-                    </td>
-                    <td style={{ fontSize: '0.82rem', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lead.property_interest || '—'}</td>
-                    <td style={{ fontWeight: 600, fontSize: '0.82rem', color: 'var(--success)' }}>{lead.budget || '—'}</td>
-                    <td>
-                      <span style={{ fontSize: '0.72rem', fontWeight: 700, color: sourceColors[lead.source] || 'var(--text-muted)', background: (sourceColors[lead.source] || '#666') + '18', padding: '0.2rem 0.5rem', borderRadius: 99 }}>
-                        {lead.source}
-                      </span>
-                    </td>
-                    <td>
-                      <div style={{ display: 'flex', gap: '0.35rem' }} onClick={e => e.stopPropagation()}>
-                        <button className="btn-icon" title="View Customer 360" onClick={() => setSelected360LeadId(lead.id)}>
-                          <Eye size={14} color="var(--accent-primary)" />
-                        </button>
-                        <button className="btn-icon" title="Edit" onClick={e => openEdit(lead, e)}>
-                          <Edit2 size={14} />
-                        </button>
-                        <button className="btn-icon" title="Delete" onClick={e => handleDelete(lead.id, e)}>
-                          <Trash2 size={14} style={{ color: 'var(--danger)' }} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
+                      </td>
+                      <td><span className={`badge ${statusConfig[lead.status]?.badge}`}>{lead.status}</span></td>
+                      <td>
+                        <span className="badge badge-neutral" style={{ fontWeight: 700, color: lead.lead_score >= 80 ? 'var(--danger)' : lead.lead_score >= 50 ? 'var(--warning)' : 'var(--text-muted)' }}>
+                          ⚡ {lead.lead_score || 0}
+                        </span>
+                      </td>
+                      <td style={{ fontSize: '0.82rem', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lead.property_interest || '—'}</td>
+                      <td style={{ fontWeight: 600, fontSize: '0.82rem', color: 'var(--success)' }}>{lead.budget || '—'}</td>
+                      <td>
+                        <span style={{ fontSize: '0.72rem', fontWeight: 700, color: sourceColors[lead.source] || 'var(--text-muted)', background: (sourceColors[lead.source] || '#666') + '18', padding: '0.2rem 0.5rem', borderRadius: 99 }}>
+                          {lead.source}
+                        </span>
+                      </td>
+                      <td>
+                        <div style={{ display: 'flex', gap: '0.35rem' }} onClick={e => e.stopPropagation()}>
+                          <button className="btn-icon" title="View Customer 360" onClick={() => setSelected360LeadId(lead.id)}>
+                            <Eye size={14} color="var(--accent-primary)" />
+                          </button>
+                          <button className="btn-icon" title="Edit" onClick={e => openEdit(lead, e)}>
+                            <Edit2 size={14} />
+                          </button>
+                          <button className="btn-icon" title="Delete" onClick={e => handleDelete(lead.id, e)}>
+                            <Trash2 size={14} style={{ color: 'var(--danger)' }} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -381,6 +486,73 @@ const CRM = () => {
         </div>
       )}
 
+      {/* STICKY FLOATING BULK ACTIONS BAR */}
+      {selectedLeadIds.size > 0 && (
+        <div style={{
+          position: 'fixed',
+          bottom: '1.5rem',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          zIndex: 900,
+          background: 'var(--bg-primary, #0f172a)',
+          border: '1px solid var(--accent-primary, #6366f1)',
+          borderRadius: 50,
+          padding: '0.6rem 1.25rem',
+          boxShadow: '0 12px 36px rgba(0,0,0,0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '1rem',
+          backdropFilter: 'blur(16px)',
+          animation: 'fadeIn 0.2s ease',
+        }}>
+          <div style={{ fontSize: '0.85rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.4rem', color: 'var(--text-primary)' }}>
+            <span style={{ background: 'var(--accent-primary)', color: 'white', borderRadius: 99, padding: '0.15rem 0.55rem', fontSize: '0.75rem' }}>
+              {selectedLeadIds.size}
+            </span>
+            Leads Selected
+          </div>
+
+          <div style={{ height: 20, width: 1, background: 'var(--border-color)' }} />
+
+          <button
+            className="btn btn-whatsapp btn-sm"
+            onClick={handleLaunchCampaignWithSelected}
+            style={{ borderRadius: 99, padding: '0.4rem 0.9rem', fontSize: '0.8rem' }}
+          >
+            <Send size={14} /> Launch WhatsApp Broadcast
+          </button>
+
+          {/* Bulk Stage Dropdown */}
+          <select
+            className="input-field"
+            style={{ fontSize: '0.75rem', padding: '0.35rem 0.6rem', width: 'auto', borderRadius: 99 }}
+            onChange={e => { if (e.target.value) handleBulkStageChange(e.target.value); }}
+            defaultValue=""
+          >
+            <option value="" disabled>Move Stage...</option>
+            {STAGES.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+
+          <button
+            className="btn btn-secondary btn-sm"
+            onClick={handleExportSelectedCSV}
+            style={{ borderRadius: 99, padding: '0.4rem 0.75rem', fontSize: '0.75rem' }}
+            title="Export selected contacts to CSV"
+          >
+            <Download size={13} /> Export CSV
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setSelectedLeadIds(new Set())}
+            style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.8rem', padding: '0.2rem' }}
+            title="Clear selection"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* Customer 360 Full Modal */}
       {selected360LeadId && (
         <Customer360Modal
@@ -395,6 +567,38 @@ const CRM = () => {
         <ProductCatalogModal
           isOpen={showCatalog}
           onClose={() => setShowCatalog(false)}
+        />
+      )}
+
+      {/* Bulk Import Modal */}
+      {showBulkImport && (
+        <BulkImportModal
+          isOpen={showBulkImport}
+          onClose={() => setShowBulkImport(false)}
+          onImportSuccess={(imported) => {
+            loadLeads();
+            showToast(`${imported.length} contacts imported successfully!`);
+          }}
+          onLaunchCampaignWithLeads={(importedLeads) => {
+            setCampaignRecipients(importedLeads);
+            setShowCampaignBuilder(true);
+          }}
+        />
+      )}
+
+      {/* Campaign Builder Modal */}
+      {showCampaignBuilder && (
+        <CampaignBuilderModal
+          isOpen={showCampaignBuilder}
+          onClose={() => {
+            setShowCampaignBuilder(false);
+            setCampaignRecipients(null);
+          }}
+          initialRecipients={campaignRecipients}
+          onCampaignQueued={() => {
+            showToast('Campaign successfully queued and dispatched!');
+            setSelectedLeadIds(new Set());
+          }}
         />
       )}
 
@@ -460,7 +664,7 @@ const CRM = () => {
               <div>
                 <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Lead Source</label>
                 <select className="input-field" value={form.source} onChange={e => setForm(p => ({ ...p, source: e.target.value }))}>
-                  {['WhatsApp','Facebook','Instagram','Website','Walk-in','Referral'].map(s => <option key={s}>{s}</option>)}
+                  {['WhatsApp','Facebook','Instagram','Website','Walk-in','Referral','Import / CSV'].map(s => <option key={s}>{s}</option>)}
                 </select>
               </div>
               <div>

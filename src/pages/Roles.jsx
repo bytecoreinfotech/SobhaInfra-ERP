@@ -1,10 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, Plus, X, Edit2, Trash2, User, Check, RefreshCw, AlertCircle } from 'lucide-react';
+import { Shield, Plus, X, Edit2, Trash2, User, Check, RefreshCw, AlertCircle, Save, RotateCcw, Lock, CheckSquare, Square } from 'lucide-react';
 import { getRoles, createRole, getTeamMembers, inviteTeamMember } from '../lib/db';
 import { useAuth } from '../context/AuthContext';
 import './Pages.css';
 
 const modules = ['Dashboard', 'WhatsApp', 'CRM', 'Tasks', 'Payments', 'Finance', 'Reports', 'Roles'];
+
+const DEFAULT_ROLES = [
+  { id: 'role-1', name: 'Super Admin', color: '#ef4444', is_system: true, users_count: 1 },
+  { id: 'role-2', name: 'Manager', color: '#6366f1', is_system: true, users_count: 3 },
+  { id: 'role-3', name: 'Sales Executive', color: '#10b981', is_system: true, users_count: 8 },
+  { id: 'role-4', name: 'Accounts', color: '#f59e0b', is_system: true, users_count: 2 },
+  { id: 'role-5', name: 'Support Agent', color: '#06b6d4', is_system: true, users_count: 4 },
+];
 
 const defaultMatrix = {
   'Super Admin': { Dashboard: true, WhatsApp: true, CRM: true, Tasks: true, Payments: true, Finance: true, Reports: true, Roles: true },
@@ -16,11 +24,21 @@ const defaultMatrix = {
 
 const Roles = () => {
   const { hasPermission } = useAuth();
-  const [roles, setRoles] = useState([]);
+  const [roles, setRoles] = useState(DEFAULT_ROLES);
   const [teamMembers, setTeamMembers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('users');
   
+  // Interactive Permission Matrix state
+  const [matrix, setMatrix] = useState(() => {
+    try {
+      const saved = localStorage.getItem('erppro_permission_matrix');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return defaultMatrix;
+  });
+  const [matrixDirty, setMatrixDirty] = useState(false);
+
   // Modals
   const [showAddUser, setShowAddUser] = useState(false);
   const [showAddRole, setShowAddRole] = useState(false);
@@ -41,7 +59,11 @@ const Roles = () => {
       getRoles(),
       getTeamMembers(),
     ]);
-    setRoles(rolesRes.data || []);
+    if (rolesRes.data && rolesRes.data.length > 0) {
+      setRoles(rolesRes.data);
+    } else {
+      setRoles(DEFAULT_ROLES);
+    }
     setTeamMembers(usersRes.data || []);
     setLoading(false);
   };
@@ -50,12 +72,13 @@ const Roles = () => {
     e.preventDefault();
     if (!userForm.full_name || !userForm.email) return;
     setSubmitting(true);
-    const { data, error } = await inviteTeamMember(userForm);
+    const effectiveRole = userForm.role || roles[0]?.name || 'Sales Executive';
+    const { data, error } = await inviteTeamMember({ ...userForm, role: effectiveRole });
     if (data) {
       setTeamMembers(prev => [data, ...prev]);
       setShowAddUser(false);
       setUserForm({ full_name: '', email: '', role: 'Sales Executive', phone: '' });
-      setFeedbackMsg({ type: 'success', text: `Invitation sent to ${data.email}!` });
+      setFeedbackMsg({ type: 'success', text: `Invitation sent to ${data.email} as ${effectiveRole}!` });
       setTimeout(() => setFeedbackMsg(null), 4000);
     } else {
       setFeedbackMsg({ type: 'error', text: error?.message || 'Failed to invite user.' });
@@ -70,6 +93,11 @@ const Roles = () => {
     const { data, error } = await createRole(roleForm);
     if (data) {
       setRoles(prev => [...prev, data]);
+      // Initialize permissions for new role
+      setMatrix(prev => ({
+        ...prev,
+        [data.name]: { Dashboard: true, WhatsApp: true, CRM: true, Tasks: true, Payments: false, Finance: false, Reports: false, Roles: false }
+      }));
       setShowAddRole(false);
       setRoleForm({ name: '', description: '', color: '#6366f1' });
       setFeedbackMsg({ type: 'success', text: `Role "${data.name}" created!` });
@@ -79,6 +107,45 @@ const Roles = () => {
     }
     setSubmitting(false);
   };
+
+  const togglePermission = (roleName, mod) => {
+    if (roleName === 'Super Admin') return; // Super admin always has all permissions
+    setMatrix(prev => {
+      const rolePerms = prev[roleName] || {};
+      const updated = {
+        ...prev,
+        [roleName]: {
+          ...rolePerms,
+          [mod]: !rolePerms[mod],
+        }
+      };
+      setMatrixDirty(true);
+      return updated;
+    });
+  };
+
+  const savePermissionMatrix = () => {
+    try {
+      localStorage.setItem('erppro_permission_matrix', JSON.stringify(matrix));
+      setMatrixDirty(false);
+      setFeedbackMsg({ type: 'success', text: 'Permission Matrix updated and saved successfully!' });
+      setTimeout(() => setFeedbackMsg(null), 4000);
+    } catch (err) {
+      setFeedbackMsg({ type: 'error', text: 'Failed to save permissions: ' + err.message });
+    }
+  };
+
+  const resetPermissionMatrix = () => {
+    setMatrix(defaultMatrix);
+    setMatrixDirty(true);
+    try {
+      localStorage.removeItem('erppro_permission_matrix');
+    } catch {}
+    setFeedbackMsg({ type: 'success', text: 'Reset permissions to system defaults.' });
+    setTimeout(() => setFeedbackMsg(null), 3000);
+  };
+
+  const availableRoles = roles.length > 0 ? roles : DEFAULT_ROLES;
 
   return (
     <div className="page-container animate-fade-in">
@@ -99,7 +166,7 @@ const Roles = () => {
       <div className="page-header">
         <div className="page-title-group">
           <h1 className="page-title">Roles & Access Control</h1>
-          <p className="page-subtitle">Manage organization team members, roles, and module-level permissions.</p>
+          <p className="page-subtitle">Manage organization team members, roles, and module-level permission checkboxes.</p>
         </div>
         <div className="page-actions">
           <button className="btn btn-secondary" onClick={loadData}>
@@ -116,8 +183,8 @@ const Roles = () => {
 
       {/* Role Cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
-        {roles.map(role => (
-          <div key={role.id} className="glass-card p-6" style={{ textAlign: 'center', '--card-accent': role.color || '#6366f1' }}>
+        {availableRoles.map(role => (
+          <div key={role.id || role.name} className="glass-card p-6" style={{ textAlign: 'center', '--card-accent': role.color || '#6366f1' }}>
             <div style={{
               width: 48, height: 48, borderRadius: '50%', background: (role.color || '#6366f1') + '22',
               border: `2px solid ${role.color || '#6366f1'}`, display: 'flex', alignItems: 'center',
@@ -172,107 +239,194 @@ const Roles = () => {
             <tbody>
               {loading ? (
                 <tr><td colSpan={5} style={{ textAlign: 'center', padding: '2.5rem', color: 'var(--text-muted)' }}><RefreshCw size={20} className="animate-spin" /></td></tr>
-              ) : teamMembers.map(u => {
-                const roleObj = roles.find(r => r.name === u.role);
-                return (
-                  <tr key={u.id}>
-                    <td>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
-                        <div className="mini-avatar" style={{ width: 36, height: 36, fontSize: '0.72rem' }}>{u.avatar || u.full_name?.slice(0, 2).toUpperCase() || 'U'}</div>
-                        <div>
-                          <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>{u.full_name}</div>
-                          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{u.email}</div>
+              ) : teamMembers.length === 0 ? (
+                <tr>
+                  <td colSpan={5} style={{ textAlign: 'center', padding: '3rem 1rem' }}>
+                    <div style={{ color: 'var(--text-muted)', fontSize: '0.88rem', marginBottom: '0.75rem' }}>
+                      No team members added yet.
+                    </div>
+                    <button className="btn btn-primary btn-sm" onClick={() => setShowAddUser(true)}>
+                      <Plus size={14} /> Invite First Member
+                    </button>
+                  </td>
+                </tr>
+              ) : (
+                teamMembers.map(u => {
+                  const roleObj = availableRoles.find(r => r.name === u.role);
+                  return (
+                    <tr key={u.id}>
+                      <td>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+                          <div className="mini-avatar" style={{ width: 36, height: 36, fontSize: '0.72rem' }}>{u.avatar || u.full_name?.slice(0, 2).toUpperCase() || 'U'}</div>
+                          <div>
+                            <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>{u.full_name}</div>
+                            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{u.email}</div>
+                          </div>
                         </div>
-                      </div>
-                    </td>
-                    <td>
-                      <span className="badge" style={{ background: (roleObj?.color || '#6366f1') + '22', color: roleObj?.color || '#6366f1' }}>
-                        {u.role}
-                      </span>
-                    </td>
-                    <td>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                        <span className={`status-dot ${u.is_active ? 'online' : 'offline'}`} />
-                        <span style={{ fontSize: '0.82rem' }}>{u.is_active ? 'Active' : 'Inactive'}</span>
-                      </div>
-                    </td>
-                    <td style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{u.last_login_at || 'Never'}</td>
-                    <td>
-                      <div style={{ display: 'flex', gap: '0.4rem' }}>
-                        <button className="btn-icon" title="Edit Permissions"><Edit2 size={14} /></button>
-                        {u.role !== 'Super Admin' && <button className="btn-icon" style={{ color: 'var(--danger)' }} title="Remove Member"><Trash2 size={14} /></button>}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
+                      </td>
+                      <td>
+                        <span className="badge" style={{ background: (roleObj?.color || '#6366f1') + '22', color: roleObj?.color || '#6366f1' }}>
+                          {u.role || 'Member'}
+                        </span>
+                      </td>
+                      <td>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                          <span className={`status-dot ${u.is_active ? 'online' : 'offline'}`} />
+                          <span style={{ fontSize: '0.82rem' }}>{u.is_active ? 'Active' : 'Inactive'}</span>
+                        </div>
+                      </td>
+                      <td style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{u.last_login_at || 'Never'}</td>
+                      <td>
+                        <div style={{ display: 'flex', gap: '0.4rem' }}>
+                          <button className="btn-icon" title="Edit Permissions" onClick={() => setActiveTab('permissions')}><Edit2 size={14} /></button>
+                          {u.role !== 'Super Admin' && (
+                            <button
+                              className="btn-icon"
+                              style={{ color: 'var(--danger)' }}
+                              title="Remove Member"
+                              onClick={() => setTeamMembers(p => p.filter(m => m.id !== u.id))}
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
             </tbody>
           </table>
         </div>
       )}
 
-      {/* Permission Matrix */}
+      {/* Permission Matrix (Interactive Checkboxes) */}
       {activeTab === 'permissions' && (
-        <div className="glass-card table-container">
-          <table className="permission-matrix">
-            <thead>
-              <tr>
-                <th>Module / Action</th>
-                {roles.map(r => (
-                  <th key={r.id} style={{ color: r.color || 'var(--accent-primary)' }}>{r.name}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {modules.map(mod => (
-                <tr key={mod}>
-                  <td style={{ fontWeight: 600 }}>{mod}</td>
-                  {roles.map(r => {
-                    const has = defaultMatrix[r.name]?.[mod] || r.name === 'Super Admin';
-                    return (
-                      <td key={r.id}>
-                        {has
-                          ? <span className="perm-check" title="Access granted">✓</span>
-                          : <span className="perm-cross" title="No access">✗</span>
-                        }
-                      </td>
-                    );
-                  })}
+        <div className="glass-card" style={{ padding: '1.25rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+            <div>
+              <div style={{ fontSize: '0.95rem', fontWeight: 700 }}>Interactive Role Permission Matrix</div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                Click any checkbox to grant or restrict access to modules for each role.
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <button className="btn btn-secondary btn-sm" onClick={resetPermissionMatrix} style={{ fontSize: '0.75rem' }}>
+                <RotateCcw size={13} /> Reset Defaults
+              </button>
+              <button className="btn btn-primary btn-sm" onClick={savePermissionMatrix} style={{ fontSize: '0.75rem' }}>
+                <Save size={13} /> Save Permissions {matrixDirty && '●'}
+              </button>
+            </div>
+          </div>
+
+          <div className="table-container" style={{ border: '1px solid var(--border-color)', borderRadius: 8, overflowX: 'auto' }}>
+            <table className="data-table" style={{ width: '100%', textAlign: 'center' }}>
+              <thead>
+                <tr style={{ background: 'var(--bg-tertiary)' }}>
+                  <th style={{ textAlign: 'left', minWidth: 150, padding: '0.75rem 1rem' }}>Module / Action</th>
+                  {availableRoles.map(r => (
+                    <th key={r.id || r.name} style={{ padding: '0.75rem 0.5rem', minWidth: 110 }}>
+                      <div style={{ color: r.color || 'var(--accent-primary)', fontWeight: 700, fontSize: '0.82rem' }}>
+                        {r.name}
+                      </div>
+                      <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontWeight: 400 }}>
+                        {r.name === 'Super Admin' ? '(Full Access)' : '(Customizable)'}
+                      </div>
+                    </th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {modules.map(mod => (
+                  <tr key={mod} className="hover-row">
+                    <td style={{ textAlign: 'left', fontWeight: 600, padding: '0.65rem 1rem', fontSize: '0.85rem' }}>
+                      {mod}
+                    </td>
+                    {availableRoles.map(r => {
+                      const isSuperAdmin = r.name === 'Super Admin';
+                      const hasAccess = isSuperAdmin || Boolean(matrix[r.name]?.[mod] ?? defaultMatrix[r.name]?.[mod]);
+                      return (
+                        <td
+                          key={r.id || r.name}
+                          onClick={() => !isSuperAdmin && togglePermission(r.name, mod)}
+                          style={{
+                            cursor: isSuperAdmin ? 'default' : 'pointer',
+                            padding: '0.65rem 0.5rem',
+                            transition: 'background 0.15s',
+                          }}
+                        >
+                          {isSuperAdmin ? (
+                            <span style={{
+                              display: 'inline-flex', alignItems: 'center', gap: '0.2rem',
+                              background: 'rgba(16,185,129,0.12)', color: 'var(--success)',
+                              padding: '0.25rem 0.55rem', borderRadius: 4, fontSize: '0.72rem', fontWeight: 700
+                            }}>
+                              <Lock size={11} /> Always
+                            </span>
+                          ) : (
+                            <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                              <input
+                                type="checkbox"
+                                checked={hasAccess}
+                                onChange={() => togglePermission(r.name, mod)}
+                                style={{
+                                  width: 18, height: 18, cursor: 'pointer',
+                                  accentColor: r.color || 'var(--accent-primary)'
+                                }}
+                              />
+                            </div>
+                          )}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
       {/* Invite Member Modal */}
       {showAddUser && (
         <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) setShowAddUser(false); }}>
-          <div className="modal-content animate-fade-in">
+          <div className="modal-content animate-fade-in" style={{ maxWidth: 500 }}>
             <button className="modal-close-btn" onClick={() => setShowAddUser(false)} title="Close Modal (Esc)" aria-label="Close">
               <X size={18} />
             </button>
-            <h2 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '1.5rem', paddingRight: '2.5rem' }}>Invite Team Member</h2>
+            <h2 style={{ fontSize: '1.15rem', fontWeight: 700, marginBottom: '1.25rem', paddingRight: '2.5rem' }}>
+              Invite Team Member
+            </h2>
             <form onSubmit={handleInviteUser} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div>
                 <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Full Name *</label>
-                <input type="text" className="input-field" placeholder="e.g. Anand Sharma" value={userForm.full_name} onChange={e => setUserForm(p => ({ ...p, full_name: e.target.value }))} required />
+                <input type="text" className="input-field" placeholder="e.g. Niraj Kumar" value={userForm.full_name} onChange={e => setUserForm(p => ({ ...p, full_name: e.target.value }))} required />
               </div>
               <div>
                 <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Email Address *</label>
-                <input type="email" className="input-field" placeholder="anand@company.com" value={userForm.email} onChange={e => setUserForm(p => ({ ...p, email: e.target.value }))} required />
+                <input type="email" className="input-field" placeholder="vatsniraj94@gmail.com" value={userForm.email} onChange={e => setUserForm(p => ({ ...p, email: e.target.value }))} required />
               </div>
               <div>
                 <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Phone Number</label>
-                <input type="text" className="input-field" placeholder="+91 98765 43210" value={userForm.phone} onChange={e => setUserForm(p => ({ ...p, phone: e.target.value }))} />
+                <input type="text" className="input-field" placeholder="+919472697849" value={userForm.phone} onChange={e => setUserForm(p => ({ ...p, phone: e.target.value }))} />
               </div>
               <div>
                 <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Assign Role *</label>
-                <select className="input-field" value={userForm.role} onChange={e => setUserForm(p => ({ ...p, role: e.target.value }))}>
-                  {roles.map(r => <option key={r.id} value={r.name}>{r.name}</option>)}
+                <select
+                  className="input-field"
+                  value={userForm.role}
+                  onChange={e => setUserForm(p => ({ ...p, role: e.target.value }))}
+                  required
+                >
+                  {availableRoles.map(r => (
+                    <option key={r.id || r.name} value={r.name}>
+                      {r.name} {r.is_system ? '(System)' : ''}
+                    </option>
+                  ))}
                 </select>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '0.75rem' }}>
                 <button type="button" className="btn btn-secondary" onClick={() => setShowAddUser(false)}>Cancel</button>
                 <button type="submit" className="btn btn-primary" disabled={submitting}>
                   {submitting ? 'Sending...' : 'Send Invitation'}
@@ -286,11 +440,13 @@ const Roles = () => {
       {/* Create Role Modal */}
       {showAddRole && (
         <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) setShowAddRole(false); }}>
-          <div className="modal-content animate-fade-in">
+          <div className="modal-content animate-fade-in" style={{ maxWidth: 500 }}>
             <button className="modal-close-btn" onClick={() => setShowAddRole(false)} title="Close Modal (Esc)" aria-label="Close">
               <X size={18} />
             </button>
-            <h2 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '1.5rem', paddingRight: '2.5rem' }}>Create Custom Role</h2>
+            <h2 style={{ fontSize: '1.15rem', fontWeight: 700, marginBottom: '1.25rem', paddingRight: '2.5rem' }}>
+              Create Custom Role
+            </h2>
             <form onSubmit={handleCreateRole} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div>
                 <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Role Name *</label>
@@ -316,7 +472,7 @@ const Roles = () => {
                   ))}
                 </div>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '0.75rem' }}>
                 <button type="button" className="btn btn-secondary" onClick={() => setShowAddRole(false)}>Cancel</button>
                 <button type="submit" className="btn btn-primary" disabled={submitting}>
                   {submitting ? 'Creating...' : 'Create Role'}
