@@ -183,13 +183,52 @@ const Tasks = () => {
                   </select>
                 </div>
               </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                <div>
+                  <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Assign To</label>
+                  <input
+                    type="text"
+                    className="input-field"
+                    placeholder="e.g. Anand Sharma (Field Agent)"
+                    value={form.assigned_to || ''}
+                    onChange={e => setForm(p => ({ ...p, assigned_to: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Category / Tag</label>
+                  <select
+                    className="input-field"
+                    onChange={e => {
+                      const tag = e.target.value;
+                      if (tag && !form.tags?.includes(tag)) {
+                        setForm(p => ({ ...p, tags: [...(p.tags || []), tag] }));
+                      }
+                    }}
+                  >
+                    <option value="">+ Add Tag</option>
+                    <option value="Site Visit">🏢 Site Visit</option>
+                    <option value="Client Inspection">📸 Client Inspection</option>
+                    <option value="Payment Follow-up">💰 Payment Follow-up</option>
+                    <option value="KYC & Legal">📑 KYC & Legal</option>
+                  </select>
+                </div>
+              </div>
+              {form.tags?.length > 0 && (
+                <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                  {form.tags.map(t => (
+                    <span key={t} className="badge badge-accent" style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                      {t} <span style={{ cursor: 'pointer' }} onClick={() => setForm(p => ({ ...p, tags: p.tags.filter(x => x !== t) }))}>×</span>
+                    </span>
+                  ))}
+                </div>
+              )}
               <div>
                 <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Due Date</label>
                 <input type="date" className="input-field" value={form.due_date} onChange={e => setForm(p => ({ ...p, due_date: e.target.value }))} />
               </div>
               <div>
                 <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Description</label>
-                <textarea className="input-field textarea-field" rows="2" placeholder="Add details..." value={form.description} onChange={e => setForm(p => ({ ...p, description: e.target.value }))} />
+                <textarea className="input-field textarea-field" rows="2" placeholder="Add details or site address..." value={form.description} onChange={e => setForm(p => ({ ...p, description: e.target.value }))} />
               </div>
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
                 <button className="btn btn-secondary" onClick={() => setShowAdd(false)}>Cancel</button>
