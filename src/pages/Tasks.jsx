@@ -1,15 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import {
   CheckSquare, Clock, AlertCircle, CheckCircle2,
-  Plus, Search, Filter, Calendar, List, Columns, X, RefreshCw
+  Plus, Search, Filter, Calendar, List, Columns, X, RefreshCw,
+  MessageSquare, Send, User, Tag, Check, ChevronRight
 } from 'lucide-react';
-import { getTasks, createTask, updateTask } from '../lib/db';
+import { getTasks, createTask, updateTask, addTaskComment } from '../lib/db';
 import './Pages.css';
 
 const priorityColors = { High: 'var(--danger)', Medium: 'var(--warning)', Low: 'var(--success)' };
 const colColors = { 'To Do': 'var(--text-muted)', 'In Progress': 'var(--warning)', 'Under Review': 'var(--accent-primary)', 'Done': 'var(--success)' };
 const COLUMNS = ['To Do', 'In Progress', 'Under Review', 'Done'];
-const EMPTY_TASK = { title: '', description: '', status: 'To Do', priority: 'Medium', due_date: '', tags: [] };
+const EMPTY_TASK = { title: '', description: '', status: 'To Do', priority: 'Medium', due_date: '', tags: [], assigned_to: '' };
 
 const Tasks = () => {
   const [tasks, setTasks] = useState([]);
@@ -19,6 +20,12 @@ const Tasks = () => {
   const [form, setForm] = useState(EMPTY_TASK);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');
+
+  // Task Details & Comment Drawer / Modal
+  const [selectedTask, setSelectedTask] = useState(null);
+  const [newComment, setNewComment] = useState('');
+  const [commentAuthor, setCommentAuthor] = useState('Anand Sharma');
+  const [addingComment, setAddingComment] = useState(false);
 
   useEffect(() => { loadTasks(); }, []);
 
@@ -41,7 +48,36 @@ const Tasks = () => {
 
   const moveTask = async (task, newStatus) => {
     setTasks(prev => prev.map(t => t.id === task.id ? { ...t, status: newStatus } : t));
+    if (selectedTask?.id === task.id) {
+      setSelectedTask(prev => ({ ...prev, status: newStatus }));
+    }
     await updateTask(task.id, { status: newStatus });
+  };
+
+  const handleAddComment = async (e) => {
+    e.preventDefault();
+    if (!newComment.trim() || !selectedTask) return;
+
+    setAddingComment(true);
+    const { data: createdComment } = await addTaskComment(selectedTask.id, newComment.trim(), commentAuthor);
+
+    if (createdComment) {
+      const updatedComments = [...(selectedTask.comments || []), createdComment];
+      
+      // Update selected task
+      setSelectedTask(prev => ({
+        ...prev,
+        comments: updatedComments
+      }));
+
+      // Update in main tasks state
+      setTasks(prev => prev.map(t =>
+        t.id === selectedTask.id ? { ...t, comments: updatedComments } : t
+      ));
+
+      setNewComment('');
+    }
+    setAddingComment(false);
   };
 
   const tasksByCol = (col) => tasks.filter(t => t.status === col && (!search || t.title.toLowerCase().includes(search.toLowerCase())));
@@ -54,7 +90,7 @@ const Tasks = () => {
       <div className="page-header">
         <div className="page-title-group">
           <h1 className="page-title">Task Management</h1>
-          <p className="page-subtitle">Track team productivity, assignments & deadlines.</p>
+          <p className="page-subtitle">Track team productivity, assignments, site visits & task comments.</p>
         </div>
         <div className="page-actions">
           <div style={{ display: 'flex', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
@@ -91,30 +127,50 @@ const Tasks = () => {
                     <span className="kanban-count">{tasksByCol(col).length}</span>
                   </div>
                   <div className="kanban-cards">
-                    {tasksByCol(col).map(task => (
-                      <div key={task.id} className="kanban-card">
-                        <div className="kanban-card-title">{task.title}</div>
-                        {task.tags?.length > 0 && (
-                          <div style={{ display: 'flex', gap: '0.3rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
-                            {task.tags.map(tag => <span key={tag} className="badge badge-neutral" style={{ fontSize: '0.62rem' }}>{tag}</span>)}
-                          </div>
-                        )}
-                        <div className="kanban-card-meta">
-                          {task.due_date && (
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-                              <Calendar size={11} /> {new Date(task.due_date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' })}
+                    {tasksByCol(col).map(task => {
+                      const commentsCount = task.comments?.length || 0;
+                      return (
+                        <div
+                          key={task.id}
+                          className="kanban-card"
+                          onClick={() => setSelectedTask(task)}
+                          style={{ cursor: 'pointer', position: 'relative' }}
+                        >
+                          <div className="kanban-card-title">{task.title}</div>
+                          {task.assigned_to && (
+                            <div style={{ fontSize: '0.72rem', color: 'var(--accent-primary)', marginBottom: '0.35rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                              <User size={11} /> {task.assigned_to}
                             </div>
                           )}
-                          <span style={{ fontSize: '0.68rem', fontWeight: 700, color: priorityColors[task.priority] }}>{task.priority}</span>
+                          {task.tags?.length > 0 && (
+                            <div style={{ display: 'flex', gap: '0.3rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
+                              {task.tags.map(tag => <span key={tag} className="badge badge-neutral" style={{ fontSize: '0.62rem' }}>{tag}</span>)}
+                            </div>
+                          )}
+                          <div className="kanban-card-meta">
+                            {task.due_date && (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                                <Calendar size={11} /> {new Date(task.due_date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' })}
+                              </div>
+                            )}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                              {commentsCount > 0 && (
+                                <span style={{ fontSize: '0.68rem', color: 'var(--accent-primary)', display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
+                                  <MessageSquare size={11} /> {commentsCount}
+                                </span>
+                              )}
+                              <span style={{ fontSize: '0.68rem', fontWeight: 700, color: priorityColors[task.priority] }}>{task.priority}</span>
+                            </div>
+                          </div>
+                          {/* Quick move buttons */}
+                          <div style={{ display: 'flex', gap: '0.25rem', marginTop: '0.5rem', flexWrap: 'wrap' }} onClick={e => e.stopPropagation()}>
+                            {COLUMNS.filter(c => c !== col).map(c => (
+                              <button key={c} onClick={() => moveTask(task, c)} className="btn btn-secondary btn-sm" style={{ fontSize: '0.6rem', padding: '0.15rem 0.4rem' }}>→ {c}</button>
+                            ))}
+                          </div>
                         </div>
-                        {/* Quick move buttons */}
-                        <div style={{ display: 'flex', gap: '0.25rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
-                          {COLUMNS.filter(c => c !== col).map(c => (
-                            <button key={c} onClick={() => moveTask(task, c)} className="btn btn-secondary btn-sm" style={{ fontSize: '0.6rem', padding: '0.15rem 0.4rem' }}>→ {c}</button>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                     <button className="btn btn-secondary btn-sm" style={{ width: '100%', justifyContent: 'center', borderStyle: 'dashed' }} onClick={() => { setForm({ ...EMPTY_TASK, status: col }); setShowAdd(true); }}>
                       <Plus size={13} /> Add
                     </button>
@@ -129,31 +185,131 @@ const Tasks = () => {
             <div className="glass-card table-container">
               <table className="data-table">
                 <thead>
-                  <tr><th>Task</th><th>Status</th><th>Priority</th><th>Due Date</th><th>Tags</th></tr>
+                  <tr><th>Task</th><th>Assignee</th><th>Status</th><th>Priority</th><th>Due Date</th><th>Comments</th><th>Tags</th></tr>
                 </thead>
                 <tbody>
-                  {filteredFlat.length === 0 && <tr><td colSpan={5} style={{ textAlign: 'center', padding: '2.5rem', color: 'var(--text-muted)' }}>No tasks found</td></tr>}
-                  {filteredFlat.map(task => (
-                    <tr key={task.id}>
-                      <td style={{ fontWeight: 600 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                          {task.status === 'Done' ? <CheckCircle2 size={16} style={{ color: 'var(--success)', flexShrink: 0 }} /> : <Clock size={16} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />}
-                          <span style={{ textDecoration: task.status === 'Done' ? 'line-through' : 'none', opacity: task.status === 'Done' ? 0.6 : 1 }}>{task.title}</span>
-                        </div>
-                      </td>
-                      <td><span className={`badge ${statusBadge[task.status]}`}>{task.status}</span></td>
-                      <td><span style={{ fontSize: '0.8rem', fontWeight: 600, color: priorityColors[task.priority], display: 'flex', alignItems: 'center', gap: '0.25rem' }}>{task.priority === 'High' && <AlertCircle size={13} />}{task.priority}</span></td>
-                      <td style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                        {task.due_date ? <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}><Calendar size={13} />{new Date(task.due_date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' })}</div> : '—'}
-                      </td>
-                      <td><div style={{ display: 'flex', gap: '0.25rem' }}>{task.tags?.map(tag => <span key={tag} className="badge badge-neutral">{tag}</span>)}</div></td>
-                    </tr>
-                  ))}
+                  {filteredFlat.length === 0 && <tr><td colSpan={7} style={{ textAlign: 'center', padding: '2.5rem', color: 'var(--text-muted)' }}>No tasks found</td></tr>}
+                  {filteredFlat.map(task => {
+                    const commentsCount = task.comments?.length || 0;
+                    return (
+                      <tr key={task.id} onClick={() => setSelectedTask(task)} style={{ cursor: 'pointer' }}>
+                        <td style={{ fontWeight: 600 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            {task.status === 'Done' ? <CheckCircle2 size={16} style={{ color: 'var(--success)', flexShrink: 0 }} /> : <Clock size={16} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />}
+                            <span style={{ textDecoration: task.status === 'Done' ? 'line-through' : 'none', opacity: task.status === 'Done' ? 0.6 : 1 }}>{task.title}</span>
+                          </div>
+                        </td>
+                        <td style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{task.assigned_to || '—'}</td>
+                        <td><span className={`badge ${statusBadge[task.status]}`}>{task.status}</span></td>
+                        <td><span style={{ fontSize: '0.8rem', fontWeight: 600, color: priorityColors[task.priority], display: 'flex', alignItems: 'center', gap: '0.25rem' }}>{task.priority === 'High' && <AlertCircle size={13} />}{task.priority}</span></td>
+                        <td style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                          {task.due_date ? <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}><Calendar size={13} />{new Date(task.due_date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' })}</div> : '—'}
+                        </td>
+                        <td>
+                          <button
+                            className="btn btn-secondary btn-sm"
+                            onClick={(e) => { e.stopPropagation(); setSelectedTask(task); }}
+                            style={{ fontSize: '0.72rem', padding: '0.2rem 0.5rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}
+                          >
+                            <MessageSquare size={12} /> {commentsCount} {commentsCount === 1 ? 'Comment' : 'Comments'}
+                          </button>
+                        </td>
+                        <td><div style={{ display: 'flex', gap: '0.25rem' }}>{task.tags?.map(tag => <span key={tag} className="badge badge-neutral">{tag}</span>)}</div></td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
           )}
         </>
+      )}
+
+      {/* Task Details & Comments Modal */}
+      {selectedTask && (
+        <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) setSelectedTask(null); }}>
+          <div className="modal-content animate-fade-in" style={{ maxWidth: 580, padding: '1.5rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
+              <div>
+                <h2 style={{ fontSize: '1.15rem', fontWeight: 700, margin: '0 0 0.35rem 0' }}>
+                  {selectedTask.title}
+                </h2>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                  <span className={`badge ${statusBadge[selectedTask.status]}`}>{selectedTask.status}</span>
+                  <span style={{ fontSize: '0.75rem', fontWeight: 700, color: priorityColors[selectedTask.priority] }}>
+                    {selectedTask.priority} Priority
+                  </span>
+                  {selectedTask.assigned_to && (
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                      <User size={12} /> {selectedTask.assigned_to}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <button className="modal-close-btn" onClick={() => setSelectedTask(null)}>✕</button>
+            </div>
+
+            {/* Task Description */}
+            {selectedTask.description && (
+              <div style={{ padding: '0.75rem 1rem', background: 'rgba(255,255,255,0.03)', borderRadius: 8, border: '1px solid var(--border-color)', marginBottom: '1.25rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                {selectedTask.description}
+              </div>
+            )}
+
+            {/* Comments Section */}
+            <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
+              <div style={{ fontSize: '0.9rem', fontWeight: 700, marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <MessageSquare size={16} color="var(--accent-primary)" />
+                Activity & Comments ({selectedTask.comments?.length || 0})
+              </div>
+
+              {/* Comments Stream */}
+              <div style={{ maxHeight: 220, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.65rem', marginBottom: '1rem', paddingRight: '0.25rem' }}>
+                {(!selectedTask.comments || selectedTask.comments.length === 0) ? (
+                  <div style={{ textAlign: 'center', padding: '1.5rem', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                    No comments yet. Leave a note or progress update below.
+                  </div>
+                ) : (
+                  selectedTask.comments.map(c => (
+                    <div key={c.id} style={{ padding: '0.65rem 0.85rem', background: 'var(--bg-tertiary)', borderRadius: 8, border: '1px solid var(--border-color)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.25rem' }}>
+                        <strong style={{ fontSize: '0.78rem', color: 'var(--text-primary)' }}>👤 {c.author}</strong>
+                        <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+                          {new Date(c.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} • {new Date(c.created_at).toLocaleDateString([], { day: '2-digit', month: 'short' })}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                        {c.text}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              {/* Add Comment Form */}
+              <form onSubmit={handleAddComment} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <input
+                    type="text"
+                    className="input-field"
+                    placeholder="Write a comment or site visit update..."
+                    value={newComment}
+                    onChange={e => setNewComment(e.target.value)}
+                    style={{ flex: 1 }}
+                  />
+                  <button
+                    type="submit"
+                    className="btn btn-primary"
+                    disabled={addingComment || !newComment.trim()}
+                    style={{ padding: '0 1rem' }}
+                  >
+                    <Send size={15} /> Post
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Create Task Modal */}

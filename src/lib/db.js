@@ -583,36 +583,96 @@ export async function createDeal(dealData) {
 }
 
 export async function getTasks() {
-  if (!isSupabaseConfigured) return { data: MOCK_STORE.tasks, error: null };
-  const { data, error } = await supabase.from('tasks').select('*').order('created_at', { ascending: false });
-  return { data, error };
+  if (isSupabaseConfigured) {
+    try {
+      const { data, error } = await supabase.from('tasks').select('*').order('created_at', { ascending: false });
+      if (!error && data) {
+        // Enrich with any local comments if needed
+        const localComments = JSON.parse(localStorage.getItem('erppro_task_comments') || '{}');
+        const enriched = data.map(t => ({
+          ...t,
+          comments: t.comments || localComments[t.id] || [],
+        }));
+        return { data: enriched, error: null };
+      }
+    } catch {}
+  }
+  const localTasks = JSON.parse(localStorage.getItem('erppro_local_tasks') || 'null');
+  return { data: localTasks || MOCK_STORE.tasks, error: null };
 }
 
 export async function createTask(task) {
-  if (!isSupabaseConfigured) {
-    const newTask = { id: 'task-' + Date.now(), ...task, created_at: new Date().toISOString() };
-    MOCK_STORE.tasks.unshift(newTask);
-    logAuditEvent('task.create', 'tasks', newTask.id, newTask);
-    return { data: newTask, error: null };
+  const newTask = {
+    id: 'task-' + Date.now(),
+    comments: [],
+    ...task,
+    created_at: new Date().toISOString()
+  };
+
+  if (isSupabaseConfigured) {
+    let { data, error } = await supabase.from('tasks').insert([{ ...task, organization_id: DEFAULT_ORG_ID }]).select().single();
+    if (error && error.message && error.message.includes('organization_id')) {
+      const fb = await supabase.from('tasks').insert([task]).select().single();
+      data = fb.data;
+      error = fb.error;
+    }
+    if (data) {
+      logAuditEvent('task.create', 'tasks', data.id, data);
+      return { data: { ...data, comments: [] }, error: null };
+    }
   }
-  let { data, error } = await supabase.from('tasks').insert([{ ...task, organization_id: DEFAULT_ORG_ID }]).select().single();
-  if (error && error.message && error.message.includes('organization_id')) {
-    const fb = await supabase.from('tasks').insert([task]).select().single();
-    data = fb.data;
-    error = fb.error;
-  }
-  if (data) logAuditEvent('task.create', 'tasks', data.id, data);
-  return { data, error };
+
+  MOCK_STORE.tasks.unshift(newTask);
+  try {
+    localStorage.setItem('erppro_local_tasks', JSON.stringify(MOCK_STORE.tasks));
+  } catch {}
+  logAuditEvent('task.create', 'tasks', newTask.id, newTask);
+  return { data: newTask, error: null };
 }
 
 export async function updateTask(id, updates) {
-  if (!isSupabaseConfigured) {
-    const idx = MOCK_STORE.tasks.findIndex(t => t.id === id);
-    if (idx !== -1) MOCK_STORE.tasks[idx] = { ...MOCK_STORE.tasks[idx], ...updates };
+  if (isSupabaseConfigured) {
+    try {
+      const { data, error } = await supabase.from('tasks').update(updates).eq('id', id).select().single();
+      if (!error && data) return { data, error: null };
+    } catch {}
+  }
+  const idx = MOCK_STORE.tasks.findIndex(t => t.id === id);
+  if (idx !== -1) {
+    MOCK_STORE.tasks[idx] = { ...MOCK_STORE.tasks[idx], ...updates };
+    try {
+      localStorage.setItem('erppro_local_tasks', JSON.stringify(MOCK_STORE.tasks));
+    } catch {}
     return { data: MOCK_STORE.tasks[idx], error: null };
   }
-  const { data, error } = await supabase.from('tasks').update(updates).eq('id', id).select().single();
-  return { data, error };
+  return { data: null, error: { message: 'Task not found' } };
+}
+
+export async function addTaskComment(taskId, commentText, author = 'Admin') {
+  const comment = {
+    id: 'comment-' + Date.now(),
+    author: author || 'Team Member',
+    text: commentText,
+    created_at: new Date().toISOString(),
+  };
+
+  // Save in local storage map
+  try {
+    const localComments = JSON.parse(localStorage.getItem('erppro_task_comments') || '{}');
+    if (!localComments[taskId]) localComments[taskId] = [];
+    localComments[taskId].push(comment);
+    localStorage.setItem('erppro_task_comments', JSON.stringify(localComments));
+  } catch {}
+
+  // Update in mock store
+  const task = MOCK_STORE.tasks.find(t => t.id === taskId);
+  if (task) {
+    if (!task.comments) task.comments = [];
+    task.comments.push(comment);
+  }
+
+  logAuditEvent('task.comment_added', 'tasks', taskId, { commentText, author });
+  return { data: comment, error: null };
 }
 
 export async function getCampaigns() {
