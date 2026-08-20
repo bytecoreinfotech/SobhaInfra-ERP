@@ -96,3 +96,60 @@ export async function deleteFromStorage(publicUrl) {
     // Non-critical cleanup failure
   }
 }
+
+/**
+ * Parse message object and extract media (image, document, video, audio)
+ * from both native columns (media_url, message_type) and embedded tags ([image: url]).
+ */
+export function parseMessageMedia(m) {
+  if (!m) return { text: '', mediaUrl: null, mediaType: 'text' };
+
+  let text = m.body || '';
+  let mediaUrl = m.media_url || null;
+  let mediaType = m.message_type || null;
+
+  // 1. Check for explicit [type: url] tags in text body (e.g. [image: https://...])
+  const tagRegex = /\[(image|document|video|audio):\s*(https?:\/\/[^\s\]]+)\]/i;
+  const tagMatch = text.match(tagRegex);
+  if (tagMatch) {
+    if (!mediaType || mediaType === 'text') {
+      mediaType = tagMatch[1].toLowerCase();
+    }
+    if (!mediaUrl) {
+      mediaUrl = tagMatch[2];
+    }
+    text = text.replace(tagRegex, '').trim();
+  }
+
+  // 2. Check for standalone media URLs in text if no media found yet
+  if (!mediaUrl) {
+    const imgRegex = /(https?:\/\/[^\s]+\.(?:jpg|jpeg|png|webp|gif|svg)(\?[^\s]*)?)/i;
+    const imgMatch = text.match(imgRegex);
+    if (imgMatch) {
+      mediaType = 'image';
+      mediaUrl = imgMatch[1];
+      text = text.replace(imgMatch[0], '').trim();
+    }
+  }
+
+  if (!mediaUrl) {
+    const docRegex = /(https?:\/\/[^\s]+\.(?:pdf|docx?|xlsx?)(\?[^\s]*)?)/i;
+    const docMatch = text.match(docRegex);
+    if (docMatch) {
+      mediaType = 'document';
+      mediaUrl = docMatch[1];
+      text = text.replace(docMatch[0], '').trim();
+    }
+  }
+
+  if (mediaUrl && (!mediaType || mediaType === 'text')) {
+    mediaType = 'image';
+  }
+
+  return {
+    text,
+    mediaUrl,
+    mediaType: mediaType || 'text',
+  };
+}
+

@@ -6,7 +6,7 @@ import {
   Paperclip, UploadCloud, Image, Film, Music, FileIcon
 } from 'lucide-react';
 import { getCustomer360, addCustomerNote, createDeal, logPaymentReminder, sendWhatsAppMessage, updateConversationMode, deleteWhatsAppMessage, clearWhatsAppChat } from '../lib/db';
-import { uploadToWhatsAppMedia, getWhatsAppMediaType } from '../lib/storage';
+import { uploadToWhatsAppMedia, getWhatsAppMediaType, parseMessageMedia } from '../lib/storage';
 import './Customer360Modal.css';
 
 const Customer360Modal = ({ leadId, onClose, onLeadUpdated }) => {
@@ -466,37 +466,88 @@ const Customer360Modal = ({ leadId, onClose, onLeadUpdated }) => {
                               {m.status === 'failed' && <span style={{ color: 'var(--danger, #ef4444)', marginLeft: 4 }}>✕ Failed</span>}
                             </div>
 
-                            {/* Media rendering */}
-                            {m.message_type === 'image' && m.media_url && (
-                              <img
-                                src={m.media_url}
-                                alt="Shared image"
-                                style={{ maxWidth: '100%', borderRadius: 8, marginBottom: m.body ? '0.4rem' : 0, display: 'block' }}
-                                onError={e => { e.target.style.display = 'none'; }}
-                              />
-                            )}
-                            {m.message_type === 'video' && m.media_url && (
-                              <video controls style={{ maxWidth: '100%', borderRadius: 8, marginBottom: m.body ? '0.4rem' : 0, display: 'block' }}>
-                                <source src={m.media_url} />
-                              </video>
-                            )}
-                            {m.message_type === 'audio' && m.media_url && (
-                              <audio controls style={{ width: '100%', marginBottom: m.body ? '0.4rem' : 0 }}>
-                                <source src={m.media_url} />
-                              </audio>
-                            )}
-                            {m.message_type === 'document' && m.media_url && (
-                              <a href={m.media_url} target="_blank" rel="noreferrer" style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--accent-primary)', textDecoration: 'none', marginBottom: m.body ? '0.4rem' : 0, fontSize: '0.8rem' }}>
-                                📎 {m.body || 'Document'} (tap to open)
-                              </a>
-                            )}
+                            {/* Smart Media & Text Rendering */}
+                            {(() => {
+                              const { text: cleanText, mediaUrl, mediaType } = parseMessageMedia(m);
+                              return (
+                                <>
+                                  {/* Image preview */}
+                                  {mediaUrl && mediaType === 'image' && (
+                                    <div style={{ marginBottom: cleanText ? '0.45rem' : 0 }}>
+                                      <a href={mediaUrl} target="_blank" rel="noopener noreferrer" title="Click to view full image">
+                                        <img
+                                          src={mediaUrl}
+                                          alt="WhatsApp shared image"
+                                          style={{
+                                            maxWidth: '100%',
+                                            maxHeight: 280,
+                                            borderRadius: 8,
+                                            display: 'block',
+                                            cursor: 'pointer',
+                                            objectFit: 'contain',
+                                            background: 'rgba(0,0,0,0.15)',
+                                            border: '1px solid rgba(255,255,255,0.08)'
+                                          }}
+                                          onError={e => { e.target.style.display = 'none'; }}
+                                        />
+                                      </a>
+                                    </div>
+                                  )}
 
-                            {/* Text body */}
-                            {m.body && m.message_type !== 'document' && (
-                              <div style={{ whiteSpace: 'pre-wrap' }}>{m.body}</div>
-                            )}
+                                  {/* Video preview */}
+                                  {mediaUrl && mediaType === 'video' && (
+                                    <div style={{ marginBottom: cleanText ? '0.45rem' : 0 }}>
+                                      <video controls style={{ maxWidth: '100%', maxHeight: 260, borderRadius: 8, display: 'block' }}>
+                                        <source src={mediaUrl} />
+                                      </video>
+                                    </div>
+                                  )}
+
+                                  {/* Audio preview */}
+                                  {mediaUrl && mediaType === 'audio' && (
+                                    <div style={{ marginBottom: cleanText ? '0.45rem' : 0 }}>
+                                      <audio controls style={{ width: '100%', minWidth: 200 }}>
+                                        <source src={mediaUrl} />
+                                      </audio>
+                                    </div>
+                                  )}
+
+                                  {/* Document preview */}
+                                  {mediaUrl && mediaType === 'document' && (
+                                    <div style={{ marginBottom: cleanText ? '0.45rem' : 0 }}>
+                                      <a
+                                        href={mediaUrl}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        style={{
+                                          display: 'inline-flex',
+                                          alignItems: 'center',
+                                          gap: '0.4rem',
+                                          padding: '0.35rem 0.6rem',
+                                          background: 'rgba(99,102,241,0.15)',
+                                          border: '1px solid var(--accent-primary)',
+                                          borderRadius: 6,
+                                          color: 'var(--text-primary)',
+                                          textDecoration: 'none',
+                                          fontSize: '0.78rem',
+                                          fontWeight: 500
+                                        }}
+                                      >
+                                        📎 {cleanText || 'Document'} ↗
+                                      </a>
+                                    </div>
+                                  )}
+
+                                  {/* Clean Text Body */}
+                                  {cleanText && (mediaType !== 'document' || !mediaUrl) && (
+                                    <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.45 }}>{cleanText}</div>
+                                  )}
+                                </>
+                              );
+                            })()}
                           </div>
                         </div>
+
                       ))
                     )}
                   </div>

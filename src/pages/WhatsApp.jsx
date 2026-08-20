@@ -13,6 +13,7 @@ import {
 import Customer360Modal from '../components/Customer360Modal';
 import CampaignBuilderModal from '../components/CampaignBuilderModal';
 import HumanHandoffModal from '../components/HumanHandoffModal';
+import { uploadToWhatsAppMedia, getWhatsAppMediaType, parseMessageMedia } from '../lib/storage';
 import './Pages.css';
 
 const statusConfig = {
@@ -74,6 +75,12 @@ const WhatsApp = () => {
   const [leads, setLeads] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showCampaignBuilder, setShowCampaignBuilder] = useState(false);
+  
+  // File attachment state
+  const [attachedFile, setAttachedFile] = useState(null);
+  const [attachedPreview, setAttachedPreview] = useState(null);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const fileInputRef = useRef(null);
 
   const messagesEndRef = useRef(null);
 
@@ -123,14 +130,34 @@ const WhatsApp = () => {
   useEffect(() => {
     if (selectedConv) {
       loadMessages(selectedConv.id);
-      setSelectedFeedbackTag(null);
-      setFeedbackSuccess(false);
+      setAttachedFile(null);
+      setAttachedPreview(null);
     }
-  }, [selectedConv?.id]);
+  }, [selectedConv]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  const handleFileSelect = (file) => {
+    if (!file) return;
+    setAttachedFile(file);
+    setUploadProgress(0);
+    if (file.type.startsWith('image/')) {
+      const reader = new FileReader();
+      reader.onload = ev => setAttachedPreview(ev.target.result);
+      reader.readAsDataURL(file);
+    } else {
+      setAttachedPreview(null);
+    }
+  };
+
+  const clearAttachment = () => {
+    setAttachedFile(null);
+    setAttachedPreview(null);
+    setUploadProgress(0);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
 
   const loadAllData = async () => {
     setLoading(true);
@@ -172,18 +199,42 @@ const WhatsApp = () => {
 
   const handleSendMessage = async (e) => {
     e.preventDefault();
-    if (!msgInput.trim() || !selectedConv) return;
+    if ((!msgInput.trim() && !attachedFile) || !selectedConv) return;
     setSendingMsg(true);
     const textToSend = msgInput;
     setMsgInput('');
 
-    const { data: newMsg } = await sendWhatsAppMessage(selectedConv.id, textToSend, 'human_agent', selectedConv.contact_phone);
-    if (newMsg) {
-      setMessages(prev => [...prev, newMsg]);
-      if (selectedConv.conversation_mode === 'AI ACTIVE') {
-        handleModeChange('HUMAN ACTIVE');
+    let mediaUrl = null;
+    let mediaType = 'text';
+
+    try {
+      if (attachedFile) {
+        mediaUrl = await uploadToWhatsAppMedia(attachedFile, 'crm', setUploadProgress);
+        mediaType = getWhatsAppMediaType(attachedFile);
       }
+
+      const { data: newMsg } = await sendWhatsAppMessage(
+        selectedConv.id,
+        textToSend,
+        'human_agent',
+        selectedConv.contact_phone,
+        mediaType,
+        mediaUrl,
+        attachedFile?.name || null
+      );
+
+      clearAttachment();
+
+      if (newMsg) {
+        setMessages(prev => [...prev, newMsg]);
+        if (selectedConv.conversation_mode === 'AI ACTIVE') {
+          handleModeChange('HUMAN ACTIVE');
+        }
+      }
+    } catch (err) {
+      console.error('[WhatsApp Page] Send error:', err);
     }
+
     setSendingMsg(false);
   };
 
@@ -390,6 +441,7 @@ const WhatsApp = () => {
                 <div style={{ flex: 1, overflowY: 'auto', padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                   {messages.map(m => {
                     const isOutbound = m.direction === 'outbound';
+                    const { text: cleanText, mediaUrl, mediaType } = parseMessageMedia(m);
                     return (
                       <div
                         key={m.id}
@@ -412,7 +464,79 @@ const WhatsApp = () => {
                           </span>
                           <span>{new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                         </div>
-                        <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.4 }}>{m.body}</div>
+
+                        {/* Image Preview */}
+                        {mediaUrl && mediaType === 'image' && (
+                          <div style={{ marginBottom: cleanText ? '0.45rem' : 0 }}>
+                            <a href={mediaUrl} target="_blank" rel="noopener noreferrer" title="Click to view full image">
+                              <img
+                                src={mediaUrl}
+                                alt="WhatsApp shared image"
+                                style={{
+                                  maxWidth: '100%',
+                                  maxHeight: 260,
+                                  borderRadius: 8,
+                                  display: 'block',
+                                  cursor: 'pointer',
+                                  objectFit: 'contain',
+                                  background: 'rgba(0,0,0,0.15)',
+                                  border: '1px solid rgba(255,255,255,0.08)'
+                                }}
+                                onError={e => { e.target.style.display = 'none'; }}
+                              />
+                            </a>
+                          </div>
+                        )}
+
+                        {/* Video Preview */}
+                        {mediaUrl && mediaType === 'video' && (
+                          <div style={{ marginBottom: cleanText ? '0.45rem' : 0 }}>
+                            <video controls style={{ maxWidth: '100%', maxHeight: 240, borderRadius: 8, display: 'block' }}>
+                              <source src={mediaUrl} />
+                            </video>
+                          </div>
+                        )}
+
+                        {/* Audio Preview */}
+                        {mediaUrl && mediaType === 'audio' && (
+                          <div style={{ marginBottom: cleanText ? '0.45rem' : 0 }}>
+                            <audio controls style={{ width: '100%', minWidth: 200 }}>
+                              <source src={mediaUrl} />
+                            </audio>
+                          </div>
+                        )}
+
+                        {/* Document Preview */}
+                        {mediaUrl && mediaType === 'document' && (
+                          <div style={{ marginBottom: cleanText ? '0.45rem' : 0 }}>
+                            <a
+                              href={mediaUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '0.4rem',
+                                padding: '0.35rem 0.6rem',
+                                background: 'rgba(99,102,241,0.15)',
+                                border: '1px solid var(--accent-primary)',
+                                borderRadius: 6,
+                                color: 'var(--text-primary)',
+                                textDecoration: 'none',
+                                fontSize: '0.78rem',
+                                fontWeight: 500
+                              }}
+                            >
+                              📎 {cleanText || 'Document'} ↗
+                            </a>
+                          </div>
+                        )}
+
+                        {/* Clean Text Body */}
+                        {cleanText && (mediaType !== 'document' || !mediaUrl) && (
+                          <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.4 }}>{cleanText}</div>
+                        )}
+
                         {isOutbound && (
                           <div style={{ textAlign: 'right', marginTop: '0.2rem' }}>
                             <CheckCheck size={12} color="var(--accent-secondary)" />
@@ -424,17 +548,56 @@ const WhatsApp = () => {
                   <div ref={messagesEndRef} />
                 </div>
 
+                {/* Attachment Preview Box */}
+                {attachedFile && (
+                  <div style={{ padding: '0.5rem 1.25rem', background: 'var(--bg-secondary)', borderTop: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                    {attachedPreview
+                      ? <img src={attachedPreview} alt="preview" style={{ width: 40, height: 40, objectFit: 'cover', borderRadius: 6 }} />
+                      : <div style={{ width: 40, height: 40, borderRadius: 6, background: 'rgba(99,102,241,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.2rem' }}>📄</div>
+                    }
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: '0.78rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{attachedFile.name}</div>
+                      <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>{(attachedFile.size / 1024).toFixed(0)} KB · {getWhatsAppMediaType(attachedFile)}</div>
+                      {uploadProgress > 0 && uploadProgress < 100 && (
+                        <div style={{ marginTop: '0.25rem', height: 3, background: 'var(--border-color)', borderRadius: 99, overflow: 'hidden' }}>
+                          <div style={{ width: `${uploadProgress}%`, height: '100%', background: 'var(--accent-primary)', transition: 'width 0.2s' }} />
+                        </div>
+                      )}
+                    </div>
+                    <button type="button" onClick={clearAttachment} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '1rem', padding: '0.2rem' }}>✕</button>
+                  </div>
+                )}
+
+                <input ref={fileInputRef} type="file" accept="image/*,.pdf,.mp4,.mp3,.ogg,.wav,.doc,.docx" style={{ display: 'none' }} onChange={e => handleFileSelect(e.target.files[0])} />
+
                 {/* Chat Composer */}
-                <form onSubmit={handleSendMessage} style={{ padding: '0.85rem 1.25rem', borderTop: '1px solid var(--border-color)', background: 'var(--bg-secondary)', display: 'flex', gap: '0.5rem' }}>
+                <form onSubmit={handleSendMessage} style={{ padding: '0.85rem 1.25rem', borderTop: '1px solid var(--border-color)', background: 'var(--bg-secondary)', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    title="Attach image, PDF, or document"
+                    style={{
+                      background: attachedFile ? 'var(--accent-primary)' : 'var(--bg-tertiary)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: 8, padding: '0.45rem 0.65rem',
+                      cursor: 'pointer', color: attachedFile ? '#fff' : 'var(--text-muted)',
+                      fontSize: '1.1rem', lineHeight: 1, flexShrink: 0
+                    }}
+                  >
+                    📎
+                  </button>
                   <input
                     type="text"
                     className="input-field"
-                    placeholder={`Reply as ${selectedConv.assigned_salesperson || 'Sales Rep'}...`}
+                    placeholder={attachedFile ? 'Add a caption (optional)...' : `Reply as ${selectedConv.assigned_salesperson || 'Sales Rep'}...`}
                     value={msgInput}
                     onChange={e => setMsgInput(e.target.value)}
+                    disabled={sendingMsg}
+                    style={{ flex: 1 }}
                   />
-                  <button type="submit" className="btn btn-whatsapp" disabled={sendingMsg || !msgInput.trim()}>
-                    <Send size={15} /> Send
+                  <button type="submit" className="btn btn-whatsapp" disabled={sendingMsg || (!msgInput.trim() && !attachedFile)}>
+                    <Send size={15} className={sendingMsg ? 'animate-spin' : ''} />
+                    {sendingMsg ? (uploadProgress > 0 && uploadProgress < 100 ? `${uploadProgress}%` : 'Sending...') : 'Send'}
                   </button>
                 </form>
               </>
