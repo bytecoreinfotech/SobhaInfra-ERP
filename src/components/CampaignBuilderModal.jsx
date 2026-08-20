@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { X, Send, Users, Filter, CheckCircle2, AlertTriangle, Shield, Clock, RefreshCw, Zap, MessageCircle } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { X, Send, Users, Filter, CheckCircle2, AlertTriangle, Shield, Clock, RefreshCw, Zap, MessageCircle, UploadCloud, Paperclip } from 'lucide-react';
 import { estimateCampaignAudience, queueCampaign, processCampaignBatch } from '../lib/db';
+import { uploadToWhatsAppMedia, getWhatsAppMediaType } from '../lib/storage';
 
 const TEMPLATES = [
   { id: 1, tag: 'Announcement', name: 'New Product Launch', text: 'Hi {name}! 👋 We have introduced our new {product}. Would you like the official rate chart and brochure?' },
@@ -15,14 +16,26 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued }) => {
   const [filters, setFilters] = useState({ statusFilter: 'All', propertyFilter: 'All', minScore: 0 });
   const [estimation, setEstimation] = useState({ totalRaw: 0, targeted: 0, optedOut: 0, invalidPhone: 0, finalAudienceCount: 0, eligibleLeads: [] });
   const [estimating, setEstimating] = useState(false);
-  
+
+  // Campaign media attachment
+  const [campaignFile, setCampaignFile] = useState(null);
+  const [campaignFilePreview, setCampaignFilePreview] = useState(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [uploadingMedia, setUploadingMedia] = useState(false);
+  const [uploadedMediaUrl, setUploadedMediaUrl] = useState(null);
+  const [uploadedMediaType, setUploadedMediaType] = useState(null);
+  const campaignFileRef = useRef(null);
+
   // Execution state
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [batchProgress, setBatchProgress] = useState(null); // { sent, total, status }
+  const [batchProgress, setBatchProgress] = useState(null);
 
   useEffect(() => {
     if (isOpen) {
       calculateAudience();
+      // Reset media on open
+      setCampaignFile(null); setCampaignFilePreview(null);
+      setUploadedMediaUrl(null); setUploadedMediaType(null);
     }
   }, [isOpen, filters]);
 
@@ -33,16 +46,58 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued }) => {
     setEstimating(false);
   };
 
+  const handleCampaignFileSelect = useCallback((file) => {
+    if (!file) return;
+    setCampaignFile(file);
+    setUploadedMediaUrl(null); // reset so it re-uploads on launch
+    if (file.type.startsWith('image/')) {
+      const reader = new FileReader();
+      reader.onload = ev => setCampaignFilePreview(ev.target.result);
+      reader.readAsDataURL(file);
+    } else {
+      setCampaignFilePreview(null);
+    }
+  }, []);
+
+  const handleCampaignDrop = useCallback((e) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file) handleCampaignFileSelect(file);
+  }, [handleCampaignFileSelect]);
+
   const handleLaunchCampaign = async (e) => {
     e.preventDefault();
     if (!name.trim() || estimation.finalAudienceCount === 0) return;
     setIsSubmitting(true);
     setBatchProgress({ sent: 0, total: estimation.finalAudienceCount, status: 'Queuing batch in database...' });
 
+    // Upload campaign media to Supabase if a file was attached
+    let mediaUrl = uploadedMediaUrl;
+    let mediaType = uploadedMediaType;
+    if (campaignFile && !mediaUrl) {
+      setUploadingMedia(true);
+      setBatchProgress({ sent: 0, total: estimation.finalAudienceCount, status: 'Uploading campaign media to storage...' });
+      try {
+        mediaUrl = await uploadToWhatsAppMedia(campaignFile, 'campaigns');
+        mediaType = getWhatsAppMediaType(campaignFile);
+        setUploadedMediaUrl(mediaUrl);
+        setUploadedMediaType(mediaType);
+      } catch (err) {
+        setBatchProgress({ sent: 0, total: estimation.finalAudienceCount, status: 'Media upload failed: ' + err.message });
+        setIsSubmitting(false);
+        setUploadingMedia(false);
+        return;
+      }
+      setUploadingMedia(false);
+    }
+
     // 1. Queue in database
     const { data: cData } = await queueCampaign({
       name,
       template_name: selectedTemplate.name,
+      media_url: mediaUrl || null,
+      media_type: mediaType || null,
     }, filters);
 
     if (cData) {
@@ -203,6 +258,43 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued }) => {
                 <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '0.4rem' }}>
                   Variables <code>{'{name}'}</code> and <code>{'{product}'}</code> are dynamically injected per recipient lead.
                 </div>
+              </div>
+
+              {/* Campaign Media Attachment */}
+              <div style={{ marginTop: '0.25rem' }}>
+                <label style={{ fontSize: '0.78rem', fontWeight: 600, display: 'block', marginBottom: '0.3rem' }}>📎 Attach Media (optional)</label>
+                {campaignFile ? (
+                  <div style={{ padding: '0.6rem 0.75rem', background: 'var(--bg-tertiary)', borderRadius: 8, border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                    {campaignFilePreview
+                      ? <img src={campaignFilePreview} alt="preview" style={{ width: 42, height: 42, objectFit: 'cover', borderRadius: 6 }} />
+                      : <div style={{ width: 42, height: 42, borderRadius: 6, background: 'rgba(99,102,241,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.3rem' }}>📄</div>
+                    }
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: '0.78rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{campaignFile.name}</div>
+                      <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>{(campaignFile.size / 1024).toFixed(0)} KB · Will be sent with each message</div>
+                    </div>
+                    <button type="button" onClick={() => { setCampaignFile(null); setCampaignFilePreview(null); setUploadedMediaUrl(null); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '1rem' }}>✕</button>
+                  </div>
+                ) : (
+                  <div
+                    onDrop={handleCampaignDrop}
+                    onDragOver={e => { e.preventDefault(); setIsDragOver(true); }}
+                    onDragLeave={() => setIsDragOver(false)}
+                    onClick={() => campaignFileRef.current?.click()}
+                    style={{
+                      border: `1.5px dashed ${isDragOver ? 'var(--accent-primary)' : 'var(--border-color)'}`,
+                      borderRadius: 8, padding: '0.8rem',
+                      textAlign: 'center', cursor: 'pointer',
+                      background: isDragOver ? 'rgba(99,102,241,0.06)' : 'var(--bg-tertiary)',
+                      transition: 'all 0.15s',
+                    }}
+                  >
+                    <UploadCloud size={16} style={{ opacity: 0.4, marginBottom: 4 }} />
+                    <div style={{ fontSize: '0.75rem', fontWeight: 600 }}>Click or drag image / PDF brochure</div>
+                    <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: 2 }}>Max 15 MB · PNG, JPG, PDF, MP4</div>
+                  </div>
+                )}
+                <input ref={campaignFileRef} type="file" accept="image/*,.pdf,.mp4" style={{ display: 'none' }} onChange={e => handleCampaignFileSelect(e.target.files[0])} />
               </div>
 
               {/* Batch Queue Safety Notice */}

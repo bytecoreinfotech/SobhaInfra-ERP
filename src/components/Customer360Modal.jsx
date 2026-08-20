@@ -1,10 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   X, User, MessageCircle, Phone, Mail, FileText, CheckCircle2,
   Clock, IndianRupee, Send, AlertTriangle, Shield, Building2,
-  TrendingUp, Calendar, Tag, ChevronRight, Plus, RefreshCw, Zap
+  TrendingUp, Calendar, Tag, ChevronRight, Plus, RefreshCw, Zap,
+  Paperclip, UploadCloud, Image, Film, Music, FileIcon
 } from 'lucide-react';
 import { getCustomer360, addCustomerNote, createDeal, logPaymentReminder, sendWhatsAppMessage, updateConversationMode, deleteWhatsAppMessage, clearWhatsAppChat } from '../lib/db';
+import { uploadToWhatsAppMedia, getWhatsAppMediaType } from '../lib/storage';
 import './Customer360Modal.css';
 
 const Customer360Modal = ({ leadId, onClose, onLeadUpdated }) => {
@@ -25,11 +27,12 @@ const Customer360Modal = ({ leadId, onClose, onLeadUpdated }) => {
   const [sendingMsg, setSendingMsg] = useState(false);
   const [togglingMode, setTogglingMode] = useState(false);
 
-  // Media attachment
-  const [showMediaInput, setShowMediaInput] = useState(false);
-  const [mediaType, setMediaType] = useState('image');
-  const [mediaUrl, setMediaUrl] = useState('');
-  const [mediaFileName, setMediaFileName] = useState('');
+  // File attachment (local file → Supabase Storage → WhatsApp URL)
+  const [attachedFile, setAttachedFile] = useState(null);      // File object
+  const [attachedPreview, setAttachedPreview] = useState(null); // data URL for image preview
+  const [uploadProgress, setUploadProgress] = useState(0);      // 0-100
+  const [isDragOver, setIsDragOver] = useState(false);
+  const fileInputRef = useRef(null);
 
   // Message management
   const [hoveredMsgId, setHoveredMsgId] = useState(null);
@@ -115,23 +118,62 @@ const Customer360Modal = ({ leadId, onClose, onLeadUpdated }) => {
     setSavingDeal(false);
   };
 
+  // ── File attachment handlers ──────────────────────────────────────────────
+  const handleFileSelect = useCallback((file) => {
+    if (!file) return;
+    setAttachedFile(file);
+    setUploadProgress(0);
+    // Generate preview for images
+    if (file.type.startsWith('image/')) {
+      const reader = new FileReader();
+      reader.onload = (ev) => setAttachedPreview(ev.target.result);
+      reader.readAsDataURL(file);
+    } else {
+      setAttachedPreview(null);
+    }
+  }, []);
+
+  const handleDrop = useCallback((e) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file) handleFileSelect(file);
+  }, [handleFileSelect]);
+
+  const handleDragOver = (e) => { e.preventDefault(); setIsDragOver(true); };
+  const handleDragLeave = () => setIsDragOver(false);
+
+  const clearAttachment = () => {
+    setAttachedFile(null);
+    setAttachedPreview(null);
+    setUploadProgress(0);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  // ── Send message handler ──────────────────────────────────────────────────
   const handleSendQuickMsg = async (e) => {
     e.preventDefault();
     const hasText = replyText.trim();
-    const hasMedia = showMediaInput && mediaUrl.trim();
-    if ((!hasText && !hasMedia) || sendingMsg) return;
+    if ((!hasText && !attachedFile) || sendingMsg) return;
     setSendingMsg(true);
     const textToSend = replyText;
     const phoneToUse = data?.lead?.phone;
     const convId = data?.conv?.id || null;
-    const mType = hasMedia ? mediaType : 'text';
-    const mUrl = hasMedia ? mediaUrl.trim() : null;
-    const mName = hasMedia ? (mediaFileName.trim() || null) : null;
+
+    let mUrl = null;
+    let mType = 'text';
 
     try {
-      const res = await sendWhatsAppMessage(convId, textToSend, 'human_agent', phoneToUse, mType, mUrl, mName);
+      // Upload file to Supabase Storage if attached
+      if (attachedFile) {
+        setMsgSent({ success: true, text: '⬆ Uploading file to storage...' });
+        mUrl = await uploadToWhatsAppMedia(attachedFile, 'crm', setUploadProgress);
+        mType = getWhatsAppMediaType(attachedFile);
+      }
+
+      const res = await sendWhatsAppMessage(convId, textToSend, 'human_agent', phoneToUse, mType, mUrl, attachedFile?.name || null);
       setReplyText('');
-      if (hasMedia) { setMediaUrl(''); setMediaFileName(''); setShowMediaInput(false); }
+      clearAttachment();
 
       // Immediately reload from DB so message persists after modal close/reopen
       const refreshed = await getCustomer360(leadId);
@@ -142,14 +184,11 @@ const Customer360Modal = ({ leadId, onClose, onLeadUpdated }) => {
           messages: refreshed.data.messages || prev?.messages || [],
         }));
       } else {
-        // Fallback: optimistically add to local state
         const newMsg = {
           id: 'msg-' + Date.now(),
           direction: 'outbound',
           sender_type: 'human_agent',
-          message_type: mType,
           body: textToSend,
-          media_url: mUrl,
           created_at: new Date().toISOString(),
         };
         setData(prev => ({ ...prev, messages: [...(prev.messages || []), newMsg] }));
@@ -158,7 +197,7 @@ const Customer360Modal = ({ leadId, onClose, onLeadUpdated }) => {
       if (res.error) {
         setMsgSent({ success: false, text: 'Logged (WhatsApp API warning: ' + (res.error.message || 'Check credentials') + ')' });
       } else {
-        setMsgSent({ success: true, text: `✓ Message dispatched to WhatsApp (${phoneToUse})` });
+        setMsgSent({ success: true, text: `✓ ${attachedFile ? 'File + message' : 'Message'} sent to WhatsApp (${phoneToUse})` });
       }
       setTimeout(() => setMsgSent(null), 4000);
     } catch (err) {
@@ -476,61 +515,71 @@ const Customer360Modal = ({ leadId, onClose, onLeadUpdated }) => {
                     </div>
                   )}
 
-                  {/* Media URL input panel */}
-                  {showMediaInput && (
-                    <div style={{ marginTop: '0.5rem', padding: '0.6rem 0.75rem', background: 'var(--bg-tertiary)', borderRadius: 8, display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                        <select
-                          value={mediaType}
-                          onChange={e => setMediaType(e.target.value)}
-                          style={{ padding: '0.3rem 0.5rem', borderRadius: 6, border: '1px solid var(--border-color)', background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: '0.78rem', cursor: 'pointer' }}
-                        >
-                          <option value="image">🖼 Image</option>
-                          <option value="document">📄 Document</option>
-                          <option value="video">🎬 Video</option>
-                          <option value="audio">🎵 Audio</option>
-                        </select>
-                        <input
-                          type="url"
-                          className="input-field"
-                          placeholder="Paste public media URL (e.g. https://...jpg)"
-                          value={mediaUrl}
-                          onChange={e => setMediaUrl(e.target.value)}
-                          style={{ flex: 1, fontSize: '0.78rem' }}
-                        />
-                        {mediaType === 'document' && (
-                          <input
-                            type="text"
-                            className="input-field"
-                            placeholder="Filename (e.g. brochure.pdf)"
-                            value={mediaFileName}
-                            onChange={e => setMediaFileName(e.target.value)}
-                            style={{ width: 130, fontSize: '0.78rem' }}
-                          />
-                        )}
-                        <button type="button" onClick={() => { setShowMediaInput(false); setMediaUrl(''); setMediaFileName(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '1rem' }}>✕</button>
+                  {/* File Attachment Preview */}
+                  {attachedFile && (
+                    <div style={{ marginTop: '0.5rem', padding: '0.6rem 0.75rem', background: 'var(--bg-tertiary)', borderRadius: 8, border: `1px solid ${isDragOver ? 'var(--accent-primary)' : 'var(--border-color)'}` }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                        {attachedPreview
+                          ? <img src={attachedPreview} alt="preview" style={{ width: 48, height: 48, objectFit: 'cover', borderRadius: 6 }} />
+                          : <div style={{ width: 48, height: 48, borderRadius: 6, background: 'rgba(99,102,241,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.5rem' }}>
+                              {attachedFile.type.startsWith('video') ? '🎬' : attachedFile.type.startsWith('audio') ? '🎵' : '📄'}
+                            </div>
+                        }
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: '0.8rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{attachedFile.name}</div>
+                          <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{(attachedFile.size / 1024).toFixed(1)} KB · {getWhatsAppMediaType(attachedFile)}</div>
+                          {uploadProgress > 0 && uploadProgress < 100 && (
+                            <div style={{ marginTop: '0.3rem', height: 3, background: 'var(--border-color)', borderRadius: 99, overflow: 'hidden' }}>
+                              <div style={{ width: `${uploadProgress}%`, height: '100%', background: 'var(--accent-primary)', transition: 'width 0.2s' }} />
+                            </div>
+                          )}
+                        </div>
+                        <button type="button" onClick={clearAttachment} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '1.1rem', padding: '0.2rem' }}>✕</button>
                       </div>
                     </div>
                   )}
+
+                  {/* Drag & Drop zone (shown when no file attached) */}
+                  {!attachedFile && (
+                    <div
+                      onDrop={handleDrop}
+                      onDragOver={handleDragOver}
+                      onDragLeave={handleDragLeave}
+                      onClick={() => fileInputRef.current?.click()}
+                      style={{
+                        marginTop: '0.5rem',
+                        border: `1.5px dashed ${isDragOver ? 'var(--accent-primary)' : 'var(--border-color)'}`,
+                        borderRadius: 8, padding: '0.6rem',
+                        textAlign: 'center', cursor: 'pointer',
+                        background: isDragOver ? 'rgba(99,102,241,0.06)' : 'transparent',
+                        transition: 'all 0.15s', display: 'none',
+                      }}
+                      id="crm-drop-zone"
+                    >
+                      <UploadCloud size={14} style={{ opacity: 0.4, marginBottom: 2 }} />
+                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Drop image, PDF, video, audio</div>
+                    </div>
+                  )}
+                  <input ref={fileInputRef} type="file" accept="image/*,.pdf,.mp4,.mp3,.ogg,.wav,.doc,.docx" style={{ display: 'none' }} onChange={e => handleFileSelect(e.target.files[0])} />
 
                   {/* Compose bar */}
                   <form onSubmit={handleSendQuickMsg} style={{ display: 'flex', gap: '0.4rem', marginTop: '0.5rem', alignItems: 'center' }}>
                     <button
                       type="button"
-                      onClick={() => setShowMediaInput(v => !v)}
+                      onClick={() => fileInputRef.current?.click()}
+                      title="Attach file (image, PDF, video, audio)"
                       style={{
-                        background: showMediaInput ? 'var(--accent-primary)' : 'var(--bg-tertiary)',
+                        background: attachedFile ? 'var(--accent-primary)' : 'var(--bg-tertiary)',
                         border: '1px solid var(--border-color)',
                         borderRadius: 8, padding: '0.45rem 0.6rem',
-                        cursor: 'pointer', color: showMediaInput ? '#fff' : 'var(--text-muted)',
-                        fontSize: '1rem', lineHeight: 1, flexShrink: 0,
+                        cursor: 'pointer', color: attachedFile ? '#fff' : 'var(--text-muted)',
+                        fontSize: '1.1rem', lineHeight: 1, flexShrink: 0,
                       }}
-                      title="Attach image, document, video, or audio"
                     >📎</button>
                     <input
                       type="text"
                       className="input-field"
-                      placeholder={showMediaInput ? 'Caption (optional)...' : 'Type a WhatsApp message...'}
+                      placeholder={attachedFile ? 'Add a caption (optional)...' : 'Type a WhatsApp message...'}
                       value={replyText}
                       onChange={e => setReplyText(e.target.value)}
                       disabled={sendingMsg}
@@ -539,10 +588,10 @@ const Customer360Modal = ({ leadId, onClose, onLeadUpdated }) => {
                     <button
                       type="submit"
                       className="btn btn-whatsapp"
-                      disabled={sendingMsg || (!replyText.trim() && !(showMediaInput && mediaUrl.trim()))}
+                      disabled={sendingMsg || (!replyText.trim() && !attachedFile)}
                     >
                       <Send size={15} className={sendingMsg ? 'animate-spin' : ''} />
-                      {sendingMsg ? 'Sending...' : 'Send'}
+                      {sendingMsg ? (uploadProgress > 0 && uploadProgress < 100 ? `${uploadProgress}%` : 'Sending...') : 'Send'}
                     </button>
                   </form>
                 </div>
