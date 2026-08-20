@@ -111,12 +111,14 @@ const Roles = () => {
   const togglePermission = (roleName, mod) => {
     if (roleName === 'Super Admin') return; // Super admin always has all permissions
     setMatrix(prev => {
-      const rolePerms = prev[roleName] || {};
+      const currentRolePerms = prev[roleName] || defaultMatrix[roleName] || {};
+      const currentVal = currentRolePerms[mod] !== undefined ? Boolean(currentRolePerms[mod]) : Boolean(defaultMatrix[roleName]?.[mod]);
       const updated = {
         ...prev,
         [roleName]: {
-          ...rolePerms,
-          [mod]: !rolePerms[mod],
+          ...(defaultMatrix[roleName] || {}),
+          ...currentRolePerms,
+          [mod]: !currentVal,
         }
       };
       setMatrixDirty(true);
@@ -345,11 +347,14 @@ const Roles = () => {
                     </td>
                     {availableRoles.map(r => {
                       const isSuperAdmin = r.name === 'Super Admin';
-                      const hasAccess = isSuperAdmin || Boolean(matrix[r.name]?.[mod] ?? defaultMatrix[r.name]?.[mod]);
+                      const currentRolePerms = matrix[r.name] || defaultMatrix[r.name] || {};
+                      const hasAccess = isSuperAdmin || (currentRolePerms[mod] !== undefined ? Boolean(currentRolePerms[mod]) : Boolean(defaultMatrix[r.name]?.[mod]));
                       return (
                         <td
                           key={r.id || r.name}
-                          onClick={() => !isSuperAdmin && togglePermission(r.name, mod)}
+                          onClick={() => {
+                            if (!isSuperAdmin) togglePermission(r.name, mod);
+                          }}
                           style={{
                             cursor: isSuperAdmin ? 'default' : 'pointer',
                             padding: '0.65rem 0.5rem',
@@ -369,7 +374,11 @@ const Roles = () => {
                               <input
                                 type="checkbox"
                                 checked={hasAccess}
-                                onChange={() => togglePermission(r.name, mod)}
+                                onChange={(e) => {
+                                  e.stopPropagation();
+                                  togglePermission(r.name, mod);
+                                }}
+                                onClick={(e) => e.stopPropagation()}
                                 style={{
                                   width: 18, height: 18, cursor: 'pointer',
                                   accentColor: r.color || 'var(--accent-primary)'

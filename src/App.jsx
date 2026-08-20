@@ -41,6 +41,15 @@ function LoadingScreen() {
   );
 }
 
+// Role-based route guard
+function ProtectedRoute({ module, children }) {
+  const { hasPermission } = useAuth();
+  if (module && !hasPermission(module)) {
+    return <Navigate to="/" replace />;
+  }
+  return children;
+}
+
 function AppInner() {
   const { user, loading } = useAuth();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -62,17 +71,17 @@ function AppInner() {
         <main className="main-content">
           <Routes>
             <Route path="/"          element={<Dashboard />} />
-            <Route path="/whatsapp"  element={<WhatsApp />} />
-            <Route path="/chatbot"   element={<Chatbot />} />
-            <Route path="/crm"       element={<CRM />} />
-            <Route path="/tasks"     element={<Tasks />} />
-            <Route path="/field-ops" element={<FieldOps />} />
-            <Route path="/payments"  element={<Payments />} />
-            <Route path="/finance"   element={<Finance />} />
-            <Route path="/automations" element={<Automations />} />
-            <Route path="/roles"     element={<Roles />} />
-            <Route path="/reports"   element={<Reports />} />
-            <Route path="/settings"  element={<Settings />} />
+            <Route path="/whatsapp"  element={<ProtectedRoute module="WhatsApp"><WhatsApp /></ProtectedRoute>} />
+            <Route path="/chatbot"   element={<ProtectedRoute module="WhatsApp"><Chatbot /></ProtectedRoute>} />
+            <Route path="/crm"       element={<ProtectedRoute module="CRM"><CRM /></ProtectedRoute>} />
+            <Route path="/tasks"     element={<ProtectedRoute module="Tasks"><Tasks /></ProtectedRoute>} />
+            <Route path="/field-ops" element={<ProtectedRoute module="Tasks"><FieldOps /></ProtectedRoute>} />
+            <Route path="/payments"  element={<ProtectedRoute module="Payments"><Payments /></ProtectedRoute>} />
+            <Route path="/finance"   element={<ProtectedRoute module="Finance"><Finance /></ProtectedRoute>} />
+            <Route path="/automations" element={<ProtectedRoute module="Roles"><Automations /></ProtectedRoute>} />
+            <Route path="/roles"     element={<ProtectedRoute module="Roles"><Roles /></ProtectedRoute>} />
+            <Route path="/reports"   element={<ProtectedRoute module="Reports"><Reports /></ProtectedRoute>} />
+            <Route path="/settings"  element={<ProtectedRoute module="Roles"><Settings /></ProtectedRoute>} />
             <Route path="*"          element={<Navigate to="/" replace />} />
           </Routes>
         </main>

@@ -187,10 +187,34 @@ export const AuthProvider = ({ children }) => {
     setUser(null);
   };
 
-  const hasPermission = (permissionCode) => {
+  const hasPermission = (moduleOrPerm) => {
     if (!user) return false;
     if (user.role === 'Super Admin' || user.permissions?.includes('all')) return true;
-    return user.permissions?.includes(permissionCode) || false;
+
+    // Check user explicit permissions array if matching exactly
+    if (user.permissions?.includes(moduleOrPerm)) return true;
+
+    // Check dynamic Permission Matrix from LocalStorage or Defaults
+    try {
+      const savedMatrix = JSON.parse(localStorage.getItem('erppro_permission_matrix') || 'null');
+      const matrixToUse = savedMatrix || {
+        'Super Admin': { Dashboard: true, WhatsApp: true, CRM: true, Tasks: true, Payments: true, Finance: true, Reports: true, Roles: true },
+        'Manager':     { Dashboard: true, WhatsApp: true, CRM: true, Tasks: true, Payments: true, Finance: true, Reports: true, Roles: false },
+        'Sales Executive': { Dashboard: true, WhatsApp: true, CRM: true, Tasks: true, Payments: false, Finance: false, Reports: true, Roles: false },
+        'Accounts':    { Dashboard: true, WhatsApp: false, CRM: false, Tasks: false, Payments: true, Finance: true, Reports: true, Roles: false },
+        'Support Agent': { Dashboard: true, WhatsApp: true, CRM: true, Tasks: true, Payments: false, Finance: false, Reports: false, Roles: false },
+      };
+
+      const userRoleMatrix = matrixToUse[user.role];
+      if (userRoleMatrix) {
+        if (userRoleMatrix[moduleOrPerm] !== undefined) {
+          return Boolean(userRoleMatrix[moduleOrPerm]);
+        }
+      }
+    } catch {}
+
+    // Fallback: If not restricted, default to true for basic modules
+    return !['Roles', 'Settings', 'Finance', 'Payments'].includes(moduleOrPerm);
   };
 
   return (
