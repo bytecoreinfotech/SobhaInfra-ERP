@@ -619,20 +619,99 @@
 }
 
 /* =====================
+   WHATSAPP INBOX RESPONSIVE GRID
+   ===================== */
+.whatsapp-inbox-grid {
+  display: grid;
+  grid-template-columns: 300px 1fr 280px;
+  height: 660px;
+  min-height: 520px;
+  overflow: hidden;
+  padding: 0 !important;
+  border-radius: var(--radius-lg);
+}
+
+@media (max-width: 1200px) {
+  .whatsapp-inbox-grid {
+    grid-template-columns: 280px 1fr;
+  }
+  .whatsapp-right-pane {
+    display: none !important;
+  }
+}
+
+/* =====================
    MOBILE RESPONSIVE
    ===================== */
 @media (max-width: 768px) {
+  .whatsapp-inbox-grid {
+    display: flex;
+    flex-direction: column;
+    height: auto;
+    min-height: auto;
+  }
+
+  .whatsapp-conv-list {
+    max-height: 240px;
+    border-right: none !important;
+    border-bottom: 1px solid var(--border-color);
+  }
+
+  .whatsapp-chat-pane {
+    height: 520px !important;
+  }
+
   .kanban-board {
-    grid-template-columns: 1fr;
+    display: flex;
+    overflow-x: auto;
+    gap: 1rem;
+    padding-bottom: 0.75rem;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .kanban-col {
+    min-width: 260px;
+    flex-shrink: 0;
   }
 
   .stats-grid {
     grid-template-columns: repeat(2, 1fr);
+    gap: 0.75rem;
   }
 
   .page-header {
     flex-direction: column;
-    align-items: flex-start;
+    align-items: stretch;
+    gap: 0.75rem;
+  }
+
+  .page-actions {
+    width: 100%;
+    justify-content: flex-start;
+    overflow-x: auto;
+    padding-bottom: 0.25rem;
+  }
+
+  .filter-bar {
+    width: 100%;
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 0.35rem;
+  }
+
+  .filter-chip {
+    flex-shrink: 0;
+  }
+
+  .table-container {
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .data-table {
+    min-width: 620px;
   }
 
   .chat-window {
@@ -643,6 +722,14 @@
 @media (max-width: 480px) {
   .stats-grid {
     grid-template-columns: 1fr;
+  }
+
+  .stat-card {
+    padding: 1rem;
+  }
+
+  .page-title {
+    font-size: 1.3rem;
   }
 }
 

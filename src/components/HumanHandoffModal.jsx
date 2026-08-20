@@ -2,10 +2,11 @@ import React, { useState } from 'react';
 import { X, UserCheck, ShieldAlert, CheckCircle2, User, Clock, AlertCircle } from 'lucide-react';
 import { triggerHumanHandoff } from '../lib/db';
 
-const TEAM_MEMBERS = ['Rajesh Kumar', 'Priya Sharma', 'Amit Verma', 'Sunita Patel'];
+const DEFAULT_TEAM = ['Rajesh Kumar', 'Priya Sharma', 'Amit Verma', 'Sunita Patel'];
 
-const HumanHandoffModal = ({ isOpen, onClose, conversation, lead, onHandoffCompleted }) => {
-  const [assignedTo, setAssignedTo] = useState(conversation?.assigned_salesperson || 'Rajesh Kumar');
+const HumanHandoffModal = ({ isOpen, onClose, conversation, lead, onHandoffCompleted, teamMembers = DEFAULT_TEAM }) => {
+  const activeTeam = teamMembers && teamMembers.length > 0 ? teamMembers : DEFAULT_TEAM;
+  const [assignedTo, setAssignedTo] = useState(conversation?.assigned_salesperson || activeTeam[0]);
   const [priority, setPriority] = useState('High');
   const [summary, setSummary] = useState('Customer asking for customized pricing & down-payment discount review.');
   const [taskTitle, setTaskTitle] = useState(`Call ${lead?.name || conversation?.contact_name || 'Customer'} - Price Review & Site Visit`);
@@ -19,7 +20,7 @@ const HumanHandoffModal = ({ isOpen, onClose, conversation, lead, onHandoffCompl
     setSubmitting(true);
     await triggerHumanHandoff({
       conversationId: conversation.id,
-      leadId: lead?.id || conversation.lead_id || 'lead-1',
+      leadId: lead?.id || conversation.lead_id || conversation.contact_phone || conversation.id,
       assignedTo,
       priority,
       summary,
@@ -66,7 +67,7 @@ const HumanHandoffModal = ({ isOpen, onClose, conversation, lead, onHandoffCompl
             <div>
               <label style={{ fontSize: '0.78rem', fontWeight: 600, display: 'block', marginBottom: '0.25rem' }}>Assign Salesperson *</label>
               <select className="input-field" value={assignedTo} onChange={e => setAssignedTo(e.target.value)}>
-                {TEAM_MEMBERS.map(m => <option key={m}>{m}</option>)}
+                {activeTeam.map(m => <option key={m}>{m}</option>)}
               </select>
             </div>
             <div>

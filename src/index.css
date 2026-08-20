@@ -439,12 +439,15 @@ h1, h2, h3, h4, h5, h6 {
    DATA TABLES
    ===================== */
 .table-container {
+  width: 100%;
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
   border-radius: var(--radius-lg);
 }
 
 .data-table {
   width: 100%;
+  min-width: 620px;
   border-collapse: collapse;
   font-size: 0.875rem;
 }

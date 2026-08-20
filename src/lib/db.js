@@ -278,20 +278,40 @@ export async function deleteLead(id) {
   return { error };
 }
 
-export async function getCustomer360(leadId) {
+export async function getCustomer360(leadIdOrPhone) {
+  if (!leadIdOrPhone) return { data: null, error: { message: 'No lead identifier provided' } };
+
+  // Check if identifier is a UUID
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(leadIdOrPhone).trim());
+
   if (!isSupabaseConfigured) {
-    const lead = MOCK_STORE.leads.find(l => l.id === leadId);
-    if (!lead) return { data: null, error: { message: 'Lead not found' } };
+    let lead = isUuid
+      ? MOCK_STORE.leads.find(l => l.id === leadIdOrPhone)
+      : MOCK_STORE.leads.find(l => normalizePhone(l.phone) === normalizePhone(leadIdOrPhone) || l.name?.toLowerCase() === String(leadIdOrPhone).toLowerCase());
+
+    if (!lead) {
+      // Check conversations
+      const conv = MOCK_STORE.whatsapp_conversations.find(c => c.id === leadIdOrPhone || normalizePhone(c.contact_phone) === normalizePhone(leadIdOrPhone));
+      lead = {
+        id: conv ? conv.id : 'lead-' + Date.now(),
+        name: conv?.contact_name || 'Customer (' + leadIdOrPhone + ')',
+        phone: conv?.contact_phone || (String(leadIdOrPhone).startsWith('+') ? leadIdOrPhone : '+' + leadIdOrPhone),
+        status: 'WhatsApp Lead',
+        lead_score: 65,
+        budget: '₹50L - ₹1Cr',
+        property_interest: conv?.property_interest || 'General Inquiry',
+        created_at: conv?.created_at || new Date().toISOString(),
+      };
+    }
 
     const normPhone = normalizePhone(lead.phone);
-    const deals = MOCK_STORE.deals.filter(d => d.lead_id === leadId);
-    const quotations = MOCK_STORE.quotations.filter(q => q.lead_id === leadId);
-    const tasks = MOCK_STORE.tasks.filter(t => t.lead_id === leadId);
+    const deals = MOCK_STORE.deals.filter(d => d.lead_id === lead.id);
+    const quotations = MOCK_STORE.quotations.filter(q => q.lead_id === lead.id);
+    const tasks = MOCK_STORE.tasks.filter(t => t.lead_id === lead.id);
     const invoices = MOCK_STORE.invoices.filter(i => normalizePhone(i.client_phone) === normPhone || i.client_name === lead.name);
-
-    const conv = MOCK_STORE.whatsapp_conversations.find(c => c.lead_id === leadId || normalizePhone(c.contact_phone) === normPhone);
+    const conv = MOCK_STORE.whatsapp_conversations.find(c => c.lead_id === lead.id || normalizePhone(c.contact_phone) === normPhone);
     const messages = conv ? (MOCK_STORE.whatsapp_messages[conv.id] || []) : [];
-    const activities = MOCK_STORE.activities.filter(a => a.lead_id === leadId);
+    const activities = MOCK_STORE.activities.filter(a => a.lead_id === lead.id);
 
     const totalOutstanding = invoices.filter(i => i.status !== 'Paid').reduce((s, i) => s + Number(i.amount), 0);
     const totalPaid = invoices.filter(i => i.status === 'Paid').reduce((s, i) => s + Number(i.amount), 0);
@@ -311,23 +331,62 @@ export async function getCustomer360(leadId) {
     };
   }
 
-  const { data: lead, error: leadErr } = await supabase.from('leads').select('*').eq('id', leadId).single();
-  if (leadErr) return { data: null, error: leadErr };
+  // Live Supabase lookup
+  let lead = null;
+  if (isUuid) {
+    const { data: leadById } = await supabase.from('leads').select('*').eq('id', leadIdOrPhone).maybeSingle();
+    lead = leadById;
+  }
 
-  const normPhone = normalizePhone(lead.phone);
+  // If not found by UUID, try lookup by phone or name
+  if (!lead) {
+    const cleanPhone = normalizePhone(leadIdOrPhone);
+    const digitsOnly = cleanPhone.replace(/[^\d]/g, '');
+    if (digitsOnly.length >= 7) {
+      const { data: leadByPhone } = await supabase.from('leads')
+        .select('*')
+        .or(`phone.eq.${cleanPhone},phone.eq.${digitsOnly},phone.eq.+${digitsOnly}`)
+        .maybeSingle();
+      lead = leadByPhone;
+    }
+  }
+
+  const normPhone = normalizePhone(lead?.phone || leadIdOrPhone);
   const digitsOnly = normPhone.replace(/[^\d]/g, '');
 
-  const [dealsRes, quotesRes, tasksRes, invoicesRes, activitiesRes, convRes] = await Promise.all([
-    supabase.from('deals').select('*').eq('lead_id', leadId),
-    supabase.from('quotations').select('*').eq('lead_id', leadId),
-    supabase.from('tasks').select('*').eq('related_lead_id', leadId),
+  // If still not in leads table, find matching WhatsApp conversation or create virtual lead
+  const { data: conv } = await supabase
+    .from('whatsapp_conversations')
+    .select('*')
+    .or(`contact_phone.eq.${normPhone},contact_phone.eq.${digitsOnly},contact_phone.eq.+${digitsOnly}`)
+    .order('last_message_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!lead) {
+    lead = {
+      id: conv?.id || 'temp-' + Date.now(),
+      name: conv?.contact_name || 'Customer (' + normPhone + ')',
+      phone: conv?.contact_phone || normPhone,
+      status: 'WhatsApp Lead',
+      lead_score: 70,
+      budget: '₹50L - ₹1Cr',
+      property_interest: conv?.property_interest || 'General Inquiry',
+      created_at: conv?.created_at || new Date().toISOString(),
+    };
+  }
+
+  const leadActualId = isUuid ? leadIdOrPhone : lead.id;
+
+  const [dealsRes, quotesRes, tasksRes, invoicesRes, activitiesRes] = await Promise.all([
+    isUuid ? supabase.from('deals').select('*').eq('lead_id', leadActualId) : Promise.resolve({ data: [] }),
+    isUuid ? supabase.from('quotations').select('*').eq('lead_id', leadActualId) : Promise.resolve({ data: [] }),
+    isUuid ? supabase.from('tasks').select('*').eq('related_lead_id', leadActualId) : Promise.resolve({ data: [] }),
     supabase.from('invoices').select('*').or(`client_phone.eq.${normPhone},client_phone.eq.${digitsOnly},client_phone.eq.+${digitsOnly}`),
-    supabase.from('activities').select('*').eq('lead_id', leadId).order('created_at', { ascending: false }),
-    supabase.from('whatsapp_conversations').select('*').or(`contact_phone.eq.${normPhone},contact_phone.eq.${digitsOnly},contact_phone.eq.+${digitsOnly}`).order('last_message_at', { ascending: false }).limit(1).maybeSingle(),
+    isUuid ? supabase.from('activities').select('*').eq('lead_id', leadActualId).order('created_at', { ascending: false }) : Promise.resolve({ data: [] }),
   ]);
 
   let messages = [];
-  const conv = convRes?.data;
   if (conv?.id) {
     const { data: msgs } = await supabase.from('whatsapp_messages').select('*').eq('conversation_id', conv.id).order('created_at', { ascending: true });
     messages = msgs || [];

@@ -8,7 +8,8 @@ import {
 import {
   getCampaigns, getLeads,
   getWhatsAppConversations, getWhatsAppMessages, sendWhatsAppMessage,
-  updateConversationMode, toggleLeadOptOut, reassignSalesperson, submitAiFeedback
+  updateConversationMode, toggleLeadOptOut, reassignSalesperson, submitAiFeedback,
+  getTeamMembers
 } from '../lib/db';
 import Customer360Modal from '../components/Customer360Modal';
 import CampaignBuilderModal from '../components/CampaignBuilderModal';
@@ -73,6 +74,7 @@ const WhatsApp = () => {
   // Campaigns State
   const [campaigns, setCampaigns] = useState([]);
   const [leads, setLeads] = useState([]);
+  const [teamMembers, setTeamMembers] = useState(['Rajesh Kumar', 'Priya Sharma', 'Amit Verma', 'Sunita Patel']);
   const [loading, setLoading] = useState(true);
   const [showCampaignBuilder, setShowCampaignBuilder] = useState(false);
   
@@ -162,12 +164,18 @@ const WhatsApp = () => {
   const loadAllData = async () => {
     setLoading(true);
     setConvLoading(true);
-    const [cRes, lRes] = await Promise.all([
+    const [cRes, lRes, uRes] = await Promise.all([
       getCampaigns(),
       getLeads(),
+      getTeamMembers(),
     ]);
     setCampaigns(cRes.data || []);
     setLeads(lRes.data || []);
+
+    if (uRes?.data && uRes.data.length > 0) {
+      const names = uRes.data.map(u => u.full_name || u.name).filter(Boolean);
+      if (names.length > 0) setTeamMembers(names);
+    }
 
     // Try live Netlify proxy first (always bypasses RLS & returns real Supabase data)
     const liveConvs = await fetchLiveConversations();
@@ -328,10 +336,10 @@ const WhatsApp = () => {
           TAB 1: 3-PANE LIVE INBOX
          ========================================================================= */}
       {activeTab === 'inbox' && (
-        <div className="glass-card" style={{ display: 'grid', gridTemplateColumns: '300px 1fr 300px', height: '640px', overflow: 'hidden', padding: 0 }}>
+        <div className="glass-card whatsapp-inbox-grid">
           
           {/* PANE 1: CONVERSATIONS LIST */}
-          <div style={{ borderRight: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', background: 'var(--bg-secondary)' }}>
+          <div className="whatsapp-conv-list" style={{ borderRight: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', background: 'var(--bg-secondary)' }}>
             <div style={{ padding: '0.85rem', borderBottom: '1px solid var(--border-color)' }}>
               <div className="input-group">
                 <Search size={14} className="input-icon" />
@@ -413,7 +421,7 @@ const WhatsApp = () => {
           </div>
 
           {/* PANE 2: ACTIVE CHAT THREAD */}
-          <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-primary)' }}>
+          <div className="whatsapp-chat-pane" style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-primary)' }}>
             {selectedConv ? (
               <>
                 {/* Chat Top bar */}
@@ -431,7 +439,7 @@ const WhatsApp = () => {
                     <button className="btn btn-secondary btn-sm" onClick={() => setShowHandoffModal(true)}>
                       <UserCheck size={13} color="var(--accent-primary)" /> Assign & Handoff
                     </button>
-                    <button className="btn btn-secondary btn-sm" onClick={() => setSelected360LeadId(selectedConv.lead_id || 'lead-1')}>
+                    <button className="btn btn-secondary btn-sm" onClick={() => setSelected360LeadId(selectedConv.lead_id || selectedConv.contact_phone || selectedConv.id)}>
                       <Eye size={13} /> 360 View
                     </button>
                   </div>
@@ -609,13 +617,13 @@ const WhatsApp = () => {
           </div>
 
           {/* PANE 3: HUMAN TAKEOVER, REASSIGNMENT & AI FEEDBACK LOOP (Section 23, 24) */}
-          <div style={{ borderLeft: '1px solid var(--border-color)', background: 'var(--bg-secondary)', padding: '1.25rem', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+          <div className="whatsapp-right-pane" style={{ borderLeft: '1px solid var(--border-color)', background: 'var(--bg-secondary)', padding: '1.25rem', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
             {selectedConv ? (
               <>
-                {/* 1. Mode Controls */}
+                {/* 1. Mode Toggle */}
                 <div>
                   <span className="section-title" style={{ fontSize: '0.82rem' }}>Conversation Mode</span>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', marginTop: '0.4rem' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', marginTop: '0.5rem' }}>
                     <button
                       className={`btn btn-sm ${selectedConv.conversation_mode === 'HUMAN ACTIVE' ? 'btn-primary' : 'btn-secondary'}`}
                       style={{ width: '100%', justifyContent: 'flex-start' }}
@@ -639,10 +647,10 @@ const WhatsApp = () => {
                   <select
                     className="input-field"
                     style={{ fontSize: '0.78rem', marginTop: '0.4rem' }}
-                    value={selectedConv.assigned_salesperson || 'Rajesh Kumar'}
+                    value={selectedConv.assigned_salesperson || teamMembers[0] || 'Rajesh Kumar'}
                     onChange={e => handleReassign(e.target.value)}
                   >
-                    {TEAM_MEMBERS.map(m => <option key={m}>{m}</option>)}
+                    {teamMembers.map(m => <option key={m}>{m}</option>)}
                   </select>
                 </div>
 
@@ -772,6 +780,7 @@ const WhatsApp = () => {
           onClose={() => setShowHandoffModal(false)}
           conversation={selectedConv}
           lead={leads.find(l => l.id === selectedConv.lead_id)}
+          teamMembers={teamMembers}
           onHandoffCompleted={(newRep) => {
             setSelectedConv(p => ({ ...p, conversation_mode: 'HUMAN ACTIVE', assigned_salesperson: newRep }));
             loadAllData();

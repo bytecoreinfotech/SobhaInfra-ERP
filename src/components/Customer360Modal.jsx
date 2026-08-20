@@ -306,6 +306,12 @@ const Customer360Modal = ({ leadId, onClose, onLeadUpdated }) => {
             <div style={{ display: 'flex', justifyContent: 'center', padding: '4rem', color: 'var(--text-muted)' }}>
               <RefreshCw size={28} className="animate-spin" />
             </div>
+          ) : !data || !data.lead ? (
+            <div style={{ padding: '3rem 1rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+              <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>🔍</div>
+              <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>Customer Record Not Found</div>
+              <div style={{ fontSize: '0.78rem', marginTop: '0.25rem' }}>No matching lead or conversation details found for this contact.</div>
+            </div>
           ) : (
             <>
               {/* TAB 1: OVERVIEW & AI INSIGHTS */}
@@ -316,12 +322,12 @@ const Customer360Modal = ({ leadId, onClose, onLeadUpdated }) => {
                     <div className="c360-card">
                       <div className="c360-card-title">Lead Attributes</div>
                       <div className="c360-field-list">
-                        <div><span className="text-muted">Property Interest:</span> <strong>{data.lead.property_interest || '—'}</strong></div>
-                        <div><span className="text-muted">Target Budget:</span> <strong style={{ color: 'var(--success)' }}>{data.lead.budget || '—'}</strong></div>
-                        <div><span className="text-muted">Opt-in Status:</span> <strong>{data.lead.marketing_opt_out ? '❌ Opted Out' : '✅ Active Opt-in'}</strong></div>
-                        <div><span className="text-muted">First Touch Campaign:</span> <strong>{data.lead.first_touch_campaign || 'Direct / Organic'}</strong></div>
-                        <div><span className="text-muted">Last Touch Campaign:</span> <strong>{data.lead.last_touch_campaign || '—'}</strong></div>
-                        <div><span className="text-muted">Created Date:</span> <span>{new Date(data.lead.created_at).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' })}</span></div>
+                        <div><span className="text-muted">Property Interest:</span> <strong>{data.lead?.property_interest || '—'}</strong></div>
+                        <div><span className="text-muted">Target Budget:</span> <strong style={{ color: 'var(--success)' }}>{data.lead?.budget || '—'}</strong></div>
+                        <div><span className="text-muted">Opt-in Status:</span> <strong>{data.lead?.marketing_opt_out ? '❌ Opted Out' : '✅ Active Opt-in'}</strong></div>
+                        <div><span className="text-muted">First Touch Campaign:</span> <strong>{data.lead?.first_touch_campaign || 'Direct / Organic'}</strong></div>
+                        <div><span className="text-muted">Last Touch Campaign:</span> <strong>{data.lead?.last_touch_campaign || '—'}</strong></div>
+                        <div><span className="text-muted">Created Date:</span> <span>{data.lead?.created_at ? new Date(data.lead.created_at).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}</span></div>
                       </div>
                     </div>
 
@@ -330,14 +336,14 @@ const Customer360Modal = ({ leadId, onClose, onLeadUpdated }) => {
                       <div className="c360-card-title">Tally Financial Pulse</div>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', textAlign: 'center' }}>
                         <div style={{ padding: '0.75rem', background: 'var(--bg-tertiary)', borderRadius: 8 }}>
-                          <div style={{ fontSize: '1.25rem', fontWeight: 800, color: data.financials.totalOutstanding > 0 ? 'var(--danger)' : 'var(--success)' }}>
-                            {fmtCurrency(data.financials.totalOutstanding)}
+                          <div style={{ fontSize: '1.25rem', fontWeight: 800, color: (data.financials?.totalOutstanding || 0) > 0 ? 'var(--danger)' : 'var(--success)' }}>
+                            {fmtCurrency(data.financials?.totalOutstanding || 0)}
                           </div>
                           <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Total Outstanding</div>
                         </div>
                         <div style={{ padding: '0.75rem', background: 'var(--bg-tertiary)', borderRadius: 8 }}>
                           <div style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--success)' }}>
-                            {fmtCurrency(data.financials.totalPaid)}
+                            {fmtCurrency(data.financials?.totalPaid || 0)}
                           </div>
                           <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Total Cleared</div>
                         </div>
@@ -352,7 +358,7 @@ const Customer360Modal = ({ leadId, onClose, onLeadUpdated }) => {
                         <Zap size={16} /> AI Sales Qualification Card
                       </div>
                       <div style={{ fontSize: '0.85rem', marginBottom: '0.75rem', lineHeight: 1.5 }}>
-                        {data.lead.notes || 'Lead in active discovery. AI has identified product preference.'}
+                        {data.lead?.notes || 'Lead in active discovery. AI has identified product preference.'}
                       </div>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', fontSize: '0.78rem' }}>
                         <div style={{ padding: '0.5rem 0.75rem', background: 'var(--bg-tertiary)', borderRadius: 6 }}>
