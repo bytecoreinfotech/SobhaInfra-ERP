@@ -10,7 +10,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import {
   getSystemSafetyAndQuotas, updateSystemSafety, toggleCircuitBreaker, exportAllData,
-  getRoles, createRole, deleteRole, getPermissionMatrix, savePermissionMatrix, getTeamMembers
+  getRoles, createRole, updateRole, deleteRole, getPermissionMatrix, savePermissionMatrix, getTeamMembers
 } from '../lib/db';
 import './Pages.css';
 
@@ -40,6 +40,8 @@ const Settings = () => {
   const [matrixDirty, setMatrixDirty] = useState(false);
   const [showAddPositionModal, setShowAddPositionModal] = useState(false);
   const [newPositionForm, setNewPositionForm] = useState({ name: '', description: '', color: '#6366f1' });
+  const [editingPosition, setEditingPosition] = useState(null);
+  const [editPositionForm, setEditPositionForm] = useState({ name: '', description: '', color: '#6366f1' });
   const [posSuccessMsg, setPosSuccessMsg] = useState('');
   const [posLoading, setPosLoading] = useState(false);
 
@@ -790,45 +792,89 @@ const Settings = () => {
               )}
 
               {/* Positions Cards Grid */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.85rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0.85rem' }}>
                 {rolesList.map(role => {
                   const memberCount = teamMembersList.filter(m => m.role === role.name).length;
+                  const isDisabled = Boolean(role.is_disabled);
+
                   return (
                     <div key={role.id || role.name} style={{
-                      padding: '1rem', borderRadius: 10, background: 'var(--bg-secondary)',
-                      border: `1px solid ${role.color || '#6366f1'}33`, position: 'relative'
+                      padding: '1rem', borderRadius: 10,
+                      background: isDisabled ? 'rgba(255,255,255,0.02)' : 'var(--bg-secondary)',
+                      border: `1px solid ${role.color || '#6366f1'}${isDisabled ? '15' : '40'}`,
+                      opacity: isDisabled ? 0.6 : 1, transition: 'all 0.2s', position: 'relative'
                     }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.4rem' }}>
-                        <span style={{ fontWeight: 700, fontSize: '0.88rem', color: role.color || 'var(--text-primary)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.35rem' }}>
+                        <span style={{ fontWeight: 700, fontSize: '0.9rem', color: isDisabled ? 'var(--text-muted)' : (role.color || 'var(--text-primary)') }}>
                           {role.name}
                         </span>
-                        {!role.is_system && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                          {/* Pencil Edit Icon */}
                           <button
                             className="btn-icon"
-                            style={{ color: 'var(--danger)', padding: 2 }}
-                            title="Delete Position"
-                            onClick={async () => {
-                              if (!window.confirm(`Delete position "${role.name}"?`)) return;
-                              await deleteRole(role.id);
-                              setRolesList(prev => prev.filter(r => r.id !== role.id));
-                              setSettingsMatrix(prev => { const copy = { ...prev }; delete copy[role.name]; return copy; });
-                              setPosSuccessMsg(`Position "${role.name}" deleted.`);
-                              setTimeout(() => setPosSuccessMsg(''), 3000);
+                            style={{ color: 'var(--accent-primary)', padding: 3 }}
+                            title="Edit / Rename Position"
+                            onClick={() => {
+                              setEditingPosition(role);
+                              setEditPositionForm({
+                                name: role.name,
+                                description: role.description || '',
+                                color: role.color || '#6366f1'
+                              });
                             }}
                           >
-                            <Trash2 size={13} />
+                            <Edit3 size={13} />
                           </button>
-                        )}
+
+                          {/* Toggle Active / Disabled switch */}
+                          {role.name !== 'Super Admin' && (
+                            <button
+                              className="btn-icon"
+                              style={{ color: isDisabled ? 'var(--text-muted)' : 'var(--success)', padding: 3 }}
+                              title={isDisabled ? 'Activate Position' : 'Disable / Pause Position'}
+                              onClick={async () => {
+                                const nextState = !isDisabled;
+                                await updateRole(role.id, { is_disabled: nextState });
+                                setRolesList(prev => prev.map(r => r.id === role.id ? { ...r, is_disabled: nextState } : r));
+                                setPosSuccessMsg(`Position "${role.name}" ${nextState ? 'disabled / paused' : 'activated'}!`);
+                                setTimeout(() => setPosSuccessMsg(''), 3000);
+                              }}
+                            >
+                              {isDisabled ? <ToggleLeft size={16} /> : <ToggleRight size={16} />}
+                            </button>
+                          )}
+
+                          {/* Delete Custom Position */}
+                          {!role.is_system && role.name !== 'Super Admin' && (
+                            <button
+                              className="btn-icon"
+                              style={{ color: 'var(--danger)', padding: 3 }}
+                              title="Delete Position"
+                              onClick={async () => {
+                                if (!window.confirm(`Delete position "${role.name}"?`)) return;
+                                await deleteRole(role.id);
+                                setRolesList(prev => prev.filter(r => r.id !== role.id));
+                                setSettingsMatrix(prev => { const copy = { ...prev }; delete copy[role.name]; return copy; });
+                                setPosSuccessMsg(`Position "${role.name}" deleted.`);
+                                setTimeout(() => setPosSuccessMsg(''), 3000);
+                              }}
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          )}
+                        </div>
                       </div>
-                      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
-                        {role.description || (role.is_system ? 'Default System Role' : 'Custom Organization Position')}
+
+                      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '0.65rem' }}>
+                        {role.description || (role.is_system ? 'Standard System Position' : 'Custom Organization Position')}
                       </div>
+
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <span className="badge" style={{ fontSize: '0.62rem', background: (role.color || '#6366f1') + '22', color: role.color || '#6366f1' }}>
                           {memberCount} Active Member{memberCount === 1 ? '' : 's'}
                         </span>
-                        <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>
-                          {role.is_system ? 'System' : 'Custom'}
+                        <span className={`badge ${isDisabled ? 'badge-neutral' : 'badge-success'}`} style={{ fontSize: '0.6rem' }}>
+                          {isDisabled ? 'Disabled' : 'Active'}
                         </span>
                       </div>
                     </div>
@@ -1020,6 +1066,98 @@ const Settings = () => {
                       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.5rem' }}>
                         <button type="button" className="btn btn-secondary" onClick={() => setShowAddPositionModal(false)}>Cancel</button>
                         <button type="submit" className="btn btn-primary" disabled={!newPositionForm.name.trim()}>Create Position</button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              )}
+
+              {/* Edit Position Modal (Rename, Change Color & Description) */}
+              {editingPosition && (
+                <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) setEditingPosition(null); }}>
+                  <div className="modal-content animate-fade-in" style={{ maxWidth: 460 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+                      <div>
+                        <h3 style={{ fontSize: '1.05rem', fontWeight: 700, margin: 0 }}>Edit Position / Role</h3>
+                        <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Customize title, color badge and description</div>
+                      </div>
+                      <button className="modal-close-btn" onClick={() => setEditingPosition(null)}>✕</button>
+                    </div>
+                    <form onSubmit={async (e) => {
+                      e.preventDefault();
+                      if (!editPositionForm.name.trim()) return;
+                      const oldName = editingPosition.name;
+                      const newName = editPositionForm.name.trim();
+
+                      const { data } = await updateRole(editingPosition.id, {
+                        name: newName,
+                        description: editPositionForm.description,
+                        color: editPositionForm.color
+                      });
+
+                      // Update local state
+                      setRolesList(prev => prev.map(r => r.id === editingPosition.id ? { ...r, ...editPositionForm, name: newName } : r));
+
+                      // If name changed, migrate matrix mapping
+                      if (oldName !== newName) {
+                        setSettingsMatrix(prev => {
+                          const copy = { ...prev };
+                          if (copy[oldName]) {
+                            copy[newName] = copy[oldName];
+                            delete copy[oldName];
+                          }
+                          return copy;
+                        });
+                        setMatrixDirty(true);
+                      }
+
+                      setPosSuccessMsg(`Position "${newName}" updated successfully!`);
+                      setEditingPosition(null);
+                      setTimeout(() => setPosSuccessMsg(''), 3000);
+                    }} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                      <div>
+                        <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Position Title / Designation *</label>
+                        <input
+                          type="text"
+                          className="input-field"
+                          placeholder="e.g. Senior Project Director"
+                          value={editPositionForm.name}
+                          onChange={e => setEditPositionForm(p => ({ ...p, name: e.target.value }))}
+                          required
+                        />
+                        <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '0.2rem', display: 'block' }}>
+                          Renaming this position will update it across team members and permissions.
+                        </span>
+                      </div>
+                      <div>
+                        <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Badge Color</label>
+                        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                          {['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#06b6d4', '#8b5cf6', '#ec4899', '#3b82f6'].map(c => (
+                            <div
+                              key={c}
+                              onClick={() => setEditPositionForm(p => ({ ...p, color: c }))}
+                              style={{
+                                width: 26, height: 26, borderRadius: '50%', background: c,
+                                cursor: 'pointer', border: editPositionForm.color === c ? '3px solid white' : '2px solid transparent',
+                                transform: editPositionForm.color === c ? 'scale(1.15)' : 'none', transition: 'all 0.15s'
+                              }}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Responsibilities / Description</label>
+                        <textarea
+                          className="input-field textarea-field"
+                          rows={2}
+                          placeholder="e.g. Manages overall sales pipeline and field team"
+                          value={editPositionForm.description}
+                          onChange={e => setEditPositionForm(p => ({ ...p, description: e.target.value }))}
+                        />
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.5rem' }}>
+                        <button type="button" className="btn btn-secondary" onClick={() => setEditingPosition(null)}>Cancel</button>
+                        <button type="submit" className="btn btn-primary" disabled={!editPositionForm.name.trim()}>Save Changes</button>
                       </div>
                     </form>
                   </div>

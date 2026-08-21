@@ -1287,6 +1287,23 @@ export async function createRole(roleData) {
   return { data: newRole, error: null };
 }
 
+export async function updateRole(roleId, updates) {
+  if (isSupabaseConfigured) {
+    try {
+      const { data, error } = await supabase.from('roles').update(updates).eq('id', roleId).select().single();
+      if (!error && data) return { data, error: null };
+    } catch (err) {
+      console.warn('[db] updateRole error:', err.message);
+    }
+  }
+  const idx = MOCK_STORE.roles.findIndex(r => r.id === roleId || r.name === roleId);
+  if (idx !== -1) {
+    MOCK_STORE.roles[idx] = { ...MOCK_STORE.roles[idx], ...updates };
+    return { data: MOCK_STORE.roles[idx], error: null };
+  }
+  return { data: null, error: 'Role not found' };
+}
+
 export async function deleteRole(roleId) {
   if (isSupabaseConfigured) {
     try {

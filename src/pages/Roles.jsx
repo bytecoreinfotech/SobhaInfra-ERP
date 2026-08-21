@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, Plus, X, Edit2, Trash2, User, Check, RefreshCw, AlertCircle, Save, RotateCcw, Lock, CheckSquare, Square } from 'lucide-react';
-import { getRoles, createRole, deleteRole, getTeamMembers, inviteTeamMember, getPermissionMatrix, savePermissionMatrix } from '../lib/db';
+import { Shield, Plus, X, Edit2, Edit3, Trash2, User, Check, RefreshCw, AlertCircle, Save, RotateCcw, Lock, CheckSquare, Square, ToggleLeft, ToggleRight } from 'lucide-react';
+import { getRoles, createRole, updateRole, deleteRole, getTeamMembers, inviteTeamMember, getPermissionMatrix, savePermissionMatrix } from '../lib/db';
 import { useAuth } from '../context/AuthContext';
 import './Pages.css';
 
@@ -36,6 +36,8 @@ const Roles = () => {
   // Modals
   const [showAddUser, setShowAddUser] = useState(false);
   const [showAddRole, setShowAddRole] = useState(false);
+  const [editingRole, setEditingRole] = useState(null);
+  const [editRoleForm, setEditRoleForm] = useState({ name: '', description: '', color: '#6366f1' });
   
   // Forms
   const [userForm, setUserForm] = useState({ full_name: '', email: '', role: 'Sales Executive', phone: '' });
@@ -198,16 +200,53 @@ const Roles = () => {
             <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '0.6rem' }}>
               {teamMembers.filter(m => m.role === role.name).length || role.users_count || 0} active members
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem' }}>
               <span className={`badge ${role.is_system ? 'badge-neutral' : 'badge-accent'}`} style={{ fontSize: '0.65rem' }}>
-                {role.is_system ? 'System Role' : 'Custom Role'}
+                {role.is_system ? 'System' : 'Custom'}
               </span>
-              {!role.is_system && (
+
+              {/* Edit Role Pencil Icon */}
+              <button
+                className="btn-icon"
+                style={{ color: 'var(--accent-primary)', padding: '0.15rem' }}
+                title="Edit / Rename Position"
+                onClick={() => {
+                  setEditingRole(role);
+                  setEditRoleForm({
+                    name: role.name,
+                    description: role.description || '',
+                    color: role.color || '#6366f1'
+                  });
+                }}
+              >
+                <Edit3 size={13} />
+              </button>
+
+              {/* Toggle Disable / Enable */}
+              {role.name !== 'Super Admin' && (
+                <button
+                  className="btn-icon"
+                  style={{ color: role.is_disabled ? 'var(--text-muted)' : 'var(--success)', padding: '0.15rem' }}
+                  title={role.is_disabled ? 'Activate Role' : 'Disable / Pause Role'}
+                  onClick={async () => {
+                    const nextState = !role.is_disabled;
+                    await updateRole(role.id, { is_disabled: nextState });
+                    setRoles(prev => prev.map(r => r.id === role.id ? { ...r, is_disabled: nextState } : r));
+                    setFeedbackMsg({ type: 'success', text: `Role "${role.name}" ${nextState ? 'disabled/paused' : 'activated'}!` });
+                    setTimeout(() => setFeedbackMsg(null), 3000);
+                  }}
+                >
+                  {role.is_disabled ? <ToggleLeft size={16} /> : <ToggleRight size={16} />}
+                </button>
+              )}
+
+              {!role.is_system && role.name !== 'Super Admin' && (
                 <button
                   className="btn-icon"
                   style={{ color: 'var(--danger)', padding: '0.15rem' }}
                   title="Delete Custom Role"
                   onClick={async () => {
+                    if (!window.confirm(`Delete role "${role.name}"?`)) return;
                     await deleteRole(role.id);
                     setRoles(prev => prev.filter(r => r.id !== role.id));
                     setMatrix(prev => { const copy = { ...prev }; delete copy[role.name]; return copy; });
@@ -503,6 +542,91 @@ const Roles = () => {
                 <button type="submit" className="btn btn-primary" disabled={submitting}>
                   {submitting ? 'Creating...' : 'Create Role'}
                 </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Role Modal */}
+      {editingRole && (
+        <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) setEditingRole(null); }}>
+          <div className="modal-content animate-fade-in" style={{ maxWidth: 450 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+              <div>
+                <h3 style={{ fontSize: '1.05rem', fontWeight: 700, margin: 0 }}>Edit Position / Role</h3>
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Rename title, change badge color & description</div>
+              </div>
+              <button className="modal-close-btn" onClick={() => setEditingRole(null)}>✕</button>
+            </div>
+            <form onSubmit={async (e) => {
+              e.preventDefault();
+              if (!editRoleForm.name.trim()) return;
+              const oldName = editingRole.name;
+              const newName = editRoleForm.name.trim();
+
+              await updateRole(editingRole.id, {
+                name: newName,
+                description: editRoleForm.description,
+                color: editRoleForm.color
+              });
+
+              setRoles(prev => prev.map(r => r.id === editingRole.id ? { ...r, ...editRoleForm, name: newName } : r));
+
+              if (oldName !== newName) {
+                setMatrix(prev => {
+                  const copy = { ...prev };
+                  if (copy[oldName]) {
+                    copy[newName] = copy[oldName];
+                    delete copy[oldName];
+                  }
+                  return copy;
+                });
+                setMatrixDirty(true);
+              }
+
+              setFeedbackMsg({ type: 'success', text: `Role "${newName}" updated successfully!` });
+              setEditingRole(null);
+              setTimeout(() => setFeedbackMsg(null), 3000);
+            }} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div>
+                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Role / Position Title *</label>
+                <input
+                  type="text"
+                  className="input-field"
+                  value={editRoleForm.name}
+                  onChange={e => setEditRoleForm(p => ({ ...p, name: e.target.value }))}
+                  required
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Badge Color</label>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  {['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#06b6d4', '#8b5cf6', '#ec4899'].map(c => (
+                    <div
+                      key={c}
+                      onClick={() => setEditRoleForm(p => ({ ...p, color: c }))}
+                      style={{
+                        width: 26, height: 26, borderRadius: '50%', background: c,
+                        border: editRoleForm.color === c ? '3px solid white' : '2px solid transparent',
+                        cursor: 'pointer'
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Scope / Description</label>
+                <input
+                  type="text"
+                  className="input-field"
+                  value={editRoleForm.description}
+                  onChange={e => setEditRoleForm(p => ({ ...p, description: e.target.value }))}
+                />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '0.5rem' }}>
+                <button type="button" className="btn btn-secondary" onClick={() => setEditingRole(null)}>Cancel</button>
+                <button type="submit" className="btn btn-primary" disabled={!editRoleForm.name.trim()}>Save Changes</button>
               </div>
             </form>
           </div>
