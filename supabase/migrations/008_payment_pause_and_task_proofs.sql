@@ -46,3 +46,16 @@ CREATE POLICY "Org settings open access" ON public.org_settings FOR ALL USING (t
 INSERT INTO public.org_settings (organization_id, key, value, description)
 VALUES ('00000000-0000-0000-0000-000000000001', 'reminder_interval_days', '3', 'Days between auto WhatsApp payment reminders')
 ON CONFLICT (organization_id, key) DO NOTHING;
+
+-- 6. Task Templates & Automated Recurrence Loop Columns
+ALTER TABLE public.task_templates ADD COLUMN IF NOT EXISTS is_auto_recurring BOOLEAN DEFAULT true;
+ALTER TABLE public.task_templates ADD COLUMN IF NOT EXISTS recurrence_type TEXT DEFAULT 'daily'; -- 'daily', 'weekdays', 'weekly', 'interval_days', 'monthly'
+ALTER TABLE public.task_templates ADD COLUMN IF NOT EXISTS recurrence_days JSONB DEFAULT '["Mon", "Tue", "Wed", "Thu", "Fri"]'::jsonb;
+ALTER TABLE public.task_templates ADD COLUMN IF NOT EXISTS interval_days INTEGER DEFAULT 1;
+ALTER TABLE public.task_templates ADD COLUMN IF NOT EXISTS assignee_target_type TEXT DEFAULT 'all_employees'; -- 'all_employees', 'role', 'specific_employees', 'per_client'
+ALTER TABLE public.task_templates ADD COLUMN IF NOT EXISTS target_role TEXT DEFAULT 'Sales Executive';
+ALTER TABLE public.task_templates ADD COLUMN IF NOT EXISTS target_employee_names JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE public.task_templates ADD COLUMN IF NOT EXISTS target_client_names JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE public.task_templates ADD COLUMN IF NOT EXISTS last_generated_date DATE;
+ALTER TABLE public.task_templates ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true;
+

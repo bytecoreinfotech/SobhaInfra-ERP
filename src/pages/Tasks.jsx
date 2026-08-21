@@ -5,12 +5,14 @@ import {
   MessageSquare, Send, User, Tag, Check, ChevronRight, UserCheck,
   Trash2, FileText, BarChart3, Copy, ArrowRight, Image as ImageIcon,
   Paperclip, Link as LinkIcon, ExternalLink, ShieldCheck, Repeat,
-  Building, Sparkles, AlertTriangle, Eye, UploadCloud
+  Building, Sparkles, AlertTriangle, Eye, UploadCloud, Edit3,
+  Play, Pause, Zap, ToggleLeft, ToggleRight, CalendarDays, Users, Layers
 } from 'lucide-react';
 import {
   getTasks, createTask, updateTask, deleteTask, addTaskComment,
   getTeamMembers, getTaskTemplates, saveTaskTemplate, deleteTaskTemplate,
-  getTasksByEmployee, getLeads, generateDailyTasksForClients
+  getTasksByEmployee, getLeads, generateDailyTasksForClients,
+  toggleTaskTemplateActive, checkAndRunRecurringTaskRoutines
 } from '../lib/db';
 import { useAuth } from '../context/AuthContext';
 import './Pages.css';
@@ -32,6 +34,24 @@ const EMPTY_TASK = {
   recurrence_interval: 'Daily'
 };
 
+const EMPTY_TEMPLATE = {
+  id: null,
+  title: '',
+  description: '',
+  priority: 'Medium',
+  tags: [],
+  default_assignee: '',
+  is_auto_recurring: true,
+  recurrence_type: 'daily', // 'daily', 'weekdays', 'weekly', 'interval_days', 'monthly'
+  recurrence_days: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
+  interval_days: 1,
+  assignee_target_type: 'all_employees', // 'all_employees', 'role', 'specific_employees', 'per_client'
+  target_role: 'Sales Executive',
+  target_employee_names: [],
+  is_active: true,
+};
+
+const DAYS_OF_WEEK = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
 const Tasks = () => {
@@ -82,7 +102,9 @@ const Tasks = () => {
   // Template state
   const [templates, setTemplates] = useState([]);
   const [showAddTemplate, setShowAddTemplate] = useState(false);
-  const [tplForm, setTplForm] = useState({ title: '', description: '', priority: 'Medium', tags: [], default_assignee: '', is_recurring: false });
+  const [tplForm, setTplForm] = useState(EMPTY_TEMPLATE);
+  const [runningRoutineId, setRunningRoutineId] = useState(null);
+  const [runningAllRoutines, setRunningAllRoutines] = useState(false);
 
   // 1-Click Daily Routine Task Generator Modal
   const [showDailyGenModal, setShowDailyGenModal] = useState(false);
@@ -116,7 +138,18 @@ const Tasks = () => {
   useEffect(() => {
     loadTasks();
     loadTemplates();
+    triggerAutoRecurringCheck();
   }, []);
+
+  const triggerAutoRecurringCheck = async () => {
+    try {
+      const res = await checkAndRunRecurringTaskRoutines();
+      if (res?.totalTasksGenerated > 0) {
+        await loadTasks();
+        showToast(`✨ Auto-spawned ${res.totalTasksGenerated} routine tasks across ${res.triggeredRoutines.length} recurring routines for today!`);
+      }
+    } catch {}
+  };
 
   const loadTemplates = async () => {
     const tpls = await getTaskTemplates();
@@ -427,11 +460,61 @@ const Tasks = () => {
     await saveTaskTemplate(tplForm);
     await loadTemplates();
     setShowAddTemplate(false);
-    setTplForm({ title: '', description: '', priority: 'Medium', tags: [], default_assignee: '', is_recurring: false });
-    showToast('Task template saved!');
+    setTplForm(EMPTY_TEMPLATE);
+    showToast(tplForm.id ? 'Routine template updated!' : 'Routine template created with automated schedule!');
+  };
+
+  const handleEditTemplate = (tpl) => {
+    setTplForm({
+      id: tpl.id,
+      title: tpl.title || '',
+      description: tpl.description || '',
+      priority: tpl.priority || 'Medium',
+      tags: tpl.tags || [],
+      default_assignee: tpl.default_assignee || '',
+      is_auto_recurring: tpl.is_auto_recurring !== false,
+      recurrence_type: tpl.recurrence_type || 'daily',
+      recurrence_days: tpl.recurrence_days || ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
+      interval_days: tpl.interval_days || 1,
+      assignee_target_type: tpl.assignee_target_type || 'all_employees',
+      target_role: tpl.target_role || 'Sales Executive',
+      target_employee_names: tpl.target_employee_names || [],
+      is_active: tpl.is_active !== false,
+    });
+    setShowAddTemplate(true);
+  };
+
+  const handleToggleTemplateActive = async (tpl) => {
+    const nextActive = tpl.is_active === false ? true : false;
+    await toggleTaskTemplateActive(tpl.id, nextActive);
+    setTemplates(prev => prev.map(t => t.id === tpl.id ? { ...t, is_active: nextActive } : t));
+    showToast(nextActive ? `🟢 Auto-loop enabled for "${tpl.title}"` : `⏸ Auto-loop paused for "${tpl.title}"`);
+  };
+
+  const handleRunTemplateNow = async (tpl) => {
+    setRunningRoutineId(tpl.id);
+    const res = await checkAndRunRecurringTaskRoutines(tpl.id);
+    await loadTasks();
+    await loadTemplates();
+    setRunningRoutineId(null);
+    showToast(`⚡ Generated ${res.totalTasksGenerated || 0} tasks for "${tpl.title}" for today!`);
+  };
+
+  const handleRunAllRoutinesNow = async () => {
+    setRunningAllRoutines(true);
+    const res = await checkAndRunRecurringTaskRoutines();
+    await loadTasks();
+    await loadTemplates();
+    setRunningAllRoutines(false);
+    if (res.totalTasksGenerated > 0) {
+      showToast(`⚡ Successfully dispatched ${res.totalTasksGenerated} routine tasks for today across ${res.triggeredRoutines.length} routines!`);
+    } else {
+      showToast('All scheduled routines have already run for today. Click "⚡ Run Today" on individual cards to force extra generation.');
+    }
   };
 
   const handleDeleteTemplate = async (id) => {
+    if (!window.confirm('Delete this routine template?')) return;
     await deleteTaskTemplate(id);
     await loadTemplates();
     showToast('Template deleted.');
@@ -735,65 +818,235 @@ const Tasks = () => {
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem' }}>
             <div>
-              <h2 style={{ fontSize: '1.05rem', fontWeight: 700, margin: 0 }}>Daily Client Routines & Templates Master</h2>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <h2 style={{ fontSize: '1.05rem', fontWeight: 700, margin: 0 }}>Automated Daily Routines & Task Loops Master</h2>
+                <span className="badge badge-accent" style={{ fontSize: '0.68rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                  <Zap size={11} /> Auto-Dispatch Engine
+                </span>
+              </div>
               <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: '0.2rem 0 0 0' }}>
-                Pre-configured daily repeated tasks. Instantiate across clients in 1-click so you never have to re-type repeated jobs.
+                Define recurring operational tasks once. The system automatically creates & assigns them to staff on scheduled days so you never have to re-type routine duties.
               </p>
             </div>
-            <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <button className="btn" onClick={() => setShowDailyGenModal(true)} style={{ background: 'var(--success)', color: 'white', fontWeight: 700 }}>
-                <Sparkles size={14} /> ⚡ Apply Routine to Clients
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+              <button
+                className="btn"
+                onClick={handleRunAllRoutinesNow}
+                disabled={runningAllRoutines}
+                style={{ background: 'var(--accent-primary)', color: 'white', fontWeight: 700 }}
+                title="Evaluate and spawn all scheduled routine tasks for today"
+              >
+                {runningAllRoutines ? <RefreshCw size={14} className="animate-spin" /> : <Zap size={14} />}
+                <span>{runningAllRoutines ? 'Running Engine...' : '⚡ Run Daily Routines Today'}</span>
               </button>
-              <button className="btn btn-primary" onClick={() => setShowAddTemplate(true)}>
-                <Plus size={14} /> Create Template
+              <button className="btn" onClick={() => setShowDailyGenModal(true)} style={{ background: 'var(--success)', color: 'white', fontWeight: 700 }}>
+                <Sparkles size={14} /> Batch To Clients
+              </button>
+              <button className="btn btn-primary" onClick={() => { setTplForm(EMPTY_TEMPLATE); setShowAddTemplate(true); }}>
+                <Plus size={14} /> Create Routine Template
               </button>
             </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1rem' }}>
-            {templates.map(tpl => (
-              <div key={tpl.id} className="glass-card" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <h3 style={{ fontSize: '0.95rem', fontWeight: 700, margin: 0 }}>{tpl.title}</h3>
-                  <span className="badge" style={{ fontSize: '0.65rem', color: priorityColors[tpl.priority], borderColor: priorityColors[tpl.priority] }}>
-                    {tpl.priority}
-                  </span>
-                </div>
-
-                <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.4, flex: 1 }}>
-                  {tpl.description || 'No description provided.'}
-                </p>
-
-                {tpl.tags?.length > 0 && (
-                  <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap' }}>
-                    {tpl.tags.map(t => <span key={t} className="badge badge-neutral" style={{ fontSize: '0.65rem' }}>{t}</span>)}
-                  </div>
-                )}
-
-                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                  👤 Default Assignee: <strong>{tpl.default_assignee || 'Unassigned'}</strong>
-                </div>
-
-                <div style={{ display: 'flex', gap: '0.5rem', borderTop: '1px solid var(--border-color)', paddingTop: '0.75rem' }}>
-                  <button className="btn btn-primary btn-sm" onClick={() => handleCreateFromTemplate(tpl)} style={{ flex: 1, justifyContent: 'center' }}>
-                    <Plus size={12} /> Use Single
-                  </button>
-                  <button
-                    className="btn btn-secondary btn-sm"
-                    onClick={() => {
-                      setDailyGenConfig(p => ({ ...p, templateId: tpl.id }));
-                      setShowDailyGenModal(true);
-                    }}
-                    style={{ flex: 1, justifyContent: 'center', color: 'var(--success)' }}
-                  >
-                    <Sparkles size={12} /> Apply to Clients
-                  </button>
-                  <button className="btn btn-secondary btn-sm" onClick={() => handleDeleteTemplate(tpl.id)} style={{ color: 'var(--danger)' }}>
-                    <Trash2 size={12} />
-                  </button>
-                </div>
+          {/* Quick Stats Grid */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
+            <div className="glass-card" style={{ padding: '0.85rem 1rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <div style={{ width: 36, height: 36, borderRadius: 8, background: 'rgba(99,102,241,0.15)', color: 'var(--accent-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Repeat size={18} />
               </div>
-            ))}
+              <div>
+                <div style={{ fontSize: '1.25rem', fontWeight: 800 }}>{templates.length}</div>
+                <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600 }}>Total Routines</div>
+              </div>
+            </div>
+
+            <div className="glass-card" style={{ padding: '0.85rem 1rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <div style={{ width: 36, height: 36, borderRadius: 8, background: 'rgba(16,185,129,0.15)', color: 'var(--success)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Zap size={18} />
+              </div>
+              <div>
+                <div style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--success)' }}>
+                  {templates.filter(t => t.is_auto_recurring && t.is_active !== false).length}
+                </div>
+                <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600 }}>Active Auto-Loops</div>
+              </div>
+            </div>
+
+            <div className="glass-card" style={{ padding: '0.85rem 1rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <div style={{ width: 36, height: 36, borderRadius: 8, background: 'rgba(245,158,11,0.15)', color: 'var(--warning)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <CalendarDays size={18} />
+              </div>
+              <div>
+                <div style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--warning)' }}>
+                  {templates.filter(t => t.recurrence_type === 'daily' || t.recurrence_type === 'weekdays').length}
+                </div>
+                <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600 }}>Daily & Weekday Routines</div>
+              </div>
+            </div>
+
+            <div className="glass-card" style={{ padding: '0.85rem 1rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <div style={{ width: 36, height: 36, borderRadius: 8, background: 'rgba(6,182,212,0.15)', color: 'var(--accent-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Users size={18} />
+              </div>
+              <div>
+                <div style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--accent-secondary)' }}>
+                  {teamMembers.length}
+                </div>
+                <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600 }}>Staff Members in Pool</div>
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1rem' }}>
+            {templates.map(tpl => {
+              const isAuto = tpl.is_auto_recurring !== false;
+              const isActive = tpl.is_active !== false;
+              const recType = tpl.recurrence_type || 'daily';
+              const targetType = tpl.assignee_target_type || 'all_employees';
+
+              let recLabel = 'Daily (All 7 Days)';
+              if (recType === 'weekdays') recLabel = 'Weekdays (Mon - Fri)';
+              if (recType === 'weekly') recLabel = `Weekly on ${Array.isArray(tpl.recurrence_days) ? tpl.recurrence_days.join(', ') : 'Mon'}`;
+              if (recType === 'interval_days') recLabel = `Every ${tpl.interval_days || 1} Days`;
+              if (recType === 'monthly') recLabel = `Monthly on Day ${tpl.interval_days || 1}`;
+
+              let targetLabel = 'All Active Staff';
+              if (targetType === 'role') targetLabel = `All ${tpl.target_role || 'Staff'} Members`;
+              if (targetType === 'specific_employees') targetLabel = Array.isArray(tpl.target_employee_names) && tpl.target_employee_names.length > 0 ? tpl.target_employee_names.join(', ') : (tpl.default_assignee || 'Specific Staff');
+              if (targetType === 'per_client') targetLabel = 'Per Active CRM Client';
+
+              return (
+                <div
+                  key={tpl.id}
+                  className="glass-card"
+                  style={{
+                    padding: '1.25rem',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '0.75rem',
+                    border: isActive ? '1px solid var(--border-color)' : '1px dashed var(--border-color)',
+                    opacity: isActive ? 1 : 0.75,
+                    transition: 'all 0.2s ease'
+                  }}
+                >
+                  {/* Card Header */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.5rem' }}>
+                    <div>
+                      <h3 style={{ fontSize: '0.98rem', fontWeight: 700, margin: '0 0 0.25rem 0' }}>{tpl.title}</h3>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap' }}>
+                        <span className="badge" style={{ fontSize: '0.65rem', color: priorityColors[tpl.priority], borderColor: priorityColors[tpl.priority] }}>
+                          {tpl.priority} Priority
+                        </span>
+                        {isAuto ? (
+                          <span
+                            onClick={() => handleToggleTemplateActive(tpl)}
+                            style={{
+                              fontSize: '0.65rem',
+                              fontWeight: 700,
+                              cursor: 'pointer',
+                              padding: '0.15rem 0.45rem',
+                              borderRadius: 6,
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '0.2rem',
+                              background: isActive ? 'rgba(16,185,129,0.15)' : 'rgba(245,158,11,0.15)',
+                              color: isActive ? 'var(--success)' : 'var(--warning)',
+                              border: `1px solid ${isActive ? 'rgba(16,185,129,0.3)' : 'rgba(245,158,11,0.3)'}`
+                            }}
+                            title="Click to toggle active/pause"
+                          >
+                            {isActive ? <Play size={10} /> : <Pause size={10} />}
+                            <span>{isActive ? 'Auto-Loop ON' : 'Loop Paused'}</span>
+                          </span>
+                        ) : (
+                          <span className="badge badge-neutral" style={{ fontSize: '0.65rem' }}>Manual Template</span>
+                        )}
+                      </div>
+                    </div>
+
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => handleEditTemplate(tpl)}
+                      style={{ padding: '0.25rem 0.45rem', fontSize: '0.7rem' }}
+                      title="Edit Routine Schedule & Details"
+                    >
+                      <Edit3 size={13} />
+                    </button>
+                  </div>
+
+                  {/* Description */}
+                  <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.4, flex: 1 }}>
+                    {tpl.description || 'Standard routine duty.'}
+                  </p>
+
+                  {/* Automation Details Box */}
+                  <div style={{ background: 'var(--bg-tertiary)', borderRadius: 8, padding: '0.6rem 0.75rem', fontSize: '0.73rem', display: 'flex', flexDirection: 'column', gap: '0.35rem', border: '1px solid var(--border-color)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: 'var(--accent-primary)', fontWeight: 600 }}>
+                      <Repeat size={13} />
+                      <span>{recLabel}</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: 'var(--text-secondary)' }}>
+                      <Users size={13} />
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        Assigns: <strong>{targetLabel}</strong>
+                      </span>
+                    </div>
+                    {tpl.last_generated_date && (
+                      <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>
+                        Last Spawned: {tpl.last_generated_date === new Date().toISOString().split('T')[0] ? '🟢 Today' : tpl.last_generated_date}
+                      </div>
+                    )}
+                  </div>
+
+                  {tpl.tags?.length > 0 && (
+                    <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap' }}>
+                      {tpl.tags.map(t => <span key={t} className="badge badge-neutral" style={{ fontSize: '0.65rem' }}>{t}</span>)}
+                    </div>
+                  )}
+
+                  {/* Card Actions */}
+                  <div style={{ display: 'flex', gap: '0.4rem', borderTop: '1px solid var(--border-color)', paddingTop: '0.75rem', flexWrap: 'wrap' }}>
+                    <button
+                      className="btn btn-sm"
+                      onClick={() => handleRunTemplateNow(tpl)}
+                      disabled={runningRoutineId === tpl.id}
+                      style={{ flex: 1, justifyContent: 'center', background: 'var(--accent-primary)', color: 'white', fontWeight: 600, fontSize: '0.72rem' }}
+                      title="Force run today's routine tasks immediately"
+                    >
+                      {runningRoutineId === tpl.id ? <RefreshCw size={12} className="animate-spin" /> : <Zap size={12} />}
+                      <span>{runningRoutineId === tpl.id ? 'Running...' : '⚡ Run Today'}</span>
+                    </button>
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => handleCreateFromTemplate(tpl)}
+                      style={{ padding: '0.25rem 0.5rem', fontSize: '0.72rem' }}
+                      title="Create a one-off single task from this"
+                    >
+                      <Plus size={12} /> Single
+                    </button>
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => {
+                        setDailyGenConfig(p => ({ ...p, templateId: tpl.id }));
+                        setShowDailyGenModal(true);
+                      }}
+                      style={{ padding: '0.25rem 0.5rem', fontSize: '0.72rem', color: 'var(--success)' }}
+                      title="Batch instantiate for selected clients"
+                    >
+                      <Sparkles size={12} /> Batch
+                    </button>
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => handleDeleteTemplate(tpl.id)}
+                      style={{ padding: '0.25rem 0.45rem', color: 'var(--danger)' }}
+                      title="Delete Template"
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
@@ -1539,19 +1792,42 @@ const Tasks = () => {
         </div>
       )}
 
-      {/* CREATE TEMPLATE MODAL */}
+      {/* CREATE & EDIT RECURRING ROUTINE TEMPLATE MODAL */}
       {showAddTemplate && (
-        <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) setShowAddTemplate(false); }}>
-          <div className="modal-content animate-fade-in" style={{ maxWidth: 500 }}>
+        <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) setShowAddTemplate(false); }} style={{ zIndex: 9999 }}>
+          <div className="modal-content animate-fade-in" style={{ maxWidth: 560, maxHeight: '90vh', overflowY: 'auto', padding: '1.5rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
-              <h2 style={{ fontSize: '1.1rem', fontWeight: 700, margin: 0 }}>Create Routine Template</h2>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'rgba(99,102,241,0.15)', color: 'var(--accent-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Repeat size={18} />
+                </div>
+                <div>
+                  <h2 style={{ fontSize: '1.1rem', fontWeight: 700, margin: 0 }}>
+                    {tplForm.id ? 'Edit Routine Schedule & Template' : 'Create Automated Routine Template'}
+                  </h2>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                    Set predefined tasks once to automatically loop across staff daily or on custom schedules.
+                  </div>
+                </div>
+              </div>
               <button className="modal-close-btn" onClick={() => setShowAddTemplate(false)}>✕</button>
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.15rem' }}>
+              {/* 1. Basic Title & Priority */}
               <div>
-                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Template Title *</label>
-                <input type="text" className="input-field" placeholder="e.g. Daily Site Inspection & Photo Verification" value={tplForm.title} onChange={e => setTplForm(p => ({ ...p, title: e.target.value }))} />
+                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>
+                  Routine Task Title *
+                </label>
+                <input
+                  type="text"
+                  className="input-field"
+                  placeholder="e.g. Daily Morning Client Calling & Inquiries"
+                  value={tplForm.title}
+                  onChange={e => setTplForm(p => ({ ...p, title: e.target.value }))}
+                />
               </div>
+
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                 <div>
                   <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Priority</label>
@@ -1560,20 +1836,215 @@ const Tasks = () => {
                   </select>
                 </div>
                 <div>
-                  <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Default Assignee</label>
+                  <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Fallback Assignee</label>
                   <select className="input-field" value={tplForm.default_assignee} onChange={e => setTplForm(p => ({ ...p, default_assignee: e.target.value }))}>
-                    <option value="">-- None --</option>
+                    <option value="">-- Auto-Assign Rule Below --</option>
                     {teamMembers.map(m => <option key={m.id} value={m.full_name}>{m.full_name} ({m.role})</option>)}
                   </select>
                 </div>
               </div>
-              <div>
-                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Description</label>
-                <textarea className="input-field textarea-field" rows="2" placeholder="Standard operating procedure or inspection steps..." value={tplForm.description} onChange={e => setTplForm(p => ({ ...p, description: e.target.value }))} />
+
+              {/* 2. Automated Loop Schedule Configuration Panel */}
+              <div style={{ padding: '1rem', background: 'var(--bg-tertiary)', borderRadius: 10, border: '1.5px solid rgba(99,102,241,0.3)', display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: '0.88rem', display: 'flex', alignItems: 'center', gap: '0.4rem', color: 'var(--accent-primary)' }}>
+                      <Zap size={14} /> Automated Recurrence Loop
+                    </div>
+                    <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                      Auto-generate tasks without manual typing
+                    </div>
+                  </div>
+
+                  <div
+                    onClick={() => setTplForm(p => ({ ...p, is_auto_recurring: !p.is_auto_recurring }))}
+                    style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+                  >
+                    {tplForm.is_auto_recurring ? (
+                      <ToggleRight size={32} color="var(--success)" />
+                    ) : (
+                      <ToggleLeft size={32} color="var(--text-muted)" />
+                    )}
+                    <span style={{ fontSize: '0.75rem', fontWeight: 700, color: tplForm.is_auto_recurring ? 'var(--success)' : 'var(--text-muted)' }}>
+                      {tplForm.is_auto_recurring ? 'Enabled' : 'Disabled'}
+                    </span>
+                  </div>
+                </div>
+
+                {tplForm.is_auto_recurring && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', borderTop: '1px solid var(--border-color)', paddingTop: '0.75rem' }}>
+                    <div>
+                      <label style={{ fontSize: '0.78rem', fontWeight: 600, display: 'block', marginBottom: '0.3rem' }}>
+                        Repeat Frequency
+                      </label>
+                      <select
+                        className="input-field"
+                        value={tplForm.recurrence_type}
+                        onChange={e => setTplForm(p => ({ ...p, recurrence_type: e.target.value }))}
+                      >
+                        <option value="daily">🔁 Daily (Every Single Day - 7 Days)</option>
+                        <option value="weekdays">📅 Weekdays Only (Monday to Friday)</option>
+                        <option value="weekly">🗓️ Specific Days of the Week (Custom Days)</option>
+                        <option value="interval_days">⏳ Custom Interval (Every N Days)</option>
+                        <option value="monthly">📆 Monthly (On a specific day of month)</option>
+                      </select>
+                    </div>
+
+                    {/* Specific Days Picker */}
+                    {tplForm.recurrence_type === 'weekly' && (
+                      <div>
+                        <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'block', marginBottom: '0.35rem' }}>
+                          Select Active Days of Week:
+                        </label>
+                        <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
+                          {DAYS_OF_WEEK.map(day => {
+                            const isSelected = Array.isArray(tplForm.recurrence_days) && tplForm.recurrence_days.includes(day);
+                            return (
+                              <button
+                                key={day}
+                                type="button"
+                                className="btn btn-sm"
+                                style={{
+                                  fontSize: '0.72rem',
+                                  padding: '0.25rem 0.55rem',
+                                  background: isSelected ? 'var(--accent-primary)' : 'var(--bg-secondary)',
+                                  color: isSelected ? 'white' : 'var(--text-secondary)',
+                                  border: `1px solid ${isSelected ? 'var(--accent-primary)' : 'var(--border-color)'}`
+                                }}
+                                onClick={() => {
+                                  const current = Array.isArray(tplForm.recurrence_days) ? tplForm.recurrence_days : [];
+                                  if (isSelected) {
+                                    setTplForm(p => ({ ...p, recurrence_days: current.filter(d => d !== day) }));
+                                  } else {
+                                    setTplForm(p => ({ ...p, recurrence_days: [...current, day] }));
+                                  }
+                                }}
+                              >
+                                {day}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Custom Interval Input */}
+                    {tplForm.recurrence_type === 'interval_days' && (
+                      <div>
+                        <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'block', marginBottom: '0.25rem' }}>
+                          Repeat Every (in Days):
+                        </label>
+                        <input
+                          type="number"
+                          min="1"
+                          max="90"
+                          className="input-field"
+                          value={tplForm.interval_days || 1}
+                          onChange={e => setTplForm(p => ({ ...p, interval_days: Number(e.target.value) }))}
+                        />
+                      </div>
+                    )}
+
+                    {/* Monthly Day Input */}
+                    {tplForm.recurrence_type === 'monthly' && (
+                      <div>
+                        <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'block', marginBottom: '0.25rem' }}>
+                          On Day of the Month (1-31):
+                        </label>
+                        <input
+                          type="number"
+                          min="1"
+                          max="31"
+                          className="input-field"
+                          value={tplForm.interval_days || 1}
+                          onChange={e => setTplForm(p => ({ ...p, interval_days: Number(e.target.value) }))}
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
-                <button className="btn btn-secondary" onClick={() => setShowAddTemplate(false)}>Cancel</button>
-                <button className="btn btn-primary" onClick={handleSaveTemplate} disabled={!tplForm.title.trim()}>Save Routine Template</button>
+
+              {/* 3. Auto-Assign Target Rules */}
+              <div>
+                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>
+                  👥 Target Staff Assignment Rule
+                </label>
+                <select
+                  className="input-field"
+                  value={tplForm.assignee_target_type}
+                  onChange={e => setTplForm(p => ({ ...p, assignee_target_type: e.target.value }))}
+                >
+                  <option value="all_employees">All Active Staff (Auto-spawns a task for each team member)</option>
+                  <option value="role">By Position / Role (Auto-spawns for all employees in chosen role)</option>
+                  <option value="specific_employees">Specific Selected Staff Members</option>
+                  <option value="per_client">Per Active CRM Client (Creates task for each client in CRM)</option>
+                </select>
+
+                {/* Sub-inputs based on mode */}
+                {tplForm.assignee_target_type === 'role' && (
+                  <div style={{ marginTop: '0.5rem' }}>
+                    <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'block', marginBottom: '0.25rem' }}>Select Role / Position:</label>
+                    <select
+                      className="input-field"
+                      value={tplForm.target_role}
+                      onChange={e => setTplForm(p => ({ ...p, target_role: e.target.value }))}
+                    >
+                      {['Sales Executive', 'Field Agent', 'Accounts', 'Manager', 'Support Agent'].map(r => (
+                        <option key={r} value={r}>{r}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {tplForm.assignee_target_type === 'specific_employees' && (
+                  <div style={{ marginTop: '0.5rem', maxHeight: 120, overflowY: 'auto', background: 'var(--bg-secondary)', padding: '0.5rem', borderRadius: 6, border: '1px solid var(--border-color)' }}>
+                    {teamMembers.map(m => {
+                      const isChecked = Array.isArray(tplForm.target_employee_names) && tplForm.target_employee_names.includes(m.full_name);
+                      return (
+                        <label key={m.id} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.75rem', padding: '0.2rem 0', cursor: 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={e => {
+                              const curr = Array.isArray(tplForm.target_employee_names) ? tplForm.target_employee_names : [];
+                              if (e.target.checked) {
+                                setTplForm(p => ({ ...p, target_employee_names: [...curr, m.full_name] }));
+                              } else {
+                                setTplForm(p => ({ ...p, target_employee_names: curr.filter(n => n !== m.full_name) }));
+                              }
+                            }}
+                          />
+                          <span><strong>{m.full_name}</strong> ({m.role})</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* 4. Description & Instructions */}
+              <div>
+                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Description & Instructions for Staff</label>
+                <textarea
+                  className="input-field textarea-field"
+                  rows={2}
+                  placeholder="Standard operating procedure, inspection checklist, or calling guidelines..."
+                  value={tplForm.description}
+                  onChange={e => setTplForm(p => ({ ...p, description: e.target.value }))}
+                />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '0.25rem' }}>
+                <button type="button" className="btn btn-secondary" onClick={() => setShowAddTemplate(false)}>Cancel</button>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={handleSaveTemplate}
+                  disabled={!tplForm.title.trim()}
+                >
+                  {tplForm.id ? 'Save Changes' : 'Save Routine Template'}
+                </button>
               </div>
             </div>
           </div>

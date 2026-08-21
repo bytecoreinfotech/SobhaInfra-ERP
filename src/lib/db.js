@@ -157,11 +157,63 @@ const MOCK_STORE = {
     total_synced_vouchers: 0,
   },
   ledger_mappings: [],
-  sync_errors: [],
-  campaigns: [],
-  activities: [],
   tasks: [],
-  task_templates: [],
+  task_templates: [
+    {
+      id: 'tpl-1',
+      title: 'Daily Client Follow-up & Order Inquiries',
+      description: 'Contact allocated leads/clients to follow up on product inquiries, quotes, and dispatch orders. Update call notes and submit proof.',
+      priority: 'High',
+      tags: ['Daily Routine', 'Client Followup', 'Sales'],
+      default_assignee: 'Anand Sharma',
+      is_auto_recurring: true,
+      recurrence_type: 'daily',
+      recurrence_days: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+      interval_days: 1,
+      assignee_target_type: 'all_employees',
+      target_role: 'Sales Executive',
+      target_employee_names: [],
+      is_active: true,
+      last_generated_date: null,
+      created_at: new Date().toISOString(),
+    },
+    {
+      id: 'tpl-2',
+      title: 'Daily Site Inspection & Photo Verification',
+      description: 'Visit ongoing customer project site, verify material usage & quality, and submit live camera photo proof with GPS coordinates.',
+      priority: 'High',
+      tags: ['Site Visit', 'Inspection', 'Field Ops'],
+      default_assignee: 'Rajesh Kumar',
+      is_auto_recurring: true,
+      recurrence_type: 'weekdays',
+      recurrence_days: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
+      interval_days: 1,
+      assignee_target_type: 'role',
+      target_role: 'Sales Executive',
+      target_employee_names: [],
+      is_active: true,
+      last_generated_date: null,
+      created_at: new Date().toISOString(),
+    },
+    {
+      id: 'tpl-3',
+      title: 'Weekly Overdue Ledger & Payment Followup',
+      description: 'Review overdue Tally invoices, call clients for payment commitments, and update promise dates in Finance center.',
+      priority: 'Medium',
+      tags: ['Finance', 'Ledger', 'Payment Recovery'],
+      default_assignee: 'Sunita Patel',
+      is_auto_recurring: true,
+      recurrence_type: 'weekly',
+      recurrence_days: ['Mon', 'Thu'],
+      interval_days: 3,
+      assignee_target_type: 'role',
+      target_role: 'Accounts',
+      target_employee_names: [],
+      is_active: true,
+      last_generated_date: null,
+      created_at: new Date().toISOString(),
+    }
+  ],
   products: [],
   deals: [],
   quotations: [],
@@ -1021,18 +1073,19 @@ export async function deleteTask(taskId) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// TASK TEMPLATES (Default / Recurring Tasks for Super Admin)
+// TASK TEMPLATES & AUTOMATED RECURRING ROUTINES (Loop Automation for Super Admin)
 // ─────────────────────────────────────────────────────────────────────────────
 export async function getTaskTemplates() {
   if (isSupabaseConfigured) {
     try {
       const { data, error } = await supabase.from('task_templates').select('*').order('created_at', { ascending: false });
-      if (!error && data) return data;
+      if (!error && data && data.length > 0) return data;
     } catch (err) {
       console.warn('[db] getTaskTemplates fallback:', err.message);
     }
   }
-  return MOCK_STORE.task_templates;
+  const local = JSON.parse(localStorage.getItem('erppro_task_templates') || 'null');
+  return local || MOCK_STORE.task_templates;
 }
 
 export async function saveTaskTemplate(template) {
@@ -1042,21 +1095,38 @@ export async function saveTaskTemplate(template) {
     priority: template.priority || 'Medium',
     tags: template.tags || [],
     default_assignee: template.default_assignee || '',
+    is_auto_recurring: Boolean(template.is_auto_recurring),
+    recurrence_type: template.recurrence_type || 'daily', // 'daily', 'weekdays', 'weekly', 'interval_days', 'monthly'
+    recurrence_days: template.recurrence_days || ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
+    interval_days: Number(template.interval_days) || 1,
+    assignee_target_type: template.assignee_target_type || 'all_employees', // 'all_employees', 'role', 'specific_employees', 'per_client'
+    target_role: template.target_role || 'Sales Executive',
+    target_employee_names: template.target_employee_names || [],
+    is_active: template.is_active !== false,
+    last_generated_date: template.last_generated_date || null,
   };
 
   if (isSupabaseConfigured) {
     try {
       if (template.id) {
         const { data, error } = await supabase.from('task_templates').update(newTpl).eq('id', template.id).select().single();
-        if (!error && data) return data;
+        if (!error && data) {
+          logAuditEvent('template.update', 'task_templates', template.id, newTpl);
+          return data;
+        }
       } else {
         const { data, error } = await supabase.from('task_templates').insert([{ ...newTpl, organization_id: DEFAULT_ORG_ID }]).select().single();
-        if (!error && data) return data;
+        if (!error && data) {
+          logAuditEvent('template.create', 'task_templates', data.id, data);
+          return data;
+        }
       }
-    } catch {}
+    } catch (err) {
+      console.warn('[db] saveTaskTemplate fallback:', err.message);
+    }
   }
 
-  // Fallback to mock store
+  // Fallback to mock store & localStorage
   const mockTpl = { id: template.id || 'tpl-' + Date.now(), ...newTpl, created_at: new Date().toISOString() };
   const existingIdx = MOCK_STORE.task_templates.findIndex(t => t.id === mockTpl.id);
   if (existingIdx !== -1) {
@@ -1064,18 +1134,200 @@ export async function saveTaskTemplate(template) {
   } else {
     MOCK_STORE.task_templates.unshift(mockTpl);
   }
+  try {
+    localStorage.setItem('erppro_task_templates', JSON.stringify(MOCK_STORE.task_templates));
+  } catch {}
+
+  logAuditEvent('template.save', 'task_templates', mockTpl.id, mockTpl);
   return mockTpl;
+}
+
+export async function toggleTaskTemplateActive(templateId, isActive) {
+  if (isSupabaseConfigured) {
+    try {
+      const { data, error } = await supabase
+        .from('task_templates')
+        .update({ is_active: isActive })
+        .eq('id', templateId)
+        .select()
+        .single();
+      if (!error && data) return { data, error: null };
+    } catch {}
+  }
+  const tpl = MOCK_STORE.task_templates.find(t => t.id === templateId);
+  if (tpl) {
+    tpl.is_active = isActive;
+    try {
+      localStorage.setItem('erppro_task_templates', JSON.stringify(MOCK_STORE.task_templates));
+    } catch {}
+    return { data: tpl, error: null };
+  }
+  return { data: null, error: { message: 'Template not found' } };
 }
 
 export async function deleteTaskTemplate(templateId) {
   if (isSupabaseConfigured) {
     try {
       const { error } = await supabase.from('task_templates').delete().eq('id', templateId);
-      if (!error) return { error: null };
+      if (!error) {
+        logAuditEvent('template.delete', 'task_templates', templateId);
+        return { error: null };
+      }
     } catch {}
   }
   MOCK_STORE.task_templates = MOCK_STORE.task_templates.filter(t => t.id !== templateId);
+  try {
+    localStorage.setItem('erppro_task_templates', JSON.stringify(MOCK_STORE.task_templates));
+  } catch {}
+  logAuditEvent('template.delete', 'task_templates', templateId);
   return { error: null };
+}
+
+/**
+ * Automated Task Routine Engine
+ * Evaluates all active recurring templates and auto-spawns tasks for employees.
+ * Safe & idempotent: avoids duplicate runs on the same calendar day unless forced.
+ */
+export async function checkAndRunRecurringTaskRoutines(forceTemplateId = null) {
+  const templates = await getTaskTemplates();
+  const activeTemplates = (templates || []).filter(t => {
+    if (forceTemplateId) return t.id === forceTemplateId;
+    return t.is_auto_recurring && t.is_active !== false;
+  });
+
+  if (activeTemplates.length === 0) {
+    return { success: true, count: 0, message: 'No active recurring routines found to run.' };
+  }
+
+  const { data: teamMembers } = await getTeamMembers();
+  const { data: leads } = await getLeads();
+  const today = new Date();
+  const todayStr = today.toISOString().split('T')[0];
+  const dayOfWeekAbbr = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][today.getDay()];
+  const dayOfWeekNum = today.getDay(); // 0: Sun, 1: Mon ... 6: Sat
+
+  let totalTasksGenerated = 0;
+  const triggeredRoutines = [];
+
+  for (const tpl of activeTemplates) {
+    // If not manually forced by admin, check schedule condition
+    if (!forceTemplateId) {
+      if (tpl.last_generated_date === todayStr) {
+        // Already spawned today
+        continue;
+      }
+
+      let isDueToday = false;
+      const recType = tpl.recurrence_type || 'daily';
+
+      if (recType === 'daily') {
+        isDueToday = true;
+      } else if (recType === 'weekdays') {
+        // Mon-Fri
+        isDueToday = dayOfWeekNum >= 1 && dayOfWeekNum <= 5;
+      } else if (recType === 'weekly') {
+        const days = Array.isArray(tpl.recurrence_days) ? tpl.recurrence_days : [];
+        isDueToday = days.includes(dayOfWeekAbbr);
+      } else if (recType === 'interval_days') {
+        if (!tpl.last_generated_date) {
+          isDueToday = true;
+        } else {
+          const diffTime = Math.abs(new Date(todayStr) - new Date(tpl.last_generated_date));
+          const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+          isDueToday = diffDays >= (Number(tpl.interval_days) || 1);
+        }
+      } else if (recType === 'monthly') {
+        isDueToday = today.getDate() === (Number(tpl.interval_days) || 1);
+      }
+
+      if (!isDueToday) continue;
+    }
+
+    // Determine target assignees
+    let targetEmployees = [];
+    const targetType = tpl.assignee_target_type || 'all_employees';
+
+    if (targetType === 'all_employees') {
+      targetEmployees = (teamMembers || []).filter(m => m.is_active !== false && m.role !== 'Super Admin');
+      if (targetEmployees.length === 0) targetEmployees = teamMembers || [];
+    } else if (targetType === 'role') {
+      targetEmployees = (teamMembers || []).filter(m => m.role === tpl.target_role);
+      if (targetEmployees.length === 0 && tpl.default_assignee) {
+        targetEmployees = [{ full_name: tpl.default_assignee, role: tpl.target_role }];
+      }
+    } else if (targetType === 'specific_employees') {
+      const names = Array.isArray(tpl.target_employee_names) ? tpl.target_employee_names : [];
+      targetEmployees = (teamMembers || []).filter(m => names.includes(m.full_name));
+      if (targetEmployees.length === 0 && tpl.default_assignee) {
+        targetEmployees = [{ full_name: tpl.default_assignee }];
+      }
+    } else if (targetType === 'per_client') {
+      // Loop over clients
+      const targetLeads = leads || [];
+      for (const client of targetLeads) {
+        const clientAssignee = tpl.default_assignee || client.assigned_to || 'Sales Executive';
+        const taskPayload = {
+          title: `${tpl.title} — ${client.name}`,
+          description: `${tpl.description || ''}\n\nClient Contact: ${client.phone || 'N/A'}\nCompany: ${client.company_name || 'N/A'}\nInterest: ${client.property_interest || 'General'}`,
+          status: 'To Do',
+          priority: tpl.priority || 'Medium',
+          due_date: todayStr,
+          tags: Array.from(new Set([...(tpl.tags || []), 'Daily Routine', 'Auto-Scheduled'])),
+          assigned_to: clientAssignee,
+          client_name: client.name,
+          client_phone: client.phone,
+          is_recurring: true,
+          recurrence_interval: tpl.recurrence_type || 'Daily',
+        };
+        await createTask(taskPayload);
+        totalTasksGenerated++;
+      }
+      targetEmployees = [];
+    }
+
+    // Spawn for target employees
+    for (const emp of targetEmployees) {
+      const taskPayload = {
+        title: `${tpl.title}`,
+        description: tpl.description || '',
+        status: 'To Do',
+        priority: tpl.priority || 'Medium',
+        due_date: todayStr,
+        tags: Array.from(new Set([...(tpl.tags || []), 'Daily Routine', 'Auto-Scheduled'])),
+        assigned_to: emp.full_name || emp.name || tpl.default_assignee,
+        client_name: '',
+        client_phone: '',
+        is_recurring: true,
+        recurrence_interval: tpl.recurrence_type || 'Daily',
+      };
+      await createTask(taskPayload);
+      totalTasksGenerated++;
+    }
+
+    // Update last_generated_date on template
+    tpl.last_generated_date = todayStr;
+    if (isSupabaseConfigured) {
+      try {
+        await supabase.from('task_templates').update({ last_generated_date: todayStr }).eq('id', tpl.id);
+      } catch {}
+    }
+    try {
+      localStorage.setItem('erppro_task_templates', JSON.stringify(MOCK_STORE.task_templates));
+    } catch {}
+
+    triggeredRoutines.push(tpl.title);
+  }
+
+  logAuditEvent('tasks.recurring_routines_executed', 'tasks', null, {
+    totalTasksGenerated,
+    routines: triggeredRoutines,
+  });
+
+  return {
+    success: true,
+    totalTasksGenerated,
+    triggeredRoutines,
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
