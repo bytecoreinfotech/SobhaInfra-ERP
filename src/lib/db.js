@@ -1712,8 +1712,63 @@ export async function syncToGoogleSheets(webhookUrl = '') {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// REAL ESTATE FIELD OPERATIONS & SITE VISITS (Free GPS & Geotag Photo Engine)
 // ─────────────────────────────────────────────────────────────────────────────
+// REAL ESTATE FIELD OPERATIONS, LIVE GPS PINGS & SITE VISITS
+// ─────────────────────────────────────────────────────────────────────────────
+export async function updateEmployeeLivePing(pingData) {
+  const payload = {
+    employee_id: String(pingData.employee_id || 'usr-1'),
+    employee_name: pingData.employee_name || 'Field Agent',
+    role: pingData.role || 'Sales Executive',
+    lat: Number(pingData.lat || 0),
+    lng: Number(pingData.lng || 0),
+    accuracy: Number(pingData.accuracy || 10),
+    address: pingData.address || '',
+    is_live: pingData.is_live !== false,
+    last_ping: new Date().toISOString(),
+    organization_id: DEFAULT_ORG_ID,
+  };
+
+  if (isSupabaseConfigured) {
+    try {
+      const { data, error } = await supabase
+        .from('employee_live_locations')
+        .upsert(payload, { onConflict: 'employee_id' })
+        .select()
+        .single();
+      if (!error && data) return { data, error: null };
+    } catch (e) {
+      console.warn('[db] updateEmployeeLivePing fallback:', e.message);
+    }
+  }
+
+  if (!MOCK_STORE.employee_live_locations) MOCK_STORE.employee_live_locations = [];
+  const idx = MOCK_STORE.employee_live_locations.findIndex(p => p.employee_id === payload.employee_id);
+  if (idx !== -1) {
+    MOCK_STORE.employee_live_locations[idx] = { ...MOCK_STORE.employee_live_locations[idx], ...payload };
+  } else {
+    MOCK_STORE.employee_live_locations.push(payload);
+  }
+  return { data: payload, error: null };
+}
+
+export async function getEmployeeLivePings() {
+  if (isSupabaseConfigured) {
+    try {
+      const { data, error } = await supabase
+        .from('employee_live_locations')
+        .select('*')
+        .eq('is_live', true)
+        .order('last_ping', { ascending: false });
+      if (!error && data && data.length > 0) return { data, error: null };
+    } catch (err) {
+      console.warn('[db] getEmployeeLivePings fallback:', err.message);
+    }
+  }
+  const inMemory = (MOCK_STORE.employee_live_locations || []).filter(p => p.is_live);
+  return { data: inMemory, error: null };
+}
+
 export async function getSiteVisits() {
   if (isSupabaseConfigured) {
     try {
@@ -1726,16 +1781,7 @@ export async function getSiteVisits() {
       console.warn('[db] getSiteVisits fallback:', err.message);
     }
   }
-  try {
-    const local = localStorage.getItem('erppro_site_visits');
-    if (local) {
-      const parsed = JSON.parse(local);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return { data: parsed, error: null };
-      }
-    }
-  } catch {}
-  return { data: MOCK_STORE.site_visits, error: null };
+  return { data: MOCK_STORE.site_visits || [], error: null };
 }
 
 export async function createSiteVisit(visitData) {
@@ -1743,7 +1789,7 @@ export async function createSiteVisit(visitData) {
     id: 'visit-' + Date.now(),
     organization_id: DEFAULT_ORG_ID,
     employee_name: visitData.employee_name || 'Field Agent',
-    employee_id: visitData.employee_id || 'usr-1',
+    employee_id: String(visitData.employee_id || 'usr-1'),
     site_name: visitData.site_name || 'Site Inspection',
     client_name: visitData.client_name || '',
     lead_id: visitData.lead_id || null,
@@ -1769,10 +1815,8 @@ export async function createSiteVisit(visitData) {
     }
   }
 
+  if (!MOCK_STORE.site_visits) MOCK_STORE.site_visits = [];
   MOCK_STORE.site_visits.unshift(newVisit);
-  try {
-    localStorage.setItem('erppro_site_visits', JSON.stringify(MOCK_STORE.site_visits));
-  } catch {}
   logAuditEvent('field.check_in', 'site_visits', newVisit.id, {
     site_name: newVisit.site_name,
     employee: newVisit.employee_name,
@@ -1788,12 +1832,9 @@ export async function updateSiteVisit(visitId, updates) {
       if (!error && data) return { data, error: null };
     } catch {}
   }
-  const idx = MOCK_STORE.site_visits.findIndex(v => v.id === visitId);
+  const idx = (MOCK_STORE.site_visits || []).findIndex(v => v.id === visitId);
   if (idx !== -1) {
     MOCK_STORE.site_visits[idx] = { ...MOCK_STORE.site_visits[idx], ...updates };
-    try {
-      localStorage.setItem('erppro_site_visits', JSON.stringify(MOCK_STORE.site_visits));
-    } catch {}
     return { data: MOCK_STORE.site_visits[idx], error: null };
   }
   return { data: null, error: { message: 'Visit not found' } };

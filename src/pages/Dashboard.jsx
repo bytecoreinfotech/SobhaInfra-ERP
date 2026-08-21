@@ -3,9 +3,9 @@ import {
   Users, CheckSquare, IndianRupee, TrendingUp, MessageCircle,
   ArrowUpRight, ArrowDownRight, Bot, CreditCard, BarChart3,
   Clock, AlertCircle, CheckCircle2, RefreshCw, Zap, Send,
-  Phone, Star, Building2, AlertTriangle
+  Phone, Star, Building2, AlertTriangle, Navigation, Camera, MapPin
 } from 'lucide-react';
-import { getDashboardStats, getActivityFeed, getTasks, getLeads, getCampaigns, getInvoices, getTeamMembers } from '../lib/db';
+import { getDashboardStats, getActivityFeed, getTasks, getLeads, getCampaigns, getInvoices, getTeamMembers, getEmployeeLivePings, getSiteVisits } from '../lib/db';
 import { isSupabaseConfigured } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import './Pages.css';
@@ -19,13 +19,15 @@ const Dashboard = () => {
   const [campaigns, setCampaigns] = useState([]);
   const [invoices, setInvoices] = useState([]);
   const [teamMembers, setTeamMembers] = useState([]);
+  const [livePings, setLivePings] = useState([]);
+  const [recentVisits, setRecentVisits] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => { loadData(); }, []);
 
   const loadData = async () => {
     setLoading(true);
-    const [statsRes, actRes, taskRes, leadRes, campRes, invRes, membersRes] = await Promise.all([
+    const [statsRes, actRes, taskRes, leadRes, campRes, invRes, membersRes, liveRes, visitsRes] = await Promise.all([
       getDashboardStats(),
       getActivityFeed(8),
       getTasks(),
@@ -33,6 +35,8 @@ const Dashboard = () => {
       getCampaigns(),
       getInvoices(),
       getTeamMembers(),
+      getEmployeeLivePings(),
+      getSiteVisits(),
     ]);
     if (statsRes.data) setStats(statsRes.data);
     setActivities(actRes.data || []);
@@ -41,6 +45,8 @@ const Dashboard = () => {
     setCampaigns(campRes.data || []);
     setInvoices(invRes.data || []);
     setTeamMembers(membersRes.data || []);
+    setLivePings(liveRes.data || []);
+    setRecentVisits(visitsRes.data || []);
     setLoading(false);
   };
 
@@ -345,6 +351,73 @@ const Dashboard = () => {
             ))}
           </div>
         </div>
+
+        {/* Live Field Staff & GPS Tracking Widget */}
+        {hasPermission('FieldOps') && (
+          <div className="glass-card p-6" style={{ gridColumn: '1 / -1' }}>
+            <div className="section-header" style={{ marginBottom: '0.85rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span className="section-title">Live Field Staff & GPS Status</span>
+                <span className="badge badge-success" style={{ fontSize: '0.68rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                  <Navigation size={11} className="animate-pulse" /> {livePings.length} Active On-Field
+                </span>
+              </div>
+              <a href="/field-ops" className="section-link" style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                Open Live Map <ArrowUpRight size={13} />
+              </a>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1rem' }}>
+              {livePings.length === 0 ? (
+                <div style={{ padding: '1.25rem', background: 'var(--bg-secondary)', borderRadius: 8, color: 'var(--text-muted)', fontSize: '0.78rem', gridColumn: '1 / -1', textAlign: 'center' }}>
+                  No field agents currently broadcasting GPS. When agents turn on "Live Location" in their field portal, their exact live coordinates will stream here.
+                </div>
+              ) : (
+                livePings.map(agent => (
+                  <div key={agent.employee_id} style={{
+                    padding: '0.85rem 1rem', borderRadius: 10, background: 'rgba(16,185,129,0.05)',
+                    border: '1px solid rgba(16,185,129,0.25)', display: 'flex', flexDirection: 'column', gap: '0.35rem'
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontWeight: 700, fontSize: '0.88rem', color: '#10b981' }}>
+                        🟢 {agent.employee_name}
+                      </span>
+                      <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>
+                        {agent.last_ping ? new Date(agent.last_ping).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Live'}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-primary)', fontWeight: 500 }}>
+                      📍 {agent.address || `${agent.lat.toFixed(5)}°, ${agent.lng.toFixed(5)}°`}
+                    </div>
+                    <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+                      🎯 GPS Fix: {agent.lat.toFixed(5)}° N, {agent.lng.toFixed(5)}° E (±{agent.accuracy || 6}m) · {agent.role}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Latest Real Geotagged Inspection Photos */}
+            {recentVisits.filter(v => Boolean(v.photo_url)).length > 0 && (
+              <div style={{ marginTop: '1.25rem', borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
+                <div style={{ fontSize: '0.82rem', fontWeight: 700, marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                  <Camera size={14} color="var(--accent-primary)" /> Latest Geotagged Site Inspection Photos ({recentVisits.filter(v => Boolean(v.photo_url)).length})
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.75rem' }}>
+                  {recentVisits.filter(v => Boolean(v.photo_url)).slice(0, 4).map(v => (
+                    <div key={v.id} style={{ borderRadius: 8, overflow: 'hidden', border: '1px solid var(--border-color)', background: 'var(--bg-secondary)' }}>
+                      <img src={v.photo_url} alt={v.site_name} style={{ width: '100%', height: 110, objectFit: 'cover' }} />
+                      <div style={{ padding: '0.5rem' }}>
+                        <div style={{ fontWeight: 600, fontSize: '0.78rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{v.site_name}</div>
+                        <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>👤 {v.employee_name} · {new Date(v.check_in_time || v.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Module Health */}
         <div className="glass-card p-6" style={{ gridColumn: '1 / -1' }}>

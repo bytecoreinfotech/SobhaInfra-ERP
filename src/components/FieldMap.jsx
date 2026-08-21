@@ -1,16 +1,19 @@
 import React, { useEffect, useRef } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { User, MapPin, Clock, Camera, MessageCircle, ExternalLink } from 'lucide-react';
+import { User, MapPin, Clock, Camera, MessageCircle, ExternalLink, Navigation } from 'lucide-react';
 
 /**
  * FieldMap Component:
- * Interactive OpenStreetMap (100% Free Leaflet.js engine) showing live field employees & site visits.
+ * Interactive OpenStreetMap (100% Free Leaflet.js engine) showing real-time live field employees & site visits.
  */
 const FieldMap = ({
   visits = [],
+  liveAgents = [],
   selectedVisit = null,
+  selectedAgent = null,
   onSelectVisit = () => {},
+  onSelectAgent = () => {},
   onViewPhoto = () => {},
   height = '480px',
 }) => {
@@ -21,9 +24,9 @@ const FieldMap = ({
   useEffect(() => {
     if (!mapContainerRef.current) return;
 
-    // Default center (India / Delhi NCR or first visit location)
-    const defaultLat = visits[0]?.lat || 28.5355;
-    const defaultLng = visits[0]?.lng || 77.3910;
+    // Default center (Delhi NCR / India or first coordinate)
+    const defaultLat = liveAgents[0]?.lat || visits[0]?.lat || 28.5355;
+    const defaultLng = liveAgents[0]?.lng || visits[0]?.lng || 77.3910;
 
     if (!mapInstanceRef.current) {
       const map = L.map(mapContainerRef.current, {
@@ -32,7 +35,6 @@ const FieldMap = ({
         zoomControl: true,
       });
 
-      // Free OpenStreetMap CartoDB Dark/Voyager or standard OSM Tiles
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
         maxZoom: 19,
@@ -49,15 +51,103 @@ const FieldMap = ({
 
     const bounds = [];
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // 1. RENDER LIVE EMPLOYEE GPS BROADCASTING PINS (Green Pulsating Radar)
+    // ─────────────────────────────────────────────────────────────────────────
+    liveAgents.forEach((agent) => {
+      if (!agent.lat || !agent.lng) return;
+      bounds.push([agent.lat, agent.lng]);
+
+      const liveIcon = L.divIcon({
+        className: 'custom-live-agent-pin',
+        html: `
+          <div style="
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #10b981, #059669);
+            color: #ffffff;
+            font-weight: 800;
+            font-size: 12px;
+            box-shadow: 0 0 20px rgba(16,185,129,0.8), 0 4px 12px rgba(0,0,0,0.5);
+            border: 2.5px solid #ffffff;
+            cursor: pointer;
+          ">
+            <span>${(agent.employee_name || 'A').slice(0, 2).toUpperCase()}</span>
+            <div style="
+              position: absolute;
+              top: -6px;
+              right: -6px;
+              width: 14px;
+              height: 14px;
+              border-radius: 50%;
+              background: #22c55e;
+              border: 2px solid #ffffff;
+              box-shadow: 0 0 10px #22c55e;
+            "></div>
+          </div>
+        `,
+        iconSize: [40, 40],
+        iconAnchor: [20, 20],
+        popupAnchor: [0, -22],
+      });
+
+      const marker = L.marker([agent.lat, agent.lng], { icon: liveIcon, zIndexOffset: 1000 }).addTo(map);
+
+      const popupHtml = `
+        <div style="font-family: Outfit, Inter, sans-serif; min-width: 230px; color: #1e293b; padding: 4px;">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+            <strong style="font-size: 13px; color: #0f172a;">👤 ${agent.employee_name}</strong>
+            <span style="
+              font-size: 9px;
+              font-weight: 800;
+              padding: 2px 6px;
+              border-radius: 20px;
+              background: #dcfce7;
+              color: #166534;
+              display: flex;
+              align-items: center;
+              gap: 3px;
+            ">● LIVE GPS</span>
+          </div>
+
+          <div style="font-size: 11px; color: #0284c7; font-weight: 600; margin-bottom: 3px;">
+            🏢 Role: ${agent.role || 'Field Staff'}
+          </div>
+
+          <div style="font-size: 11px; color: #475569; margin-bottom: 5px; line-height: 1.3;">
+            📍 ${agent.address || 'Broadcasting Live Coordinates'}
+          </div>
+
+          <div style="font-size: 10px; color: #0284c7; background: #f0f9ff; padding: 4px 6px; border-radius: 4px; margin-bottom: 6px;">
+            🎯 Exact GPS: ${agent.lat.toFixed(5)}° N, ${agent.lng.toFixed(5)}° E (±${agent.accuracy || 6}m)
+          </div>
+
+          <div style="font-size: 10px; color: #94a3b8;">
+            ⏱️ Last Ping: ${agent.last_ping ? new Date(agent.last_ping).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : 'Active'}
+          </div>
+        </div>
+      `;
+
+      marker.bindPopup(popupHtml);
+      marker.on('click', () => onSelectAgent(agent));
+      markersRef.current.push(marker);
+    });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 2. RENDER PROPERTY INSPECTION VISITS & REAL PHOTOS
+    // ─────────────────────────────────────────────────────────────────────────
     visits.forEach((v) => {
       if (!v.lat || !v.lng) return;
-
       bounds.push([v.lat, v.lng]);
 
       const isCompleted = v.status === 'Completed';
-      const markerColor = isCompleted ? '#10b981' : '#6366f1';
+      const markerColor = isCompleted ? '#3b82f6' : '#6366f1';
 
-      // Custom animated HTML pin
       const customIcon = L.divIcon({
         className: 'custom-field-pin',
         html: `
@@ -66,72 +156,63 @@ const FieldMap = ({
             display: flex;
             align-items: center;
             justify-content: center;
-            width: 36px;
-            height: 36px;
+            width: 34px;
+            height: 34px;
             border-radius: 50%;
             background: ${markerColor};
             color: #ffffff;
             font-weight: 700;
             font-size: 11px;
-            box-shadow: 0 0 15px ${markerColor}aa, 0 4px 10px rgba(0,0,0,0.5);
+            box-shadow: 0 0 12px ${markerColor}99, 0 3px 8px rgba(0,0,0,0.4);
             border: 2px solid #ffffff;
             cursor: pointer;
           ">
-            <span>${(v.employee_name || 'A').slice(0, 2).toUpperCase()}</span>
-            ${!isCompleted ? `<div style="
-              position: absolute;
-              top: -3px;
-              right: -3px;
-              width: 10px;
-              height: 10px;
-              border-radius: 50%;
-              background: #22c55e;
-              border: 1.5px solid #ffffff;
-              animation: ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite;
-            "></div>` : ''}
+            <span>🏢</span>
           </div>
         `,
-        iconSize: [36, 36],
-        iconAnchor: [18, 18],
-        popupAnchor: [0, -20],
+        iconSize: [34, 34],
+        iconAnchor: [17, 17],
+        popupAnchor: [0, -18],
       });
 
       const marker = L.marker([v.lat, v.lng], { icon: customIcon }).addTo(map);
 
-      // Popup Content Card
       const popupHtml = `
-        <div style="font-family: Outfit, sans-serif; min-width: 220px; color: #1e293b; padding: 2px;">
-          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
-            <strong style="font-size: 13px; color: #0f172a;">👤 ${v.employee_name}</strong>
+        <div style="font-family: Outfit, Inter, sans-serif; min-width: 230px; color: #1e293b; padding: 4px;">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 5px;">
+            <strong style="font-size: 13px; color: #0f172a;">🏢 ${v.site_name}</strong>
             <span style="
-              font-size: 10px;
+              font-size: 9px;
               font-weight: 700;
               padding: 2px 6px;
               border-radius: 4px;
-              background: ${isCompleted ? '#dcfce7' : '#e0e7ff'};
-              color: ${isCompleted ? '#166534' : '#3730a3'};
+              background: ${isCompleted ? '#dbeafe' : '#fef3c7'};
+              color: ${isCompleted ? '#1e40af' : '#92400e'};
             ">${v.status}</span>
           </div>
 
-          <div style="font-size: 12px; font-weight: 600; color: #334155; margin-bottom: 3px;">
-            🏢 ${v.site_name}
+          <div style="font-size: 11px; color: #6366f1; font-weight: 600; margin-bottom: 2px;">
+            👤 Agent: ${v.employee_name} ${v.client_name ? `· Client: ${v.client_name}` : ''}
           </div>
 
-          <div style="font-size: 11px; color: #64748b; margin-bottom: 6px;">
-            📍 ${v.address || 'Field Location'}
+          <div style="font-size: 11px; color: #64748b; margin-bottom: 5px; line-height: 1.3;">
+            📍 ${v.address || 'Site Location'}
           </div>
 
-          <div style="font-size: 10px; color: #94a3b8; margin-bottom: 8px;">
-            ⏱️ Check-In: ${new Date(v.check_in_time || v.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} (Accuracy: ±${v.accuracy || 10}m)
+          <div style="font-size: 10px; color: #94a3b8; margin-bottom: 6px;">
+            ⏱️ ${new Date(v.check_in_time || v.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} (Accuracy: ±${v.accuracy || 8}m)
           </div>
 
           ${v.photo_url ? `
-            <div style="margin-bottom: 8px;">
-              <img src="${v.photo_url}" alt="Site Photo" style="width: 100%; height: 95px; object-fit: cover; border-radius: 6px; border: 1px solid #e2e8f0; cursor: pointer;" id="popup-img-${v.id}" />
+            <div style="margin-bottom: 6px; position: relative;">
+              <img src="${v.photo_url}" alt="Site Photo" style="width: 100%; height: 110px; object-fit: cover; border-radius: 6px; border: 1px solid #cbd5e1; cursor: pointer;" id="popup-img-${v.id}" />
+              <div style="position: absolute; bottom: 4px; right: 4px; background: rgba(0,0,0,0.7); color: #10b981; padding: 2px 6px; border-radius: 4px; font-size: 9px; font-weight: 700;">
+                🛡️ Watermarked Photo
+              </div>
             </div>
           ` : ''}
 
-          <div style="display: flex; gap: 6px;">
+          <div style="display: flex; gap: 4px;">
             ${v.lead_phone ? `
               <a href="https://wa.me/${v.lead_phone.replace(/\\D/g, '')}" target="_blank" rel="noreferrer" style="
                 flex: 1;
@@ -139,9 +220,9 @@ const FieldMap = ({
                 background: #25D366;
                 color: #ffffff;
                 text-decoration: none;
-                font-size: 11px;
+                font-size: 10px;
                 font-weight: 600;
-                padding: 4px 6px;
+                padding: 4px;
                 border-radius: 4px;
               ">
                 💬 WhatsApp
@@ -152,9 +233,9 @@ const FieldMap = ({
               background: #6366f1;
               color: #ffffff;
               border: none;
-              font-size: 11px;
+              font-size: 10px;
               font-weight: 600;
-              padding: 4px 6px;
+              padding: 4px;
               border-radius: 4px;
               cursor: pointer;
             ">
@@ -178,20 +259,17 @@ const FieldMap = ({
     });
 
     if (bounds.length > 0) {
-      map.fitBounds(bounds, { padding: [40, 40], maxZoom: 15 });
+      map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
     }
+  }, [visits, liveAgents]);
 
-    return () => {
-      // Cleanup on unmount
-    };
-  }, [visits]);
-
-  // Center on selected visit if changed
+  // Center on selected item
   useEffect(() => {
-    if (selectedVisit && mapInstanceRef.current && selectedVisit.lat && selectedVisit.lng) {
-      mapInstanceRef.current.setView([selectedVisit.lat, selectedVisit.lng], 15, { animate: true });
+    const target = selectedVisit || selectedAgent;
+    if (target && mapInstanceRef.current && target.lat && target.lng) {
+      mapInstanceRef.current.setView([target.lat, target.lng], 16, { animate: true });
     }
-  }, [selectedVisit]);
+  }, [selectedVisit, selectedAgent]);
 
   return (
     <div style={{ position: 'relative', width: '100%', height, borderRadius: 12, overflow: 'hidden', border: '1px solid var(--border-color)' }}>
@@ -200,17 +278,17 @@ const FieldMap = ({
       {/* Floating Legend */}
       <div style={{
         position: 'absolute', bottom: 12, right: 12, zIndex: 1000,
-        background: 'rgba(11, 13, 26, 0.88)', backdropFilter: 'blur(8px)',
-        padding: '0.5rem 0.75rem', borderRadius: 8, border: '1px solid var(--border-color)',
+        background: 'rgba(11, 13, 26, 0.92)', backdropFilter: 'blur(8px)',
+        padding: '0.45rem 0.75rem', borderRadius: 8, border: '1px solid var(--border-color)',
         fontSize: '0.72rem', display: 'flex', gap: '0.85rem', color: 'var(--text-secondary)'
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-          <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#6366f1' }} />
-          <span>Active On-Site</span>
+          <span style={{ width: 9, height: 9, borderRadius: '50%', background: '#10b981', boxShadow: '0 0 6px #10b981' }} />
+          <span style={{ fontWeight: 600, color: '#10b981' }}>Live Active Agent</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-          <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#10b981' }} />
-          <span>Completed Visit</span>
+          <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#6366f1' }} />
+          <span>Site Inspection</span>
         </div>
       </div>
     </div>

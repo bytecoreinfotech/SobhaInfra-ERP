@@ -192,3 +192,57 @@ DO $$ BEGIN
   CREATE POLICY "tasks_anon_all" ON public.tasks FOR ALL USING (true) WITH CHECK (true);
 EXCEPTION WHEN OTHERS THEN NULL;
 END $$;
+
+-- 13. Ensure 'site_visits' table exists
+CREATE TABLE IF NOT EXISTS public.site_visits (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id UUID DEFAULT '00000000-0000-0000-0000-000000000001',
+  employee_name TEXT NOT NULL,
+  employee_id TEXT NOT NULL,
+  site_name TEXT NOT NULL,
+  client_name TEXT DEFAULT '',
+  lead_id TEXT DEFAULT NULL,
+  lead_phone TEXT DEFAULT '',
+  purpose TEXT DEFAULT 'Site Inspection',
+  lat DOUBLE PRECISION NOT NULL DEFAULT 0,
+  lng DOUBLE PRECISION NOT NULL DEFAULT 0,
+  accuracy INTEGER DEFAULT 10,
+  address TEXT DEFAULT '',
+  status TEXT DEFAULT 'In Progress',
+  check_in_time TIMESTAMPTZ DEFAULT now(),
+  photo_url TEXT,
+  notes TEXT DEFAULT '',
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- 14. Ensure 'employee_live_locations' table exists for real-time tracking
+CREATE TABLE IF NOT EXISTS public.employee_live_locations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id UUID DEFAULT '00000000-0000-0000-0000-000000000001',
+  employee_id TEXT NOT NULL UNIQUE,
+  employee_name TEXT NOT NULL,
+  role TEXT DEFAULT 'Sales Executive',
+  lat DOUBLE PRECISION NOT NULL,
+  lng DOUBLE PRECISION NOT NULL,
+  accuracy INTEGER DEFAULT 10,
+  address TEXT DEFAULT '',
+  is_live BOOLEAN DEFAULT true,
+  last_ping TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+ALTER TABLE public.site_visits ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.employee_live_locations ENABLE ROW LEVEL SECURITY;
+
+DO $$ BEGIN
+  DROP POLICY IF EXISTS "site_visits_anon_all" ON public.site_visits;
+  CREATE POLICY "site_visits_anon_all" ON public.site_visits FOR ALL USING (true) WITH CHECK (true);
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+DO $$ BEGIN
+  DROP POLICY IF EXISTS "employee_live_locations_anon_all" ON public.employee_live_locations;
+  CREATE POLICY "employee_live_locations_anon_all" ON public.employee_live_locations FOR ALL USING (true) WITH CHECK (true);
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+

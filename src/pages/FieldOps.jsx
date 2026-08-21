@@ -3,9 +3,10 @@ import {
   MapPin, Camera, Navigation, User, Users, Building, Calendar,
   Clock, CheckCircle, Plus, Search, Filter, Download, RefreshCw,
   ExternalLink, MessageCircle, AlertCircle, Eye, ShieldCheck, Check,
-  Radio, Power, ToggleLeft, ToggleRight, ArrowRight, X, Image as ImageIcon
+  Radio, Power, ToggleLeft, ToggleRight, ArrowRight, X, Image as ImageIcon,
+  Activity, Signal
 } from 'lucide-react';
-import { getSiteVisits, createSiteVisit, updateSiteVisit, getLeads, getTeamMembers } from '../lib/db';
+import { getSiteVisits, createSiteVisit, updateSiteVisit, getLeads, getTeamMembers, updateEmployeeLivePing, getEmployeeLivePings, reverseGeocode } from '../lib/db';
 import { useAuth } from '../context/AuthContext';
 import FieldMap from '../components/FieldMap';
 import GeotaggedCameraModal from '../components/GeotaggedCameraModal';
@@ -21,13 +22,15 @@ const FieldOps = () => {
   const isSupervisor = canViewAll || canApprove || user?.role === 'Super Admin' || user?.role === 'Manager';
 
   const [visits, setVisits] = useState([]);
+  const [liveAgents, setLiveAgents] = useState([]);
   const [leads, setLeads] = useState([]);
   const [teamMembers, setTeamMembers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('map'); // 'map' | 'gallery' | 'logs'
 
-  // Selected visit for map focus / drawer
+  // Selected visit / agent for map focus
   const [selectedVisit, setSelectedVisit] = useState(null);
+  const [selectedAgent, setSelectedAgent] = useState(null);
   const [previewPhotoUrl, setPreviewPhotoUrl] = useState(null);
 
   // Employee Live Location State
@@ -68,25 +71,54 @@ const FieldOps = () => {
 
   useEffect(() => {
     loadAllData();
-    if (navigator.geolocation) {
-      fetchCurrentGps();
+
+    // If supervisor, set up periodic polling for real-time live map updates
+    let pollInterval = null;
+    if (isSupervisor) {
+      pollInterval = setInterval(async () => {
+        const [liveRes, visitsRes] = await Promise.all([
+          getEmployeeLivePings(),
+          getSiteVisits()
+        ]);
+        if (liveRes.data) setLiveAgents(liveRes.data);
+        if (visitsRes.data) setVisits(visitsRes.data);
+      }, 10000);
     }
-  }, []);
+
+    // If field employee, acquire real-time GPS and send live ping
+    if (!isSupervisor && navigator.geolocation) {
+      fetchCurrentGps();
+      const pingTimer = setInterval(() => {
+        if (liveLocationActive) fetchCurrentGps();
+      }, 15000);
+      return () => {
+        clearInterval(pingTimer);
+        if (pollInterval) clearInterval(pollInterval);
+      };
+    }
+
+    return () => {
+      if (pollInterval) clearInterval(pollInterval);
+    };
+  }, [isSupervisor, liveLocationActive]);
 
   const loadAllData = async () => {
     setLoading(true);
-    const [visitsRes, leadsRes, usersRes] = await Promise.all([
+    const [visitsRes, liveRes, leadsRes, usersRes] = await Promise.all([
       getSiteVisits(),
+      getEmployeeLivePings(),
       getLeads(),
       getTeamMembers(),
     ]);
 
     setVisits(visitsRes.data || []);
+    setLiveAgents(liveRes.data || []);
     setLeads(leadsRes.data || []);
     setTeamMembers(usersRes.data || []);
     setLoading(false);
   };
 
+  // Acquire real device GPS and broadcast live ping to Supabase
   const fetchCurrentGps = () => {
     setLocatingGps(true);
     if (!navigator.geolocation) {
@@ -95,14 +127,22 @@ const FieldOps = () => {
     }
 
     navigator.geolocation.getCurrentPosition(
-      (pos) => {
+      async (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        const accuracy = Math.round(pos.coords.accuracy || 6);
+
+        // Reverse geocode to exact real street address
+        const realAddress = await reverseGeocode(lat, lng);
+
         const newCoords = {
-          lat: pos.coords.latitude,
-          lng: pos.coords.longitude,
-          accuracy: Math.round(pos.coords.accuracy || 8),
-          address: `GPS: ${pos.coords.latitude.toFixed(4)}° N, ${pos.coords.longitude.toFixed(4)}° E`,
+          lat,
+          lng,
+          accuracy,
+          address: realAddress,
           lastUpdated: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
         };
+
         setCurrentGps(newCoords);
         setCheckInForm(p => ({
           ...p,
@@ -112,22 +152,44 @@ const FieldOps = () => {
           address: newCoords.address,
         }));
         setLocatingGps(false);
+
+        // Broadcast live GPS ping to Supabase
+        if (user && liveLocationActive) {
+          await updateEmployeeLivePing({
+            employee_id: user.id || user.email || 'usr-3',
+            employee_name: user.name || 'Field Agent',
+            role: user.role || 'Sales Executive',
+            lat,
+            lng,
+            accuracy,
+            address: realAddress,
+            is_live: true
+          });
+        }
       },
       (err) => {
-        console.warn('GPS error:', err.message);
+        console.warn('GPS position acquire notice:', err.message);
         setLocatingGps(false);
       },
-      { enableHighAccuracy: true, timeout: 10000 }
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
   };
 
-  const handleToggleLiveLocation = () => {
+  const handleToggleLiveLocation = async () => {
     const nextState = !liveLocationActive;
     setLiveLocationActive(nextState);
+
     if (nextState) {
       fetchCurrentGps();
-      setFeedbackMsg({ type: 'success', text: 'Live location broadcasting enabled. Admin can now track your on-field presence.' });
+      setFeedbackMsg({ type: 'success', text: 'Live location broadcasting enabled. Exact GPS coordinates are now streaming to Super Admin.' });
     } else {
+      if (user) {
+        await updateEmployeeLivePing({
+          employee_id: user.id || user.email || 'usr-3',
+          employee_name: user.name || 'Field Agent',
+          is_live: false
+        });
+      }
       setFeedbackMsg({ type: 'info', text: 'Live location broadcasting paused.' });
     }
     setTimeout(() => setFeedbackMsg(null), 3500);
@@ -160,7 +222,7 @@ const FieldOps = () => {
     const submissionData = {
       ...checkInForm,
       employee_name: user?.name || 'Field Agent',
-      employee_id: user?.id || 'usr-1',
+      employee_id: String(user?.id || user?.email || 'usr-1'),
     };
 
     const { data } = await createSiteVisit(submissionData);
@@ -181,7 +243,7 @@ const FieldOps = () => {
         accuracy: currentGps.accuracy,
         photo_url: null,
       });
-      setFeedbackMsg({ type: 'success', text: 'Site inspection check-in submitted successfully with live GPS & photo proof!' });
+      setFeedbackMsg({ type: 'success', text: 'Site inspection check-in submitted successfully with real-time GPS & live photo proof!' });
       setTimeout(() => setFeedbackMsg(null), 4000);
     }
     setSubmitting(false);
@@ -215,13 +277,12 @@ const FieldOps = () => {
     return matchesSearch && matchesStatus;
   });
 
-  const activeOnFieldCount = visits.filter(v => v.status === 'In Progress').length;
+  const activeOnFieldCount = liveAgents.length || visits.filter(v => v.status === 'In Progress').length;
   const photosSnappedCount = visits.filter(v => Boolean(v.photo_url)).length;
   const uniqueSitesCount = new Set(visits.map(v => v.site_name)).size;
 
   return (
     <div className="page-container animate-fade-in">
-
       {/* ═══════════════════════════════════════════════════════════════════ */}
       {/* VIEW A: FIELD EMPLOYEE PORTAL (Live GPS Toggle + Live Camera Check-in) */}
       {/* ═══════════════════════════════════════════════════════════════════ */}
@@ -265,7 +326,7 @@ const FieldOps = () => {
                   <div>
                     <h3 style={{ fontSize: '0.95rem', fontWeight: 700, margin: 0 }}>Live Location Sharing</h3>
                     <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                      {liveLocationActive ? 'Broadcasting live to Admin Supervisor map' : 'Location sharing currently paused'}
+                      {liveLocationActive ? 'Broadcasting live GPS to Admin Supervisor Map' : 'Location sharing currently paused'}
                     </span>
                   </div>
                 </div>
@@ -287,7 +348,7 @@ const FieldOps = () => {
                 <div style={{ padding: '0.75rem', borderRadius: 8, background: 'rgba(16,185,129,0.06)', border: '1px solid rgba(16,185,129,0.2)' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
                     <span style={{ fontSize: '0.78rem', fontWeight: 600, color: '#10b981' }}>
-                      📍 Live GPS Coordinates
+                      📍 Exact Real-Time GPS Coordinates
                     </span>
                     <button
                       onClick={fetchCurrentGps}
@@ -295,14 +356,14 @@ const FieldOps = () => {
                       className="btn btn-secondary btn-sm"
                       style={{ fontSize: '0.68rem', padding: '0.15rem 0.45rem', height: 'auto' }}
                     >
-                      <RefreshCw size={11} className={locatingGps ? 'animate-spin' : ''} /> Refresh GPS
+                      <RefreshCw size={11} className={locatingGps ? 'animate-spin' : ''} /> Refetch GPS Fix
                     </button>
                   </div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-primary)', fontWeight: 600, marginBottom: '0.2rem' }}>
-                    {currentGps.lat.toFixed(5)}° N, {currentGps.lng.toFixed(5)}° E (±{currentGps.accuracy}m Accuracy)
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text-primary)', fontWeight: 700, marginBottom: '0.2rem' }}>
+                    {currentGps.lat.toFixed(6)}° N, {currentGps.lng.toFixed(6)}° E (±{currentGps.accuracy}m Accuracy)
                   </div>
-                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-                    {currentGps.address} • Last Sync: {currentGps.lastUpdated}
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                    🏠 {currentGps.address} • Last Sync: {currentGps.lastUpdated}
                   </div>
                 </div>
               ) : (
@@ -421,7 +482,7 @@ const FieldOps = () => {
             </div>
             <div className="page-actions">
               <button className="btn btn-secondary" onClick={loadAllData}>
-                <RefreshCw size={15} className={loading ? 'animate-spin' : ''} /> Refresh Map
+                <RefreshCw size={15} className={loading ? 'animate-spin' : ''} /> Refresh Live Data
               </button>
             </div>
           </div>
@@ -431,11 +492,11 @@ const FieldOps = () => {
             <div className="glass-card stat-card">
               <div className="stat-header">
                 <div>
-                  <div className="stat-label">Active Agents on Field</div>
-                  <div className="stat-value">{activeOnFieldCount}</div>
+                  <div className="stat-label">Active Agents Broadcasting GPS</div>
+                  <div className="stat-value">{liveAgents.length}</div>
                 </div>
-                <div className="stat-icon" style={{ background: 'rgba(99,102,241,0.15)', color: '#6366f1' }}>
-                  <Navigation size={22} />
+                <div className="stat-icon" style={{ background: 'rgba(16,185,129,0.15)', color: '#10b981' }}>
+                  <Navigation size={22} className="animate-pulse" />
                 </div>
               </div>
             </div>
@@ -446,7 +507,7 @@ const FieldOps = () => {
                   <div className="stat-label">Total Visits Logged</div>
                   <div className="stat-value">{visits.length}</div>
                 </div>
-                <div className="stat-icon" style={{ background: 'rgba(16,185,129,0.15)', color: '#10b981' }}>
+                <div className="stat-icon" style={{ background: 'rgba(99,102,241,0.15)', color: '#6366f1' }}>
                   <Building size={22} />
                 </div>
               </div>
@@ -480,7 +541,7 @@ const FieldOps = () => {
           {/* Sub Navigation Tabs */}
           <div style={{ display: 'flex', borderBottom: '1px solid var(--border-color)', marginBottom: '1.25rem' }}>
             {[
-              { id: 'map', label: 'Live Field Map & Tracking', icon: <MapPin size={15} /> },
+              { id: 'map', label: `Live Field Map (${liveAgents.length} Active)`, icon: <MapPin size={15} /> },
               { id: 'gallery', label: `Geotagged Photo Gallery (${photosSnappedCount})`, icon: <Camera size={15} /> },
               { id: 'logs', label: `Inspection Logs & Approval (${visits.length})`, icon: <CheckCircle size={15} /> },
             ].map(tab => (
@@ -503,28 +564,80 @@ const FieldOps = () => {
 
           {/* TAB 1: Live Field Map */}
           {activeTab === 'map' && (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: '1.25rem', alignItems: 'start' }}>
-              <div className="glass-card" style={{ padding: '1rem', minHeight: 480 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 360px', gap: '1.25rem', alignItems: 'start' }}>
+              <div className="glass-card" style={{ padding: '1rem', minHeight: 520 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-                  <div style={{ fontWeight: 600, fontSize: '0.88rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                    <Navigation size={15} color="var(--accent-primary)" />
-                    Live Real-Time Agent Location Pins
+                  <div style={{ fontWeight: 700, fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                    <Navigation size={15} color="#10b981" className="animate-pulse" />
+                    Live Employee GPS Pins & Site Inspections
                   </div>
-                  <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Powered by OpenStreetMap & Leaflet</span>
+                  <span style={{ fontSize: '0.7rem', color: '#10b981', fontWeight: 600 }}>● Auto-refreshing every 10s</span>
                 </div>
-                <FieldMap visits={visits} selectedVisit={selectedVisit} />
+                <FieldMap
+                  visits={visits}
+                  liveAgents={liveAgents}
+                  selectedVisit={selectedVisit}
+                  selectedAgent={selectedAgent}
+                  onSelectVisit={v => setSelectedVisit(v)}
+                  onSelectAgent={a => setSelectedAgent(a)}
+                  onViewPhoto={url => setPreviewPhotoUrl(url)}
+                />
               </div>
 
-              {/* Sidebar: Agents Activity */}
-              <div className="glass-card" style={{ padding: '1rem', maxHeight: 540, overflowY: 'auto' }}>
-                <div style={{ fontWeight: 700, fontSize: '0.88rem', marginBottom: '0.25rem' }}>
-                  Field Agents Activity
+              {/* Sidebar: Active Agents Roster & Visits */}
+              <div className="glass-card" style={{ padding: '1rem', maxHeight: 560, overflowY: 'auto' }}>
+                <div style={{ fontWeight: 700, fontSize: '0.88rem', marginBottom: '0.2rem' }}>
+                  Active Field Agents ({liveAgents.length})
                 </div>
                 <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '0.85rem' }}>
-                  Click any agent to locate on map
+                  Click to zoom on exact coordinates
                 </div>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+                {liveAgents.length === 0 ? (
+                  <div style={{ padding: '1rem', background: 'var(--bg-secondary)', borderRadius: 8, textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.75rem', marginBottom: '1rem' }}>
+                    No agents broadcasting GPS right now. Tell staff to turn on "Live Location" in their field portal.
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1rem' }}>
+                    {liveAgents.map(a => {
+                      const isSelected = selectedAgent?.employee_id === a.employee_id;
+                      return (
+                        <div
+                          key={a.employee_id}
+                          onClick={() => { setSelectedAgent(a); setSelectedVisit(null); }}
+                          style={{
+                            padding: '0.65rem 0.85rem', borderRadius: 8,
+                            background: isSelected ? 'rgba(16,185,129,0.15)' : 'rgba(16,185,129,0.05)',
+                            border: `1px solid ${isSelected ? '#10b981' : 'rgba(16,185,129,0.25)'}`,
+                            cursor: 'pointer', transition: 'all 0.2s ease'
+                          }}
+                        >
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.2rem' }}>
+                            <span style={{ fontWeight: 700, fontSize: '0.82rem', color: '#10b981' }}>
+                              🟢 {a.employee_name}
+                            </span>
+                            <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>
+                              {a.last_ping ? new Date(a.last_ping).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Live'}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: '0.7rem', color: 'var(--text-primary)', marginBottom: '0.15rem' }}>
+                            📍 {a.address || `${a.lat.toFixed(5)}°, ${a.lng.toFixed(5)}°`}
+                          </div>
+                          <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>
+                            🎯 GPS Accuracy: ±{a.accuracy || 6}m · {a.role}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Submitted Inspections List */}
+                <div style={{ fontWeight: 700, fontSize: '0.85rem', marginBottom: '0.4rem', borderTop: '1px solid var(--border-color)', paddingTop: '0.75rem' }}>
+                  Latest Inspection Logs ({visits.length})
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
                   {visits.map(v => {
                     const isSelected = selectedVisit?.id === v.id;
                     const isCompleted = v.status === 'Completed';
@@ -532,27 +645,24 @@ const FieldOps = () => {
                     return (
                       <div
                         key={v.id}
-                        onClick={() => setSelectedVisit(v)}
+                        onClick={() => { setSelectedVisit(v); setSelectedAgent(null); }}
                         style={{
-                          padding: '0.75rem', borderRadius: 8,
+                          padding: '0.65rem 0.85rem', borderRadius: 8,
                           background: isSelected ? 'rgba(99,102,241,0.12)' : 'var(--bg-secondary)',
                           border: `1px solid ${isSelected ? 'var(--accent-primary)' : 'var(--border-color)'}`,
                           cursor: 'pointer', transition: 'all 0.2s ease',
                         }}
                       >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.25rem' }}>
-                          <div style={{ fontWeight: 600, fontSize: '0.82rem' }}>
-                            👤 {v.employee_name}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.2rem' }}>
+                          <div style={{ fontWeight: 600, fontSize: '0.8rem' }}>
+                            🏢 {v.site_name}
                           </div>
-                          <span className={`badge ${isCompleted ? 'badge-success' : 'badge-warning'}`} style={{ fontSize: '0.62rem' }}>
+                          <span className={`badge ${isCompleted ? 'badge-success' : 'badge-warning'}`} style={{ fontSize: '0.6rem' }}>
                             {v.status}
                           </span>
                         </div>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-primary)', fontWeight: 500, marginBottom: '0.2rem' }}>
-                          🏢 {v.site_name}
-                        </div>
-                        <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginBottom: '0.35rem', lineHeight: 1.3 }}>
-                          📍 {v.address}
+                        <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>
+                          👤 {v.employee_name} · 📍 {v.address}
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.65rem', color: 'var(--text-muted)' }}>
                           <span>⏱️ {new Date(v.check_in_time || v.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
@@ -560,9 +670,9 @@ const FieldOps = () => {
                             <button
                               className="btn btn-secondary btn-sm"
                               onClick={(e) => { e.stopPropagation(); setPreviewPhotoUrl(v.photo_url); }}
-                              style={{ fontSize: '0.62rem', padding: '0.1rem 0.4rem', height: 'auto' }}
+                              style={{ fontSize: '0.62rem', padding: '0.1rem 0.4rem', height: 'auto', color: '#10b981' }}
                             >
-                              <Camera size={11} /> Photo Proof
+                              <Camera size={11} /> Real Photo
                             </button>
                           )}
                         </div>
@@ -596,23 +706,24 @@ const FieldOps = () => {
                 <div className="glass-card" style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>
                   <Camera size={36} style={{ marginBottom: '0.5rem', opacity: 0.3 }} />
                   <div style={{ fontWeight: 600 }}>No site inspection photos captured yet</div>
+                  <div style={{ fontSize: '0.75rem', marginTop: '0.25rem' }}>Photos snapped by field agents using their mobile camera will appear here automatically.</div>
                 </div>
               ) : (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem' }}>
                   {visits.filter(v => Boolean(v.photo_url)).map(v => (
                     <div key={v.id} className="glass-card" style={{ padding: '0.75rem', overflow: 'hidden' }}>
                       <div
-                        style={{ position: 'relative', height: 180, borderRadius: 8, overflow: 'hidden', cursor: 'pointer', marginBottom: '0.65rem' }}
+                        style={{ position: 'relative', height: 190, borderRadius: 8, overflow: 'hidden', cursor: 'pointer', marginBottom: '0.65rem' }}
                         onClick={() => setPreviewPhotoUrl(v.photo_url)}
                       >
                         <img src={v.photo_url} alt={v.site_name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                        <div style={{ position: 'absolute', bottom: 6, right: 6, background: 'rgba(0,0,0,0.7)', color: 'white', padding: '0.2rem 0.5rem', borderRadius: 4, fontSize: '0.65rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                          <Eye size={11} /> Zoom Proof
+                        <div style={{ position: 'absolute', bottom: 6, right: 6, background: 'rgba(0,0,0,0.75)', color: '#10b981', padding: '0.2rem 0.5rem', borderRadius: 4, fontSize: '0.65rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                          <ShieldCheck size={12} /> Geotagged Proof
                         </div>
                       </div>
-                      <div style={{ fontWeight: 700, fontSize: '0.85rem', marginBottom: '0.2rem' }}>{v.site_name}</div>
-                      <div style={{ fontSize: '0.72rem', color: 'var(--accent-primary)', marginBottom: '0.2rem' }}>👤 {v.employee_name}</div>
-                      <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>📍 {v.address}</div>
+                      <div style={{ fontWeight: 700, fontSize: '0.88rem', marginBottom: '0.2rem' }}>{v.site_name}</div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--accent-primary)', marginBottom: '0.2rem' }}>👤 Agent: {v.employee_name}</div>
+                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>📍 {v.address}</div>
                     </div>
                   ))}
                 </div>
@@ -661,7 +772,7 @@ const FieldOps = () => {
                             <button
                               className="btn btn-secondary btn-sm"
                               onClick={() => setPreviewPhotoUrl(v.photo_url)}
-                              style={{ fontSize: '0.7rem', padding: '0.2rem 0.5rem' }}
+                              style={{ fontSize: '0.7rem', padding: '0.2rem 0.5rem', color: '#10b981' }}
                             >
                               <Camera size={12} /> View Photo
                             </button>
@@ -747,7 +858,7 @@ const FieldOps = () => {
               {/* Live GPS Coordinates Banner */}
               <div style={{ padding: '0.75rem', borderRadius: 8, background: 'rgba(56,189,248,0.08)', border: '1px solid rgba(56,189,248,0.25)', fontSize: '0.78rem' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
-                  <span style={{ fontWeight: 600, color: '#38bdf8' }}>📍 Live GPS Coordinates</span>
+                  <span style={{ fontWeight: 600, color: '#38bdf8' }}>📍 Exact Real-Time GPS Coordinates</span>
                   <button
                     type="button"
                     onClick={fetchCurrentGps}
@@ -758,8 +869,11 @@ const FieldOps = () => {
                     <RefreshCw size={11} className={locatingGps ? 'animate-spin' : ''} /> Refetch GPS
                   </button>
                 </div>
-                <div style={{ color: 'var(--text-muted)', fontSize: '0.72rem' }}>
-                  {checkInForm.lat ? `${checkInForm.lat.toFixed(5)}° N, ${checkInForm.lng.toFixed(5)}° E (±${checkInForm.accuracy}m accuracy)` : 'Click refetch to detect GPS'}
+                <div style={{ color: 'var(--text-primary)', fontWeight: 600, fontSize: '0.75rem', marginBottom: '0.2rem' }}>
+                  {checkInForm.lat ? `${checkInForm.lat.toFixed(6)}° N, ${checkInForm.lng.toFixed(6)}° E (±${checkInForm.accuracy}m accuracy)` : 'Click refetch to detect GPS'}
+                </div>
+                <div style={{ color: 'var(--text-muted)', fontSize: '0.7rem' }}>
+                  🏠 {checkInForm.address}
                 </div>
               </div>
 
