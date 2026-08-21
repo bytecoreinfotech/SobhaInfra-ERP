@@ -758,11 +758,22 @@ export async function updateTask(id, updates) {
   return { data: null, error: { message: 'Task not found' } };
 }
 
-export async function addTaskComment(taskId, commentText, author = 'Admin') {
+export async function addTaskComment(taskId, commentData, author = 'Admin') {
+  const payload = typeof commentData === 'string'
+    ? { text: commentData, author: author || 'Team Member' }
+    : { ...commentData, author: commentData.author || author || 'Team Member' };
+
   const comment = {
     id: 'comment-' + Date.now(),
-    author: author || 'Team Member',
-    text: commentText,
+    author: payload.author,
+    author_role: payload.author_role || 'Team Member',
+    text: payload.text || '',
+    media_url: payload.media_url || null,
+    media_name: payload.media_name || null,
+    media_type: payload.media_type || (payload.media_url ? 'image' : null),
+    link_url: payload.link_url || null,
+    link_title: payload.link_title || null,
+    is_proof: Boolean(payload.is_proof),
     created_at: new Date().toISOString(),
   };
 
@@ -781,8 +792,62 @@ export async function addTaskComment(taskId, commentText, author = 'Admin') {
     task.comments.push(comment);
   }
 
-  logAuditEvent('task.comment_added', 'tasks', taskId, { commentText, author });
+  // If Supabase has comments JSON on tasks
+  if (isSupabaseConfigured) {
+    try {
+      const { data: currentTask } = await supabase.from('tasks').select('comments').eq('id', taskId).maybeSingle();
+      const existingComments = currentTask?.comments || [];
+      await supabase.from('tasks').update({
+        comments: [...existingComments, comment]
+      }).eq('id', taskId);
+    } catch {}
+  }
+
+  logAuditEvent('task.comment_added', 'tasks', taskId, {
+    commentText: comment.text,
+    author: comment.author,
+    hasMedia: Boolean(comment.media_url),
+    hasLink: Boolean(comment.link_url),
+    isProof: comment.is_proof,
+  });
+
   return { data: comment, error: null };
+}
+
+export async function generateDailyTasksForClients(config = {}) {
+  const { template, clients = [], assignee = '', dueDate = new Date().toISOString().split('T')[0] } = config;
+  if (!template) return { data: [], error: 'Template required' };
+
+  const createdTasks = [];
+
+  for (const client of clients) {
+    const taskTitle = `${template.title} — ${client.name || 'Client'}`;
+    const taskDesc = `${template.description ? template.description + '\n\n' : ''}Client: ${client.name} (${client.phone || 'No phone'})\nCompany: ${client.company_name || 'N/A'}\nInterest: ${client.property_interest || 'N/A'}`;
+
+    const taskPayload = {
+      title: taskTitle,
+      description: taskDesc,
+      status: 'To Do',
+      priority: template.priority || 'Medium',
+      due_date: dueDate,
+      tags: Array.from(new Set([...(template.tags || []), 'Daily Routine', 'Client Task'])),
+      assigned_to: assignee || template.default_assignee || client.assigned_to || 'Sales Executive',
+      client_name: client.name || '',
+      client_phone: client.phone || '',
+      is_recurring: true,
+      recurrence_interval: 'Daily',
+    };
+
+    const { data: created } = await createTask(taskPayload);
+    if (created) createdTasks.push(created);
+  }
+
+  logAuditEvent('tasks.daily_generated', 'tasks', null, {
+    count: createdTasks.length,
+    templateTitle: template.title
+  });
+
+  return { data: createdTasks, error: null };
 }
 
 export async function deleteTask(taskId) {
