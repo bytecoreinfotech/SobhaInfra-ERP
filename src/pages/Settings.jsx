@@ -3,7 +3,8 @@ import {
   Settings as SettingsIcon, Bell, Shield, Palette, MessageCircle,
   RefreshCw, Save, Check, Zap, Download, AlertTriangle, Activity,
   Server, Cpu, Database, Radio, ToggleLeft, ToggleRight, FileSpreadsheet, FileJson,
-  Brain, Plus, Trash2, Edit3, BookOpen, CheckCircle2, Share2, Send, Copy, Sparkles
+  Brain, Plus, Trash2, Edit3, BookOpen, CheckCircle2, Share2, Send, Copy, Sparkles,
+  HardDrive, AlertOctagon, ShieldAlert, HelpCircle, Layers, CheckSquare
 } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { useTheme } from '../context/ThemeContext';
@@ -11,7 +12,8 @@ import { useAuth } from '../context/AuthContext';
 import {
   getSystemSafetyAndQuotas, updateSystemSafety, toggleCircuitBreaker, exportAllData,
   getRoles, createRole, updateRole, deleteRole, getPermissionMatrix, savePermissionMatrix, getTeamMembers,
-  createLead, normalizePhone, getOrgSettings, updateOrgSetting
+  createLead, normalizePhone, getOrgSettings, updateOrgSetting,
+  getStorageUsageSummary, purgeStorageCategory, purgeAllExpiredStorage, runAutoStorageCleanupIfDue
 } from '../lib/db';
 import './Pages.css';
 
@@ -72,15 +74,168 @@ const Settings = () => {
   const [paySettingsSaved, setPaySettingsSaved] = useState(false);
   const [paySettingsLoading, setPaySettingsLoading] = useState(false);
 
+  // General Business Settings State
+  const [generalSettings, setGeneralSettings] = useState({
+    org_name: 'Techma ERP Solutions Pvt. Ltd.',
+    admin_email: 'admin@erppro.in',
+    contact_phone: '+91 98765 43210',
+    timezone: 'Asia/Kolkata (IST +05:30)',
+    default_currency: 'INR',
+    company_address: '101, Business Hub, Phase 1, Hinjawadi, Pune - 411057',
+    gstin_number: '27AABCT2345Q1Z8',
+    invoice_footer_notes: 'Thank you for your business. For any queries, contact accounts@erppro.in.',
+  });
+  const [generalSaving, setGeneralSaving] = useState(false);
+  const [generalSaved, setGeneralSaved] = useState(false);
+  const [generalLoading, setGeneralLoading] = useState(false);
+
+  // Storage & Supabase Health State
+  const [storageSummary, setStorageSummary] = useState(null);
+  const [storageLoading, setStorageLoading] = useState(false);
+  const [storageAutoCleanEnabled, setStorageAutoCleanEnabled] = useState(true);
+  const [storageRetentionDays, setStorageRetentionDays] = useState(7);
+  const [storageCatToggles, setStorageCatToggles] = useState({
+    whatsapp_media: true,
+    audit_logs: true,
+    activities: true,
+    site_visits: true,
+    sync_errors: true,
+    payment_reminders: true,
+  });
+  const [storageSaving, setStorageSaving] = useState(false);
+  const [storageToast, setStorageToast] = useState(null);
+  const [purgingKey, setPurgingKey] = useState(null);
+  const [showRetentionWarningModal, setShowRetentionWarningModal] = useState(false);
+  const [pendingRetentionDays, setPendingRetentionDays] = useState(7);
+  const [purgeConfirmModal, setPurgeConfirmModal] = useState(null); // null | { key, name, count, unit }
+
   useEffect(() => {
     loadSafety();
+    loadGeneralSettings();
+    runAutoStorageCleanupIfDue().catch(() => {});
   }, []);
 
   useEffect(() => {
+    if (activeTab === 'general') loadGeneralSettings();
     if (activeTab === 'ai_kb') loadKnowledgeBase();
     if (activeTab === 'roles_positions') loadRolesAndMatrix();
     if (activeTab === 'payment_automation') loadPaymentSettings();
+    if (activeTab === 'storage') loadStorageData();
   }, [activeTab]);
+
+  const loadGeneralSettings = async () => {
+    setGeneralLoading(true);
+    const { data } = await getOrgSettings();
+    if (data) {
+      setGeneralSettings(prev => ({
+        ...prev,
+        org_name: data.org_name || prev.org_name,
+        admin_email: data.admin_email || prev.admin_email,
+        contact_phone: data.contact_phone || prev.contact_phone,
+        timezone: data.timezone || prev.timezone,
+        default_currency: data.default_currency || prev.default_currency,
+        company_address: data.company_address || prev.company_address,
+        gstin_number: data.gstin_number || prev.gstin_number,
+        invoice_footer_notes: data.invoice_footer_notes || prev.invoice_footer_notes,
+      }));
+    }
+    setGeneralLoading(false);
+  };
+
+  const handleSaveGeneralSettings = async () => {
+    setGeneralSaving(true);
+    await Promise.all([
+      updateOrgSetting('org_name', generalSettings.org_name),
+      updateOrgSetting('admin_email', generalSettings.admin_email),
+      updateOrgSetting('contact_phone', generalSettings.contact_phone),
+      updateOrgSetting('timezone', generalSettings.timezone),
+      updateOrgSetting('default_currency', generalSettings.default_currency),
+      updateOrgSetting('company_address', generalSettings.company_address),
+      updateOrgSetting('gstin_number', generalSettings.gstin_number),
+      updateOrgSetting('invoice_footer_notes', generalSettings.invoice_footer_notes),
+    ]);
+    try {
+      localStorage.setItem('erppro_org_name', generalSettings.org_name);
+    } catch {}
+    setGeneralSaving(false);
+    setGeneralSaved(true);
+    setPosSuccessMsg('✅ Business profile & organization settings saved safely!');
+    setTimeout(() => { setGeneralSaved(false); setPosSuccessMsg(''); }, 3500);
+  };
+
+  const loadStorageData = async () => {
+    setStorageLoading(true);
+    const [summary, orgSetRes] = await Promise.all([
+      getStorageUsageSummary(),
+      getOrgSettings()
+    ]);
+    setStorageSummary(summary);
+    const s = orgSetRes.data || {};
+    setStorageAutoCleanEnabled(s.storage_auto_clean_enabled !== 'false');
+    setStorageRetentionDays(Number(s.storage_retention_days) || 7);
+    setStorageCatToggles({
+      whatsapp_media: s.auto_clean_whatsapp_media !== 'false',
+      audit_logs: s.auto_clean_audit_logs !== 'false',
+      activities: s.auto_clean_activities !== 'false',
+      site_visits: s.auto_clean_site_visits !== 'false',
+      sync_errors: s.auto_clean_sync_errors !== 'false',
+      payment_reminders: s.auto_clean_payment_reminders !== 'false',
+    });
+    setStorageLoading(false);
+  };
+
+  const handleRetentionDaysSliderChange = (newDays) => {
+    const val = Number(newDays);
+    if (val >= 8) {
+      setPendingRetentionDays(val);
+      setShowRetentionWarningModal(true);
+    } else {
+      setStorageRetentionDays(val);
+    }
+  };
+
+  const handleConfirmHighRetention = () => {
+    setStorageRetentionDays(pendingRetentionDays);
+    setShowRetentionWarningModal(false);
+  };
+
+  const handleSaveStorageSettings = async () => {
+    setStorageSaving(true);
+    await Promise.all([
+      updateOrgSetting('storage_auto_clean_enabled', String(storageAutoCleanEnabled)),
+      updateOrgSetting('storage_retention_days', String(storageRetentionDays)),
+      updateOrgSetting('auto_clean_whatsapp_media', String(storageCatToggles.whatsapp_media)),
+      updateOrgSetting('auto_clean_audit_logs', String(storageCatToggles.audit_logs)),
+      updateOrgSetting('auto_clean_activities', String(storageCatToggles.activities)),
+      updateOrgSetting('auto_clean_site_visits', String(storageCatToggles.site_visits)),
+      updateOrgSetting('auto_clean_sync_errors', String(storageCatToggles.sync_errors)),
+      updateOrgSetting('auto_clean_payment_reminders', String(storageCatToggles.payment_reminders)),
+    ]);
+    setStorageSaving(false);
+    setStorageToast('✅ Storage retention & auto-clear policies saved successfully!');
+    setTimeout(() => setStorageToast(null), 4000);
+  };
+
+  const handleExecutePurge = async () => {
+    if (!purgeConfirmModal) return;
+    setPurgingKey(purgeConfirmModal.key);
+    let deleted = 0;
+
+    if (purgeConfirmModal.key === 'all') {
+      const selectedKeys = Object.entries(storageCatToggles).filter(([_, v]) => v).map(([k]) => k);
+      const res = await purgeAllExpiredStorage(storageRetentionDays, selectedKeys);
+      deleted = res.totalDeleted || 0;
+    } else {
+      const res = await purgeStorageCategory(purgeConfirmModal.key, storageRetentionDays);
+      deleted = res.deletedCount || 0;
+    }
+
+    setPurgeConfirmModal(null);
+    setPurgingKey(null);
+    await loadStorageData();
+    setStorageToast(`🗑️ Successfully purged ${deleted} expired items from Supabase storage!`);
+    setTimeout(() => setStorageToast(null), 4000);
+  };
 
   const loadPaymentSettings = async () => {
     setPaySettingsLoading(true);
@@ -183,9 +338,10 @@ const Settings = () => {
   };
 
   const handleSave = async () => {
-    if (safety) {
-      await updateSystemSafety(safety);
-    }
+    await Promise.all([
+      handleSaveGeneralSettings(),
+      safety ? updateSystemSafety(safety) : Promise.resolve(),
+    ]);
     setSaved(true);
     setTimeout(() => setSaved(false), 2500);
   };
@@ -267,6 +423,7 @@ const Settings = () => {
 
   const tabs = [
     { id: 'general', label: 'General', icon: <SettingsIcon size={16} /> },
+    { id: 'storage', label: 'Storage & Supabase Health', icon: <Database size={16} /> },
     { id: 'payment_automation', label: 'Payment Automation', icon: <Bell size={16} /> },
     { id: 'meta_leads', label: 'Meta Leads (FB & IG)', icon: <Share2 size={16} /> },
     { id: 'whatsapp', label: 'WhatsApp API', icon: <MessageCircle size={16} /> },
@@ -301,32 +458,378 @@ const Settings = () => {
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '240px 1fr', gap: '1.5rem', alignItems: 'start' }}>
+      <div className="settings-page-grid">
 
-        {/* Sidebar tabs */}
-        <div className="glass-card" style={{ overflow: 'hidden' }}>
-          {tabs.map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className="btn"
-              style={{
-                width: '100%', justifyContent: 'flex-start', gap: '0.65rem',
-                borderRadius: 0, padding: '0.875rem 1.25rem',
-                background: activeTab === tab.id ? 'rgba(99,102,241,0.1)' : 'transparent',
-                color: activeTab === tab.id ? 'var(--accent-primary)' : 'var(--text-secondary)',
-                borderLeft: activeTab === tab.id ? '3px solid var(--accent-primary)' : '3px solid transparent',
-                fontWeight: activeTab === tab.id ? 600 : 400,
-                fontSize: '0.82rem'
-              }}
-            >
-              {tab.icon} {tab.label}
-            </button>
-          ))}
+        {/* Sidebar / Horizontal Scrollable Tabs on Mobile */}
+        <div className="glass-card settings-nav-card">
+          <div className="settings-tabs-container">
+            {tabs.map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`btn settings-tab-btn ${activeTab === tab.id ? 'active' : ''}`}
+              >
+                {tab.icon} <span>{tab.label}</span>
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Content Area */}
-        <div className="glass-card p-6">
+        <div className="glass-card p-6 settings-content-card">
+
+          {/* ══════════════════════════════════════════════════════════════
+              TAB: STORAGE & SUPABASE HEALTH
+             ══════════════════════════════════════════════════════════════ */}
+          {activeTab === 'storage' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+              {/* Header */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.75rem' }}>
+                <div>
+                  <h3 style={{ fontSize: '1.05rem', fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <Database size={18} color="var(--accent-primary)" /> Storage & Supabase Health Console
+                  </h3>
+                  <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: '0.25rem 0 0 0' }}>
+                    Monitor live PostgreSQL tables, WhatsApp bucket assets, and configure automated retention policies to keep the system lean and fast.
+                  </p>
+                </div>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    onClick={loadStorageData}
+                    disabled={storageLoading}
+                    title="Refresh live telemetry from Supabase"
+                  >
+                    <RefreshCw size={13} className={storageLoading ? 'animate-spin' : ''} />
+                    <span>Refresh Telemetry</span>
+                  </button>
+                  <button
+                    className="btn btn-sm"
+                    style={{ background: 'var(--danger)', color: 'white', fontWeight: 700 }}
+                    onClick={() => setPurgeConfirmModal({ key: 'all', name: 'All Selected Cleanable Storage', count: 'All Expired' })}
+                  >
+                    <Trash2 size={13} />
+                    <span>⚡ Purge All Expired Data</span>
+                  </button>
+                </div>
+              </div>
+
+              {storageLoading && !storageSummary ? (
+                <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>
+                  <RefreshCw size={24} className="animate-spin" />
+                  <div style={{ marginTop: '0.5rem', fontSize: '0.85rem' }}>Querying live Supabase PostgreSQL & Storage buckets...</div>
+                </div>
+              ) : (
+                <>
+                  {/* KPI Cards */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '0.85rem' }}>
+                    <div className="glass-card" style={{ padding: '1rem', background: 'var(--bg-tertiary)' }}>
+                      <div style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '0.35rem' }}>
+                        Total Used Storage
+                      </div>
+                      <div style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--accent-primary)' }}>
+                        {((storageSummary?.totalUsedBytes || 0) / (1024 * 1024)).toFixed(2)} MB
+                      </div>
+                      <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginTop: '0.2rem' }}>
+                        of 500.0 MB Free Tier Quota ({storageSummary?.usedPercentage || 0}%)
+                      </div>
+                    </div>
+
+                    <div className="glass-card" style={{ padding: '1rem', background: 'var(--bg-tertiary)' }}>
+                      <div style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '0.35rem' }}>
+                        Free Space Remaining
+                      </div>
+                      <div style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--success)' }}>
+                        {((storageSummary?.freeBytes || 0) / (1024 * 1024)).toFixed(2)} MB
+                      </div>
+                      <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginTop: '0.2rem' }}>
+                        Optimal headroom for smooth ops
+                      </div>
+                    </div>
+
+                    <div className="glass-card" style={{ padding: '1rem', background: 'var(--bg-tertiary)' }}>
+                      <div style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '0.35rem' }}>
+                        Database Tables Size
+                      </div>
+                      <div style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--accent-secondary)' }}>
+                        {((storageSummary?.dbBytes || 0) / (1024 * 1024)).toFixed(2)} MB
+                      </div>
+                      <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginTop: '0.2rem' }}>
+                        PostgreSQL schemas, logs & records
+                      </div>
+                    </div>
+
+                    <div className="glass-card" style={{ padding: '1rem', background: 'var(--bg-tertiary)' }}>
+                      <div style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '0.35rem' }}>
+                        WhatsApp & Media Files
+                      </div>
+                      <div style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--warning)' }}>
+                        {((storageSummary?.storageBytes || 0) / (1024 * 1024)).toFixed(2)} MB
+                      </div>
+                      <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginTop: '0.2rem' }}>
+                        Bucket files (PDFs, images, proofs)
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Quota Progress Bar */}
+                  <div style={{ padding: '1rem', background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
+                      <span style={{ fontSize: '0.8rem', fontWeight: 700 }}>Supabase Free-Tier Storage Utilization</span>
+                      <span style={{ fontSize: '0.75rem', fontWeight: 700, color: (storageSummary?.usedPercentage || 0) > 85 ? 'var(--danger)' : 'var(--success)' }}>
+                        {storageSummary?.usedPercentage || 0}% Used
+                      </span>
+                    </div>
+                    <div className="progress-bar-wrap" style={{ height: 8, background: 'rgba(255,255,255,0.06)', borderRadius: 4, overflow: 'hidden' }}>
+                      <div
+                        className="progress-bar-fill"
+                        style={{
+                          width: `${Math.max(2, storageSummary?.usedPercentage || 2)}%`,
+                          background: (storageSummary?.usedPercentage || 0) > 85
+                            ? 'var(--danger)'
+                            : (storageSummary?.usedPercentage || 0) > 60
+                            ? 'var(--warning)'
+                            : 'var(--success)',
+                          height: '100%',
+                          transition: 'width 0.5s ease'
+                        }}
+                      />
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '0.35rem' }}>
+                      <span>0 MB</span>
+                      <span>Target: &lt; 350 MB (Healthy buffer)</span>
+                      <span>500 MB (Hard Cap)</span>
+                    </div>
+                  </div>
+
+                  {/* ───────────────────────────────────────────────────────────── */}
+                  {/* AUTO-CLEAR & RETENTION SCHEDULER */}
+                  {/* ───────────────────────────────────────────────────────────── */}
+                  <div style={{ padding: '1.25rem', background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)', border: '1.5px solid rgba(99,102,241,0.35)', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: '0.92rem', display: 'flex', alignItems: 'center', gap: '0.4rem', color: 'var(--accent-primary)' }}>
+                          <Zap size={16} /> Automated Daily Storage Cleanup Engine
+                        </div>
+                        <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
+                          Automatically purges old logs, WhatsApp media, and temporary cache older than your configured retention window.
+                        </div>
+                      </div>
+
+                      <div
+                        onClick={() => setStorageAutoCleanEnabled(!storageAutoCleanEnabled)}
+                        style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+                      >
+                        {storageAutoCleanEnabled ? (
+                          <ToggleRight size={36} color="var(--success)" />
+                        ) : (
+                          <ToggleLeft size={36} color="var(--text-muted)" />
+                        )}
+                        <span style={{ fontSize: '0.78rem', fontWeight: 700, color: storageAutoCleanEnabled ? 'var(--success)' : 'var(--text-muted)' }}>
+                          {storageAutoCleanEnabled ? 'Auto-Clean ON' : 'Disabled'}
+                        </span>
+                      </div>
+                    </div>
+
+                    {storageAutoCleanEnabled && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
+                        {/* Retention Days Slider */}
+                        <div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
+                            <div>
+                              <label style={{ fontSize: '0.82rem', fontWeight: 700 }}>Data Retention Window</label>
+                              <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginLeft: '0.5rem' }}>
+                                (Keep data for this many days before auto-clearing)
+                              </span>
+                            </div>
+                            <span style={{ fontWeight: 800, fontSize: '1.2rem', color: storageRetentionDays <= 7 ? 'var(--success)' : 'var(--warning)' }}>
+                              {storageRetentionDays} Days {storageRetentionDays === 7 && <span style={{ fontSize: '0.7rem', color: 'var(--success)' }}>⭐ Recommended</span>}
+                            </span>
+                          </div>
+
+                          <input
+                            type="range"
+                            min="1"
+                            max="90"
+                            value={storageRetentionDays}
+                            onChange={e => handleRetentionDaysSliderChange(e.target.value)}
+                            style={{ width: '100%', accentColor: storageRetentionDays <= 7 ? 'var(--success)' : 'var(--warning)', cursor: 'pointer' }}
+                          />
+
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
+                            <span>1 Day (Aggressive)</span>
+                            <span style={{ color: 'var(--success)', fontWeight: 700 }}>7 Days (⭐ Supabase Free Tier Recommended)</span>
+                            <span>90 Days (High Storage)</span>
+                          </div>
+
+                          {/* Quick Pills */}
+                          <div style={{ display: 'flex', gap: '0.4rem', marginTop: '0.65rem', flexWrap: 'wrap' }}>
+                            {[
+                              { label: '3 Days', val: 3 },
+                              { label: '7 Days (Recommended ⭐)', val: 7 },
+                              { label: '14 Days', val: 14 },
+                              { label: '30 Days', val: 30 },
+                              { label: '60 Days', val: 60 },
+                              { label: '90 Days', val: 90 },
+                            ].map(p => (
+                              <button
+                                key={p.val}
+                                type="button"
+                                className="btn btn-sm"
+                                style={{
+                                  fontSize: '0.72rem',
+                                  padding: '0.25rem 0.6rem',
+                                  background: storageRetentionDays === p.val ? 'var(--accent-primary)' : 'var(--bg-secondary)',
+                                  color: storageRetentionDays === p.val ? 'white' : 'var(--text-secondary)',
+                                  border: `1px solid ${storageRetentionDays === p.val ? 'var(--accent-primary)' : 'var(--border-color)'}`,
+                                  fontWeight: storageRetentionDays === p.val ? 700 : 400
+                                }}
+                                onClick={() => handleRetentionDaysSliderChange(p.val)}
+                              >
+                                {p.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Granular Category Checkboxes */}
+                        <div>
+                          <label style={{ fontSize: '0.8rem', fontWeight: 700, display: 'block', marginBottom: '0.4rem' }}>
+                            Included Auto-Purge Categories
+                          </label>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '0.5rem' }}>
+                            {[
+                              { key: 'whatsapp_media', label: 'WhatsApp & Invoice Media Files', desc: 'Cached images, audio & PDFs' },
+                              { key: 'audit_logs', label: 'System Audit Trail Logs', desc: 'User action timestamps & updates' },
+                              { key: 'activities', label: 'Activity Timeline Feeds', desc: 'Internal notes & automated events' },
+                              { key: 'site_visits', label: 'Site Visit GPS Logs', desc: 'Field employee location pings' },
+                              { key: 'sync_errors', label: 'Resolved Tally Sync Errors', desc: 'XML payload dumps & error logs' },
+                              { key: 'payment_reminders', label: 'Payment Reminder Outbox', desc: 'Sent WhatsApp reminder records' },
+                            ].map(cat => (
+                              <label
+                                key={cat.key}
+                                style={{
+                                  display: 'flex', alignItems: 'flex-start', gap: '0.5rem',
+                                  padding: '0.6rem 0.75rem', background: 'var(--bg-secondary)',
+                                  borderRadius: 8, border: '1px solid var(--border-color)',
+                                  cursor: 'pointer'
+                                }}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={storageCatToggles[cat.key]}
+                                  onChange={e => setStorageCatToggles(p => ({ ...p, [cat.key]: e.target.checked }))}
+                                  style={{ marginTop: '0.15rem' }}
+                                />
+                                <div>
+                                  <div style={{ fontSize: '0.78rem', fontWeight: 600 }}>{cat.label}</div>
+                                  <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>{cat.desc}</div>
+                                </div>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Save Button */}
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '0.25rem' }}>
+                          <button
+                            className="btn btn-primary"
+                            onClick={handleSaveStorageSettings}
+                            disabled={storageSaving}
+                          >
+                            {storageSaving ? (
+                              <><RefreshCw size={14} className="animate-spin" /> Saving Policies...</>
+                            ) : (
+                              <><Save size={14} /> Save Auto-Clear Policies</>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* ───────────────────────────────────────────────────────────── */}
+                  {/* STORED DATA BREAKDOWN & MANUAL PURGE TABLE */}
+                  {/* ───────────────────────────────────────────────────────────── */}
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                      <h4 style={{ fontSize: '0.92rem', fontWeight: 700, margin: 0 }}>Live Stored Data Inventory (Supabase PostgreSQL & Buckets)</h4>
+                      <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                        All deletions permanently delete the actual records from Supabase
+                      </span>
+                    </div>
+
+                    <div className="table-container glass-card" style={{ padding: 0 }}>
+                      <table className="data-table">
+                        <thead>
+                          <tr>
+                            <th>Data Category</th>
+                            <th>Storage Type</th>
+                            <th style={{ textAlign: 'center' }}>Stored Items</th>
+                            <th style={{ textAlign: 'center' }}>Estimated Size</th>
+                            <th style={{ textAlign: 'center' }}>Risk Level</th>
+                            <th>Recommended Retention</th>
+                            <th style={{ textAlign: 'right' }}>Manual Action</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(storageSummary?.categories || []).map(cat => (
+                            <tr key={cat.key}>
+                              <td>
+                                <div style={{ fontWeight: 600, fontSize: '0.82rem' }}>{cat.name}</div>
+                                <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', maxWidth: 280 }}>{cat.description}</div>
+                              </td>
+                              <td>
+                                <span className="badge badge-neutral" style={{ fontSize: '0.68rem' }}>{cat.type}</span>
+                              </td>
+                              <td style={{ textAlign: 'center', fontWeight: 700 }}>
+                                {cat.count.toLocaleString()} {cat.unit}
+                              </td>
+                              <td style={{ textAlign: 'center', fontSize: '0.8rem', color: 'var(--accent-primary)', fontWeight: 600 }}>
+                                {(cat.estimatedBytes / (1024 * 1024)).toFixed(2)} MB
+                              </td>
+                              <td style={{ textAlign: 'center' }}>
+                                <span
+                                  className="badge"
+                                  style={{
+                                    fontSize: '0.68rem',
+                                    color: cat.riskLevel === 'Low' ? 'var(--success)' : cat.riskLevel === 'Medium' ? 'var(--warning)' : 'var(--accent-primary)',
+                                    borderColor: cat.riskLevel === 'Low' ? 'var(--success)' : cat.riskLevel === 'Medium' ? 'var(--warning)' : 'var(--accent-primary)'
+                                  }}
+                                >
+                                  {cat.riskLevel}
+                                </span>
+                              </td>
+                              <td style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                                {cat.recommendedRetention}
+                              </td>
+                              <td style={{ textAlign: 'right' }}>
+                                {cat.isCleanable ? (
+                                  <button
+                                    className="btn btn-secondary btn-sm"
+                                    onClick={() => setPurgeConfirmModal({ key: cat.key, name: cat.name, count: `${cat.count} ${cat.unit}` })}
+                                    disabled={cat.count === 0}
+                                    style={{ fontSize: '0.72rem', color: 'var(--danger)', borderColor: 'var(--danger)' }}
+                                    title={`Purge items older than ${storageRetentionDays} days`}
+                                  >
+                                    <Trash2 size={12} /> Purge ({storageRetentionDays}d+)
+                                  </button>
+                                ) : (
+                                  <span style={{ fontSize: '0.7rem', color: 'var(--success)', display: 'inline-flex', alignItems: 'center', gap: '0.2rem' }}>
+                                    <Shield size={12} /> Protected
+                                  </span>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
 
           {/* ══════════════════════════════════════════════════════════════
               TAB: PAYMENT AUTOMATION SETTINGS
@@ -482,61 +985,211 @@ const Settings = () => {
              ══════════════════════════════════════════════════════════════ */}
           {activeTab === 'general' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-              <h3 style={{ fontSize: '1rem', fontWeight: 700 }}>General Business Settings</h3>
-
-              <div>
-                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.5rem' }}>Company / Organization Name</label>
-                <input type="text" className="input-field" defaultValue="ERPPro Real Estate Solutions Pvt. Ltd." />
-              </div>
-
-              <div>
-                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.5rem' }}>Primary Admin Email</label>
-                <input type="email" className="input-field" defaultValue="admin@erppro.in" />
-              </div>
-
-              <div>
-                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.5rem' }}>Time Zone</label>
-                <select className="input-field">
-                  <option>Asia/Kolkata (IST +05:30)</option>
-                  <option>UTC</option>
-                </select>
-              </div>
-
-              <div>
-                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.75rem' }}>Interface Theme</label>
-                <div style={{ display: 'flex', gap: '0.75rem' }}>
-                  {['dark', 'light'].map(t => (
-                    <div
-                      key={t}
-                      onClick={() => theme !== t && toggleTheme()}
-                      style={{
-                        flex: 1, padding: '1.25rem', borderRadius: 'var(--radius-md)',
-                        border: `2px solid ${theme === t ? 'var(--accent-primary)' : 'var(--border-color)'}`,
-                        background: t === 'dark' ? '#0b0d1a' : '#f4f5fb',
-                        cursor: 'pointer', textAlign: 'center', transition: 'var(--transition)'
-                      }}
-                    >
-                      <div style={{ fontSize: '1.4rem', marginBottom: '0.3rem' }}>{t === 'dark' ? '🌙' : '☀️'}</div>
-                      <div style={{ fontSize: '0.8rem', fontWeight: 600, color: t === 'dark' ? 'white' : '#111', textTransform: 'capitalize' }}>
-                        {t} Mode
-                      </div>
-                      {theme === t && (
-                        <div style={{ marginTop: '0.4rem' }}>
-                          <span className="badge badge-accent" style={{ fontSize: '0.62rem' }}>Active</span>
-                        </div>
-                      )}
-                    </div>
-                  ))}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.75rem' }}>
+                <div>
+                  <h3 style={{ fontSize: '1.05rem', fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <SettingsIcon size={18} color="var(--accent-primary)" /> General Business Profile & Settings
+                  </h3>
+                  <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: '0.25rem 0 0 0' }}>
+                    Configure organization branding, admin contact, business address, and invoice headers.
+                  </p>
                 </div>
+                <button
+                  className="btn btn-primary btn-sm"
+                  onClick={handleSaveGeneralSettings}
+                  disabled={generalSaving}
+                >
+                  {generalSaved ? (
+                    <><Check size={14} /> Saved!</>
+                  ) : generalSaving ? (
+                    <><RefreshCw size={14} className="animate-spin" /> Saving...</>
+                  ) : (
+                    <><Save size={14} /> Save Profile</>
+                  )}
+                </button>
               </div>
 
-              <div>
-                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.5rem' }}>Currency</label>
-                <select className="input-field">
-                  <option>INR (₹) — Indian Rupee</option>
-                  <option>USD ($) — US Dollar</option>
-                </select>
-              </div>
+              {generalLoading ? (
+                <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>
+                  <RefreshCw size={20} className="animate-spin" /> Loading business profile...
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                  {/* Row 1: Company Name & Admin Email */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1rem' }}>
+                    <div>
+                      <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.4rem' }}>
+                        Company / Organization Name
+                      </label>
+                      <input
+                        type="text"
+                        className="input-field"
+                        value={generalSettings.org_name}
+                        onChange={e => setGeneralSettings(p => ({ ...p, org_name: e.target.value }))}
+                        placeholder="e.g. Acme Tech Solutions Pvt. Ltd."
+                      />
+                      <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '0.2rem', display: 'block' }}>
+                        Appears on customer invoices, reminders, and portal headers.
+                      </span>
+                    </div>
+
+                    <div>
+                      <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.4rem' }}>
+                        Primary Admin Email
+                      </label>
+                      <input
+                        type="email"
+                        className="input-field"
+                        value={generalSettings.admin_email}
+                        onChange={e => setGeneralSettings(p => ({ ...p, admin_email: e.target.value }))}
+                        placeholder="admin@company.com"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Row 2: Phone, Timezone & Currency */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
+                    <div>
+                      <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.4rem' }}>
+                        Support / Operations Phone
+                      </label>
+                      <input
+                        type="text"
+                        className="input-field"
+                        value={generalSettings.contact_phone}
+                        onChange={e => setGeneralSettings(p => ({ ...p, contact_phone: e.target.value }))}
+                        placeholder="+91 98765 43210"
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.4rem' }}>
+                        Time Zone
+                      </label>
+                      <select
+                        className="input-field"
+                        value={generalSettings.timezone}
+                        onChange={e => setGeneralSettings(p => ({ ...p, timezone: e.target.value }))}
+                      >
+                        <option value="Asia/Kolkata (IST +05:30)">Asia/Kolkata (IST +05:30)</option>
+                        <option value="UTC (GMT +00:00)">UTC (GMT +00:00)</option>
+                        <option value="Asia/Dubai (GST +04:00)">Asia/Dubai (GST +04:00)</option>
+                        <option value="America/New_York (EST)">America/New_York (EST)</option>
+                        <option value="Europe/London (BST)">Europe/London (BST)</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.4rem' }}>
+                        Default Currency
+                      </label>
+                      <select
+                        className="input-field"
+                        value={generalSettings.default_currency}
+                        onChange={e => setGeneralSettings(p => ({ ...p, default_currency: e.target.value }))}
+                      >
+                        <option value="INR">INR (₹) — Indian Rupee</option>
+                        <option value="USD">USD ($) — US Dollar</option>
+                        <option value="AED">AED (د.إ) — UAE Dirham</option>
+                        <option value="EUR">EUR (€) — Euro</option>
+                        <option value="GBP">GBP (£) — British Pound</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Row 3: Business Address & GSTIN */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1rem' }}>
+                    <div>
+                      <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.4rem' }}>
+                        Registered Business Address
+                      </label>
+                      <textarea
+                        className="input-field"
+                        rows={3}
+                        value={generalSettings.company_address}
+                        onChange={e => setGeneralSettings(p => ({ ...p, company_address: e.target.value }))}
+                        placeholder="Street, Landmark, City, State, PIN"
+                      />
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                      <div>
+                        <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.4rem' }}>
+                          GSTIN / Tax Registration No.
+                        </label>
+                        <input
+                          type="text"
+                          className="input-field"
+                          value={generalSettings.gstin_number}
+                          onChange={e => setGeneralSettings(p => ({ ...p, gstin_number: e.target.value }))}
+                          placeholder="e.g. 27AABCT2345Q1Z8"
+                        />
+                      </div>
+
+                      <div>
+                        <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.4rem' }}>
+                          Invoice Footer Terms & Payment Note
+                        </label>
+                        <input
+                          type="text"
+                          className="input-field"
+                          value={generalSettings.invoice_footer_notes}
+                          onChange={e => setGeneralSettings(p => ({ ...p, invoice_footer_notes: e.target.value }))}
+                          placeholder="Thank you for your business. For any queries, contact accounts..."
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Interface Theme */}
+                  <div>
+                    <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.75rem' }}>
+                      Interface Theme Mode
+                    </label>
+                    <div style={{ display: 'flex', gap: '0.75rem' }}>
+                      {['dark', 'light'].map(t => (
+                        <div
+                          key={t}
+                          onClick={() => theme !== t && toggleTheme()}
+                          style={{
+                            flex: 1, padding: '1rem', borderRadius: 'var(--radius-md)',
+                            border: `2px solid ${theme === t ? 'var(--accent-primary)' : 'var(--border-color)'}`,
+                            background: t === 'dark' ? '#0b0d1a' : '#f4f5fb',
+                            cursor: 'pointer', textAlign: 'center', transition: 'var(--transition)'
+                          }}
+                        >
+                          <div style={{ fontSize: '1.3rem', marginBottom: '0.2rem' }}>{t === 'dark' ? '🌙' : '☀️'}</div>
+                          <div style={{ fontSize: '0.8rem', fontWeight: 700, color: t === 'dark' ? 'white' : '#111', textTransform: 'capitalize' }}>
+                            {t} Mode
+                          </div>
+                          {theme === t && (
+                            <div style={{ marginTop: '0.3rem' }}>
+                              <span className="badge badge-accent" style={{ fontSize: '0.62rem' }}>Active</span>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Bottom Save Action */}
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
+                    <button
+                      className="btn btn-primary"
+                      onClick={handleSaveGeneralSettings}
+                      disabled={generalSaving}
+                    >
+                      {generalSaved ? (
+                        <><Check size={15} /> Business Profile Saved!</>
+                      ) : generalSaving ? (
+                        <><RefreshCw size={15} className="animate-spin" /> Saving...</>
+                      ) : (
+                        <><Save size={15} /> Save General Settings</>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -1688,7 +2341,7 @@ const Settings = () => {
       </div>
 
       {/* ── Fixed Floating Toast (Zero Layout Shift) ──────────────────── */}
-      {posSuccessMsg && (
+      {(posSuccessMsg || storageToast) && (
         <div style={{
           position: 'fixed', bottom: 28, right: 28, zIndex: 99999,
           background: 'rgba(15, 23, 42, 0.96)', border: '1px solid rgba(16,185,129,0.5)',
@@ -1698,13 +2351,128 @@ const Settings = () => {
           fontSize: '0.85rem', fontWeight: 600, animation: 'slideUp 0.25s ease'
         }}>
           <Check size={16} />
-          <span>{posSuccessMsg}</span>
+          <span>{posSuccessMsg || storageToast}</span>
           <button
-            onClick={() => setPosSuccessMsg('')}
+            onClick={() => { setPosSuccessMsg(''); setStorageToast(null); }}
             style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '0 0 0 0.4rem', display: 'flex' }}
           >
             ✕
           </button>
+        </div>
+      )}
+
+      {/* ═══════════════════════════════════════════════════════════════════ */}
+      {/* 8+ DAYS STORAGE RETENTION WARNING MODAL (As Requested by User) */}
+      {/* ═══════════════════════════════════════════════════════════════════ */}
+      {showRetentionWarningModal && (
+        <div className="modal-overlay" onClick={() => setShowRetentionWarningModal(false)} style={{ zIndex: 99999 }}>
+          <div className="modal-content animate-fade-in" style={{ maxWidth: 520, padding: '1.5rem', border: '1.5px solid var(--warning)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
+              <div style={{ width: 42, height: 42, borderRadius: '50%', background: 'rgba(245,158,11,0.15)', color: 'var(--warning)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <AlertOctagon size={24} />
+              </div>
+              <div>
+                <h3 style={{ fontSize: '1.05rem', fontWeight: 800, margin: 0, color: 'var(--warning)' }}>
+                  ⚠️ Storage Capacity Warning (8+ Days Retention)
+                </h3>
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                  Supabase Free-Tier Resource Quota Notice
+                </div>
+              </div>
+            </div>
+
+            <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', lineHeight: 1.5, display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+              <p style={{ margin: 0 }}>
+                You are setting your automated storage retention to <strong>{pendingRetentionDays} Days</strong>.
+              </p>
+              <div style={{ padding: '0.75rem 1rem', background: 'rgba(245,158,11,0.08)', borderRadius: 8, border: '1px solid rgba(245,158,11,0.3)', fontSize: '0.78rem' }}>
+                <strong>Critical System Impact:</strong>
+                <ul style={{ margin: '0.35rem 0 0 1rem', padding: 0 }}>
+                  <li>On the Supabase Free Tier (500 MB limit), retaining WhatsApp media, photos, and high-frequency audit logs for 8+ days can quickly exhaust your storage capacity.</li>
+                  <li><strong>If storage fills up 100%</strong>, PostgreSQL will reject new database writes, causing incoming Meta WhatsApp leads, customer messages, and invoice syncs to fail.</li>
+                  <li><strong>Recommended Setting:</strong> 7 Days provides continuous peak performance with zero risk of database lockouts.</li>
+                </ul>
+              </div>
+              <p style={{ margin: 0, fontSize: '0.76rem', color: 'var(--text-muted)' }}>
+                Do you still wish to proceed with {pendingRetentionDays} days retention?
+              </p>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1.25rem' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => {
+                  setStorageRetentionDays(7);
+                  setShowRetentionWarningModal(false);
+                }}
+                style={{ fontWeight: 600 }}
+              >
+                Stick to 7 Days (Recommended)
+              </button>
+              <button
+                type="button"
+                className="btn"
+                style={{ background: 'var(--warning)', color: '#000', fontWeight: 800 }}
+                onClick={handleConfirmHighRetention}
+              >
+                I Understand the Risks, Set to {pendingRetentionDays} Days
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════════════════════════════════════════════════════════════ */}
+      {/* REAL STORAGE PURGE CONFIRMATION MODAL */}
+      {/* ═══════════════════════════════════════════════════════════════════ */}
+      {purgeConfirmModal && (
+        <div className="modal-overlay" onClick={() => !purgingKey && setPurgeConfirmModal(null)} style={{ zIndex: 99999 }}>
+          <div className="modal-content animate-fade-in" style={{ maxWidth: 480, padding: '1.5rem', border: '1.5px solid var(--danger)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
+              <div style={{ width: 42, height: 42, borderRadius: '50%', background: 'rgba(239,68,68,0.15)', color: 'var(--danger)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Trash2 size={22} />
+              </div>
+              <div>
+                <h3 style={{ fontSize: '1.05rem', fontWeight: 800, margin: 0, color: 'var(--danger)' }}>
+                  Confirm Permanent Storage Purge
+                </h3>
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                  Actual Deletion in Supabase PostgreSQL & Storage
+                </div>
+              </div>
+            </div>
+
+            <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+              <p style={{ margin: '0 0 0.5rem 0' }}>
+                Are you sure you want to permanently delete records and files older than <strong>{storageRetentionDays} days</strong> from <strong>{purgeConfirmModal.name}</strong>?
+              </p>
+              <div style={{ padding: '0.75rem', background: 'rgba(239,68,68,0.08)', borderRadius: 8, border: '1px solid rgba(239,68,68,0.3)', fontSize: '0.75rem', color: 'var(--danger)' }}>
+                <strong>⚠️ Warning:</strong> This operation sends live DELETE queries to your Supabase tables and unlinks bucket objects. This action cannot be rolled back.
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1.25rem' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={Boolean(purgingKey)}
+                onClick={() => setPurgeConfirmModal(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn"
+                disabled={Boolean(purgingKey)}
+                style={{ background: 'var(--danger)', color: 'white', fontWeight: 800 }}
+                onClick={handleExecutePurge}
+              >
+                {purgingKey ? <RefreshCw size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                <span>{purgingKey ? 'Executing Deletion...' : 'Yes, Purge Now'}</span>
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -1712,3 +2480,4 @@ const Settings = () => {
 };
 
 export default Settings;
+

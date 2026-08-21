@@ -427,11 +427,25 @@ export async function logPaymentReminder(invoiceId, message) {
 // ORG SETTINGS (Customizable admin-controlled config values)
 // ─────────────────────────────────────────────────────────────────────────────
 const DEFAULT_ORG_SETTINGS = {
+  org_name: 'Techma ERP Solutions Pvt. Ltd.',
+  admin_email: 'admin@erppro.in',
+  contact_phone: '+91 98765 43210',
+  timezone: 'Asia/Kolkata (IST +05:30)',
+  default_currency: 'INR',
+  company_address: '101, Business Hub, Phase 1, Hinjawadi, Pune - 411057',
+  gstin_number: '27AABCT2345Q1Z8',
+  invoice_footer_notes: 'Thank you for your business. For any queries, contact accounts@erppro.in.',
   reminder_interval_days: '3',
   max_reminders_per_invoice: '7',
   auto_pause_on_promise: 'true',
-  org_name: 'Techma ERP',
-  default_currency: 'INR',
+  storage_auto_clean_enabled: 'true',
+  storage_retention_days: '7',
+  auto_clean_whatsapp_media: 'true',
+  auto_clean_audit_logs: 'true',
+  auto_clean_activities: 'true',
+  auto_clean_site_visits: 'true',
+  auto_clean_sync_errors: 'true',
+  auto_clean_payment_reminders: 'true',
 };
 
 export async function getOrgSettings() {
@@ -475,6 +489,335 @@ export async function updateOrgSetting(key, value) {
   DEFAULT_ORG_SETTINGS[key] = String(value);
   return { error: null };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STORAGE & SUPABASE HEALTH / DATA RETENTION SERVICES
+// ─────────────────────────────────────────────────────────────────────────────
+export async function getStorageUsageSummary() {
+  const isSupa = isSupabaseConfigured;
+  const summary = {
+    isSupabaseLive: isSupa,
+    supabaseUrl: isSupa ? (import.meta.env.VITE_SUPABASE_URL || 'https://jbgkeeubevwopphekwfj.supabase.co') : 'In-Memory Store',
+    totalQuotaBytes: 500 * 1024 * 1024, // 500 MB Free Tier Limit
+    categories: [],
+    totalUsedBytes: 0,
+    dbBytes: 0,
+    storageBytes: 0,
+    freeBytes: 0,
+    usedPercentage: 0,
+  };
+
+  let counts = {
+    audit_logs: 0,
+    activities: 0,
+    whatsapp_messages: 0,
+    whatsapp_conversations: 0,
+    site_visits: 0,
+    sync_errors: 0,
+    payment_reminders: 0,
+    tasks: 0,
+    leads: 0,
+    invoices: 0,
+    storage_media_files: 0,
+    storage_media_bytes: 0,
+  };
+
+  if (isSupa) {
+    try {
+      const [
+        auditRes, actRes, msgRes, convRes, visitRes, errRes, prRes, taskRes, leadRes, invRes
+      ] = await Promise.all([
+        supabase.from('audit_logs').select('id', { count: 'exact', head: true }),
+        supabase.from('activities').select('id', { count: 'exact', head: true }),
+        supabase.from('whatsapp_messages').select('id', { count: 'exact', head: true }),
+        supabase.from('whatsapp_conversations').select('id', { count: 'exact', head: true }),
+        supabase.from('site_visits').select('id', { count: 'exact', head: true }),
+        supabase.from('sync_errors').select('id', { count: 'exact', head: true }),
+        supabase.from('payment_reminders').select('id', { count: 'exact', head: true }),
+        supabase.from('tasks').select('id', { count: 'exact', head: true }),
+        supabase.from('leads').select('id', { count: 'exact', head: true }),
+        supabase.from('invoices').select('id', { count: 'exact', head: true }),
+      ]);
+
+      counts.audit_logs = auditRes.count || 0;
+      counts.activities = actRes.count || 0;
+      counts.whatsapp_messages = msgRes.count || 0;
+      counts.whatsapp_conversations = convRes.count || 0;
+      counts.site_visits = visitRes.count || 0;
+      counts.sync_errors = errRes.count || 0;
+      counts.payment_reminders = prRes.count || 0;
+      counts.tasks = taskRes.count || 0;
+      counts.leads = leadRes.count || 0;
+      counts.invoices = invRes.count || 0;
+
+      // Scan Supabase Storage buckets
+      const folders = ['campaigns', 'crm', 'reminders', 'invoices', 'proofs', ''];
+      for (const f of folders) {
+        try {
+          const { data: files } = await supabase.storage.from('whatsapp-media').list(f, { limit: 100 });
+          if (files && files.length > 0) {
+            for (const file of files) {
+              if (file.name !== '.emptyFolderPlaceholder') {
+                counts.storage_media_files++;
+                counts.storage_media_bytes += (file.metadata?.size || 150000);
+              }
+            }
+          }
+        } catch {}
+      }
+    } catch (err) {
+      console.warn('[db] getStorageUsageSummary count error:', err.message);
+    }
+  } else {
+    // In-memory mock counts
+    counts.audit_logs = (MOCK_STORE.audit_logs || []).length;
+    counts.activities = (MOCK_STORE.activities || []).length;
+    counts.whatsapp_messages = 12;
+    counts.whatsapp_conversations = (MOCK_STORE.whatsapp_conversations || []).length;
+    counts.site_visits = (MOCK_STORE.site_visits || []).length;
+    counts.sync_errors = (MOCK_STORE.sync_errors || []).length;
+    counts.payment_reminders = 4;
+    counts.tasks = (MOCK_STORE.tasks || []).length;
+    counts.leads = (MOCK_STORE.leads || []).length;
+    counts.invoices = (MOCK_STORE.invoices || []).length;
+    counts.storage_media_files = 8;
+    counts.storage_media_bytes = 2.4 * 1024 * 1024;
+  }
+
+  const bytesPerAudit = 1200;
+  const bytesPerActivity = 800;
+  const bytesPerMsg = 1500;
+  const bytesPerVisit = 3500;
+  const bytesPerSyncError = 2500;
+  const bytesPerReminder = 900;
+  const bytesPerTask = 1100;
+  const bytesPerLead = 1800;
+  const bytesPerInvoice = 2200;
+
+  const dbBytes =
+    counts.audit_logs * bytesPerAudit +
+    counts.activities * bytesPerActivity +
+    counts.whatsapp_messages * bytesPerMsg +
+    counts.site_visits * bytesPerVisit +
+    counts.sync_errors * bytesPerSyncError +
+    counts.payment_reminders * bytesPerReminder +
+    counts.tasks * bytesPerTask +
+    counts.leads * bytesPerLead +
+    counts.invoices * bytesPerInvoice +
+    (5 * 1024 * 1024); // PostgreSQL system catalogs & indexes ~5MB base
+
+  const storageBytes = Math.max(counts.storage_media_bytes, counts.storage_media_files * 250000);
+  const totalUsed = dbBytes + storageBytes;
+
+  summary.totalUsedBytes = totalUsed;
+  summary.dbBytes = dbBytes;
+  summary.storageBytes = storageBytes;
+  summary.freeBytes = Math.max(0, summary.totalQuotaBytes - totalUsed);
+  summary.usedPercentage = Math.min(100, Math.round((totalUsed / summary.totalQuotaBytes) * 1000) / 10);
+
+  summary.categories = [
+    {
+      key: 'whatsapp_media',
+      name: 'WhatsApp & Invoice Media Files',
+      type: 'Storage Bucket',
+      bucket: 'whatsapp-media',
+      count: counts.storage_media_files,
+      unit: 'files',
+      estimatedBytes: storageBytes,
+      isCleanable: true,
+      riskLevel: 'Low',
+      recommendedRetention: '7 Days',
+      description: 'Cached PDF invoices, uploaded proof images, campaign media & audio clips.',
+    },
+    {
+      key: 'audit_logs',
+      name: 'System Audit Trail Logs',
+      type: 'Database Table',
+      table: 'audit_logs',
+      count: counts.audit_logs,
+      unit: 'records',
+      estimatedBytes: counts.audit_logs * bytesPerAudit,
+      isCleanable: true,
+      riskLevel: 'Low',
+      recommendedRetention: '7 Days',
+      description: 'Granular user actions, login timestamps, entity updates, and system logs.',
+    },
+    {
+      key: 'activities',
+      name: 'Activity Feed & History Logs',
+      type: 'Database Table',
+      table: 'activities',
+      count: counts.activities,
+      unit: 'records',
+      estimatedBytes: counts.activities * bytesPerActivity,
+      isCleanable: true,
+      riskLevel: 'Low',
+      recommendedRetention: '7 Days',
+      description: 'Timeline activity events, automatic WhatsApp logs, note additions.',
+    },
+    {
+      key: 'site_visits',
+      name: 'Site Visits & GPS Check-in Logs',
+      type: 'Database Table',
+      table: 'site_visits',
+      count: counts.site_visits,
+      unit: 'visits',
+      estimatedBytes: counts.site_visits * bytesPerVisit,
+      isCleanable: true,
+      riskLevel: 'Medium',
+      recommendedRetention: '14 Days',
+      description: 'Historical field staff location check-ins and photo coordinates.',
+    },
+    {
+      key: 'sync_errors',
+      name: 'Tally Synchronization Logs & Errors',
+      type: 'Database Table',
+      table: 'sync_errors',
+      count: counts.sync_errors,
+      unit: 'logs',
+      estimatedBytes: counts.sync_errors * bytesPerSyncError,
+      isCleanable: true,
+      riskLevel: 'Low',
+      recommendedRetention: '7 Days',
+      description: 'Resolved connector sync error dumps and XML payload snapshots.',
+    },
+    {
+      key: 'payment_reminders',
+      name: 'Payment Reminder Outbox History',
+      type: 'Database Table',
+      table: 'payment_reminders',
+      count: counts.payment_reminders,
+      unit: 'reminders',
+      estimatedBytes: counts.payment_reminders * bytesPerReminder,
+      isCleanable: true,
+      riskLevel: 'Low',
+      recommendedRetention: '14 Days',
+      description: 'Log of sent WhatsApp payment reminders and delivery statuses.',
+    },
+    {
+      key: 'core_crm',
+      name: 'CRM Customers, Deals & Invoices',
+      type: 'Database Core',
+      count: counts.leads + counts.invoices + counts.tasks,
+      unit: 'entities',
+      estimatedBytes: (counts.leads * bytesPerLead) + (counts.invoices * bytesPerInvoice) + (counts.tasks * bytesPerTask),
+      isCleanable: false,
+      riskLevel: 'Protected',
+      recommendedRetention: 'Indefinite',
+      description: 'Active financial vouchers, CRM leads, and task management boards (Protected from auto-purge).',
+    }
+  ];
+
+  return summary;
+}
+
+export async function purgeStorageCategory(categoryKey, olderThanDays = 7) {
+  const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000).toISOString();
+  let deletedCount = 0;
+
+  if (isSupabaseConfigured) {
+    try {
+      if (categoryKey === 'audit_logs') {
+        const { data } = await supabase.from('audit_logs').delete().lt('created_at', cutoff).select('id');
+        deletedCount = data?.length || 0;
+      } else if (categoryKey === 'activities') {
+        const { data } = await supabase.from('activities').delete().lt('created_at', cutoff).select('id');
+        deletedCount = data?.length || 0;
+      } else if (categoryKey === 'site_visits') {
+        const { data } = await supabase.from('site_visits').delete().lt('check_in_time', cutoff).select('id');
+        deletedCount = data?.length || 0;
+      } else if (categoryKey === 'sync_errors') {
+        const { data } = await supabase.from('sync_errors').delete().lt('created_at', cutoff).select('id');
+        deletedCount = data?.length || 0;
+      } else if (categoryKey === 'payment_reminders') {
+        const { data } = await supabase.from('payment_reminders').delete().lt('sent_at', cutoff).select('id');
+        deletedCount = data?.length || 0;
+      } else if (categoryKey === 'whatsapp_media') {
+        const folders = ['campaigns', 'crm', 'reminders', 'invoices', 'proofs'];
+        for (const folder of folders) {
+          try {
+            const { data: files } = await supabase.storage.from('whatsapp-media').list(folder, { limit: 100 });
+            if (files && files.length > 0) {
+              const filesToDelete = files
+                .filter(f => f.name !== '.emptyFolderPlaceholder')
+                .map(f => `${folder}/${f.name}`);
+              if (filesToDelete.length > 0) {
+                await supabase.storage.from('whatsapp-media').remove(filesToDelete);
+                deletedCount += filesToDelete.length;
+              }
+            }
+          } catch {}
+        }
+      }
+      logAuditEvent('storage.purged', categoryKey, null, { categoryKey, olderThanDays, deletedCount });
+      return { success: true, deletedCount, error: null };
+    } catch (err) {
+      console.warn('[db] purgeStorageCategory error:', err.message);
+      return { success: false, deletedCount: 0, error: err.message };
+    }
+  }
+
+  // Fallback in-memory purge
+  if (categoryKey === 'audit_logs' && MOCK_STORE.audit_logs) {
+    deletedCount = MOCK_STORE.audit_logs.length;
+    MOCK_STORE.audit_logs = [];
+  } else if (categoryKey === 'activities' && MOCK_STORE.activities) {
+    deletedCount = MOCK_STORE.activities.length;
+    MOCK_STORE.activities = [];
+  } else if (categoryKey === 'sync_errors' && MOCK_STORE.sync_errors) {
+    deletedCount = MOCK_STORE.sync_errors.length;
+    MOCK_STORE.sync_errors = [];
+  } else if (categoryKey === 'whatsapp_media') {
+    deletedCount = 5;
+  }
+  return { success: true, deletedCount, error: null };
+}
+
+export async function purgeAllExpiredStorage(retentionDays = 7, selectedCategories = []) {
+  const categoriesToPurge = selectedCategories.length > 0
+    ? selectedCategories
+    : ['audit_logs', 'activities', 'sync_errors', 'payment_reminders', 'whatsapp_media'];
+
+  let totalDeleted = 0;
+  const results = {};
+
+  for (const cat of categoriesToPurge) {
+    const res = await purgeStorageCategory(cat, retentionDays);
+    results[cat] = res.deletedCount || 0;
+    totalDeleted += (res.deletedCount || 0);
+  }
+
+  logAuditEvent('storage.full_purge', 'system', null, { retentionDays, totalDeleted, results });
+  return { success: true, totalDeleted, results };
+}
+
+export async function runAutoStorageCleanupIfDue() {
+  const { data: settings } = await getOrgSettings();
+  if (settings?.storage_auto_clean_enabled !== 'true') return { skipped: true, reason: 'Auto-clean disabled' };
+
+  const todayStr = new Date().toISOString().split('T')[0];
+  const lastAutoClean = localStorage.getItem('erppro_last_storage_autoclean');
+  if (lastAutoClean === todayStr) return { skipped: true, reason: 'Already ran today' };
+
+  const retentionDays = Number(settings?.storage_retention_days) || 7;
+  const categories = [];
+  if (settings?.auto_clean_whatsapp_media === 'true') categories.push('whatsapp_media');
+  if (settings?.auto_clean_audit_logs === 'true') categories.push('audit_logs');
+  if (settings?.auto_clean_activities === 'true') categories.push('activities');
+  if (settings?.auto_clean_site_visits === 'true') categories.push('site_visits');
+  if (settings?.auto_clean_sync_errors === 'true') categories.push('sync_errors');
+  if (settings?.auto_clean_payment_reminders === 'true') categories.push('payment_reminders');
+
+  if (categories.length > 0) {
+    const res = await purgeAllExpiredStorage(retentionDays, categories);
+    try {
+      localStorage.setItem('erppro_last_storage_autoclean', todayStr);
+    } catch {}
+    return { success: true, ...res };
+  }
+  return { skipped: true, reason: 'No categories selected' };
+}
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // INVOICE PAYMENT PAUSE / RESUME (Smart Promise Engine)

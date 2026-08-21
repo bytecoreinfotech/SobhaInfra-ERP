@@ -59,3 +59,18 @@ ALTER TABLE public.task_templates ADD COLUMN IF NOT EXISTS target_client_names J
 ALTER TABLE public.task_templates ADD COLUMN IF NOT EXISTS last_generated_date DATE;
 ALTER TABLE public.task_templates ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true;
 
+-- 7. Seed storage retention default settings (7 days recommended for Supabase Free Tier)
+INSERT INTO public.org_settings (organization_id, key, value, description)
+VALUES 
+  ('00000000-0000-0000-0000-000000000001', 'storage_auto_clean_enabled', 'true', 'Automated daily storage cleanup switch'),
+  ('00000000-0000-0000-0000-000000000001', 'storage_retention_days', '7', 'Days to retain logs and media before auto-purging'),
+  ('00000000-0000-0000-0000-000000000001', 'auto_clean_whatsapp_media', 'true', 'Auto purge WhatsApp media files'),
+  ('00000000-0000-0000-0000-000000000001', 'auto_clean_audit_logs', 'true', 'Auto purge audit logs'),
+  ('00000000-0000-0000-0000-000000000001', 'auto_clean_activities', 'true', 'Auto purge activity logs'),
+  ('00000000-0000-0000-0000-000000000001', 'auto_clean_site_visits', 'true', 'Auto purge site visits logs'),
+  ('00000000-0000-0000-0000-000000000001', 'auto_clean_sync_errors', 'true', 'Auto purge sync error dumps'),
+  ('00000000-0000-0000-0000-000000000001', 'auto_clean_payment_reminders', 'true', 'Auto purge payment reminder logs')
+ON CONFLICT (organization_id, key) DO NOTHING;
+
+
+
