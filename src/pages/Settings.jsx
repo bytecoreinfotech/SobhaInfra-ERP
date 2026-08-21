@@ -7,7 +7,11 @@ import {
 } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { useTheme } from '../context/ThemeContext';
-import { getSystemSafetyAndQuotas, updateSystemSafety, toggleCircuitBreaker, exportAllData } from '../lib/db';
+import { useAuth } from '../context/AuthContext';
+import {
+  getSystemSafetyAndQuotas, updateSystemSafety, toggleCircuitBreaker, exportAllData,
+  getRoles, createRole, deleteRole, getPermissionMatrix, savePermissionMatrix, getTeamMembers
+} from '../lib/db';
 import './Pages.css';
 
 const KB_CATEGORIES = ['Properties', 'Pricing', 'Policy', 'FAQ', 'Operations', 'Contact', 'Payment Terms'];
@@ -26,8 +30,18 @@ const Settings = () => {
   const [kbLoading, setKbLoading] = useState(false);
   const [kbSaving, setKbSaving] = useState(false);
   const [editingKb, setEditingKb] = useState(null); // null | 'new' | item
-  const [kbForm, setKbForm] = useState({ category: 'Properties', title: '', content: '', status: 'active' });
+  const { user, canPerformAction } = useAuth();
   const [kbSuccess, setKbSuccess] = useState('');
+
+  // Roles & Positions tab state (Super Admin)
+  const [rolesList, setRolesList] = useState([]);
+  const [teamMembersList, setTeamMembersList] = useState([]);
+  const [settingsMatrix, setSettingsMatrix] = useState({});
+  const [matrixDirty, setMatrixDirty] = useState(false);
+  const [showAddPositionModal, setShowAddPositionModal] = useState(false);
+  const [newPositionForm, setNewPositionForm] = useState({ name: '', description: '', color: '#6366f1' });
+  const [posSuccessMsg, setPosSuccessMsg] = useState('');
+  const [posLoading, setPosLoading] = useState(false);
 
   useEffect(() => {
     loadSafety();
@@ -35,7 +49,21 @@ const Settings = () => {
 
   useEffect(() => {
     if (activeTab === 'ai_kb') loadKnowledgeBase();
+    if (activeTab === 'roles_positions') loadRolesAndMatrix();
   }, [activeTab]);
+
+  const loadRolesAndMatrix = async () => {
+    setPosLoading(true);
+    const [rolesRes, membersRes, matrixRes] = await Promise.all([
+      getRoles(),
+      getTeamMembers(),
+      getPermissionMatrix()
+    ]);
+    setRolesList(rolesRes.data || []);
+    setTeamMembersList(membersRes.data || []);
+    setSettingsMatrix(matrixRes.data || {});
+    setPosLoading(false);
+  };
 
   const loadKnowledgeBase = async () => {
     setKbLoading(true);
@@ -153,6 +181,7 @@ const Settings = () => {
     { id: 'ai_kb', label: 'AI Knowledge Base', icon: <Brain size={16} /> },
     { id: 'safety', label: 'Free-Tier Safety & Quotas', icon: <Zap size={16} /> },
     { id: 'export', label: 'Data Portability & Export', icon: <Download size={16} /> },
+    { id: 'roles_positions', label: 'Roles & Positions', icon: <Shield size={16} /> },
     { id: 'whatsapp', label: 'WhatsApp API', icon: <MessageCircle size={16} /> },
     { id: 'tally', label: 'Tally Config', icon: <RefreshCw size={16} /> },
     { id: 'notifications', label: 'Notifications', icon: <Bell size={16} /> },
@@ -725,6 +754,277 @@ const Settings = () => {
               <div style={{ padding: '0.75rem 1rem', background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: 8, fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
                 💡 <strong>Tip:</strong> The AI refreshes its knowledge every 5 minutes. After saving, send a test WhatsApp message to verify the AI uses your new content.
               </div>
+            </div>
+          )}
+
+          {/* ══════════════════════════════════════════════════════════════
+              TAB 9: ROLES & POSITIONS (Super Admin Organization Control)
+             ══════════════════════════════════════════════════════════════ */}
+          {activeTab === 'roles_positions' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
+                <div>
+                  <h3 style={{ fontSize: '1.05rem', fontWeight: 700, margin: 0 }}>Organization Roles & Positions</h3>
+                  <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: '0.25rem 0 0 0' }}>
+                    Configure employee positions, custom designations, and grant/restrict module access.
+                  </p>
+                </div>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <button className="btn btn-secondary btn-sm" onClick={loadRolesAndMatrix}>
+                    <RefreshCw size={13} className={posLoading ? 'animate-spin' : ''} /> Refresh
+                  </button>
+                  <button className="btn btn-primary btn-sm" onClick={() => setShowAddPositionModal(true)}>
+                    <Plus size={13} /> Add Position
+                  </button>
+                </div>
+              </div>
+
+              {posSuccessMsg && (
+                <div style={{
+                  padding: '0.65rem 1rem', borderRadius: 8, background: 'rgba(16,185,129,0.1)',
+                  border: '1px solid rgba(16,185,129,0.3)', color: 'var(--success)',
+                  display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.82rem'
+                }}>
+                  <Check size={15} /> {posSuccessMsg}
+                </div>
+              )}
+
+              {/* Positions Cards Grid */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.85rem' }}>
+                {rolesList.map(role => {
+                  const memberCount = teamMembersList.filter(m => m.role === role.name).length;
+                  return (
+                    <div key={role.id || role.name} style={{
+                      padding: '1rem', borderRadius: 10, background: 'var(--bg-secondary)',
+                      border: `1px solid ${role.color || '#6366f1'}33`, position: 'relative'
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.4rem' }}>
+                        <span style={{ fontWeight: 700, fontSize: '0.88rem', color: role.color || 'var(--text-primary)' }}>
+                          {role.name}
+                        </span>
+                        {!role.is_system && (
+                          <button
+                            className="btn-icon"
+                            style={{ color: 'var(--danger)', padding: 2 }}
+                            title="Delete Position"
+                            onClick={async () => {
+                              if (!window.confirm(`Delete position "${role.name}"?`)) return;
+                              await deleteRole(role.id);
+                              setRolesList(prev => prev.filter(r => r.id !== role.id));
+                              setSettingsMatrix(prev => { const copy = { ...prev }; delete copy[role.name]; return copy; });
+                              setPosSuccessMsg(`Position "${role.name}" deleted.`);
+                              setTimeout(() => setPosSuccessMsg(''), 3000);
+                            }}
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        )}
+                      </div>
+                      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
+                        {role.description || (role.is_system ? 'Default System Role' : 'Custom Organization Position')}
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span className="badge" style={{ fontSize: '0.62rem', background: (role.color || '#6366f1') + '22', color: role.color || '#6366f1' }}>
+                          {memberCount} Active Member{memberCount === 1 ? '' : 's'}
+                        </span>
+                        <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>
+                          {role.is_system ? 'System' : 'Custom'}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Interactive Permission Matrix */}
+              <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '1.25rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.85rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                  <div>
+                    <h4 style={{ fontSize: '0.92rem', fontWeight: 700, margin: 0 }}>Role Permission Matrix</h4>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                      Check or uncheck permissions to grant or revoke module access for each position.
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      onClick={async () => {
+                        const defaultMx = {
+                          'Super Admin': { Dashboard: true, WhatsApp: true, CRM: true, Tasks: true, Payments: true, Finance: true, Reports: true, Roles: true, FieldOps: true },
+                          'Manager':     { Dashboard: true, WhatsApp: true, CRM: true, Tasks: true, Payments: true, Finance: true, Reports: true, Roles: false, FieldOps: true },
+                          'Sales Executive': { Dashboard: true, WhatsApp: true, CRM: true, Tasks: true, Payments: false, Finance: false, Reports: false, Roles: false, FieldOps: true },
+                          'Accounts':    { Dashboard: true, WhatsApp: false, CRM: false, Tasks: false, Payments: true, Finance: true, Reports: true, Roles: false, FieldOps: false },
+                          'Support Agent': { Dashboard: true, WhatsApp: true, CRM: true, Tasks: true, Payments: false, Finance: false, Reports: false, Roles: false, FieldOps: false },
+                        };
+                        setSettingsMatrix(defaultMx);
+                        await savePermissionMatrix(defaultMx);
+                        setPosSuccessMsg('Permissions reset to defaults.');
+                        setTimeout(() => setPosSuccessMsg(''), 3000);
+                      }}
+                    >
+                      Reset Defaults
+                    </button>
+                    <button
+                      className="btn btn-primary btn-sm"
+                      onClick={async () => {
+                        await savePermissionMatrix(settingsMatrix);
+                        setMatrixDirty(false);
+                        setPosSuccessMsg('Permission matrix saved to cloud!');
+                        setTimeout(() => setPosSuccessMsg(''), 4000);
+                      }}
+                    >
+                      <Save size={13} /> Save Permissions {matrixDirty && '●'}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="table-container" style={{ border: '1px solid var(--border-color)', borderRadius: 8, overflowX: 'auto' }}>
+                  <table className="data-table" style={{ width: '100%', textAlign: 'center' }}>
+                    <thead>
+                      <tr style={{ background: 'var(--bg-secondary)' }}>
+                        <th style={{ textAlign: 'left', minWidth: 140, padding: '0.65rem 0.85rem' }}>Module</th>
+                        {rolesList.map(r => (
+                          <th key={r.id || r.name} style={{ padding: '0.65rem 0.5rem', minWidth: 100 }}>
+                            <div style={{ color: r.color || 'var(--accent-primary)', fontWeight: 700, fontSize: '0.78rem' }}>
+                              {r.name}
+                            </div>
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {['Dashboard', 'WhatsApp', 'CRM', 'Tasks', 'Payments', 'Finance', 'Reports', 'Roles', 'FieldOps'].map(mod => (
+                        <tr key={mod}>
+                          <td style={{ textAlign: 'left', fontWeight: 600, padding: '0.55rem 0.85rem', fontSize: '0.82rem' }}>
+                            {mod}
+                          </td>
+                          {rolesList.map(r => {
+                            const isSuperAdmin = r.name === 'Super Admin';
+                            const currentRolePerms = settingsMatrix[r.name] || {};
+                            const hasAccess = isSuperAdmin || Boolean(currentRolePerms[mod]);
+                            return (
+                              <td
+                                key={r.id || r.name}
+                                style={{ padding: '0.55rem 0.5rem', cursor: isSuperAdmin ? 'default' : 'pointer' }}
+                                onClick={() => {
+                                  if (isSuperAdmin) return;
+                                  setSettingsMatrix(prev => {
+                                    const updated = {
+                                      ...prev,
+                                      [r.name]: {
+                                        ...(prev[r.name] || {}),
+                                        [mod]: !hasAccess,
+                                      }
+                                    };
+                                    setMatrixDirty(true);
+                                    return updated;
+                                  });
+                                }}
+                              >
+                                {isSuperAdmin ? (
+                                  <span style={{ fontSize: '0.7rem', color: 'var(--success)', fontWeight: 700 }}>Always</span>
+                                ) : (
+                                  <input
+                                    type="checkbox"
+                                    checked={hasAccess}
+                                    onChange={(e) => {
+                                      e.stopPropagation();
+                                      setSettingsMatrix(prev => {
+                                        const updated = {
+                                          ...prev,
+                                          [r.name]: {
+                                            ...(prev[r.name] || {}),
+                                            [mod]: e.target.checked,
+                                          }
+                                        };
+                                        setMatrixDirty(true);
+                                        return updated;
+                                      });
+                                    }}
+                                    onClick={e => e.stopPropagation()}
+                                    style={{ width: 16, height: 16, cursor: 'pointer', accentColor: r.color || 'var(--accent-primary)' }}
+                                  />
+                                )}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Add Position Modal */}
+              {showAddPositionModal && (
+                <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) setShowAddPositionModal(false); }}>
+                  <div className="modal-content animate-fade-in" style={{ maxWidth: 440 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+                      <h3 style={{ fontSize: '1.05rem', fontWeight: 700, margin: 0 }}>Add New Position / Role</h3>
+                      <button className="modal-close-btn" onClick={() => setShowAddPositionModal(false)}>✕</button>
+                    </div>
+                    <form onSubmit={async (e) => {
+                      e.preventDefault();
+                      if (!newPositionForm.name.trim()) return;
+                      const { data } = await createRole(newPositionForm);
+                      if (data) {
+                        setRolesList(prev => [...prev, data]);
+                        setSettingsMatrix(prev => ({
+                          ...prev,
+                          [data.name]: { Dashboard: true, WhatsApp: true, CRM: true, Tasks: true, Payments: false, Finance: false, Reports: false, Roles: false, FieldOps: false }
+                        }));
+                        setMatrixDirty(true);
+                        setShowAddPositionModal(false);
+                        setNewPositionForm({ name: '', description: '', color: '#6366f1' });
+                        setPosSuccessMsg(`Position "${data.name}" created!`);
+                        setTimeout(() => setPosSuccessMsg(''), 3000);
+                      }
+                    }} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                      <div>
+                        <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Position Title *</label>
+                        <input
+                          type="text"
+                          className="input-field"
+                          placeholder="e.g. Senior Site Supervisor, Telecaller"
+                          value={newPositionForm.name}
+                          onChange={e => setNewPositionForm(p => ({ ...p, name: e.target.value }))}
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Badge Color</label>
+                        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                          {['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#06b6d4', '#8b5cf6', '#ec4899'].map(c => (
+                            <div
+                              key={c}
+                              onClick={() => setNewPositionForm(p => ({ ...p, color: c }))}
+                              style={{
+                                width: 24, height: 24, borderRadius: '50%', background: c,
+                                cursor: 'pointer', border: newPositionForm.color === c ? '2px solid white' : '2px solid transparent',
+                                transform: newPositionForm.color === c ? 'scale(1.15)' : 'none', transition: 'all 0.15s'
+                              }}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Description / Designation Scope</label>
+                        <input
+                          type="text"
+                          className="input-field"
+                          placeholder="e.g. Handles on-site visits and client inspections"
+                          value={newPositionForm.description}
+                          onChange={e => setNewPositionForm(p => ({ ...p, description: e.target.value }))}
+                        />
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.5rem' }}>
+                        <button type="button" className="btn btn-secondary" onClick={() => setShowAddPositionModal(false)}>Cancel</button>
+                        <button type="submit" className="btn btn-primary" disabled={!newPositionForm.name.trim()}>Create Position</button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

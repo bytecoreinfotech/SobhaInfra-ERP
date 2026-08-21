@@ -8,6 +8,8 @@ const demoCredentials = [
   { role: 'Field Employee / Agent', email: 'field@erppro.in', password: 'demo1234', name: 'Anand Sharma', badge: 'warning' },
   { role: 'Sales Executive', email: 'sales@erppro.in', password: 'demo1234', name: 'Rajesh Kumar', badge: 'success' },
   { role: 'Accounts & Billing', email: 'accounts@erppro.in', password: 'demo1234', name: 'Sunita Patel', badge: 'neutral' },
+  { role: 'Support Agent', email: 'neha@erppro.in', password: 'demo1234', name: 'Neha Gupta', badge: 'accent' },
+  { role: 'Senior Field Sales', email: 'vikram@erppro.in', password: 'demo1234', name: 'Vikram Singh', badge: 'warning' },
 ];
 
 const Login = () => {
