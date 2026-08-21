@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Shield, Plus, X, Edit2, Trash2, User, Check, RefreshCw, AlertCircle, Save, RotateCcw, Lock, CheckSquare, Square } from 'lucide-react';
-import { getRoles, createRole, getTeamMembers, inviteTeamMember } from '../lib/db';
+import { getRoles, createRole, deleteRole, getTeamMembers, inviteTeamMember, getPermissionMatrix, savePermissionMatrix } from '../lib/db';
 import { useAuth } from '../context/AuthContext';
 import './Pages.css';
 
-const modules = ['Dashboard', 'WhatsApp', 'CRM', 'Tasks', 'Payments', 'Finance', 'Reports', 'Roles'];
+const modules = ['Dashboard', 'WhatsApp', 'CRM', 'Tasks', 'Payments', 'Finance', 'Reports', 'Roles', 'FieldOps'];
 
 const DEFAULT_ROLES = [
   { id: 'role-1', name: 'Super Admin', color: '#ef4444', is_system: true, users_count: 1 },
@@ -15,11 +15,11 @@ const DEFAULT_ROLES = [
 ];
 
 const defaultMatrix = {
-  'Super Admin': { Dashboard: true, WhatsApp: true, CRM: true, Tasks: true, Payments: true, Finance: true, Reports: true, Roles: true },
-  'Manager':     { Dashboard: true, WhatsApp: true, CRM: true, Tasks: true, Payments: true, Finance: true, Reports: true, Roles: false },
-  'Sales Executive': { Dashboard: true, WhatsApp: true, CRM: true, Tasks: true, Payments: false, Finance: false, Reports: true, Roles: false },
-  'Accounts':    { Dashboard: true, WhatsApp: false, CRM: false, Tasks: false, Payments: true, Finance: true, Reports: true, Roles: false },
-  'Support Agent': { Dashboard: true, WhatsApp: true, CRM: true, Tasks: true, Payments: false, Finance: false, Reports: false, Roles: false },
+  'Super Admin': { Dashboard: true, WhatsApp: true, CRM: true, Tasks: true, Payments: true, Finance: true, Reports: true, Roles: true, FieldOps: true },
+  'Manager':     { Dashboard: true, WhatsApp: true, CRM: true, Tasks: true, Payments: true, Finance: true, Reports: true, Roles: false, FieldOps: true },
+  'Sales Executive': { Dashboard: true, WhatsApp: true, CRM: true, Tasks: true, Payments: false, Finance: false, Reports: false, Roles: false, FieldOps: true },
+  'Accounts':    { Dashboard: true, WhatsApp: false, CRM: false, Tasks: false, Payments: true, Finance: true, Reports: true, Roles: false, FieldOps: false },
+  'Support Agent': { Dashboard: true, WhatsApp: true, CRM: true, Tasks: true, Payments: false, Finance: false, Reports: false, Roles: false, FieldOps: false },
 };
 
 const Roles = () => {
@@ -30,13 +30,7 @@ const Roles = () => {
   const [activeTab, setActiveTab] = useState('users');
   
   // Interactive Permission Matrix state
-  const [matrix, setMatrix] = useState(() => {
-    try {
-      const saved = localStorage.getItem('erppro_permission_matrix');
-      if (saved) return JSON.parse(saved);
-    } catch {}
-    return defaultMatrix;
-  });
+  const [matrix, setMatrix] = useState({});
   const [matrixDirty, setMatrixDirty] = useState(false);
 
   // Modals
@@ -55,9 +49,10 @@ const Roles = () => {
 
   const loadData = async () => {
     setLoading(true);
-    const [rolesRes, usersRes] = await Promise.all([
+    const [rolesRes, usersRes, matrixRes] = await Promise.all([
       getRoles(),
       getTeamMembers(),
+      getPermissionMatrix(),
     ]);
     if (rolesRes.data && rolesRes.data.length > 0) {
       setRoles(rolesRes.data);
@@ -65,6 +60,11 @@ const Roles = () => {
       setRoles(DEFAULT_ROLES);
     }
     setTeamMembers(usersRes.data || []);
+    if (matrixRes.data && Object.keys(matrixRes.data).length > 0) {
+      setMatrix(matrixRes.data);
+    } else {
+      setMatrix(defaultMatrix);
+    }
     setLoading(false);
   };
 
@@ -96,7 +96,7 @@ const Roles = () => {
       // Initialize permissions for new role
       setMatrix(prev => ({
         ...prev,
-        [data.name]: { Dashboard: true, WhatsApp: true, CRM: true, Tasks: true, Payments: false, Finance: false, Reports: false, Roles: false }
+        [data.name]: { Dashboard: true, WhatsApp: true, CRM: true, Tasks: true, Payments: false, Finance: false, Reports: false, Roles: false, FieldOps: false }
       }));
       setShowAddRole(false);
       setRoleForm({ name: '', description: '', color: '#6366f1' });
@@ -126,22 +126,22 @@ const Roles = () => {
     });
   };
 
-  const savePermissionMatrix = () => {
+  const savePermissionMatrixHandler = async () => {
     try {
-      localStorage.setItem('erppro_permission_matrix', JSON.stringify(matrix));
+      await savePermissionMatrix(matrix);
       setMatrixDirty(false);
-      setFeedbackMsg({ type: 'success', text: 'Permission Matrix updated and saved successfully!' });
+      setFeedbackMsg({ type: 'success', text: 'Permission Matrix saved to cloud successfully!' });
       setTimeout(() => setFeedbackMsg(null), 4000);
     } catch (err) {
       setFeedbackMsg({ type: 'error', text: 'Failed to save permissions: ' + err.message });
     }
   };
 
-  const resetPermissionMatrix = () => {
+  const resetPermissionMatrix = async () => {
     setMatrix(defaultMatrix);
     setMatrixDirty(true);
     try {
-      localStorage.removeItem('erppro_permission_matrix');
+      await savePermissionMatrix(defaultMatrix);
     } catch {}
     setFeedbackMsg({ type: 'success', text: 'Reset permissions to system defaults.' });
     setTimeout(() => setFeedbackMsg(null), 3000);
@@ -198,9 +198,26 @@ const Roles = () => {
             <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '0.6rem' }}>
               {teamMembers.filter(m => m.role === role.name).length || role.users_count || 0} active members
             </div>
-            <span className={`badge ${role.is_system ? 'badge-neutral' : 'badge-accent'}`} style={{ fontSize: '0.65rem' }}>
-              {role.is_system ? 'System Role' : 'Custom Role'}
-            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              <span className={`badge ${role.is_system ? 'badge-neutral' : 'badge-accent'}`} style={{ fontSize: '0.65rem' }}>
+                {role.is_system ? 'System Role' : 'Custom Role'}
+              </span>
+              {!role.is_system && (
+                <button
+                  className="btn-icon"
+                  style={{ color: 'var(--danger)', padding: '0.15rem' }}
+                  title="Delete Custom Role"
+                  onClick={async () => {
+                    await deleteRole(role.id);
+                    setRoles(prev => prev.filter(r => r.id !== role.id));
+                    setMatrix(prev => { const copy = { ...prev }; delete copy[role.name]; return copy; });
+                    setMatrixDirty(true);
+                  }}
+                >
+                  <Trash2 size={12} />
+                </button>
+              )}
+            </div>
           </div>
         ))}
       </div>
@@ -316,7 +333,7 @@ const Roles = () => {
               <button className="btn btn-secondary btn-sm" onClick={resetPermissionMatrix} style={{ fontSize: '0.75rem' }}>
                 <RotateCcw size={13} /> Reset Defaults
               </button>
-              <button className="btn btn-primary btn-sm" onClick={savePermissionMatrix} style={{ fontSize: '0.75rem' }}>
+              <button className="btn btn-primary btn-sm" onClick={savePermissionMatrixHandler} style={{ fontSize: '0.75rem' }}>
                 <Save size={13} /> Save Permissions {matrixDirty && '●'}
               </button>
             </div>

@@ -26,13 +26,20 @@ export function normalizePhone(phone) {
 const MOCK_STORE = {
   roles: [
     { id: 'role-1', name: 'Super Admin', color: '#ef4444', users_count: 1, permissions: ['all'], is_system: true },
-    { id: 'role-2', name: 'Manager', color: '#6366f1', users_count: 3, permissions: ['dashboard:view', 'crm:read', 'crm:write', 'tasks:read', 'tasks:write', 'finance:read', 'whatsapp:view', 'whatsapp:send'], is_system: true },
-    { id: 'role-3', name: 'Sales Executive', color: '#10b981', users_count: 8, permissions: ['dashboard:view', 'crm:read', 'crm:write', 'tasks:read', 'tasks:write', 'whatsapp:view', 'whatsapp:send'], is_system: true },
-    { id: 'role-4', name: 'Accounts', color: '#f59e0b', users_count: 2, permissions: ['dashboard:view', 'finance:read', 'finance:sync', 'finance:remind'], is_system: true },
-    { id: 'role-5', name: 'Support Agent', color: '#06b6d4', users_count: 4, permissions: ['dashboard:view', 'whatsapp:view', 'whatsapp:send', 'crm:read'], is_system: true },
+    { id: 'role-2', name: 'Manager', color: '#6366f1', users_count: 2, permissions: ['dashboard:view', 'crm:read', 'crm:write', 'tasks:read', 'tasks:write', 'tasks:create', 'tasks:assign', 'tasks:complete', 'finance:read', 'whatsapp:view', 'whatsapp:send'], is_system: true },
+    { id: 'role-3', name: 'Sales Executive', color: '#10b981', users_count: 3, permissions: ['dashboard:view', 'crm:read', 'crm:write', 'tasks:read', 'tasks:update_own', 'whatsapp:view', 'whatsapp:send', 'field:view', 'field:checkin'], is_system: true },
+    { id: 'role-4', name: 'Accounts', color: '#f59e0b', users_count: 1, permissions: ['dashboard:view', 'finance:read', 'finance:sync', 'finance:remind', 'tasks:read'], is_system: true },
+    { id: 'role-5', name: 'Support Agent', color: '#06b6d4', users_count: 1, permissions: ['dashboard:view', 'whatsapp:view', 'whatsapp:send', 'crm:read', 'tasks:read', 'tasks:update_own'], is_system: true },
   ],
   users: [
-    { id: 'usr-1', full_name: 'Admin User', email: 'admin@erppro.in', role: 'Super Admin', is_active: true, last_login_at: 'Today, 10:35 AM', avatar: 'AU' },
+    { id: 'usr-1', full_name: 'Admin User', email: 'admin@erppro.in', role: 'Super Admin', phone: '+919999000001', is_active: true, last_login_at: 'Today, 10:35 AM', avatar: 'AU' },
+    { id: 'usr-2', full_name: 'Priya Sharma', email: 'manager@erppro.in', role: 'Manager', phone: '+919999000002', is_active: true, last_login_at: 'Today, 9:15 AM', avatar: 'PS' },
+    { id: 'usr-3', full_name: 'Anand Sharma', email: 'field@erppro.in', role: 'Sales Executive', phone: '+919999000003', is_active: true, last_login_at: 'Today, 8:45 AM', avatar: 'AS' },
+    { id: 'usr-4', full_name: 'Rajesh Kumar', email: 'sales@erppro.in', role: 'Sales Executive', phone: '+919999000004', is_active: true, last_login_at: 'Today, 9:00 AM', avatar: 'RK' },
+    { id: 'usr-5', full_name: 'Sunita Patel', email: 'accounts@erppro.in', role: 'Accounts', phone: '+919999000005', is_active: true, last_login_at: 'Today, 10:00 AM', avatar: 'SP' },
+    { id: 'usr-6', full_name: 'Vikram Singh', email: 'vikram@erppro.in', role: 'Sales Executive', phone: '+919999000006', is_active: true, last_login_at: 'Yesterday, 6:30 PM', avatar: 'VS' },
+    { id: 'usr-7', full_name: 'Deepak Verma', email: 'deepak@erppro.in', role: 'Manager', phone: '+919999000007', is_active: true, last_login_at: 'Today, 11:20 AM', avatar: 'DV' },
+    { id: 'usr-8', full_name: 'Neha Gupta', email: 'neha@erppro.in', role: 'Support Agent', phone: '+919999000008', is_active: true, last_login_at: 'Today, 10:50 AM', avatar: 'NG' },
   ],
   leads: [],
   whatsapp_conversations: [],
@@ -52,6 +59,7 @@ const MOCK_STORE = {
   campaigns: [],
   activities: [],
   tasks: [],
+  task_templates: [],
   products: [],
   deals: [],
   quotations: [],
@@ -675,6 +683,133 @@ export async function addTaskComment(taskId, commentText, author = 'Admin') {
   return { data: comment, error: null };
 }
 
+export async function deleteTask(taskId) {
+  if (isSupabaseConfigured) {
+    try {
+      const { error } = await supabase.from('tasks').delete().eq('id', taskId);
+      if (!error) {
+        logAuditEvent('task.delete', 'tasks', taskId);
+        return { error: null };
+      }
+    } catch {}
+  }
+  const idx = MOCK_STORE.tasks.findIndex(t => t.id === taskId);
+  if (idx !== -1) MOCK_STORE.tasks.splice(idx, 1);
+  try {
+    localStorage.setItem('erppro_local_tasks', JSON.stringify(MOCK_STORE.tasks));
+  } catch {}
+  logAuditEvent('task.delete', 'tasks', taskId);
+  return { error: null };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TASK TEMPLATES (Default / Recurring Tasks for Super Admin)
+// ─────────────────────────────────────────────────────────────────────────────
+export async function getTaskTemplates() {
+  if (isSupabaseConfigured) {
+    try {
+      const { data, error } = await supabase.from('task_templates').select('*').order('created_at', { ascending: false });
+      if (!error && data) return data;
+    } catch (err) {
+      console.warn('[db] getTaskTemplates fallback:', err.message);
+    }
+  }
+  return MOCK_STORE.task_templates;
+}
+
+export async function saveTaskTemplate(template) {
+  const newTpl = {
+    title: template.title,
+    description: template.description || '',
+    priority: template.priority || 'Medium',
+    tags: template.tags || [],
+    default_assignee: template.default_assignee || '',
+  };
+
+  if (isSupabaseConfigured) {
+    try {
+      if (template.id) {
+        const { data, error } = await supabase.from('task_templates').update(newTpl).eq('id', template.id).select().single();
+        if (!error && data) return data;
+      } else {
+        const { data, error } = await supabase.from('task_templates').insert([{ ...newTpl, organization_id: DEFAULT_ORG_ID }]).select().single();
+        if (!error && data) return data;
+      }
+    } catch {}
+  }
+
+  // Fallback to mock store
+  const mockTpl = { id: template.id || 'tpl-' + Date.now(), ...newTpl, created_at: new Date().toISOString() };
+  const existingIdx = MOCK_STORE.task_templates.findIndex(t => t.id === mockTpl.id);
+  if (existingIdx !== -1) {
+    MOCK_STORE.task_templates[existingIdx] = mockTpl;
+  } else {
+    MOCK_STORE.task_templates.unshift(mockTpl);
+  }
+  return mockTpl;
+}
+
+export async function deleteTaskTemplate(templateId) {
+  if (isSupabaseConfigured) {
+    try {
+      const { error } = await supabase.from('task_templates').delete().eq('id', templateId);
+      if (!error) return { error: null };
+    } catch {}
+  }
+  MOCK_STORE.task_templates = MOCK_STORE.task_templates.filter(t => t.id !== templateId);
+  return { error: null };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EMPLOYEE TASK ANALYTICS (Monthly per-employee breakdown)
+// ─────────────────────────────────────────────────────────────────────────────
+export async function getTasksByEmployee(month, year) {
+  // Get all tasks
+  const { data: allTasks } = await getTasks();
+  const tasks = allTasks || [];
+  
+  // Get all team members
+  const { data: members } = await getTeamMembers();
+  const teamMembers = members || [];
+  
+  // Filter tasks by month/year if provided
+  const filtered = tasks.filter(t => {
+    if (!month || !year) return true;
+    const d = new Date(t.created_at || t.due_date);
+    return d.getMonth() + 1 === month && d.getFullYear() === year;
+  });
+  
+  // Build per-employee stats
+  const employeeStats = teamMembers.map(m => {
+    const empTasks = filtered.filter(t => 
+      (t.assigned_to || '').toLowerCase() === (m.full_name || '').toLowerCase()
+    );
+    return {
+      id: m.id,
+      name: m.full_name,
+      role: m.role,
+      avatar: m.avatar,
+      total: empTasks.length,
+      todo: empTasks.filter(t => t.status === 'To Do').length,
+      inProgress: empTasks.filter(t => t.status === 'In Progress').length,
+      underReview: empTasks.filter(t => t.status === 'Under Review').length,
+      done: empTasks.filter(t => t.status === 'Done').length,
+      highPriority: empTasks.filter(t => t.priority === 'High').length,
+    };
+  });
+  
+  return {
+    data: employeeStats,
+    totalTasks: filtered.length,
+    summary: {
+      todo: filtered.filter(t => t.status === 'To Do').length,
+      inProgress: filtered.filter(t => t.status === 'In Progress').length,
+      underReview: filtered.filter(t => t.status === 'Under Review').length,
+      done: filtered.filter(t => t.status === 'Done').length,
+    }
+  };
+}
+
 export async function getCampaigns() {
   if (!isSupabaseConfigured) return { data: MOCK_STORE.campaigns, error: null };
   const { data, error } = await supabase.from('wa_campaigns').select('*').order('created_at', { ascending: false });
@@ -1137,15 +1272,6 @@ export async function getRoles() {
       console.warn('[db] getRoles fallback:', err.message);
     }
   }
-  try {
-    const local = localStorage.getItem('erppro_custom_roles');
-    if (local) {
-      const parsed = JSON.parse(local);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return { data: parsed, error: null };
-      }
-    }
-  } catch {}
   return { data: MOCK_STORE.roles, error: null };
 }
 
@@ -1153,15 +1279,23 @@ export async function createRole(roleData) {
   const newRole = { id: 'role-' + Date.now(), ...roleData, users_count: 0, is_system: false };
   if (isSupabaseConfigured) {
     try {
-      const { data, error } = await supabase.from('roles').insert([{ ...roleData, organization_id: DEFAULT_ORG_ID }]).select().single();
+      const { data, error } = await supabase.from('roles').insert([{ ...roleData, organization_id: DEFAULT_ORG_ID, is_system: false, users_count: 0 }]).select().single();
       if (!error && data) return { data, error: null };
     } catch {}
   }
   MOCK_STORE.roles.push(newRole);
-  try {
-    localStorage.setItem('erppro_custom_roles', JSON.stringify(MOCK_STORE.roles));
-  } catch {}
   return { data: newRole, error: null };
+}
+
+export async function deleteRole(roleId) {
+  if (isSupabaseConfigured) {
+    try {
+      const { error } = await supabase.from('roles').delete().eq('id', roleId);
+      if (!error) return { error: null };
+    } catch {}
+  }
+  MOCK_STORE.roles = MOCK_STORE.roles.filter(r => r.id !== roleId);
+  return { error: null };
 }
 
 export async function getTeamMembers() {
@@ -1173,15 +1307,6 @@ export async function getTeamMembers() {
       console.warn('[db] getTeamMembers fallback:', err.message);
     }
   }
-  try {
-    const local = localStorage.getItem('erppro_team_members');
-    if (local) {
-      const parsed = JSON.parse(local);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return { data: parsed, error: null };
-      }
-    }
-  } catch {}
   return { data: MOCK_STORE.users, error: null };
 }
 
@@ -1195,16 +1320,56 @@ export async function inviteTeamMember(userData) {
   };
   if (isSupabaseConfigured) {
     try {
-      const { data, error } = await supabase.from('users').insert([{ ...userData, organization_id: DEFAULT_ORG_ID }]).select().single();
+      const { data, error } = await supabase.from('users').insert([{ ...userData, organization_id: DEFAULT_ORG_ID, is_active: true, avatar: newUser.avatar }]).select().single();
       if (!error && data) return { data, error: null };
     } catch {}
   }
   MOCK_STORE.users.unshift(newUser);
-  try {
-    localStorage.setItem('erppro_team_members', JSON.stringify(MOCK_STORE.users));
-  } catch {}
   return { data: newUser, error: null };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PERMISSION MATRIX (Cloud-backed via Supabase)
+// ─────────────────────────────────────────────────────────────────────────────
+export async function getPermissionMatrix() {
+  if (isSupabaseConfigured) {
+    try {
+      const { data, error } = await supabase.from('permission_matrix').select('matrix').eq('organization_id', DEFAULT_ORG_ID).maybeSingle();
+      if (!error && data?.matrix) return { data: data.matrix, error: null };
+    } catch (err) {
+      console.warn('[db] getPermissionMatrix fallback:', err.message);
+    }
+  }
+  // Fallback default matrix
+  return {
+    data: {
+      'Super Admin': { Dashboard: true, WhatsApp: true, CRM: true, Tasks: true, Payments: true, Finance: true, Reports: true, Roles: true, FieldOps: true },
+      'Manager':     { Dashboard: true, WhatsApp: true, CRM: true, Tasks: true, Payments: true, Finance: true, Reports: true, Roles: false, FieldOps: true },
+      'Sales Executive': { Dashboard: true, WhatsApp: true, CRM: true, Tasks: true, Payments: false, Finance: false, Reports: false, Roles: false, FieldOps: true },
+      'Accounts':    { Dashboard: true, WhatsApp: false, CRM: false, Tasks: false, Payments: true, Finance: true, Reports: true, Roles: false, FieldOps: false },
+      'Support Agent': { Dashboard: true, WhatsApp: true, CRM: true, Tasks: true, Payments: false, Finance: false, Reports: false, Roles: false, FieldOps: false },
+    },
+    error: null,
+  };
+}
+
+export async function savePermissionMatrix(matrix) {
+  if (isSupabaseConfigured) {
+    try {
+      const { error } = await supabase.from('permission_matrix').upsert({
+        organization_id: DEFAULT_ORG_ID,
+        matrix,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'organization_id' });
+      if (!error) return { error: null };
+    } catch (err) {
+      console.warn('[db] savePermissionMatrix error:', err.message);
+    }
+  }
+  // No localStorage fallback - just return success for MOCK_STORE mode
+  return { error: null };
+}
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AUTOMATION ENGINE SERVICES (Section 31, 32, 33, 34)

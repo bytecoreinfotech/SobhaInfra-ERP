@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
-import { DEFAULT_ORG_ID, logAuditEvent } from '../lib/db';
+import { DEFAULT_ORG_ID, logAuditEvent, getPermissionMatrix } from '../lib/db';
 
 const AuthContext = createContext(null);
 
@@ -20,7 +20,7 @@ const DEMO_USERS = {
     name: 'Priya Sharma',
     avatar: 'PS',
     organization_id: DEFAULT_ORG_ID,
-    permissions: ['dashboard:view', 'whatsapp:view', 'whatsapp:send', 'whatsapp:campaign', 'crm:read', 'crm:write', 'crm:assign', 'tasks:read', 'tasks:write', 'finance:read', 'finance:remind', 'ai:view'],
+    permissions: ['dashboard:view', 'whatsapp:view', 'whatsapp:send', 'whatsapp:campaign', 'crm:read', 'crm:write', 'crm:assign', 'tasks:read', 'tasks:write', 'tasks:create', 'tasks:assign', 'tasks:complete', 'finance:read', 'finance:remind', 'ai:view', 'field:view'],
   },
   'sales@erppro.in': {
     password: 'demo1234',
@@ -28,7 +28,7 @@ const DEMO_USERS = {
     name: 'Rajesh Kumar',
     avatar: 'RK',
     organization_id: DEFAULT_ORG_ID,
-    permissions: ['dashboard:view', 'whatsapp:view', 'whatsapp:send', 'crm:read', 'crm:write', 'tasks:read', 'tasks:write', 'ai:view'],
+    permissions: ['dashboard:view', 'whatsapp:view', 'whatsapp:send', 'crm:read', 'crm:write', 'tasks:read', 'tasks:update_own', 'ai:view', 'field:view', 'field:checkin'],
   },
   'field@erppro.in': {
     password: 'demo1234',
@@ -36,7 +36,7 @@ const DEMO_USERS = {
     name: 'Anand Sharma',
     avatar: 'AS',
     organization_id: DEFAULT_ORG_ID,
-    permissions: ['dashboard:view', 'field:view', 'field:checkin', 'tasks:read', 'tasks:write', 'crm:read'],
+    permissions: ['dashboard:view', 'field:view', 'field:checkin', 'tasks:read', 'tasks:update_own', 'crm:read'],
   },
   'accounts@erppro.in': {
     password: 'demo1234',
@@ -46,14 +46,81 @@ const DEMO_USERS = {
     organization_id: DEFAULT_ORG_ID,
     permissions: ['dashboard:view', 'finance:read', 'finance:sync', 'finance:remind', 'crm:read', 'tasks:read'],
   },
+  'vikram@erppro.in': {
+    password: 'demo1234',
+    role: 'Sales Executive',
+    name: 'Vikram Singh',
+    avatar: 'VS',
+    organization_id: DEFAULT_ORG_ID,
+    permissions: ['dashboard:view', 'field:view', 'field:checkin', 'tasks:read', 'tasks:update_own', 'crm:read', 'whatsapp:view'],
+  },
+  'deepak@erppro.in': {
+    password: 'demo1234',
+    role: 'Manager',
+    name: 'Deepak Verma',
+    avatar: 'DV',
+    organization_id: DEFAULT_ORG_ID,
+    permissions: ['dashboard:view', 'whatsapp:view', 'whatsapp:send', 'crm:read', 'crm:write', 'tasks:read', 'tasks:write', 'tasks:create', 'tasks:assign', 'tasks:complete', 'finance:read', 'field:view'],
+  },
+  'neha@erppro.in': {
+    password: 'demo1234',
+    role: 'Support Agent',
+    name: 'Neha Gupta',
+    avatar: 'NG',
+    organization_id: DEFAULT_ORG_ID,
+    permissions: ['dashboard:view', 'whatsapp:view', 'whatsapp:send', 'crm:read', 'tasks:read', 'tasks:update_own'],
+  },
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ACTION-LEVEL PERMISSION MAP PER ROLE
+// ─────────────────────────────────────────────────────────────────────────────
+const ROLE_ACTION_MAP = {
+  'Super Admin': {
+    'tasks:create': true, 'tasks:assign': true, 'tasks:complete': true, 'tasks:delete': true,
+    'tasks:view_all': true, 'tasks:manage_templates': true, 'tasks:view_analytics': true,
+    'field:checkin': true, 'field:view_all': true, 'field:approve': true,
+    'roles:manage': true, 'settings:manage': true,
+  },
+  'Manager': {
+    'tasks:create': true, 'tasks:assign': true, 'tasks:complete': true, 'tasks:delete': false,
+    'tasks:view_all': true, 'tasks:manage_templates': false, 'tasks:view_analytics': true,
+    'field:checkin': false, 'field:view_all': true, 'field:approve': true,
+    'roles:manage': false, 'settings:manage': false,
+  },
+  'Sales Executive': {
+    'tasks:create': false, 'tasks:assign': false, 'tasks:complete': false, 'tasks:delete': false,
+    'tasks:view_all': false, 'tasks:manage_templates': false, 'tasks:view_analytics': false,
+    'field:checkin': true, 'field:view_all': false, 'field:approve': false,
+    'roles:manage': false, 'settings:manage': false,
+  },
+  'Accounts': {
+    'tasks:create': false, 'tasks:assign': false, 'tasks:complete': false, 'tasks:delete': false,
+    'tasks:view_all': false, 'tasks:manage_templates': false, 'tasks:view_analytics': false,
+    'field:checkin': false, 'field:view_all': false, 'field:approve': false,
+    'roles:manage': false, 'settings:manage': false,
+  },
+  'Support Agent': {
+    'tasks:create': false, 'tasks:assign': false, 'tasks:complete': false, 'tasks:delete': false,
+    'tasks:view_all': false, 'tasks:manage_templates': false, 'tasks:view_analytics': false,
+    'field:checkin': false, 'field:view_all': false, 'field:approve': false,
+    'roles:manage': false, 'settings:manage': false,
+  },
 };
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [cachedMatrix, setCachedMatrix] = useState(null);
+
+  // Load permission matrix from Supabase on mount
+  useEffect(() => {
+    getPermissionMatrix().then(res => {
+      if (res.data) setCachedMatrix(res.data);
+    });
+  }, []);
 
   useEffect(() => {
-    // 1. Check for persisted demo session first
     const demoSession = localStorage.getItem('erm-demo-user');
     if (demoSession) {
       try {
@@ -65,12 +132,9 @@ export const AuthProvider = ({ children }) => {
       }
     }
 
-    // 2. Check for real Supabase Auth session if configured
     if (isSupabaseConfigured) {
       supabase.auth.getSession().then(({ data: { session } }) => {
-        if (session?.user) {
-          hydrateSupabaseUser(session.user);
-        }
+        if (session?.user) hydrateSupabaseUser(session.user);
         setLoading(false);
       });
 
@@ -126,26 +190,24 @@ export const AuthProvider = ({ children }) => {
   const signIn = async (email, password) => {
     const cleanEmail = (email || '').trim().toLowerCase();
 
-    // 1. Instant check for demo accounts
+    // 1. Demo accounts
     const demoUser = DEMO_USERS[cleanEmail];
     if (demoUser && (demoUser.password === password || password === 'demo1234')) {
-      const mockUser = {
-        id: 'demo-' + cleanEmail,
-        email: cleanEmail,
-        ...demoUser,
-        isDemo: true,
-      };
+      const mockUser = { id: 'demo-' + cleanEmail, email: cleanEmail, ...demoUser, isDemo: true };
       localStorage.setItem('erm-demo-user', JSON.stringify(mockUser));
       setUser(mockUser);
       logAuditEvent('user.login', 'auth', mockUser.id, { method: 'demo_auth', email: cleanEmail });
       return { data: mockUser, error: null };
     }
 
-    // 2. Check for newly invited team members in this workspace
+    // 2. Invited team members (from Supabase users table)
     try {
-      const localMembers = JSON.parse(localStorage.getItem('erppro_team_members') || '[]');
-      const invited = localMembers.find(m => (m.email || '').trim().toLowerCase() === cleanEmail);
+      const { getTeamMembers } = await import('../lib/db');
+      const { data: members } = await getTeamMembers();
+      const invited = (members || []).find(m => (m.email || '').trim().toLowerCase() === cleanEmail);
       if (invited && (password === 'demo1234' || password.length >= 4)) {
+        const rolePerms = ROLE_ACTION_MAP[invited.role] || ROLE_ACTION_MAP['Sales Executive'] || {};
+        const permList = Object.keys(rolePerms).filter(k => rolePerms[k]);
         const mockInvited = {
           id: invited.id || 'usr-' + Date.now(),
           email: cleanEmail,
@@ -153,7 +215,7 @@ export const AuthProvider = ({ children }) => {
           role: invited.role || 'Sales Executive',
           avatar: (invited.full_name || 'U').slice(0, 2).toUpperCase(),
           organization_id: DEFAULT_ORG_ID,
-          permissions: ['dashboard:view', 'field:view', 'field:checkin', 'tasks:read', 'tasks:write', 'crm:read'],
+          permissions: ['dashboard:view', 'tasks:read', ...permList],
           isDemo: true,
         };
         localStorage.setItem('erm-demo-user', JSON.stringify(mockInvited));
@@ -163,7 +225,7 @@ export const AuthProvider = ({ children }) => {
       }
     } catch {}
 
-    // 3. Real Supabase Auth
+    // 3. Supabase Auth
     if (isSupabaseConfigured) {
       const { data, error } = await supabase.auth.signInWithPassword({ email: cleanEmail, password });
       if (data?.user) {
@@ -177,44 +239,47 @@ export const AuthProvider = ({ children }) => {
   };
 
   const signOut = async () => {
-    if (user?.id) {
-      logAuditEvent('user.logout', 'auth', user.id);
-    }
+    if (user?.id) logAuditEvent('user.logout', 'auth', user.id);
     localStorage.removeItem('erm-demo-user');
-    if (isSupabaseConfigured && !user?.isDemo) {
-      await supabase.auth.signOut();
-    }
+    if (isSupabaseConfigured && !user?.isDemo) await supabase.auth.signOut();
     setUser(null);
   };
 
+  // MODULE-LEVEL: controls sidebar and route access
   const hasPermission = (moduleOrPerm) => {
     if (!user) return false;
     if (user.role === 'Super Admin' || user.permissions?.includes('all')) return true;
-
-    // Check user explicit permissions array if matching exactly
     if (user.permissions?.includes(moduleOrPerm)) return true;
 
-    // Check dynamic Permission Matrix from LocalStorage or Defaults
-    try {
-      const savedMatrix = JSON.parse(localStorage.getItem('erppro_permission_matrix') || 'null');
-      const matrixToUse = savedMatrix || {
-        'Super Admin': { Dashboard: true, WhatsApp: true, CRM: true, Tasks: true, Payments: true, Finance: true, Reports: true, Roles: true },
-        'Manager':     { Dashboard: true, WhatsApp: true, CRM: true, Tasks: true, Payments: true, Finance: true, Reports: true, Roles: false },
-        'Sales Executive': { Dashboard: true, WhatsApp: true, CRM: true, Tasks: true, Payments: false, Finance: false, Reports: true, Roles: false },
-        'Accounts':    { Dashboard: true, WhatsApp: false, CRM: false, Tasks: false, Payments: true, Finance: true, Reports: true, Roles: false },
-        'Support Agent': { Dashboard: true, WhatsApp: true, CRM: true, Tasks: true, Payments: false, Finance: false, Reports: false, Roles: false },
-      };
+    // Use cached matrix from Supabase (loaded on mount)
+    const defaultMx = {
+      'Super Admin': { Dashboard: true, WhatsApp: true, CRM: true, Tasks: true, Payments: true, Finance: true, Reports: true, Roles: true, FieldOps: true },
+      'Manager':     { Dashboard: true, WhatsApp: true, CRM: true, Tasks: true, Payments: true, Finance: true, Reports: true, Roles: false, FieldOps: true },
+      'Sales Executive': { Dashboard: true, WhatsApp: true, CRM: true, Tasks: true, Payments: false, Finance: false, Reports: false, Roles: false, FieldOps: true },
+      'Accounts':    { Dashboard: true, WhatsApp: false, CRM: false, Tasks: false, Payments: true, Finance: true, Reports: true, Roles: false, FieldOps: false },
+      'Support Agent': { Dashboard: true, WhatsApp: true, CRM: true, Tasks: true, Payments: false, Finance: false, Reports: false, Roles: false, FieldOps: false },
+    };
+    const matrixToUse = cachedMatrix || defaultMx;
 
-      const userRoleMatrix = matrixToUse[user.role];
-      if (userRoleMatrix) {
-        if (userRoleMatrix[moduleOrPerm] !== undefined) {
-          return Boolean(userRoleMatrix[moduleOrPerm]);
-        }
-      }
-    } catch {}
+    const userRoleMatrix = matrixToUse[user.role];
+    if (userRoleMatrix && userRoleMatrix[moduleOrPerm] !== undefined) {
+      return Boolean(userRoleMatrix[moduleOrPerm]);
+    }
 
-    // Fallback: If not restricted, default to true for basic modules
     return !['Roles', 'Settings', 'Finance', 'Payments'].includes(moduleOrPerm);
+  };
+
+  // ACTION-LEVEL: controls what specific operations a user can do
+  const canPerformAction = (actionCode) => {
+    if (!user) return false;
+    if (user.role === 'Super Admin' || user.permissions?.includes('all')) return true;
+    if (user.permissions?.includes(actionCode)) return true;
+
+    const roleActions = ROLE_ACTION_MAP[user.role];
+    if (roleActions && roleActions[actionCode] !== undefined) {
+      return Boolean(roleActions[actionCode]);
+    }
+    return false;
   };
 
   return (
@@ -225,6 +290,7 @@ export const AuthProvider = ({ children }) => {
         signIn,
         signOut,
         hasPermission,
+        canPerformAction,
         isDemo: !!user?.isDemo,
         organizationId: user?.organization_id || DEFAULT_ORG_ID,
       }}

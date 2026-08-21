@@ -5,30 +5,34 @@ import {
   Clock, AlertCircle, CheckCircle2, RefreshCw, Zap, Send,
   Phone, Star, Building2, AlertTriangle
 } from 'lucide-react';
-import { getDashboardStats, getActivityFeed, getTasks, getLeads, getCampaigns, getInvoices } from '../lib/db';
+import { getDashboardStats, getActivityFeed, getTasks, getLeads, getCampaigns, getInvoices, getTeamMembers } from '../lib/db';
 import { isSupabaseConfigured } from '../lib/supabase';
+import { useAuth } from '../context/AuthContext';
 import './Pages.css';
 
 const Dashboard = () => {
+  const { user, hasPermission } = useAuth();
   const [stats, setStats] = useState(null);
   const [activities, setActivities] = useState([]);
   const [taskList, setTaskList] = useState([]);
   const [leads, setLeads] = useState([]);
   const [campaigns, setCampaigns] = useState([]);
   const [invoices, setInvoices] = useState([]);
+  const [teamMembers, setTeamMembers] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => { loadData(); }, []);
 
   const loadData = async () => {
     setLoading(true);
-    const [statsRes, actRes, taskRes, leadRes, campRes, invRes] = await Promise.all([
+    const [statsRes, actRes, taskRes, leadRes, campRes, invRes, membersRes] = await Promise.all([
       getDashboardStats(),
       getActivityFeed(8),
       getTasks(),
       getLeads(),
       getCampaigns(),
       getInvoices(),
+      getTeamMembers(),
     ]);
     if (statsRes.data) setStats(statsRes.data);
     setActivities(actRes.data || []);
@@ -36,6 +40,7 @@ const Dashboard = () => {
     setLeads(leadRes.data || []);
     setCampaigns(campRes.data || []);
     setInvoices(invRes.data || []);
+    setTeamMembers(membersRes.data || []);
     setLoading(false);
   };
 
@@ -102,7 +107,9 @@ const Dashboard = () => {
       <div className="page-header">
         <div className="page-title-group">
           <h1 className="page-title">Executive Dashboard</h1>
-          <p className="page-subtitle">Live business intelligence across CRM, WhatsApp, Finance & AI modules.</p>
+          <p className="page-subtitle">
+            Welcome back, <strong>{user?.name || 'Admin'}</strong> ({user?.role || 'Super Admin'}) — Live business intelligence across CRM, WhatsApp, Finance & AI modules.
+          </p>
         </div>
         <div className="page-actions">
           <button className="btn btn-secondary" onClick={loadData}><RefreshCw size={15} className={loading ? 'animate-spin' : ''} /> Refresh</button>
@@ -144,37 +151,57 @@ const Dashboard = () => {
           </div>
         </div>
 
-        <div className="stat-card animate-slide-up" style={{ '--card-accent': 'var(--danger)' }}>
-          <div className="stat-header">
-            <div>
-              <div className="stat-label">Overdue Payments</div>
-              <div className="stat-value">{fmtAmount(pendingAmount)}</div>
+        {hasPermission('Payments') && (
+          <div className="stat-card animate-slide-up" style={{ '--card-accent': 'var(--danger)' }}>
+            <div className="stat-header">
+              <div>
+                <div className="stat-label">Overdue Payments</div>
+                <div className="stat-value">{fmtAmount(pendingAmount)}</div>
+              </div>
+              <div className="stat-icon" style={{ background: 'var(--danger-bg)' }}>
+                <CreditCard size={22} style={{ color: 'var(--danger)' }} />
+              </div>
             </div>
-            <div className="stat-icon" style={{ background: 'var(--danger-bg)' }}>
-              <CreditCard size={22} style={{ color: 'var(--danger)' }} />
+            <div className="stat-footer">
+              <span className="stat-trend down"><ArrowDownRight size={13} /> {overdueInvoices} Overdue</span>
+              <span className="stat-period">{invoices.length} Total Invoices</span>
             </div>
           </div>
-          <div className="stat-footer">
-            <span className="stat-trend down"><AlertTriangle size={13} /> {overdueInvoices} Overdue</span>
-            <span className="stat-period">{invoices.length} Total Invoices</span>
-          </div>
-        </div>
+        )}
 
-        <div className="stat-card animate-slide-up" style={{ '--card-accent': 'var(--success)' }}>
-          <div className="stat-header">
-            <div>
-              <div className="stat-label">Collected (Paid)</div>
-              <div className="stat-value">{fmtAmount(totalPaid)}</div>
+        {hasPermission('Finance') ? (
+          <div className="stat-card animate-slide-up" style={{ '--card-accent': 'var(--success)' }}>
+            <div className="stat-header">
+              <div>
+                <div className="stat-label">Collected (Paid)</div>
+                <div className="stat-value">{fmtAmount(totalPaid)}</div>
+              </div>
+              <div className="stat-icon" style={{ background: 'var(--success-bg)' }}>
+                <TrendingUp size={22} style={{ color: 'var(--success)' }} />
+              </div>
             </div>
-            <div className="stat-icon" style={{ background: 'var(--success-bg)' }}>
-              <TrendingUp size={22} style={{ color: 'var(--success)' }} />
+            <div className="stat-footer">
+              <span className="stat-trend up"><ArrowUpRight size={13} /> {tasksDueCt} Tasks Due</span>
+              <span className="stat-period">This Period</span>
             </div>
           </div>
-          <div className="stat-footer">
-            <span className="stat-trend up"><ArrowUpRight size={13} /> {tasksDueCt} Tasks Due</span>
-            <span className="stat-period">This Period</span>
+        ) : (
+          <div className="stat-card animate-slide-up" style={{ '--card-accent': 'var(--success)' }}>
+            <div className="stat-header">
+              <div>
+                <div className="stat-label">Team Members</div>
+                <div className="stat-value">{teamMembers.length}</div>
+              </div>
+              <div className="stat-icon" style={{ background: 'var(--success-bg)' }}>
+                <Users size={22} style={{ color: 'var(--success)' }} />
+              </div>
+            </div>
+            <div className="stat-footer">
+              <span className="stat-trend up"><ArrowUpRight size={13} /> {tasksDueCt} Tasks Due</span>
+              <span className="stat-period">Active Now</span>
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* ── Main grid ────────────────────────────────────────────────── */}

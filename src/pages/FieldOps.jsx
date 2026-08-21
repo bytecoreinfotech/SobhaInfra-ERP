@@ -11,7 +11,10 @@ import GeotaggedCameraModal from '../components/GeotaggedCameraModal';
 import './Pages.css';
 
 const FieldOps = () => {
-  const { user } = useAuth();
+  const { user, canPerformAction } = useAuth();
+  const canCheckIn = canPerformAction('field:checkin');
+  const canViewAll = canPerformAction('field:view_all');
+  const canApprove = canPerformAction('field:approve');
   const [visits, setVisits] = useState([]);
   const [leads, setLeads] = useState([]);
   const [teamMembers, setTeamMembers] = useState([]);
@@ -28,9 +31,9 @@ const FieldOps = () => {
 
   // Form State
   const [checkInForm, setCheckInForm] = useState({
-    employee_name: user?.name || 'Anand Sharma',
-    employee_id: user?.id || 'usr-3',
-    site_name: 'Grand Palm Residency - Tower B',
+    employee_name: user?.name || '',
+    employee_id: user?.id || '',
+    site_name: '',
     client_name: '',
     lead_phone: '',
     purpose: 'Client Site Visit & Walkthrough',
@@ -127,9 +130,9 @@ const FieldOps = () => {
       setVisits(prev => [data, ...prev]);
       setShowCheckInModal(false);
       setCheckInForm({
-        employee_name: 'Anand Sharma',
-        employee_id: 'usr-3',
-        site_name: 'Grand Palm Residency - Tower B',
+        employee_name: user?.name || '',
+        employee_id: user?.id || '',
+        site_name: '',
         client_name: '',
         lead_phone: '',
         purpose: 'Client Site Visit & Walkthrough',
@@ -147,6 +150,7 @@ const FieldOps = () => {
   };
 
   const handleMarkCompleted = async (visitId) => {
+    if (!canApprove) return;
     const { data } = await updateSiteVisit(visitId, { status: 'Completed' });
     if (data) {
       setVisits(prev => prev.map(v => v.id === visitId ? { ...v, status: 'Completed' } : v));
@@ -160,6 +164,12 @@ const FieldOps = () => {
 
   // Filtered visits
   const filteredVisits = visits.filter(v => {
+    // Field agents can only see their own visits
+    if (!canViewAll) {
+      const isOwn = (v.employee_name || '').toLowerCase() === (user?.name || '').toLowerCase();
+      if (!isOwn) return false;
+    }
+
     const matchesSearch =
       (v.employee_name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
       (v.site_name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -203,16 +213,21 @@ const FieldOps = () => {
             </span>
           </div>
           <p className="page-subtitle">
-            Real-time field employee GPS location tracking, site inspection check-ins, and tamper-proof geotagged site photos.
+            {canViewAll
+              ? 'Real-time field employee GPS location tracking, site inspection check-ins, and tamper-proof geotagged site photos.'
+              : `Your field check-ins and site visit history, ${user?.name || 'Agent'}.`
+            }
           </p>
         </div>
         <div className="page-actions">
           <button className="btn btn-secondary" onClick={loadAllData}>
             <RefreshCw size={15} className={loading ? 'animate-spin' : ''} /> Refresh Map
           </button>
-          <button className="btn btn-primary" onClick={handleOpenCheckIn} style={{ background: '#10b981', borderColor: '#10b981' }}>
-            <Camera size={15} /> Field Check-In & Camera
-          </button>
+          {canCheckIn && (
+            <button className="btn btn-primary" onClick={handleOpenCheckIn} style={{ background: '#10b981', borderColor: '#10b981' }}>
+              <Camera size={15} /> Field Check-In & Camera
+            </button>
+          )}
         </div>
       </div>
 
@@ -521,7 +536,7 @@ const FieldOps = () => {
                       </span>
                     </td>
                     <td>
-                      {v.status !== 'Completed' && (
+                      {v.status !== 'Completed' && canApprove && (
                         <button
                           className="btn btn-secondary btn-sm"
                           onClick={() => handleMarkCompleted(v.id)}
@@ -529,6 +544,9 @@ const FieldOps = () => {
                         >
                           <Check size={12} /> Complete
                         </button>
+                      )}
+                      {v.status !== 'Completed' && !canApprove && (
+                        <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>Pending Review</span>
                       )}
                     </td>
                   </tr>
