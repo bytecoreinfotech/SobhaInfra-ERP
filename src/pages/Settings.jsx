@@ -42,6 +42,7 @@ const Settings = () => {
   const [newPositionForm, setNewPositionForm] = useState({ name: '', description: '', color: '#6366f1' });
   const [editingPosition, setEditingPosition] = useState(null);
   const [editPositionForm, setEditPositionForm] = useState({ name: '', description: '', color: '#6366f1' });
+  const [confirmDisableRole, setConfirmDisableRole] = useState(null);
   const [posSuccessMsg, setPosSuccessMsg] = useState('');
   const [posLoading, setPosLoading] = useState(false);
 
@@ -781,16 +782,6 @@ const Settings = () => {
                 </div>
               </div>
 
-              {posSuccessMsg && (
-                <div style={{
-                  padding: '0.65rem 1rem', borderRadius: 8, background: 'rgba(16,185,129,0.1)',
-                  border: '1px solid rgba(16,185,129,0.3)', color: 'var(--success)',
-                  display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.82rem'
-                }}>
-                  <Check size={15} /> {posSuccessMsg}
-                </div>
-              )}
-
               {/* Positions Cards Grid */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0.85rem' }}>
                 {rolesList.map(role => {
@@ -826,18 +817,23 @@ const Settings = () => {
                             <Edit3 size={13} />
                           </button>
 
-                          {/* Toggle Active / Disabled switch */}
+                          {/* Toggle Active / Disabled switch with Dual Confirmation */}
                           {role.name !== 'Super Admin' && (
                             <button
                               className="btn-icon"
                               style={{ color: isDisabled ? 'var(--text-muted)' : 'var(--success)', padding: 3 }}
                               title={isDisabled ? 'Activate Position' : 'Disable / Pause Position'}
                               onClick={async () => {
-                                const nextState = !isDisabled;
-                                await updateRole(role.id, { is_disabled: nextState });
-                                setRolesList(prev => prev.map(r => r.id === role.id ? { ...r, is_disabled: nextState } : r));
-                                setPosSuccessMsg(`Position "${role.name}" ${nextState ? 'disabled / paused' : 'activated'}!`);
-                                setTimeout(() => setPosSuccessMsg(''), 3000);
+                                if (!isDisabled) {
+                                  // Open dual confirmation modal before disabling
+                                  setConfirmDisableRole(role);
+                                } else {
+                                  // Directly re-enable
+                                  await updateRole(role.id, { is_disabled: false });
+                                  setRolesList(prev => prev.map(r => r.id === role.id ? { ...r, is_disabled: false } : r));
+                                  setPosSuccessMsg(`Position "${role.name}" activated!`);
+                                  setTimeout(() => setPosSuccessMsg(''), 3500);
+                                }
                               }}
                             >
                               {isDisabled ? <ToggleLeft size={16} /> : <ToggleRight size={16} />}
@@ -929,13 +925,21 @@ const Settings = () => {
                     <thead>
                       <tr style={{ background: 'var(--bg-secondary)' }}>
                         <th style={{ textAlign: 'left', minWidth: 140, padding: '0.65rem 0.85rem' }}>Module</th>
-                        {rolesList.map(r => (
-                          <th key={r.id || r.name} style={{ padding: '0.65rem 0.5rem', minWidth: 100 }}>
-                            <div style={{ color: r.color || 'var(--accent-primary)', fontWeight: 700, fontSize: '0.78rem' }}>
-                              {r.name}
-                            </div>
-                          </th>
-                        ))}
+                        {rolesList.map(r => {
+                          const isRoleDisabled = Boolean(r.is_disabled);
+                          return (
+                            <th key={r.id || r.name} style={{ padding: '0.65rem 0.5rem', minWidth: 110, opacity: isRoleDisabled ? 0.65 : 1 }}>
+                              <div style={{ color: isRoleDisabled ? 'var(--text-muted)' : (r.color || 'var(--accent-primary)'), fontWeight: 700, fontSize: '0.78rem' }}>
+                                {r.name}
+                              </div>
+                              {isRoleDisabled && (
+                                <span className="badge badge-neutral" style={{ fontSize: '0.55rem', padding: '0.1rem 0.35rem', marginTop: '0.15rem' }}>
+                                  PAUSED
+                                </span>
+                              )}
+                            </th>
+                          );
+                        })}
                       </tr>
                     </thead>
                     <tbody>
@@ -1163,11 +1167,80 @@ const Settings = () => {
                   </div>
                 </div>
               )}
+              {/* Dual Confirmation Modal: Disable Role / Position */}
+              {confirmDisableRole && (
+                <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) setConfirmDisableRole(null); }} style={{ zIndex: 9999 }}>
+                  <div className="modal-content animate-fade-in" style={{ maxWidth: 440, padding: '1.5rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.75rem' }}>
+                      <div style={{
+                        width: 38, height: 38, borderRadius: '50%', background: 'rgba(239,68,68,0.15)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--danger)'
+                      }}>
+                        <AlertTriangle size={20} />
+                      </div>
+                      <div>
+                        <h3 style={{ fontSize: '1.05rem', fontWeight: 700, margin: 0 }}>Disable "{confirmDisableRole.name}"?</h3>
+                        <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Action confirmation required</span>
+                      </div>
+                    </div>
+
+                    <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: '1.25rem' }}>
+                      Are you sure you want to temporarily disable the <strong>{confirmDisableRole.name}</strong> position? Active employees assigned to this role will have restricted module access until you re-enable it.
+                    </p>
+
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => setConfirmDisableRole(null)}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        className="btn"
+                        style={{ background: 'var(--danger)', color: 'white', borderColor: 'var(--danger)', fontWeight: 700 }}
+                        onClick={async () => {
+                          const targetRole = confirmDisableRole;
+                          setConfirmDisableRole(null);
+                          await updateRole(targetRole.id, { is_disabled: true });
+                          setRolesList(prev => prev.map(r => r.id === targetRole.id ? { ...r, is_disabled: true } : r));
+                          setPosSuccessMsg(`Position "${targetRole.name}" disabled / paused.`);
+                          setTimeout(() => setPosSuccessMsg(''), 3500);
+                        }}
+                      >
+                        Yes, Disable Position
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
         </div>
       </div>
+
+      {/* ── Fixed Floating Toast (Zero Layout Shift) ──────────────────── */}
+      {posSuccessMsg && (
+        <div style={{
+          position: 'fixed', bottom: 28, right: 28, zIndex: 99999,
+          background: 'rgba(15, 23, 42, 0.96)', border: '1px solid rgba(16,185,129,0.5)',
+          boxShadow: '0 15px 35px rgba(0,0,0,0.55), 0 0 20px rgba(16,185,129,0.15)',
+          backdropFilter: 'blur(12px)', padding: '0.75rem 1.25rem', borderRadius: 10,
+          color: 'var(--success)', display: 'flex', alignItems: 'center', gap: '0.6rem',
+          fontSize: '0.85rem', fontWeight: 600, animation: 'slideUp 0.25s ease'
+        }}>
+          <Check size={16} />
+          <span>{posSuccessMsg}</span>
+          <button
+            onClick={() => setPosSuccessMsg('')}
+            style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '0 0 0 0.4rem', display: 'flex' }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
     </div>
   );
 };

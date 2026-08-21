@@ -221,19 +221,6 @@ const FieldOps = () => {
 
   return (
     <div className="page-container animate-fade-in">
-      {/* Toast Feedback */}
-      {feedbackMsg && (
-        <div style={{
-          padding: '0.75rem 1rem', borderRadius: 8, marginBottom: '1rem',
-          background: feedbackMsg.type === 'success' ? 'rgba(16,185,129,0.1)' : feedbackMsg.type === 'error' ? 'rgba(239,68,68,0.1)' : 'rgba(99,102,241,0.1)',
-          border: `1px solid ${feedbackMsg.type === 'success' ? 'rgba(16,185,129,0.3)' : feedbackMsg.type === 'error' ? 'rgba(239,68,68,0.3)' : 'rgba(99,102,241,0.3)'}`,
-          color: feedbackMsg.type === 'success' ? 'var(--success)' : feedbackMsg.type === 'error' ? 'var(--danger)' : 'var(--accent-primary)',
-          display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem'
-        }}>
-          {feedbackMsg.type === 'success' ? <Check size={16} /> : <AlertCircle size={16} />}
-          {feedbackMsg.text}
-        </div>
-      )}
 
       {/* ═══════════════════════════════════════════════════════════════════ */}
       {/* VIEW A: FIELD EMPLOYEE PORTAL (Live GPS Toggle + Live Camera Check-in) */}
@@ -857,6 +844,29 @@ const FieldOps = () => {
               style={{ width: '100%', maxHeight: '80vh', objectFit: 'contain', borderRadius: 8, border: '1px solid rgba(255,255,255,0.2)' }}
             />
           </div>
+        </div>
+      )}
+
+      {/* Fixed Floating Toast (Zero Layout Shift) */}
+      {feedbackMsg && (
+        <div style={{
+          position: 'fixed', bottom: 28, right: 28, zIndex: 99999,
+          background: 'rgba(15, 23, 42, 0.96)',
+          border: `1px solid ${feedbackMsg.type === 'success' ? 'rgba(16,185,129,0.5)' : 'rgba(239,68,68,0.5)'}`,
+          boxShadow: '0 15px 35px rgba(0,0,0,0.55), 0 0 20px rgba(16,185,129,0.15)',
+          backdropFilter: 'blur(12px)', padding: '0.75rem 1.25rem', borderRadius: 10,
+          color: feedbackMsg.type === 'success' ? 'var(--success)' : 'var(--danger)',
+          display: 'flex', alignItems: 'center', gap: '0.6rem',
+          fontSize: '0.85rem', fontWeight: 600, animation: 'slideUp 0.25s ease'
+        }}>
+          {feedbackMsg.type === 'success' ? <Check size={16} /> : <AlertCircle size={16} />}
+          <span>{feedbackMsg.text}</span>
+          <button
+            onClick={() => setFeedbackMsg(null)}
+            style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '0 0 0 0.4rem', display: 'flex' }}
+          >
+            ✕
+          </button>
         </div>
       )}
     </div>

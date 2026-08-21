@@ -38,6 +38,7 @@ const Roles = () => {
   const [showAddRole, setShowAddRole] = useState(false);
   const [editingRole, setEditingRole] = useState(null);
   const [editRoleForm, setEditRoleForm] = useState({ name: '', description: '', color: '#6366f1' });
+  const [confirmDisableRole, setConfirmDisableRole] = useState(null);
   
   // Forms
   const [userForm, setUserForm] = useState({ full_name: '', email: '', role: 'Sales Executive', phone: '' });
@@ -153,18 +154,6 @@ const Roles = () => {
 
   return (
     <div className="page-container animate-fade-in">
-      {feedbackMsg && (
-        <div style={{
-          padding: '0.75rem 1rem', borderRadius: 8, marginBottom: '1rem',
-          background: feedbackMsg.type === 'success' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
-          border: `1px solid ${feedbackMsg.type === 'success' ? 'rgba(16,185,129,0.3)' : 'rgba(239,68,68,0.3)'}`,
-          color: feedbackMsg.type === 'success' ? 'var(--success)' : 'var(--danger)',
-          display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem'
-        }}>
-          {feedbackMsg.type === 'success' ? <Check size={16} /> : <AlertCircle size={16} />}
-          {feedbackMsg.text}
-        </div>
-      )}
 
       {/* Header */}
       <div className="page-header">
@@ -222,18 +211,21 @@ const Roles = () => {
                 <Edit3 size={13} />
               </button>
 
-              {/* Toggle Disable / Enable */}
+              {/* Toggle Disable / Enable with Dual Confirmation */}
               {role.name !== 'Super Admin' && (
                 <button
                   className="btn-icon"
                   style={{ color: role.is_disabled ? 'var(--text-muted)' : 'var(--success)', padding: '0.15rem' }}
                   title={role.is_disabled ? 'Activate Role' : 'Disable / Pause Role'}
                   onClick={async () => {
-                    const nextState = !role.is_disabled;
-                    await updateRole(role.id, { is_disabled: nextState });
-                    setRoles(prev => prev.map(r => r.id === role.id ? { ...r, is_disabled: nextState } : r));
-                    setFeedbackMsg({ type: 'success', text: `Role "${role.name}" ${nextState ? 'disabled/paused' : 'activated'}!` });
-                    setTimeout(() => setFeedbackMsg(null), 3000);
+                    if (!role.is_disabled) {
+                      setConfirmDisableRole(role);
+                    } else {
+                      await updateRole(role.id, { is_disabled: false });
+                      setRoles(prev => prev.map(r => r.id === role.id ? { ...r, is_disabled: false } : r));
+                      setFeedbackMsg({ type: 'success', text: `Role "${role.name}" activated!` });
+                      setTimeout(() => setFeedbackMsg(null), 3500);
+                    }
                   }}
                 >
                   {role.is_disabled ? <ToggleLeft size={16} /> : <ToggleRight size={16} />}
@@ -383,16 +375,19 @@ const Roles = () => {
               <thead>
                 <tr style={{ background: 'var(--bg-tertiary)' }}>
                   <th style={{ textAlign: 'left', minWidth: 150, padding: '0.75rem 1rem' }}>Module / Action</th>
-                  {availableRoles.map(r => (
-                    <th key={r.id || r.name} style={{ padding: '0.75rem 0.5rem', minWidth: 110 }}>
-                      <div style={{ color: r.color || 'var(--accent-primary)', fontWeight: 700, fontSize: '0.82rem' }}>
-                        {r.name}
-                      </div>
-                      <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontWeight: 400 }}>
-                        {r.name === 'Super Admin' ? '(Full Access)' : '(Customizable)'}
-                      </div>
-                    </th>
-                  ))}
+                  {availableRoles.map(r => {
+                    const isRoleDisabled = Boolean(r.is_disabled);
+                    return (
+                      <th key={r.id || r.name} style={{ padding: '0.75rem 0.5rem', minWidth: 110, opacity: isRoleDisabled ? 0.65 : 1 }}>
+                        <div style={{ color: isRoleDisabled ? 'var(--text-muted)' : (r.color || 'var(--accent-primary)'), fontWeight: 700, fontSize: '0.82rem' }}>
+                          {r.name}
+                        </div>
+                        <div style={{ fontSize: '0.65rem', color: isRoleDisabled ? 'var(--warning)' : 'var(--text-muted)', fontWeight: 400 }}>
+                          {isRoleDisabled ? '[PAUSED]' : (r.name === 'Super Admin' ? '(Full Access)' : '(Customizable)')}
+                        </div>
+                      </th>
+                    );
+                  })}
                 </tr>
               </thead>
               <tbody>
@@ -630,6 +625,77 @@ const Roles = () => {
               </div>
             </form>
           </div>
+        </div>
+      )}
+      {/* Dual Confirmation Modal: Disable Role */}
+      {confirmDisableRole && (
+        <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) setConfirmDisableRole(null); }} style={{ zIndex: 9999 }}>
+          <div className="modal-content animate-fade-in" style={{ maxWidth: 440, padding: '1.5rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.75rem' }}>
+              <div style={{
+                width: 38, height: 38, borderRadius: '50%', background: 'rgba(239,68,68,0.15)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--danger)'
+              }}>
+                <AlertCircle size={20} />
+              </div>
+              <div>
+                <h3 style={{ fontSize: '1.05rem', fontWeight: 700, margin: 0 }}>Disable Role: {confirmDisableRole.name}?</h3>
+                <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Action confirmation</span>
+              </div>
+            </div>
+
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: '1.25rem' }}>
+              Are you sure you want to temporarily pause the <strong>{confirmDisableRole.name}</strong> role? Active employees assigned to this role will have restricted module access until re-enabled.
+            </p>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setConfirmDisableRole(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn"
+                style={{ background: 'var(--danger)', color: 'white', borderColor: 'var(--danger)', fontWeight: 700 }}
+                onClick={async () => {
+                  const targetRole = confirmDisableRole;
+                  setConfirmDisableRole(null);
+                  await updateRole(targetRole.id, { is_disabled: true });
+                  setRoles(prev => prev.map(r => r.id === targetRole.id ? { ...r, is_disabled: true } : r));
+                  setFeedbackMsg({ type: 'success', text: `Role "${targetRole.name}" disabled / paused.` });
+                  setTimeout(() => setFeedbackMsg(null), 3500);
+                }}
+              >
+                Yes, Disable Role
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Fixed Floating Toast (Zero Layout Shift) */}
+      {feedbackMsg && (
+        <div style={{
+          position: 'fixed', bottom: 28, right: 28, zIndex: 99999,
+          background: 'rgba(15, 23, 42, 0.96)',
+          border: `1px solid ${feedbackMsg.type === 'success' ? 'rgba(16,185,129,0.5)' : 'rgba(239,68,68,0.5)'}`,
+          boxShadow: '0 15px 35px rgba(0,0,0,0.55), 0 0 20px rgba(16,185,129,0.15)',
+          backdropFilter: 'blur(12px)', padding: '0.75rem 1.25rem', borderRadius: 10,
+          color: feedbackMsg.type === 'success' ? 'var(--success)' : 'var(--danger)',
+          display: 'flex', alignItems: 'center', gap: '0.6rem',
+          fontSize: '0.85rem', fontWeight: 600, animation: 'slideUp 0.25s ease'
+        }}>
+          {feedbackMsg.type === 'success' ? <Check size={16} /> : <AlertCircle size={16} />}
+          <span>{feedbackMsg.text}</span>
+          <button
+            onClick={() => setFeedbackMsg(null)}
+            style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '0 0 0 0.4rem', display: 'flex' }}
+          >
+            ✕
+          </button>
         </div>
       )}
     </div>
