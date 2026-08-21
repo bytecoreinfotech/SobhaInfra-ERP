@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   X, Send, Users, Filter, CheckCircle2, AlertTriangle, Shield, Clock,
   RefreshCw, Zap, MessageCircle, UploadCloud, Paperclip, CheckSquare,
   Square, Search, Plus, Sparkles, FileText, Image as ImageIcon,
-  Smile, Phone, Layers, Settings, SlidersHorizontal, HelpCircle
+  Smile, Phone, Layers, Settings, SlidersHorizontal, HelpCircle, ExternalLink
 } from 'lucide-react';
 import { estimateCampaignAudience, queueCampaign, processCampaignBatch, getLeads, normalizePhone } from '../lib/db';
 import { uploadToWhatsAppMedia, getWhatsAppMediaType } from '../lib/storage';
@@ -44,6 +45,7 @@ const getSmartDefaultName = () => {
 };
 
 const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued, initialRecipients = null }) => {
+  const navigate = useNavigate();
   const [name, setName] = useState('');
   
   // Targeting selection modes: 'filter' | 'contacts' | 'paste'
@@ -370,30 +372,49 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued, initialRecipi
             </p>
           </div>
 
-          {/* Top Gear / Variables Settings Button */}
-          <button
-            type="button"
-            className="btn"
-            onClick={() => setShowVariablesPanel(p => !p)}
-            style={{
-              fontSize: '0.75rem',
-              padding: '0.35rem 0.75rem',
-              background: showVariablesPanel ? 'var(--accent-primary)' : 'var(--bg-tertiary)',
-              color: showVariablesPanel ? 'white' : 'var(--text-primary)',
-              border: '1px solid var(--border-color)',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.4rem',
-              borderRadius: 6,
-              fontWeight: 600,
-              boxShadow: showVariablesPanel ? '0 0 12px rgba(99,102,241,0.35)' : 'none',
-              transition: 'all 0.2s',
-            }}
-            title="Configure custom Product, Budget, Company and dynamic variable defaults"
-          >
-            <Settings size={14} className={showVariablesPanel ? 'animate-spin' : ''} style={{ animationDuration: '6s' }} />
-            <span>Customize Campaign Variables ⚙️</span>
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => { onClose(); navigate('/campaign-studio'); }}
+              style={{
+                fontSize: '0.75rem',
+                padding: '0.35rem 0.65rem',
+                gap: '0.35rem',
+                color: 'var(--accent-primary)',
+                borderColor: 'var(--accent-primary)',
+              }}
+              title="Open Spacious Full-Page Campaign Studio"
+            >
+              <ExternalLink size={13} />
+              <span>Full Studio ↗</span>
+            </button>
+
+            {/* Top Gear / Variables Settings Button */}
+            <button
+              type="button"
+              className="btn"
+              onClick={() => setShowVariablesPanel(p => !p)}
+              style={{
+                fontSize: '0.75rem',
+                padding: '0.35rem 0.75rem',
+                background: showVariablesPanel ? 'var(--accent-primary)' : 'var(--bg-tertiary)',
+                color: showVariablesPanel ? 'white' : 'var(--text-primary)',
+                border: '1px solid var(--border-color)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.4rem',
+                borderRadius: 6,
+                fontWeight: 600,
+                boxShadow: showVariablesPanel ? '0 0 12px rgba(99,102,241,0.35)' : 'none',
+                transition: 'all 0.2s',
+              }}
+              title="Configure custom Product, Budget, Company and dynamic variable defaults"
+            >
+              <Settings size={14} className={showVariablesPanel ? 'animate-spin' : ''} style={{ animationDuration: '6s' }} />
+              <span>Variables ⚙️</span>
+            </button>
+          </div>
         </div>
 
         {/* =========================================================================

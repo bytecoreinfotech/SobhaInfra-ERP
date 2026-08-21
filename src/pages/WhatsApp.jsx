@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   MessageCircle, Send, Users, BarChart3, Plus,
   CheckCircle2, Clock, XCircle, FileText, Zap, RefreshCw,
   Search, User, Phone, Shield, Pause, Play, CheckCheck, Eye,
-  UserCheck, ThumbsUp, ThumbsDown, MessageSquare, Award
+  UserCheck, ThumbsUp, ThumbsDown, MessageSquare, Award, Sparkles, ExternalLink
 } from 'lucide-react';
 import {
   getCampaigns, getLeads,
@@ -53,6 +54,7 @@ async function fetchLiveMessages(convId) {
 }
 
 const WhatsApp = () => {
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('inbox'); // 'inbox' | 'campaigns'
   
   // Live Inbox State
@@ -321,12 +323,25 @@ const WhatsApp = () => {
             </button>
           </div>
 
+          <button
+            className="btn btn-secondary"
+            onClick={() => navigate('/campaign-studio')}
+            style={{
+              color: 'var(--accent-primary)',
+              borderColor: 'var(--accent-primary)',
+              background: 'rgba(99,102,241,0.08)',
+              fontWeight: 600,
+            }}
+          >
+            <Sparkles size={15} /> Campaign & Flow Studio ↗
+          </button>
+
           <button className="btn btn-secondary" onClick={loadAllData}>
             <RefreshCw size={15} className={loading ? 'animate-spin' : ''} /> Refresh
           </button>
           {activeTab === 'campaigns' && (
             <button className="btn btn-whatsapp" onClick={() => setShowCampaignBuilder(true)}>
-              <Plus size={15} /> New Campaign
+              <Plus size={15} /> Quick Modal
             </button>
           )}
         </div>

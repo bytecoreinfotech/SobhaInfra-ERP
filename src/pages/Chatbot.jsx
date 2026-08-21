@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Bot, Send, Plus, Trash2, Edit2, CheckCircle2, AlertTriangle,
   Zap, RefreshCw, Database, Terminal, Shield, Sparkles, Activity,
-  ChevronRight, ArrowRight, IndianRupee, Layers, HelpCircle
+  ChevronRight, ArrowRight, IndianRupee, Layers, HelpCircle, ExternalLink
 } from 'lucide-react';
 import {
   getAiKnowledge, createAiKnowledge, deleteAiKnowledge,
@@ -23,6 +24,7 @@ const SCORING_RULES = [
 ];
 
 const Chatbot = () => {
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('simulator'); // 'simulator' | 'knowledge' | 'rules' | 'logs'
   
   // Simulator State
@@ -127,6 +129,19 @@ const Chatbot = () => {
 
         {/* Tab Navigation */}
         <div className="page-actions">
+          <button
+            className="btn btn-secondary"
+            onClick={() => navigate('/campaign-studio')}
+            style={{
+              color: 'var(--accent-primary)',
+              borderColor: 'var(--accent-primary)',
+              background: 'rgba(99,102,241,0.08)',
+              fontWeight: 600,
+            }}
+          >
+            <Sparkles size={14} /> Interactive Flow Studio ↗
+          </button>
+
           <div style={{ display: 'flex', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
             <button
               className="btn"

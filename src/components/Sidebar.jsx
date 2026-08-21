@@ -3,7 +3,7 @@ import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, Users, CheckSquare, IndianRupee,
   MessageCircle, Bot, CreditCard, Shield, BarChart3,
-  Settings, ChevronLeft, ChevronRight, MapPin
+  Settings, ChevronLeft, ChevronRight, MapPin, Sparkles
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useLiveCounts } from '../context/LiveCountsContext';
@@ -27,9 +27,10 @@ const Sidebar = ({ collapsed, onToggle, mobileOpen, onMobileClose }) => {
     {
       label: 'WhatsApp & CRM',
       items: [
-        { name: 'WhatsApp Campaign',    path: '/whatsapp',  icon: <MessageCircle size={18} />, badge: badge(whatsapp), module: 'WhatsApp' },
-        { name: 'Chatbot & Auto-Reply', path: '/chatbot',   icon: <Bot size={18} />,                                  module: 'WhatsApp' },
-        { name: 'CRM & Leads',          path: '/crm',       icon: <Users size={18} />,         badge: badge(leads),    module: 'CRM' },
+        { name: 'WhatsApp Campaign',    path: '/whatsapp',        icon: <MessageCircle size={18} />, badge: badge(whatsapp), module: 'WhatsApp' },
+        { name: 'Campaign Studio',      path: '/campaign-studio', icon: <Sparkles size={18} />,                              module: 'WhatsApp' },
+        { name: 'Chatbot & Auto-Reply', path: '/chatbot',         icon: <Bot size={18} />,                                  module: 'WhatsApp' },
+        { name: 'CRM & Leads',          path: '/crm',             icon: <Users size={18} />,         badge: badge(leads),    module: 'CRM' },
       ]
     },
     {

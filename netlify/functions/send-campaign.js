@@ -4,6 +4,7 @@
  *
  * Implements:
  *  - Meta WhatsApp Cloud API live message dispatch (with permanent token fallback)
+ *  - Interactive Quick Reply & Action Buttons (type: 'interactive' button & list)
  *  - Custom WhatsApp messages with image/media attachments & captions
  *  - Dynamic personalization variables ({name}, {product}, {budget}, {phone}, {company})
  *  - Database sync with wa_campaigns, whatsapp_conversations, and whatsapp_messages
@@ -70,7 +71,117 @@ async function sendWhatsAppTemplate(to, template, params) {
   }
 }
 
-// ─── 2. Send Custom WhatsApp Message (Image / Document / Video / Text) ────────
+// ─── 2. Send WhatsApp Interactive Quick Reply / List Message ─────────────────
+async function sendMetaWhatsAppInteractive(to, text, buttons = [], headerMedia = null, footerText = null) {
+  if (!WA_TOKEN || !PHONE_ID) {
+    return { success: true, messageId: 'mock-wamid-' + Date.now() };
+  }
+  try {
+    const cleanPhone = String(to).replace(/[^\d+]/g, '').replace(/^\+/, '');
+    const url = `https://graph.facebook.com/v20.0/${PHONE_ID}/messages`;
+
+    // Filter valid buttons with labels
+    const validButtons = (buttons || []).filter(b => b && (b.title || b.label));
+
+    if (validButtons.length === 0) {
+      return sendMetaWhatsAppMediaOrText(to, text, headerMedia?.type || 'text', headerMedia?.url, headerMedia?.filename);
+    }
+
+    let payload;
+
+    // Up to 3 buttons -> WhatsApp Quick Reply Buttons
+    if (validButtons.length <= 3) {
+      const interactiveObj = {
+        type: 'button',
+        body: { text: text || 'Please select an option below:' },
+        action: {
+          buttons: validButtons.slice(0, 3).map((b, idx) => ({
+            type: 'reply',
+            reply: {
+              id: b.id || `btn_${idx}_${(b.title || b.label || 'opt').toLowerCase().replace(/[^a-z0-9]/g, '_').slice(0, 20)}`,
+              title: (b.title || b.label).slice(0, 20),
+            },
+          })),
+        },
+      };
+
+      if (footerText) {
+        interactiveObj.footer = { text: footerText.slice(0, 60) };
+      }
+
+      if (headerMedia && headerMedia.url) {
+        if (headerMedia.type === 'image') {
+          interactiveObj.header = { type: 'image', image: { link: headerMedia.url } };
+        } else if (headerMedia.type === 'document') {
+          interactiveObj.header = { type: 'document', document: { link: headerMedia.url, filename: headerMedia.filename || 'Brochure.pdf' } };
+        } else if (headerMedia.type === 'video') {
+          interactiveObj.header = { type: 'video', video: { link: headerMedia.url } };
+        }
+      }
+
+      payload = {
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to: cleanPhone,
+        type: 'interactive',
+        interactive: interactiveObj,
+      };
+    } else {
+      // 4+ buttons -> WhatsApp Interactive List Menu
+      const interactiveObj = {
+        type: 'list',
+        body: { text: text || 'Please choose from the menu below:' },
+        action: {
+          button: 'View Options',
+          sections: [
+            {
+              title: 'Available Options',
+              rows: validButtons.slice(0, 10).map((b, idx) => ({
+                id: b.id || `opt_${idx}_${(b.title || b.label || 'opt').toLowerCase().replace(/[^a-z0-9]/g, '_').slice(0, 20)}`,
+                title: (b.title || b.label).slice(0, 24),
+                description: (b.description || b.actionType || 'Tap to select').slice(0, 72),
+              })),
+            },
+          ],
+        },
+      };
+
+      if (footerText) {
+        interactiveObj.footer = { text: footerText.slice(0, 60) };
+      }
+
+      payload = {
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to: cleanPhone,
+        type: 'interactive',
+        interactive: interactiveObj,
+      };
+    }
+
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${WA_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await res.json();
+    if (data.error) {
+      console.warn('[Interactive Dispatch] Fallback to standard message:', data.error.message);
+      // Fallback to text/media if interactive fails (e.g. template constraint)
+      return sendMetaWhatsAppMediaOrText(to, text, headerMedia?.type || 'text', headerMedia?.url, headerMedia?.filename);
+    }
+    return { success: true, messageId: data.messages?.[0]?.id };
+  } catch (err) {
+    console.warn('[Interactive Dispatch Catch] Fallback:', err.message);
+    return sendMetaWhatsAppMediaOrText(to, text, headerMedia?.type || 'text', headerMedia?.url, headerMedia?.filename);
+  }
+}
+
+// ─── 3. Send Custom WhatsApp Message (Image / Document / Video / Text) ────────
 async function sendMetaWhatsAppMediaOrText(to, text, mediaType = 'text', mediaUrl = null, mediaFileName = null) {
   if (!WA_TOKEN || !PHONE_ID) {
     return { success: true, messageId: 'mock-wamid-' + Date.now() };
@@ -133,7 +244,7 @@ async function sendMetaWhatsAppMediaOrText(to, text, mediaType = 'text', mediaUr
   }
 }
 
-// ─── 3. Personalization helper ────────────────────────────────────────────────
+// ─── 4. Personalization helper ────────────────────────────────────────────────
 function personalize(template, recipient, campaignDefaults = {}) {
   if (!template) return '';
   const lead = recipient.lead || recipient || {};
@@ -159,7 +270,7 @@ function personalize(template, recipient, campaignDefaults = {}) {
     .replace(/{company}/g, company);
 }
 
-// ─── 4. Main Handler ─────────────────────────────────────────────────────────
+// ─── 5. Main Handler ─────────────────────────────────────────────────────────
 exports.handler = async (event) => {
   const cors = {
     'Access-Control-Allow-Origin': '*',
@@ -178,6 +289,9 @@ exports.handler = async (event) => {
       mediaUrl,
       mediaType,
       campaignDefaults = {},
+      interactiveButtons = [],
+      buttonFlow = null,
+      automationMode = 'hybrid', // 'hybrid' | 'fallback_only' | 'strict_guided'
       recipients = [],
     } = JSON.parse(event.body || '{}');
 
@@ -189,6 +303,8 @@ exports.handler = async (event) => {
     let targetRecipients = Array.isArray(recipients) && recipients.length > 0 ? recipients : [];
     let campaign = null;
     let effectiveDefaults = { ...campaignDefaults };
+    let effectiveButtons = Array.isArray(interactiveButtons) && interactiveButtons.length > 0 ? interactiveButtons : [];
+    let effectiveFlow = buttonFlow || null;
 
     if (supabase && campaignId) {
       // 1. Fetch Campaign Info from wa_campaigns
@@ -207,6 +323,12 @@ exports.handler = async (event) => {
             }
             if (filterObj.campaign_defaults && Object.keys(effectiveDefaults).length === 0) {
               effectiveDefaults = filterObj.campaign_defaults;
+            }
+            if (effectiveButtons.length === 0 && Array.isArray(filterObj.interactive_buttons)) {
+              effectiveButtons = filterObj.interactive_buttons;
+            }
+            if (!effectiveFlow && filterObj.button_flow) {
+              effectiveFlow = filterObj.button_flow;
             }
           } catch {}
         }
@@ -240,6 +362,7 @@ exports.handler = async (event) => {
       failed: 0,
       errors: [],
       hasMedia: Boolean(effectiveMediaUrl),
+      hasInteractiveButtons: effectiveButtons.length > 0,
     };
 
     // 2. Process Batch with Meta WhatsApp Cloud API
@@ -250,12 +373,26 @@ exports.handler = async (event) => {
       const recipientLead = item.lead || item;
       const personalizedMsg = personalize(messageBodyRaw, recipientLead, effectiveDefaults);
 
-      const sendRes = await sendMetaWhatsAppMediaOrText(
-        phone,
-        personalizedMsg,
-        effectiveMediaType,
-        effectiveMediaUrl
-      );
+      let sendRes;
+      if (effectiveButtons.length > 0) {
+        // Send Interactive Quick Reply message
+        const headerObj = effectiveMediaUrl ? { type: effectiveMediaType, url: effectiveMediaUrl } : null;
+        sendRes = await sendMetaWhatsAppInteractive(
+          phone,
+          personalizedMsg,
+          effectiveButtons,
+          headerObj,
+          effectiveDefaults.company || 'ERPPro Solutions'
+        );
+      } else {
+        // Send regular Media or Text message
+        sendRes = await sendMetaWhatsAppMediaOrText(
+          phone,
+          personalizedMsg,
+          effectiveMediaType,
+          effectiveMediaUrl
+        );
+      }
 
       if (sendRes.success) {
         results.sent++;
@@ -277,7 +414,7 @@ exports.handler = async (event) => {
               const { data: newConv } = await supabase.from('whatsapp_conversations').insert([{
                 contact_name: recipientLead.name || 'Customer',
                 contact_phone: cleanPhone,
-                conversation_mode: 'HUMAN ACTIVE',
+                conversation_mode: 'AI ACTIVE',
                 last_message_text: personalizedMsg || (effectiveMediaUrl ? `[${effectiveMediaType}]` : 'Campaign broadcast'),
                 last_message_at: new Date().toISOString(),
                 unread_count: 0,
@@ -286,9 +423,13 @@ exports.handler = async (event) => {
             }
 
             if (convId) {
+              const buttonSummary = effectiveButtons.length > 0
+                ? `\n[Quick Replies: ${effectiveButtons.map(b => b.title || b.label).join(' | ')}]`
+                : '';
+              
               const msgBody = effectiveMediaUrl
-                ? (personalizedMsg ? `${personalizedMsg}\n[${effectiveMediaType}: ${effectiveMediaUrl}]` : `[${effectiveMediaType}: ${effectiveMediaUrl}]`)
-                : personalizedMsg;
+                ? (personalizedMsg ? `${personalizedMsg}\n[${effectiveMediaType}: ${effectiveMediaUrl}]${buttonSummary}` : `[${effectiveMediaType}: ${effectiveMediaUrl}]${buttonSummary}`)
+                : (personalizedMsg + buttonSummary);
 
               await supabase.from('whatsapp_messages').insert([{
                 conversation_id: convId,
@@ -318,7 +459,7 @@ exports.handler = async (event) => {
       await new Promise(r => setTimeout(r, 150));
     }
 
-    // 3. Update wa_campaigns with live sent/delivered counts
+    // 3. Update wa_campaigns with live sent/delivered counts & flow rules
     if (supabase && campaignId) {
       try {
         await supabase.from('wa_campaigns').update({

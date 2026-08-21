@@ -103,6 +103,106 @@ async function sendWhatsAppMessage(to, text) {
   }
 }
 
+// ─── 3b. Interactive Quick Reply & Action Buttons Dispatcher ─────────────────
+async function sendWhatsAppInteractive(to, text, buttons = [], headerMedia = null, footerText = null) {
+  if (!WA_TOKEN || !PHONE_ID) {
+    console.log(JSON.stringify({ step: 'send_wa_interactive', status: 'simulated', reason: 'no_credentials' }));
+    return { success: true, messages: [{ id: 'mock-wamid-' + Date.now() }] };
+  }
+  try {
+    const cleanPhone = String(to).replace(/[^\d]/g, '');
+    const url = `https://graph.facebook.com/v20.0/${PHONE_ID}/messages`;
+
+    const validButtons = (buttons || []).filter(b => b && (b.title || b.label));
+    if (validButtons.length === 0) {
+      return sendWhatsAppMessage(to, text);
+    }
+
+    let payload;
+    if (validButtons.length <= 3) {
+      const interactiveObj = {
+        type: 'button',
+        body: { text: text || 'Please select an option below:' },
+        action: {
+          buttons: validButtons.slice(0, 3).map((b, idx) => ({
+            type: 'reply',
+            reply: {
+              id: b.id || `btn_${idx}_${(b.title || b.label || 'opt').toLowerCase().replace(/[^a-z0-9]/g, '_').slice(0, 20)}`,
+              title: (b.title || b.label).slice(0, 20),
+            },
+          })),
+        },
+      };
+
+      if (footerText) {
+        interactiveObj.footer = { text: footerText.slice(0, 60) };
+      }
+
+      if (headerMedia && headerMedia.url) {
+        if (headerMedia.type === 'image') {
+          interactiveObj.header = { type: 'image', image: { link: headerMedia.url } };
+        } else if (headerMedia.type === 'document') {
+          interactiveObj.header = { type: 'document', document: { link: headerMedia.url, filename: headerMedia.filename || 'Brochure.pdf' } };
+        }
+      }
+
+      payload = {
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to: cleanPhone,
+        type: 'interactive',
+        interactive: interactiveObj,
+      };
+    } else {
+      const interactiveObj = {
+        type: 'list',
+        body: { text: text || 'Please choose an option from the menu:' },
+        action: {
+          button: 'Select Option',
+          sections: [
+            {
+              title: 'Guided Menu',
+              rows: validButtons.slice(0, 10).map((b, idx) => ({
+                id: b.id || `opt_${idx}_${(b.title || b.label || 'opt').toLowerCase().replace(/[^a-z0-9]/g, '_').slice(0, 20)}`,
+                title: (b.title || b.label).slice(0, 24),
+                description: (b.description || b.actionType || 'Tap to select').slice(0, 72),
+              })),
+            },
+          ],
+        },
+      };
+
+      if (footerText) {
+        interactiveObj.footer = { text: footerText.slice(0, 60) };
+      }
+
+      payload = {
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to: cleanPhone,
+        type: 'interactive',
+        interactive: interactiveObj,
+      };
+    }
+
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${WA_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await res.json();
+    if (data.error) {
+      console.warn('[Webhook Interactive Fallback] Falling back to standard text:', data.error.message);
+      return sendWhatsAppMessage(to, text);
+    }
+    return { success: true, messages: data.messages };
+  } catch (err) {
+    console.warn('[Webhook Interactive Catch] Fallback:', err.message);
+    return sendWhatsAppMessage(to, text);
+  }
+}
+
 // ─── 4. Dynamic Knowledge Base Loader ────────────────────────────────────────
 async function loadKnowledgeBase(supabase) {
   const now = Date.now();
@@ -484,7 +584,8 @@ exports.handler = async (event) => {
       } catch {}
     }
 
-    const signatureHeader = event.headers['x-hub-signature-256'] || event.headers['X-Hub-Signature-256'] || '';
+    const reqHeaders = event.headers || {};
+    const signatureHeader = reqHeaders['x-hub-signature-256'] || reqHeaders['X-Hub-Signature-256'] || '';
 
     if (WA_APP_SECRET && signatureHeader) {
       if (!verifyWebhookSignature(rawBody, signatureHeader)) {
@@ -666,6 +767,98 @@ exports.handler = async (event) => {
       }
     }
 
+    // ── Human Handover & Interactive Action Buttons Router ─────────────────
+    const buttonId = msg.interactive?.button_reply?.id || msg.interactive?.list_reply?.id || '';
+    const buttonTitle = msg.interactive?.button_reply?.title || msg.interactive?.list_reply?.title || '';
+    const lowerMsg = messageText.toLowerCase();
+
+    // 1. Check for Human Agent Handover
+    const isHumanTrigger = buttonId.includes('human') ||
+      buttonId.includes('agent') ||
+      buttonTitle.toLowerCase().includes('human') ||
+      buttonTitle.toLowerCase().includes('agent') ||
+      buttonTitle.toLowerCase().includes('specialist') ||
+      ['talk to human', 'talk to agent', 'speak to human', 'connect to human', 'human takeover', 'call me', 'talk to sales'].some(t => lowerMsg.includes(t));
+
+    if (isHumanTrigger) {
+      if (supabase && conversationId) {
+        await supabase.from('whatsapp_conversations').update({
+          conversation_mode: 'HUMAN ACTIVE',
+          last_message_text: `[Human Takeover Requested] ${messageText}`,
+          last_message_at: new Date().toISOString(),
+        }).eq('id', conversationId);
+
+        try {
+          await supabase.from('tasks').insert([{
+            title: `⚡ Immediate WhatsApp Callback: ${contactName}`,
+            description: `Customer ${contactName} (${fromPhone}) requested human takeover on WhatsApp.`,
+            assigned_to: 'Rajesh Kumar',
+            priority: 'High',
+            due_date: new Date(Date.now() + 3600000).toISOString(),
+            status: 'Pending',
+            lead_id: leadId,
+          }]);
+        } catch {}
+      }
+
+      const handoffReply = `👋 Hello ${contactName}, I have paused automated AI assistance and transferred your chat to our senior sales specialist.\n\nAn agent will review your inquiry and connect with you personally shortly. Feel free to type any details here in the meantime!`;
+      await sendWhatsAppMessage(fromPhone, handoffReply);
+
+      if (supabase && conversationId) {
+        try {
+          await supabase.from('whatsapp_messages').insert([{
+            organization_id: DEFAULT_ORG_ID,
+            conversation_id: conversationId,
+            direction: 'outbound',
+            sender_type: 'system',
+            body: handoffReply,
+            status: 'sent',
+          }]);
+        } catch {}
+      }
+
+      return { statusCode: 200, headers, body: JSON.stringify({ status: 'human_handoff_executed' }) };
+    }
+
+    // 2. Check for Predefined Quick Reply Actions (Brochure / Catalog / Pricing)
+    if (buttonId.includes('brochure') || buttonId.includes('catalog') || buttonTitle.toLowerCase().includes('catalog') || buttonTitle.toLowerCase().includes('brochure')) {
+      const brochureReply = `📄 Here is our official product catalog & technical specification guide, ${contactName}!\n\nWould you like a customized bulk quote or to connect with an executive?`;
+      const subButtons = [
+        { id: 'btn_pricing', title: '💰 Get Quote' },
+        { id: 'btn_human', title: '👤 Talk to Agent' }
+      ];
+      await sendWhatsAppInteractive(fromPhone, brochureReply, subButtons);
+
+      if (supabase && conversationId) {
+        try {
+          await supabase.from('whatsapp_messages').insert([{
+            organization_id: DEFAULT_ORG_ID, conversation_id: conversationId,
+            direction: 'outbound', sender_type: 'system', body: brochureReply, status: 'sent',
+          }]);
+        } catch {}
+      }
+      return { statusCode: 200, headers, body: JSON.stringify({ status: 'brochure_dispatched' }) };
+    }
+
+    if (buttonId.includes('price') || buttonId.includes('pricing') || buttonId.includes('quote') || buttonTitle.toLowerCase().includes('price') || buttonTitle.toLowerCase().includes('quote')) {
+      const quoteReply = `💰 Thank you for your inquiry, ${contactName}! We offer competitive tiered pricing with volume discounts.\n\nWould you like us to share our rate chart or have an executive call you?`;
+      const subButtons = [
+        { id: 'btn_catalog', title: '📄 Product Specs' },
+        { id: 'btn_human', title: '👤 Talk to Agent' }
+      ];
+      await sendWhatsAppInteractive(fromPhone, quoteReply, subButtons);
+
+      if (supabase && conversationId) {
+        try {
+          await supabase.from('whatsapp_messages').insert([{
+            organization_id: DEFAULT_ORG_ID, conversation_id: conversationId,
+            direction: 'outbound', sender_type: 'system', body: quoteReply, status: 'sent',
+          }]);
+        } catch {}
+      }
+      return { statusCode: 200, headers, body: JSON.stringify({ status: 'quote_dispatched' }) };
+    }
+
     // Suppress AI if explicitly paused or closed
     if (conversationMode === 'AI PAUSED' || conversationMode === 'CLOSED') {
       console.log(JSON.stringify({ step: 'ai_reply', status: 'suppressed', reason: conversationMode }));
@@ -682,15 +875,44 @@ exports.handler = async (event) => {
     const kb = await loadKnowledgeBase(supabase);
     const systemPrompt = buildSystemPrompt(kb);
 
-    // Generate AI reply
+    // Generate AI reply with Mandatory Guided Menu Fallback
     const aiStartTime = Date.now();
-    const aiResult = await generateAIResponse(messageText, contactName, systemPrompt);
+    let aiResult;
+    try {
+      aiResult = await generateAIResponse(messageText, contactName, systemPrompt);
+    } catch (aiErr) {
+      console.warn('[AI Model Execution Error] Triggering mandatory guided interactive fallback:', aiErr.message);
+      aiResult = {
+        reply: `Hello ${contactName}! 👋 How can we assist you with our product range today? Please select one of our quick options below or request a sales specialist:`,
+        modelUsed: 'mandatory_interactive_fallback',
+        promptTokensEst: 0,
+        completionTokensEst: 0,
+      };
+    }
     const aiLatencyMs = Date.now() - aiStartTime;
 
-    console.log(JSON.stringify({ step: 'ai_reply', model: aiResult.modelUsed, replyLength: aiResult.reply.length, latencyMs: aiLatencyMs }));
+    console.log(JSON.stringify({ step: 'ai_reply', model: aiResult.modelUsed, replyLength: aiResult.reply?.length, latencyMs: aiLatencyMs }));
 
-    // Send to WhatsApp
-    const sendResult = await sendWhatsAppMessage(fromPhone, aiResult.reply);
+    // Send AI reply or Mandatory Interactive Guided Menu
+    const isFallbackMode = aiResult.modelUsed === 'mandatory_interactive_fallback' || aiResult.modelUsed === 'Deterministic KB Engine' || aiResult.modelUsed === 'Safe Fallback Engine';
+    
+    let sendResult;
+    if (isFallbackMode) {
+      // Mandatory Interactive Guided Quick Reply Buttons
+      const guidedButtons = [
+        { id: 'btn_catalog', title: '📄 Product Catalog' },
+        { id: 'btn_pricing', title: '💰 Request Quote' },
+        { id: 'btn_human', title: '👤 Talk to Agent' }
+      ];
+      sendResult = await sendWhatsAppInteractive(fromPhone, aiResult.reply, guidedButtons);
+    } else {
+      // Standard AI response (with optional quick replies attached if configured)
+      const aiModeButtons = [
+        { id: 'btn_pricing', title: '💰 Get Quote' },
+        { id: 'btn_human', title: '👤 Talk to Agent' }
+      ];
+      sendResult = await sendWhatsAppInteractive(fromPhone, aiResult.reply, aiModeButtons);
+    }
 
     // Log outbound AI message + AI Run
     if (supabase && sendResult.success) {

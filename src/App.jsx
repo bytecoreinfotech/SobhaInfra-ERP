@@ -18,6 +18,7 @@ import Reports from './pages/Reports';
 import Settings from './pages/Settings';
 import Automations from './pages/Automations';
 import FieldOps from './pages/FieldOps';
+import CampaignStudio from './pages/CampaignStudio';
 import './index.css';
 import './App.css';
 
@@ -72,6 +73,7 @@ function AppInner() {
           <Routes>
             <Route path="/"          element={<Dashboard />} />
             <Route path="/whatsapp"  element={<ProtectedRoute module="WhatsApp"><WhatsApp /></ProtectedRoute>} />
+            <Route path="/campaign-studio" element={<ProtectedRoute module="WhatsApp"><CampaignStudio /></ProtectedRoute>} />
             <Route path="/chatbot"   element={<ProtectedRoute module="WhatsApp"><Chatbot /></ProtectedRoute>} />
             <Route path="/crm"       element={<ProtectedRoute module="CRM"><CRM /></ProtectedRoute>} />
             <Route path="/tasks"     element={<ProtectedRoute module="Tasks"><Tasks /></ProtectedRoute>} />
