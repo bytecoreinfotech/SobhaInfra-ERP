@@ -134,16 +134,29 @@ async function sendMetaWhatsAppMediaOrText(to, text, mediaType = 'text', mediaUr
 }
 
 // ─── 3. Personalization helper ────────────────────────────────────────────────
-function personalize(template, recipient) {
+function personalize(template, recipient, campaignDefaults = {}) {
   if (!template) return '';
   const lead = recipient.lead || recipient || {};
+  const isOverride = campaignDefaults.mode === 'override';
+
+  const defaultProduct = campaignDefaults.product || 'our products';
+  const defaultBudget = campaignDefaults.budget || 'special pricing';
+  const defaultCompany = campaignDefaults.company || 'our company';
+  const defaultPhone = campaignDefaults.phone || '';
+
+  const name = lead.name || campaignDefaults.name || 'Valued Customer';
+  const product = isOverride ? defaultProduct : (lead.property_interest || lead.product || defaultProduct);
+  const budget = isOverride ? defaultBudget : (lead.budget || defaultBudget);
+  const company = isOverride ? defaultCompany : (lead.company_name || defaultCompany);
+  const phone = lead.phone || defaultPhone;
+
   return template
-    .replace(/{name}/g, lead.name || 'Valued Customer')
-    .replace(/{product}/g, lead.property_interest || lead.product || 'our products')
-    .replace(/{budget}/g, lead.budget || 'special pricing')
-    .replace(/{amount}/g, lead.budget || 'advance')
-    .replace(/{phone}/g, lead.phone || '')
-    .replace(/{company}/g, lead.company_name || 'your company');
+    .replace(/{name}/g, name)
+    .replace(/{product}/g, product)
+    .replace(/{budget}/g, budget)
+    .replace(/{amount}/g, budget)
+    .replace(/{phone}/g, phone)
+    .replace(/{company}/g, company);
 }
 
 // ─── 4. Main Handler ─────────────────────────────────────────────────────────
@@ -164,6 +177,7 @@ exports.handler = async (event) => {
       templateText,
       mediaUrl,
       mediaType,
+      campaignDefaults = {},
       recipients = [],
     } = JSON.parse(event.body || '{}');
 
@@ -174,6 +188,7 @@ exports.handler = async (event) => {
 
     let targetRecipients = Array.isArray(recipients) && recipients.length > 0 ? recipients : [];
     let campaign = null;
+    let effectiveDefaults = { ...campaignDefaults };
 
     if (supabase && campaignId) {
       // 1. Fetch Campaign Info from wa_campaigns
@@ -182,13 +197,16 @@ exports.handler = async (event) => {
         campaign = cData;
 
         // If recipients were not passed directly in body, extract from audience_filter
-        if (targetRecipients.length === 0 && campaign?.audience_filter) {
+        if (campaign?.audience_filter) {
           try {
             const filterObj = typeof campaign.audience_filter === 'string'
               ? JSON.parse(campaign.audience_filter)
               : campaign.audience_filter;
-            if (Array.isArray(filterObj.recipients)) {
+            if (targetRecipients.length === 0 && Array.isArray(filterObj.recipients)) {
               targetRecipients = filterObj.recipients;
+            }
+            if (filterObj.campaign_defaults && Object.keys(effectiveDefaults).length === 0) {
+              effectiveDefaults = filterObj.campaign_defaults;
             }
           } catch {}
         }
@@ -230,7 +248,7 @@ exports.handler = async (event) => {
       if (!phone || phone.replace(/\D/g, '').length < 10) continue;
 
       const recipientLead = item.lead || item;
-      const personalizedMsg = personalize(messageBodyRaw, recipientLead);
+      const personalizedMsg = personalize(messageBodyRaw, recipientLead, effectiveDefaults);
 
       const sendRes = await sendMetaWhatsAppMediaOrText(
         phone,

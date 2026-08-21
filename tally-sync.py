@@ -20,6 +20,7 @@ import json
 import os
 import sys
 import io
+import base64
 from datetime import datetime, timedelta
 
 # Check if reportlab is available
@@ -387,8 +388,17 @@ def parse_voucher_block(block):
 
     status = "Paid" if "receipt" in vch_type.lower() else "Pending"
 
+    # Smart unique invoice numbering
+    if vch_number:
+        if vch_type and not any(c.isalpha() for c in str(vch_number)):
+            inv_code = f"{vch_type[:3].upper()}-{vch_number}"
+        else:
+            inv_code = str(vch_number)
+    else:
+        inv_code = f"VCH-{(party or 'X')[:8]}-{abs(hash(party or '')) % 10000}"
+
     return {
-        "invoice_number": vch_number or f"VCH-{(party or 'X')[:8]}-{id(block) % 10000}",
+        "invoice_number": inv_code,
         "ledger_name": party or "Client",
         "phone": extract_phone(block),
         "amount": amount,
@@ -706,44 +716,50 @@ def upload_pdf_to_supabase(pdf_bytes: bytes, inv_number: str) -> str | None:
     """
     Upload invoice PDF bytes to Supabase Storage (whatsapp-media bucket).
     Returns the public URL, or None on failure.
-
-    Uses direct HTTP (no supabase-py needed) so tally-sync.py stays lightweight.
+    Uses direct HTTP with proper apikey header.
     """
-    if not pdf_bytes:
+    if not pdf_bytes or not SUPABASE_KEY:
         return None
 
-    # Safe filename: remove special chars
     safe_name = re.sub(r'[^a-zA-Z0-9_-]', '_', str(inv_number))
     file_path  = f"invoices/{safe_name}_{int(time.time())}.pdf"
     upload_url = f"{SUPABASE_URL}/storage/v1/object/{STORAGE_BUCKET}/{file_path}"
 
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Content-Type": "application/pdf",
+        "x-upsert": "true",
+    }
+    if SUPABASE_KEY.startswith("eyJ"):
+        headers["Authorization"] = f"Bearer {SUPABASE_KEY}"
+
     try:
-        resp = requests.put(
+        resp = requests.post(
             upload_url,
             data=pdf_bytes,
-            headers={
-                "Authorization": f"Bearer {SUPABASE_KEY}",
-                "Content-Type": "application/pdf",
-                "x-upsert": "true",
-            },
-            timeout=30,
+            headers=headers,
+            timeout=15,
         )
         if resp.status_code in (200, 201):
             public_url = f"{SUPABASE_URL}/storage/v1/object/public/{STORAGE_BUCKET}/{file_path}"
             log.info(f"  [PDF Upload] SUCCESS: {public_url}")
             return public_url
         else:
-            log.warning(f"  [PDF Upload] Failed ({resp.status_code}): {resp.text[:200]}")
+            # Fallback PUT if POST already existed
+            resp_put = requests.put(upload_url, data=pdf_bytes, headers=headers, timeout=15)
+            if resp_put.status_code in (200, 201):
+                public_url = f"{SUPABASE_URL}/storage/v1/object/public/{STORAGE_BUCKET}/{file_path}"
+                log.info(f"  [PDF Upload] SUCCESS: {public_url}")
+                return public_url
             return None
     except Exception as e:
-        log.warning(f"  [PDF Upload] Error: {e}")
         return None
 
 
-def generate_and_upload_invoice(voucher: dict) -> str | None:
+def generate_and_upload_invoice(voucher: dict) -> tuple:
     """
-    Generate PDF from voucher data and upload to Supabase.
-    Returns public URL or None. Entirely non-fatal — never crashes sync.
+    Generate PDF from voucher data and prepare base64 / cloud URL.
+    Returns (public_url, pdf_base64). Entirely non-fatal.
     """
     try:
         inv_number = voucher.get("invoice_number", f"INV-{int(time.time())}")
@@ -751,31 +767,37 @@ def generate_and_upload_invoice(voucher: dict) -> str | None:
         pdf_bytes = generate_invoice_pdf(voucher)
         if not pdf_bytes:
             log.info("  [Invoice PDF] Skipped (reportlab not installed)")
-            return None
+            return None, None
+
+        pdf_b64 = base64.b64encode(pdf_bytes).decode('utf-8')
         url = upload_pdf_to_supabase(pdf_bytes, inv_number)
-        return url
+        return url, pdf_b64
     except Exception as e:
-        log.warning(f"  [Invoice PDF] Non-fatal error: {e}")
-        return None
+        log.warning(f"  [Invoice PDF] Non-fatal notice: {e}")
+        return None, None
 
 
 def push_to_cloud(vouchers):
     """
     1. Generate a real PDF invoice for each Tally voucher using reportlab.
-    2. Upload each PDF to Supabase Storage (whatsapp-media/invoices/).
-    3. Attach pdf_url to each voucher dict so tally-sync.js saves it to invoices.pdf_url.
-    4. Push the enriched payload to the cloud Netlify endpoint.
+    2. Attach pdf_base64 and pdf_url to payload.
+    3. Push the enriched payload to the cloud Netlify endpoint.
     """
     enriched = []
     for v in vouchers:
-        pdf_url = generate_and_upload_invoice(v)
-        enriched.append({**v, "pdf_url": pdf_url})  # pdf_url is None if reportlab not installed
+        pdf_url, pdf_b64 = generate_and_upload_invoice(v)
+        enriched.append({
+            **v,
+            "pdf_url": pdf_url,
+            "pdf_base64": pdf_b64,
+        })
 
     payload = {
         "organizationId": ORGANIZATION_ID,
         "timestamp": datetime.now().isoformat(),
         "connectorStatus": "Connected",
         "sourceParsed": True,
+        "companyName": "TallyPrime Live",
         "vouchers": enriched,
     }
 

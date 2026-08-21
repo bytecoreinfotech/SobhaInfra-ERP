@@ -415,7 +415,7 @@ const BulkImportModal = ({ isOpen, onClose, onImportSuccess, onLaunchCampaignWit
                         <th style={{ padding: '0.45rem 0.6rem' }}>Name</th>
                         <th style={{ padding: '0.45rem 0.6rem' }}>Phone (+91 Formatted)</th>
                         <th style={{ padding: '0.45rem 0.6rem' }}>Stage</th>
-                        <th style={{ padding: '0.45rem 0.6rem' }}>Product / Interest</th>
+                        <th style={{ padding: '0.45rem 0.6rem' }}>Product</th>
                         <th style={{ padding: '0.45rem 0.6rem' }}>Status</th>
                       </tr>
                     </thead>

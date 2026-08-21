@@ -26,10 +26,10 @@ const statusConfig = {
 };
 
 const templates = [
-  { id: 1, tag: 'Launch', name: 'New Property Launch', preview: 'Hi {name}! 🏠 We have an exciting new 3BHK launch in Andheri. Prices start at ₹85L. Interested in a site visit?' },
-  { id: 2, tag: 'Site Visit', name: 'Site Visit Invite', preview: 'Dear {name}, our site visits are open this weekend! Book your slot today and get ₹50K off on booking.' },
-  { id: 3, tag: 'Payment', name: 'Payment Reminder', preview: 'Dear {name}, your payment of {amount} for {property} is due on {date}. Please clear at the earliest.' },
-  { id: 4, tag: 'Festival', name: 'Festival Offer', preview: '🎉 {name}, this festive season get special pricing on our 2BHK & 3BHK properties! Limited period offer.' },
+  { id: 1, tag: 'Launch', name: 'New Product Launch', preview: 'Hi {name}! 🚀 We have introduced our new {product}. Would you like the official catalog and brochure?' },
+  { id: 2, tag: 'Catalog', name: 'Product Catalog & Demo', preview: 'Dear {name}, thank you for inquiring about {product}! We are offering free samples & demo this week. Would you like a callback?' },
+  { id: 3, tag: 'Payment', name: 'Product Payment Reminder', preview: 'Dear {name}, your payment of {amount} for {product} is due on {date}. Please clear at the earliest.' },
+  { id: 4, tag: 'Festival', name: 'Special Product Offer', preview: '🎉 {name}, this week get special volume discounts on our {product}! Limited period offer.' },
 ];
 
 const AI_FEEDBACK_TAGS = ['AI Helpful', 'Wrong Information', 'Premature Handoff', 'Late Handoff', 'Customer Annoyed'];
@@ -432,7 +432,7 @@ const WhatsApp = () => {
                       <span className="badge badge-whatsapp" style={{ fontSize: '0.65rem' }}>WhatsApp</span>
                     </div>
                     <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                      {selectedConv.contact_phone} · {selectedConv.property_interest || 'General'}
+                      {selectedConv.contact_phone} · {selectedConv.property_interest || 'General Product Inquiry'}
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: '0.4rem' }}>

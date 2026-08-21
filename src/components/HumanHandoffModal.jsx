@@ -58,7 +58,7 @@ const HumanHandoffModal = ({ isOpen, onClose, conversation, lead, onHandoffCompl
           <div style={{ padding: '0.75rem 1rem', background: 'var(--bg-tertiary)', borderRadius: 8, fontSize: '0.8rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div>
               <div style={{ fontWeight: 700 }}>{conversation.contact_name}</div>
-              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{conversation.contact_phone} · {conversation.property_interest || 'General'}</div>
+              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{conversation.contact_phone} · {conversation.property_interest || 'General Product Inquiry'}</div>
             </div>
             <span className="badge badge-warning">AI Will Be Muted</span>
           </div>

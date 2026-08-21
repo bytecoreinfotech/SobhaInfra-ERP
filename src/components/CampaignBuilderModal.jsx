@@ -3,7 +3,7 @@ import {
   X, Send, Users, Filter, CheckCircle2, AlertTriangle, Shield, Clock,
   RefreshCw, Zap, MessageCircle, UploadCloud, Paperclip, CheckSquare,
   Square, Search, Plus, Sparkles, FileText, Image as ImageIcon,
-  Smile, Phone, Layers
+  Smile, Phone, Layers, Settings, SlidersHorizontal, HelpCircle
 } from 'lucide-react';
 import { estimateCampaignAudience, queueCampaign, processCampaignBatch, getLeads, normalizePhone } from '../lib/db';
 import { uploadToWhatsAppMedia, getWhatsAppMediaType } from '../lib/storage';
@@ -22,7 +22,7 @@ const PRESET_MESSAGES = [
   },
   {
     name: 'New Product Launch',
-    text: 'Dear {name}, 🚀\n\nExciting news! We have just launched our new range of *{product}* for {company}.\n\nCheck out the attached brochure and let us know if you would like a free sample or demo!',
+    text: 'Dear {name}, 🚀\n\nExciting news! We have just launched our new range of *{product}* from {company}.\n\nCheck out the attached brochure and let us know if you would like a free sample or demo!',
   },
   {
     name: 'Payment Follow-up',
@@ -49,8 +49,8 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued, initialRecipi
   // Targeting selection modes: 'filter' | 'contacts' | 'paste'
   const [targetMode, setTargetMode] = useState(initialRecipients?.length ? 'contacts' : 'filter');
   
-  // 1. Filter state
-  const [filters, setFilters] = useState({ statusFilter: 'All', propertyFilter: 'All', minScore: 0 });
+  // 1. Filter state (Product based)
+  const [filters, setFilters] = useState({ statusFilter: 'All', productFilter: 'All', minScore: 0 });
   const [estimation, setEstimation] = useState({ totalRaw: 0, targeted: 0, optedOut: 0, invalidPhone: 0, finalAudienceCount: 0, eligibleLeads: [] });
   const [estimating, setEstimating] = useState(false);
 
@@ -62,6 +62,16 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued, initialRecipi
 
   // 3. Raw Paste / CSV state
   const [pastedNumbers, setPastedNumbers] = useState('');
+
+  // 4. Custom Campaign Dynamic Variables & Fallbacks (Gear Icon)
+  const [showVariablesPanel, setShowVariablesPanel] = useState(false);
+  const [campaignVariables, setCampaignVariables] = useState({
+    product: 'Tile Adhesive & Grout',
+    budget: '₹1,50,000',
+    company: 'ERPPro Solutions Pvt. Ltd.',
+    phone: '+91 99990 00001',
+    mode: 'fallback', // 'fallback' (use if missing in contact) | 'override' (force for all contacts in this campaign)
+  });
 
   // Message compose mode: 'custom' | 'template'
   const [messageMode, setMessageMode] = useState('custom');
@@ -130,10 +140,12 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued, initialRecipi
     }
 
     if (targetMode === 'paste') {
+      // Split by comma, newline, semicolon, or spaces
       const rawLines = pastedNumbers.split(/[\n,;]+/).map(s => s.trim()).filter(Boolean);
       const seen = new Set();
       const list = [];
       rawLines.forEach((str, idx) => {
+        // Auto-normalize phone (+91 is optional and automatically assumed)
         const norm = normalizePhone(str);
         if (norm.length >= 10 && !seen.has(norm)) {
           seen.add(norm);
@@ -141,8 +153,9 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued, initialRecipi
             id: `pasted-${idx}`,
             name: `Recipient ${idx + 1}`,
             phone: norm,
-            property_interest: 'our products',
-            budget: '',
+            property_interest: campaignVariables.product || 'our products',
+            budget: campaignVariables.budget || '',
+            company_name: campaignVariables.company || '',
           });
         }
       });
@@ -194,6 +207,19 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued, initialRecipi
     if (file) handleCampaignFileSelect(file);
   }, [handleCampaignFileSelect]);
 
+  // Apply Quick Variable Preset
+  const applyVariablePreset = (preset) => {
+    if (preset === 'discount') {
+      setCampaignVariables(p => ({ ...p, product: 'Premium Adhesive & Chemical Grout', budget: '₹49,999 Special Offer' }));
+    } else if (preset === 'launch') {
+      setCampaignVariables(p => ({ ...p, product: '2026 High-Strength Polymer Mortar', budget: '₹1,25,000 Intro Price' }));
+    } else if (preset === 'wholesale') {
+      setCampaignVariables(p => ({ ...p, product: 'Bulk Construction Supply Pack', budget: '₹2,50,000 Wholesale Quote' }));
+    } else if (preset === 'payment') {
+      setCampaignVariables(p => ({ ...p, product: 'Pending Invoice Clearance', budget: 'Outstanding Balance' }));
+    }
+  };
+
   // Launch Campaign
   const handleLaunchCampaign = async (e) => {
     if (e) e.preventDefault();
@@ -217,7 +243,6 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued, initialRecipi
         setUploadedMediaType(mediaType);
       } catch (err) {
         console.warn('[Campaign] Storage upload fallback:', err.message);
-        // If Supabase storage is not reachable or mock, keep mock preview
         if (campaignFilePreview) {
           mediaUrl = campaignFilePreview;
           mediaType = 'image';
@@ -228,12 +253,12 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued, initialRecipi
 
     const messageText = messageMode === 'custom' ? customText : selectedTemplate.text;
 
-    // Queue Campaign in DB
+    // Queue Campaign in DB with dynamic variables
     setBatchProgress({ sent: 0, total: effectiveCount, status: 'Queueing broadcast batch in database...' });
     
     const targetPayload = targetMode === 'filter'
-      ? { filters }
-      : { customRecipients: effectiveRecipients };
+      ? { filters, campaignDefaults: campaignVariables }
+      : { customRecipients: effectiveRecipients, campaignDefaults: campaignVariables };
 
     const { data: cData } = await queueCampaign({
       name: campaignName,
@@ -241,17 +266,19 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued, initialRecipi
       custom_message: messageText,
       media_url: mediaUrl || null,
       media_type: mediaType || null,
+      campaignDefaults: campaignVariables,
     }, targetPayload);
 
     if (cData) {
       setBatchProgress({ sent: 0, total: effectiveCount, status: 'Dispatched to background queue worker...' });
 
-      // Trigger Batch Worker
+      // Trigger Batch Worker with customized parameters
       await processCampaignBatch(cData.id, 50, {
         customMessage: messageText,
         templateText: messageText,
         mediaUrl: mediaUrl || null,
         mediaType: mediaType || null,
+        campaignDefaults: campaignVariables,
         recipients: effectiveRecipients,
       });
 
@@ -291,19 +318,38 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued, initialRecipi
     setSelectedLeadIds(next);
   };
 
-  // Compute live sample preview message
+  // Compute live sample preview message using dynamic custom variables & recipient
+  const isOverride = campaignVariables.mode === 'override';
+  const sampleLead = effectiveRecipients[0] || {};
+  
+  const displayProduct = isOverride 
+    ? campaignVariables.product 
+    : (sampleLead.property_interest || sampleLead.product || campaignVariables.product || 'Tile Adhesive & Grout');
+    
+  const displayBudget = isOverride 
+    ? campaignVariables.budget 
+    : (sampleLead.budget || campaignVariables.budget || '₹1,50,000');
+    
+  const displayCompany = isOverride 
+    ? campaignVariables.company 
+    : (sampleLead.company_name || campaignVariables.company || 'ERPPro Solutions Pvt. Ltd.');
+    
+  const displayPhone = sampleLead.phone || campaignVariables.phone || '+91 98765 43210';
+  const displayName = sampleLead.name || 'Rahul Sharma';
+
   const sampleText = (messageMode === 'custom' ? customText : selectedTemplate.text)
-    .replace(/{name}/g, effectiveRecipients[0]?.name || 'Rahul Sharma')
-    .replace(/{product}/g, effectiveRecipients[0]?.property_interest || 'Tile Adhesive & Grout')
-    .replace(/{budget}/g, effectiveRecipients[0]?.budget || '₹1,50,000')
-    .replace(/{company}/g, effectiveRecipients[0]?.company_name || 'Apex Builders')
-    .replace(/{phone}/g, effectiveRecipients[0]?.phone || '+91 98765 43210');
+    .replace(/{name}/g, displayName)
+    .replace(/{product}/g, displayProduct)
+    .replace(/{budget}/g, displayBudget)
+    .replace(/{amount}/g, displayBudget)
+    .replace(/{company}/g, displayCompany)
+    .replace(/{phone}/g, displayPhone);
 
   if (!isOpen) return null;
 
   return (
     <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="modal-content modal-lg animate-fade-in" style={{ maxWidth: 960 }}>
+      <div className="modal-content modal-lg animate-fade-in" style={{ maxWidth: 980, maxHeight: '92vh', overflowY: 'auto' }}>
         <button
           className="modal-close-btn"
           onClick={onClose}
@@ -314,14 +360,201 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued, initialRecipi
         </button>
 
         {/* Header */}
-        <div style={{ marginBottom: '1.25rem' }}>
-          <h2 style={{ fontSize: '1.25rem', fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <MessageCircle size={22} color="var(--whatsapp)" /> WhatsApp Campaign & Broadcast Engine
-          </h2>
-          <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: '0.2rem 0 0 0' }}>
-            Send custom messages with image/media attachments, dynamic personalization, and multi-contact targeting.
-          </p>
+        <div style={{ marginBottom: '1.1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <div>
+            <h2 style={{ fontSize: '1.25rem', fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <MessageCircle size={22} color="var(--whatsapp)" /> WhatsApp Campaign & Broadcast Engine
+            </h2>
+            <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: '0.2rem 0 0 0' }}>
+              Send custom messages with media attachments, multi-channel targeting, and custom product/budget variable personalizations.
+            </p>
+          </div>
+
+          {/* Top Gear / Variables Settings Button */}
+          <button
+            type="button"
+            className="btn"
+            onClick={() => setShowVariablesPanel(p => !p)}
+            style={{
+              fontSize: '0.75rem',
+              padding: '0.35rem 0.75rem',
+              background: showVariablesPanel ? 'var(--accent-primary)' : 'var(--bg-tertiary)',
+              color: showVariablesPanel ? 'white' : 'var(--text-primary)',
+              border: '1px solid var(--border-color)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.4rem',
+              borderRadius: 6,
+              fontWeight: 600,
+              boxShadow: showVariablesPanel ? '0 0 12px rgba(99,102,241,0.35)' : 'none',
+              transition: 'all 0.2s',
+            }}
+            title="Configure custom Product, Budget, Company and dynamic variable defaults"
+          >
+            <Settings size={14} className={showVariablesPanel ? 'animate-spin' : ''} style={{ animationDuration: '6s' }} />
+            <span>Customize Campaign Variables ⚙️</span>
+          </button>
         </div>
+
+        {/* =========================================================================
+            CUSTOM VARIABLES & DEFAULTS DRAWER / PANEL (GEAR ICON)
+           ========================================================================= */}
+        {showVariablesPanel && (
+          <div className="glass-card animate-fade-in" style={{
+            padding: '1rem 1.1rem',
+            marginBottom: '1.25rem',
+            background: 'linear-gradient(135deg, rgba(99,102,241,0.08) 0%, rgba(139,92,246,0.04) 100%)',
+            border: '1.5px solid var(--accent-primary)',
+            borderRadius: 10,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                <SlidersHorizontal size={16} color="var(--accent-primary)" />
+                <span style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                  Dynamic Variable Customization & Fallbacks
+                </span>
+                <span className="badge badge-accent" style={{ fontSize: '0.65rem' }}>Live in Preview & Dispatch</span>
+              </div>
+              
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Application Strategy:</span>
+                <div style={{ display: 'inline-flex', border: '1px solid var(--border-color)', borderRadius: 6, overflow: 'hidden' }}>
+                  <button
+                    type="button"
+                    onClick={() => setCampaignVariables(p => ({ ...p, mode: 'fallback' }))}
+                    style={{
+                      fontSize: '0.68rem',
+                      padding: '0.2rem 0.55rem',
+                      border: 'none',
+                      cursor: 'pointer',
+                      background: campaignVariables.mode === 'fallback' ? 'var(--accent-primary)' : 'var(--bg-tertiary)',
+                      color: campaignVariables.mode === 'fallback' ? 'white' : 'var(--text-secondary)',
+                      fontWeight: 600,
+                    }}
+                  >
+                    Smart Fallback
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCampaignVariables(p => ({ ...p, mode: 'override' }))}
+                    style={{
+                      fontSize: '0.68rem',
+                      padding: '0.2rem 0.55rem',
+                      border: 'none',
+                      cursor: 'pointer',
+                      background: campaignVariables.mode === 'override' ? 'var(--accent-primary)' : 'var(--bg-tertiary)',
+                      color: campaignVariables.mode === 'override' ? 'white' : 'var(--text-secondary)',
+                      fontWeight: 600,
+                    }}
+                  >
+                    Override All
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Form Inputs Grid */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.65rem', marginBottom: '0.75rem' }}>
+              <div>
+                <label style={{ fontSize: '0.7rem', fontWeight: 600, display: 'block', marginBottom: '0.2rem', color: 'var(--text-secondary)' }}>
+                  Custom Product / Offering *
+                </label>
+                <input
+                  type="text"
+                  className="input-field"
+                  style={{ fontSize: '0.75rem', padding: '0.35rem 0.55rem' }}
+                  placeholder="e.g. Tile Adhesive & Grout"
+                  value={campaignVariables.product}
+                  onChange={e => setCampaignVariables(p => ({ ...p, product: e.target.value }))}
+                />
+              </div>
+
+              <div>
+                <label style={{ fontSize: '0.7rem', fontWeight: 600, display: 'block', marginBottom: '0.2rem', color: 'var(--text-secondary)' }}>
+                  Custom Budget / Offer Price
+                </label>
+                <input
+                  type="text"
+                  className="input-field"
+                  style={{ fontSize: '0.75rem', padding: '0.35rem 0.55rem' }}
+                  placeholder="e.g. ₹1,50,000 / ₹49,999"
+                  value={campaignVariables.budget}
+                  onChange={e => setCampaignVariables(p => ({ ...p, budget: e.target.value }))}
+                />
+              </div>
+
+              <div>
+                <label style={{ fontSize: '0.7rem', fontWeight: 600, display: 'block', marginBottom: '0.2rem', color: 'var(--text-secondary)' }}>
+                  Company / Brand Name
+                </label>
+                <input
+                  type="text"
+                  className="input-field"
+                  style={{ fontSize: '0.75rem', padding: '0.35rem 0.55rem' }}
+                  placeholder="e.g. ERPPro Solutions Pvt. Ltd."
+                  value={campaignVariables.company}
+                  onChange={e => setCampaignVariables(p => ({ ...p, company: e.target.value }))}
+                />
+              </div>
+
+              <div>
+                <label style={{ fontSize: '0.7rem', fontWeight: 600, display: 'block', marginBottom: '0.2rem', color: 'var(--text-secondary)' }}>
+                  Sender / Support Phone
+                </label>
+                <input
+                  type="text"
+                  className="input-field"
+                  style={{ fontSize: '0.75rem', padding: '0.35rem 0.55rem' }}
+                  placeholder="e.g. +91 99990 00001"
+                  value={campaignVariables.phone}
+                  onChange={e => setCampaignVariables(p => ({ ...p, phone: e.target.value }))}
+                />
+              </div>
+            </div>
+
+            {/* Quick Fill Preset Buttons & Helper Notice */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.4rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)', fontWeight: 600 }}>Quick Fill Presets:</span>
+                <button
+                  type="button"
+                  onClick={() => applyVariablePreset('discount')}
+                  style={{ fontSize: '0.65rem', padding: '0.15rem 0.4rem', borderRadius: 4, border: '1px solid var(--border-color)', background: 'var(--bg-tertiary)', cursor: 'pointer', color: 'var(--text-secondary)' }}
+                >
+                  🎁 Special Discount
+                </button>
+                <button
+                  type="button"
+                  onClick={() => applyVariablePreset('launch')}
+                  style={{ fontSize: '0.65rem', padding: '0.15rem 0.4rem', borderRadius: 4, border: '1px solid var(--border-color)', background: 'var(--bg-tertiary)', cursor: 'pointer', color: 'var(--text-secondary)' }}
+                >
+                  🚀 Product Launch
+                </button>
+                <button
+                  type="button"
+                  onClick={() => applyVariablePreset('wholesale')}
+                  style={{ fontSize: '0.65rem', padding: '0.15rem 0.4rem', borderRadius: 4, border: '1px solid var(--border-color)', background: 'var(--bg-tertiary)', cursor: 'pointer', color: 'var(--text-secondary)' }}
+                >
+                  💼 B2B Wholesale
+                </button>
+                <button
+                  type="button"
+                  onClick={() => applyVariablePreset('payment')}
+                  style={{ fontSize: '0.65rem', padding: '0.15rem 0.4rem', borderRadius: 4, border: '1px solid var(--border-color)', background: 'var(--bg-tertiary)', cursor: 'pointer', color: 'var(--text-secondary)' }}
+                >
+                  🔔 Payment Reminder
+                </button>
+              </div>
+
+              <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+                {campaignVariables.mode === 'override' 
+                  ? '⚡ Override mode: Custom values are forced for all recipients in this broadcast.'
+                  : '⚡ Fallback mode: Custom values will be used whenever a recipient lacks specific product/budget details.'}
+              </div>
+            </div>
+          </div>
+        )}
 
         {batchProgress?.status === 'Completed' ? (
           <div style={{ textAlign: 'center', padding: '3.5rem 1rem' }}>
@@ -330,7 +563,7 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued, initialRecipi
               Campaign Successfully Launched!
             </h3>
             <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginTop: '0.4rem', maxWidth: 460, margin: '0.4rem auto 0 auto' }}>
-              <strong>{effectiveCount} WhatsApp messages</strong> have been queued and sent with dynamic recipient personalization.
+              <strong>{effectiveCount} WhatsApp messages</strong> have been queued and sent with customized dynamic personalization.
             </p>
             <div style={{ display: 'inline-flex', gap: '0.75rem', marginTop: '1.75rem' }}>
               <button className="btn btn-whatsapp" onClick={onClose}>
@@ -535,22 +768,28 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued, initialRecipi
                   </div>
                 )}
 
-                {/* MODE 3: PASTE NUMBERS */}
+                {/* MODE 3: PASTE NUMBERS (+91 IS FULLY OPTIONAL) */}
                 {targetMode === 'paste' && (
                   <div>
-                    <label style={{ fontSize: '0.7rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.2rem' }}>
-                      Paste comma or newline separated mobile numbers:
-                    </label>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.25rem' }}>
+                      <label style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', fontWeight: 600 }}>
+                        Enter Mobile Numbers (Comma / Newline Separated):
+                      </label>
+                      <span className="badge badge-accent" style={{ fontSize: '0.62rem' }}>
+                        +91 is Optional
+                      </span>
+                    </div>
                     <textarea
                       className="input-field"
                       rows={4}
-                      placeholder={`+919876543210\n9812345678, 9898989898\n+919765432109`}
+                      placeholder={`9876543210, 9812345678\n+919765432109\n09898989898`}
                       value={pastedNumbers}
                       onChange={e => setPastedNumbers(e.target.value)}
-                      style={{ fontSize: '0.75rem', fontFamily: 'monospace' }}
+                      style={{ fontSize: '0.75rem', fontFamily: 'monospace', lineHeight: 1.4 }}
                     />
-                    <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '0.3rem' }}>
-                      ⚡ Numbers are automatically cleaned and checked for valid 10+ digits.
+                    <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '0.35rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                      <CheckCircle2 size={12} color="var(--success)" />
+                      <span><strong>+91 is optional.</strong> Enter standard 10-digit numbers or with +91 — our system automatically detects and standardizes them.</span>
                     </div>
                   </div>
                 )}
@@ -708,7 +947,7 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued, initialRecipi
                     ref={textareaRef}
                     className="input-field"
                     rows={5}
-                    placeholder="Write your custom WhatsApp message here... (Use {name}, {product} tags)"
+                    placeholder="Write your custom WhatsApp message here... (Use {name}, {product}, {budget} tags)"
                     value={customText}
                     onChange={e => setCustomText(e.target.value)}
                     style={{ fontSize: '0.8rem', lineHeight: 1.4, resize: 'vertical' }}
@@ -753,9 +992,11 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued, initialRecipi
 
               {/* WHATSAPP REAL LIVE CHAT PREVIEW */}
               <div className="glass-card p-6" style={{ padding: '0.85rem', background: '#e5ddd5', borderRadius: 10, border: '1px solid #d1d7db' }}>
-                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#075e54', marginBottom: '0.4rem', textTransform: 'uppercase', display: 'flex', justifyContent: 'space-between' }}>
+                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#075e54', marginBottom: '0.4rem', textTransform: 'uppercase', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <span>📱 Live WhatsApp Preview</span>
-                  <span style={{ color: '#54656f', fontWeight: 500 }}>Recipient: {effectiveRecipients[0]?.name || 'Rahul Sharma'}</span>
+                  <span style={{ color: '#54656f', fontWeight: 500, fontSize: '0.68rem' }}>
+                    Recipient: {displayName}
+                  </span>
                 </div>
 
                 {/* Chat Bubble Container */}

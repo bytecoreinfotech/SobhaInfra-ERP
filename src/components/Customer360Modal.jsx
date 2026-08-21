@@ -322,7 +322,7 @@ const Customer360Modal = ({ leadId, onClose, onLeadUpdated }) => {
                     <div className="c360-card">
                       <div className="c360-card-title">Lead Attributes</div>
                       <div className="c360-field-list">
-                        <div><span className="text-muted">Property Interest:</span> <strong>{data.lead?.property_interest || '—'}</strong></div>
+                        <div><span className="text-muted">Product Interest:</span> <strong>{data.lead?.property_interest || '—'}</strong></div>
                         <div><span className="text-muted">Target Budget:</span> <strong style={{ color: 'var(--success)' }}>{data.lead?.budget || '—'}</strong></div>
                         <div><span className="text-muted">Opt-in Status:</span> <strong>{data.lead?.marketing_opt_out ? '❌ Opted Out' : '✅ Active Opt-in'}</strong></div>
                         <div><span className="text-muted">First Touch Campaign:</span> <strong>{data.lead?.first_touch_campaign || 'Direct / Organic'}</strong></div>

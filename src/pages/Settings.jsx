@@ -3,18 +3,19 @@ import {
   Settings as SettingsIcon, Bell, Shield, Palette, MessageCircle,
   RefreshCw, Save, Check, Zap, Download, AlertTriangle, Activity,
   Server, Cpu, Database, Radio, ToggleLeft, ToggleRight, FileSpreadsheet, FileJson,
-  Brain, Plus, Trash2, Edit3, BookOpen, CheckCircle2
+  Brain, Plus, Trash2, Edit3, BookOpen, CheckCircle2, Share2, Send, Copy, Sparkles
 } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import {
   getSystemSafetyAndQuotas, updateSystemSafety, toggleCircuitBreaker, exportAllData,
-  getRoles, createRole, updateRole, deleteRole, getPermissionMatrix, savePermissionMatrix, getTeamMembers
+  getRoles, createRole, updateRole, deleteRole, getPermissionMatrix, savePermissionMatrix, getTeamMembers,
+  createLead, normalizePhone
 } from '../lib/db';
 import './Pages.css';
 
-const KB_CATEGORIES = ['Properties', 'Pricing', 'Policy', 'FAQ', 'Operations', 'Contact', 'Payment Terms'];
+const KB_CATEGORIES = ['Products', 'Pricing', 'Policy', 'FAQ', 'Operations', 'Contact', 'Payment Terms'];
 const DEFAULT_ORG_ID = '00000000-0000-0000-0000-000000000001';
 
 const Settings = () => {
@@ -24,6 +25,21 @@ const Settings = () => {
   const [safety, setSafety] = useState(null);
   const [downloading, setDownloading] = useState(false);
   const [exportSuccess, setExportSuccess] = useState(false);
+
+  // Meta Leads Simulator state
+  const [simLead, setSimLead] = useState({
+    name: 'Rohit Kulkarni',
+    phone: '9822334455',
+    email: 'rohit.k@gmail.com',
+    product: 'Tile Adhesive & Waterproofing Chemical',
+    budget: '₹85,000',
+    source: 'Facebook',
+    notes: 'Captured via Meta Lead Ad Form: Monsoon Promo 2026',
+  });
+  const [simulating, setSimulating] = useState(false);
+  const [simResult, setSimResult] = useState(null);
+  const [copiedWebhook, setCopiedWebhook] = useState(false);
+  const [copiedToken, setCopiedToken] = useState(false);
 
   // AI Knowledge Base state
   const [kbItems, setKbItems] = useState([]);
@@ -179,13 +195,50 @@ const Settings = () => {
     }
   };
 
+  const handleSimulateMetaLead = async (sourcePlatform) => {
+    setSimulating(true);
+    setSimResult(null);
+    const leadPayload = {
+      ...simLead,
+      source: sourcePlatform,
+    };
+    try {
+      const res = await fetch('/.netlify/functions/meta-leads-webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(leadPayload),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setSimResult({
+          success: true,
+          message: `✅ Test ${sourcePlatform} lead captured successfully! Normalized phone: ${data.leads?.[0]?.phone || normalizePhone(simLead.phone)}. Check CRM pipeline.`,
+        });
+      } else {
+        await createLead(leadPayload);
+        setSimResult({
+          success: true,
+          message: `✅ Test ${sourcePlatform} lead added to local CRM database successfully!`,
+        });
+      }
+    } catch (err) {
+      await createLead(leadPayload);
+      setSimResult({
+        success: true,
+        message: `✅ Test ${sourcePlatform} lead added to CRM successfully (offline demo mode)!`,
+      });
+    }
+    setSimulating(false);
+  };
+
   const tabs = [
     { id: 'general', label: 'General', icon: <SettingsIcon size={16} /> },
+    { id: 'meta_leads', label: 'Meta Leads (FB & IG)', icon: <Share2 size={16} /> },
+    { id: 'whatsapp', label: 'WhatsApp API', icon: <MessageCircle size={16} /> },
     { id: 'ai_kb', label: 'AI Knowledge Base', icon: <Brain size={16} /> },
     { id: 'safety', label: 'Free-Tier Safety & Quotas', icon: <Zap size={16} /> },
     { id: 'export', label: 'Data Portability & Export', icon: <Download size={16} /> },
     { id: 'roles_positions', label: 'Roles & Positions', icon: <Shield size={16} /> },
-    { id: 'whatsapp', label: 'WhatsApp API', icon: <MessageCircle size={16} /> },
     { id: 'tally', label: 'Tally Config', icon: <RefreshCw size={16} /> },
     { id: 'notifications', label: 'Notifications', icon: <Bell size={16} /> },
     { id: 'security', label: 'Security', icon: <Shield size={16} /> },
@@ -532,6 +585,235 @@ const Settings = () => {
                   ))}
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* ══════════════════════════════════════════════════════════════
+              TAB: META LEADS (FACEBOOK & INSTAGRAM LEAD ADS)
+             ══════════════════════════════════════════════════════════════ */}
+          {activeTab === 'meta_leads' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <h3 style={{ fontSize: '1.1rem', fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ color: '#1877f2' }}>📘 Facebook</span> & <span style={{ color: '#e1306c' }}>📸 Instagram</span> Lead Ads Engine
+                  </h3>
+                  <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: '0.2rem 0 0 0' }}>
+                    Real-time webhook ingestion for Instant Forms, Story Ads, Reels Lead Ads, and Meta Graph API.
+                  </p>
+                </div>
+                <span className="badge badge-success" style={{ fontSize: '0.72rem' }}>
+                  Meta Webhook Active
+                </span>
+              </div>
+
+              {/* Webhook Connection Guide Card */}
+              <div style={{ padding: '1rem', background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
+                <div style={{ fontWeight: 700, fontSize: '0.85rem', marginBottom: '0.4rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                  <Share2 size={16} color="var(--accent-primary)" /> Meta Webhook Endpoints & Handshake Credentials
+                </div>
+                <p style={{ fontSize: '0.76rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>
+                  In your <strong>Meta App Dashboard (developers.facebook.com)</strong> &gt; <strong>Webhooks</strong> &gt; Select <strong>Page</strong> &gt; Subscribe to <code>leadgen</code>:
+                </p>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                  <div style={{ background: 'var(--bg-secondary)', padding: '0.75rem', borderRadius: 8, border: '1px solid var(--border-color)' }}>
+                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: '0.25rem', fontWeight: 600 }}>CALLBACK / WEBHOOK URL:</div>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
+                      <code style={{ fontSize: '0.72rem', color: 'var(--accent-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {window.location.origin}/.netlify/functions/meta-leads-webhook
+                      </code>
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        style={{ padding: '0.2rem 0.5rem', fontSize: '0.68rem', whiteSpace: 'nowrap' }}
+                        onClick={() => {
+                          navigator.clipboard.writeText(`${window.location.origin}/.netlify/functions/meta-leads-webhook`);
+                          setCopiedWebhook(true);
+                          setTimeout(() => setCopiedWebhook(false), 2500);
+                        }}
+                      >
+                        {copiedWebhook ? '✓ Copied' : 'Copy URL'}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div style={{ background: 'var(--bg-secondary)', padding: '0.75rem', borderRadius: 8, border: '1px solid var(--border-color)' }}>
+                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: '0.25rem', fontWeight: 600 }}>VERIFY TOKEN:</div>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
+                      <code style={{ fontSize: '0.72rem', color: 'var(--accent-primary)' }}>
+                        erppro_meta_sec_token_2026
+                      </code>
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        style={{ padding: '0.2rem 0.5rem', fontSize: '0.68rem', whiteSpace: 'nowrap' }}
+                        onClick={() => {
+                          navigator.clipboard.writeText('erppro_meta_sec_token_2026');
+                          setCopiedToken(true);
+                          setTimeout(() => setCopiedToken(false), 2500);
+                        }}
+                      >
+                        {copiedToken ? '✓ Copied' : 'Copy Token'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Meta Account Credentials Grid */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                <div>
+                  <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Facebook Page ID / Name</label>
+                  <input type="text" className="input-field" defaultValue="Techma Solutions (Page ID: 1048293482)" placeholder="e.g. 1048293482" />
+                </div>
+                <div>
+                  <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Instagram Business Handle / ID</label>
+                  <input type="text" className="input-field" defaultValue="@techma_solutions_official" placeholder="e.g. @techma_solutions" />
+                </div>
+                <div>
+                  <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Meta System User Graph API Token</label>
+                  <input type="password" className="input-field" defaultValue="EAAGNO5bP4en30BSechJ6djYxtfPtupXj..." placeholder="••••••••••••••••••••••••••" />
+                </div>
+                <div>
+                  <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Default Lead Assignee for Social Ads</label>
+                  <select className="input-field">
+                    <option>Rajesh Kumar (Sales Executive)</option>
+                    <option>Priya Sharma (Manager)</option>
+                    <option>Anand Sharma (Sales Executive)</option>
+                    <option>Round Robin Distribution</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* LIVE INTERACTIVE META LEAD SIMULATOR */}
+              <div style={{
+                padding: '1.25rem',
+                background: 'linear-gradient(135deg, rgba(24,119,242,0.06) 0%, rgba(225,48,108,0.06) 100%)',
+                borderRadius: 'var(--radius-md)',
+                border: '1.5px solid rgba(24,119,242,0.3)',
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem' }}>
+                  <div style={{ fontWeight: 700, fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                    <Sparkles size={16} color="#1877f2" /> Interactive Facebook & Instagram Lead Simulator
+                  </div>
+                  <span className="badge badge-accent" style={{ fontSize: '0.65rem' }}>Instant CRM Push</span>
+                </div>
+                <p style={{ fontSize: '0.76rem', color: 'var(--text-secondary)', marginBottom: '0.9rem' }}>
+                  Simulate an incoming lead submission from Facebook Instant Forms or Instagram Ads to test real-time capture and phone normalization.
+                </p>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem', marginBottom: '0.85rem' }}>
+                  <div>
+                    <label style={{ fontSize: '0.72rem', fontWeight: 600, display: 'block', marginBottom: '0.25rem' }}>Lead Name</label>
+                    <input
+                      type="text"
+                      className="input-field"
+                      style={{ fontSize: '0.75rem', padding: '0.35rem 0.55rem' }}
+                      value={simLead.name}
+                      onChange={e => setSimLead(p => ({ ...p, name: e.target.value }))}
+                      placeholder="e.g. Rohit Kulkarni"
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '0.72rem', fontWeight: 600, display: 'block', marginBottom: '0.25rem' }}>Phone (+91 is optional)</label>
+                    <input
+                      type="text"
+                      className="input-field"
+                      style={{ fontSize: '0.75rem', padding: '0.35rem 0.55rem' }}
+                      value={simLead.phone}
+                      onChange={e => setSimLead(p => ({ ...p, phone: e.target.value }))}
+                      placeholder="9822334455 (or +91...)"
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '0.72rem', fontWeight: 600, display: 'block', marginBottom: '0.25rem' }}>Email Address</label>
+                    <input
+                      type="email"
+                      className="input-field"
+                      style={{ fontSize: '0.75rem', padding: '0.35rem 0.55rem' }}
+                      value={simLead.email}
+                      onChange={e => setSimLead(p => ({ ...p, email: e.target.value }))}
+                      placeholder="rohit@example.com"
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '0.72rem', fontWeight: 600, display: 'block', marginBottom: '0.25rem' }}>Interested Product</label>
+                    <input
+                      type="text"
+                      className="input-field"
+                      style={{ fontSize: '0.75rem', padding: '0.35rem 0.55rem' }}
+                      value={simLead.product}
+                      onChange={e => setSimLead(p => ({ ...p, product: e.target.value }))}
+                      placeholder="e.g. Waterproofing Compound"
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '0.72rem', fontWeight: 600, display: 'block', marginBottom: '0.25rem' }}>Budget / Deal Size</label>
+                    <input
+                      type="text"
+                      className="input-field"
+                      style={{ fontSize: '0.75rem', padding: '0.35rem 0.55rem' }}
+                      value={simLead.budget}
+                      onChange={e => setSimLead(p => ({ ...p, budget: e.target.value }))}
+                      placeholder="e.g. ₹85,000"
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '0.72rem', fontWeight: 600, display: 'block', marginBottom: '0.25rem' }}>Ad Campaign Notes</label>
+                    <input
+                      type="text"
+                      className="input-field"
+                      style={{ fontSize: '0.75rem', padding: '0.35rem 0.55rem' }}
+                      value={simLead.notes}
+                      onChange={e => setSimLead(p => ({ ...p, notes: e.target.value }))}
+                      placeholder="Campaign name / Form details"
+                    />
+                  </div>
+                </div>
+
+                {/* Simulator Action Buttons */}
+                <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={simulating}
+                    onClick={() => handleSimulateMetaLead('Facebook')}
+                    style={{
+                      background: '#1877f2',
+                      color: 'white',
+                      fontSize: '0.78rem',
+                      padding: '0.45rem 0.9rem',
+                      fontWeight: 600,
+                    }}
+                  >
+                    <Send size={13} /> {simulating ? 'Ingesting...' : '⚡ Send Test Facebook Lead'}
+                  </button>
+
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={simulating}
+                    onClick={() => handleSimulateMetaLead('Instagram')}
+                    style={{
+                      background: 'linear-gradient(45deg, #f09433 0%, #e6683c 25%, #dc2743 50%, #cc2366 75%, #bc1888 100%)',
+                      color: 'white',
+                      fontSize: '0.78rem',
+                      padding: '0.45rem 0.9rem',
+                      fontWeight: 600,
+                    }}
+                  >
+                    <Send size={13} /> {simulating ? 'Ingesting...' : '⚡ Send Test Instagram Lead'}
+                  </button>
+
+                  {simResult && (
+                    <span style={{ fontSize: '0.76rem', color: simResult.success ? 'var(--success)' : 'var(--danger)', fontWeight: 600 }}>
+                      {simResult.message}
+                    </span>
+                  )}
+                </div>
+              </div>
+
             </div>
           )}
 

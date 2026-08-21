@@ -8,16 +8,27 @@ import { supabase, isSupabaseConfigured } from './supabase';
 export const DEFAULT_ORG_ID = '00000000-0000-0000-0000-000000000001';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PHONE NORMALIZATION UTILITY (Section 42)
+// PHONE NORMALIZATION UTILITY (Section 42) — +91 is OPTIONAL & Auto-Assumed
 // ─────────────────────────────────────────────────────────────────────────────
 export function normalizePhone(phone) {
   if (!phone) return '';
-  const digits = String(phone).replace(/\D/g, '');
+  const str = String(phone).trim();
+  const digits = str.replace(/\D/g, '');
+  if (!digits) return '';
+
+  // 10 digits without country code (e.g. 9876543210) -> +919876543210
   if (digits.length === 10) return '+91' + digits;
+  // 11 digits starting with 0 (e.g. 09876543210) -> +919876543210
   if (digits.length === 11 && digits.startsWith('0')) return '+91' + digits.substring(1);
+  // 12 digits starting with 91 (e.g. 919876543210) -> +919876543210
   if (digits.length === 12 && digits.startsWith('91')) return '+' + digits;
-  if (digits.length > 0) return '+' + digits;
-  return '';
+  // If explicitly has + and more than 10 digits, preserve international code
+  if (str.startsWith('+') && digits.length >= 10) return '+' + digits;
+  // Fallback default: if 10+ digits starting with 91
+  if (digits.length > 10 && digits.startsWith('91')) return '+' + digits;
+  // If 10 digits or less, assume Indian standard (+91)
+  if (digits.length <= 10) return '+91' + digits;
+  return '+' + digits;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -41,7 +52,98 @@ const MOCK_STORE = {
     { id: 'usr-7', full_name: 'Deepak Verma', email: 'deepak@erppro.in', role: 'Manager', phone: '+919999000007', is_active: true, last_login_at: 'Today, 11:20 AM', avatar: 'DV' },
     { id: 'usr-8', full_name: 'Neha Gupta', email: 'neha@erppro.in', role: 'Support Agent', phone: '+919999000008', is_active: true, last_login_at: 'Today, 10:50 AM', avatar: 'NG' },
   ],
-  leads: [],
+  leads: [
+    {
+      id: 'lead-101',
+      name: 'Abhay Kumar',
+      phone: '+919876543210',
+      email: 'abhay@example.com',
+      source: 'WhatsApp',
+      status: 'Hot',
+      property_interest: 'Tile Adhesive & Grout',
+      budget: '₹1,00,000',
+      company_name: 'Shree Ram Enterprises',
+      lead_score: 92,
+      marketing_opt_out: false,
+      notes: 'Inquired about dealer distributor margin and product sample delivery.',
+      created_at: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
+    },
+    {
+      id: 'lead-102',
+      name: 'Rohan Deshmukh',
+      phone: '+919812345678',
+      email: 'rohan.d@gmail.com',
+      source: 'Facebook',
+      status: 'New',
+      property_interest: 'Waterproofing Chemical Compound',
+      budget: '₹75,000',
+      company_name: 'Deshmukh Infra & Buildcon',
+      lead_score: 84,
+      marketing_opt_out: false,
+      notes: 'Captured via Facebook Lead Ad: Monsoon Waterproofing Campaign 2026.',
+      created_at: new Date(Date.now() - 4 * 3600 * 1000).toISOString(),
+    },
+    {
+      id: 'lead-103',
+      name: 'Sneha Kapur',
+      phone: '+919765432109',
+      email: 'sneha@kapurdesigns.in',
+      source: 'Instagram',
+      status: 'Warm',
+      property_interest: 'Epoxy Grout & Tile Sealant',
+      budget: '₹1,50,000',
+      company_name: 'Kapur Interior Studio',
+      lead_score: 88,
+      marketing_opt_out: false,
+      notes: 'Instagram Direct Lead Form submission for luxury project finishing catalog.',
+      created_at: new Date(Date.now() - 8 * 3600 * 1000).toISOString(),
+    },
+    {
+      id: 'lead-104',
+      name: 'Vikram Malhotra',
+      phone: '+919820011223',
+      email: 'vikram.m@apexbuilders.com',
+      source: 'Website',
+      status: 'Hot',
+      property_interest: 'Ready Mix Plaster & Polymer Mortar',
+      budget: '₹3,00,000',
+      company_name: 'Apex Builders & Developers',
+      lead_score: 95,
+      marketing_opt_out: false,
+      notes: 'Requested bulk quotation for 500 bags with immediate delivery.',
+      created_at: new Date(Date.now() - 12 * 3600 * 1000).toISOString(),
+    },
+    {
+      id: 'lead-105',
+      name: 'Pooja Hegde',
+      phone: '+919933445566',
+      email: 'pooja.h@hegdegroup.co',
+      source: 'Facebook',
+      status: 'Warm',
+      property_interest: 'High Strength Tile Adhesive',
+      budget: '₹1,20,000',
+      company_name: 'Hegde Constructions',
+      lead_score: 78,
+      marketing_opt_out: false,
+      notes: 'Facebook Carousel Lead ad form response.',
+      created_at: new Date(Date.now() - 24 * 3600 * 1000).toISOString(),
+    },
+    {
+      id: 'lead-106',
+      name: 'Manish Tiwari',
+      phone: '+919844556677',
+      email: 'manish.tiwari@gmail.com',
+      source: 'Instagram',
+      status: 'New',
+      property_interest: 'Wall Putty & Surface Primer',
+      budget: '₹50,000',
+      company_name: 'Tiwari Decorators',
+      lead_score: 65,
+      marketing_opt_out: false,
+      notes: 'Instagram Story lead ad form submission.',
+      created_at: new Date(Date.now() - 36 * 3600 * 1000).toISOString(),
+    }
+  ],
   whatsapp_conversations: [],
   whatsapp_messages: {},
   ai_knowledge: [],
@@ -869,6 +971,7 @@ export async function estimateCampaignAudience(filters = {}) {
 export async function queueCampaign(campaignData, targetOptions = {}) {
   let eligible = [];
   let targetedCount = 0;
+  const campaignDefaults = targetOptions.campaignDefaults || campaignData.campaignDefaults || {};
 
   if (Array.isArray(targetOptions.customRecipients) && targetOptions.customRecipients.length > 0) {
     const seenPhones = new Set();
@@ -887,9 +990,9 @@ export async function queueCampaign(campaignData, targetOptions = {}) {
         lead_id: item.id || null,
         name: item.name || 'Customer',
         phone: norm,
-        property_interest: item.property_interest || item.product || 'our products',
-        budget: item.budget || '',
-        company_name: item.company_name || '',
+        property_interest: item.property_interest || item.product || campaignDefaults.product || 'our products',
+        budget: item.budget || campaignDefaults.budget || '',
+        company_name: item.company_name || campaignDefaults.company || '',
       });
     }
   } else {
@@ -907,6 +1010,7 @@ export async function queueCampaign(campaignData, targetOptions = {}) {
       custom_message: campaignData.custom_message || null,
       media_url: campaignData.media_url || null,
       media_type: campaignData.media_type || null,
+      campaign_defaults: campaignDefaults,
       total_targeted: targetedCount,
       recipients: eligible,
     }),
@@ -924,7 +1028,8 @@ export async function queueCampaign(campaignData, targetOptions = {}) {
     logAuditEvent('campaign.queue', 'wa_campaigns', mockCamp.id, {
       eligibleCount: eligible.length,
       mediaUrl: campaignData.media_url || null,
-      customMessage: Boolean(campaignData.custom_message)
+      customMessage: Boolean(campaignData.custom_message),
+      campaignDefaults
     });
     return { data: mockCamp, error: null, eligible };
   }
@@ -947,6 +1052,7 @@ export async function processCampaignBatch(campaignId, batchSize = 50, extraData
         templateText: extraData.templateText || extraData.customMessage || null,
         mediaUrl: extraData.mediaUrl || extraData.media_url || null,
         mediaType: extraData.mediaType || extraData.media_type || null,
+        campaignDefaults: extraData.campaignDefaults || extraData.campaign_defaults || {},
         recipients: extraData.recipients || [],
       }),
     });

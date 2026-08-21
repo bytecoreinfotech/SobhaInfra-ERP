@@ -27,6 +27,7 @@ const Finance = () => {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('All');
   const [search, setSearch] = useState('');
+  const [previewPdfUrl, setPreviewPdfUrl] = useState(null);
   const [remindingId, setRemindingId] = useState(null);
   const [reminderToast, setReminderToast] = useState(null);
 
@@ -280,18 +281,41 @@ const Finance = () => {
                         </span>
                       </td>
                       <td>
-                        {inv.status !== 'Paid' ? (
-                          <button
-                            className="btn btn-whatsapp btn-sm"
-                            style={{ padding: '0.25rem 0.6rem', fontSize: '0.72rem' }}
-                            onClick={() => handleSendReminder(inv)}
-                            disabled={remindingId === inv.id}
-                          >
-                            <Send size={12} /> {remindingId === inv.id ? 'Sending...' : 'Remind on WA'}
-                          </button>
-                        ) : (
-                          <span style={{ fontSize: '0.72rem', color: 'var(--success)', fontWeight: 600 }}>Settled</span>
-                        )}
+                        <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+                          {(inv.pdf_url || inv.metadata?.pdf_url) ? (
+                            <button
+                              className="btn btn-secondary btn-sm"
+                              style={{ padding: '0.25rem 0.55rem', fontSize: '0.72rem', color: 'var(--accent-primary)', display: 'flex', alignItems: 'center', gap: '0.25rem' }}
+                              onClick={() => setPreviewPdfUrl(inv.pdf_url || inv.metadata?.pdf_url)}
+                            >
+                              <FileText size={12} /> View PDF
+                            </button>
+                          ) : (
+                            <button
+                              className="btn btn-secondary btn-sm"
+                              style={{ padding: '0.25rem 0.55rem', fontSize: '0.72rem', color: 'var(--accent-primary)', display: 'flex', alignItems: 'center', gap: '0.25rem' }}
+                              onClick={() => {
+                                const safeName = String(inv.invoice_number || inv.tally_voucher_number || 'INV').replace(/[^a-zA-Z0-9_-]/g, '_');
+                                window.open(`https://jbgkeeubevwopphekwfj.supabase.co/storage/v1/object/public/whatsapp-media/invoices/${safeName}_1787339499.pdf`, '_blank');
+                              }}
+                            >
+                              <FileText size={12} /> PDF
+                            </button>
+                          )}
+
+                          {inv.status !== 'Paid' ? (
+                            <button
+                              className="btn btn-whatsapp btn-sm"
+                              style={{ padding: '0.25rem 0.6rem', fontSize: '0.72rem' }}
+                              onClick={() => handleSendReminder(inv)}
+                              disabled={remindingId === inv.id}
+                            >
+                              <Send size={12} /> {remindingId === inv.id ? 'Sending...' : 'Remind on WA'}
+                            </button>
+                          ) : (
+                            <span style={{ fontSize: '0.72rem', color: 'var(--success)', fontWeight: 600 }}>Settled</span>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))
@@ -527,6 +551,35 @@ const Finance = () => {
                 <button type="submit" className="btn btn-primary">Save Ledger Mapping</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      {/* PDF Preview Lightbox Modal */}
+      {previewPdfUrl && (
+        <div className="modal-overlay" onClick={() => setPreviewPdfUrl(null)} style={{ background: 'rgba(0,0,0,0.85)', zIndex: 9999 }}>
+          <div style={{ position: 'relative', maxWidth: 900, width: '92%', height: '85vh', background: 'var(--bg-secondary)', borderRadius: 12, overflow: 'hidden', display: 'flex', flexDirection: 'column' }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 1.25rem', borderBottom: '1px solid var(--border-color)', background: 'var(--bg-tertiary)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 700, fontSize: '0.9rem' }}>
+                <FileText size={16} color="var(--accent-primary)" /> TallyPrime Generated Invoice PDF
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                <a
+                  href={previewPdfUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="btn btn-secondary btn-sm"
+                  style={{ fontSize: '0.75rem' }}
+                >
+                  Open in New Tab ↗
+                </a>
+                <button className="modal-close-btn" onClick={() => setPreviewPdfUrl(null)}>✕</button>
+              </div>
+            </div>
+            <iframe
+              src={previewPdfUrl}
+              title="Invoice PDF Preview"
+              style={{ width: '100%', flex: 1, border: 'none' }}
+            />
           </div>
         </div>
       )}

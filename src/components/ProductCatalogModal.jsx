@@ -68,29 +68,29 @@ const ProductCatalogModal = ({ isOpen, onClose }) => {
 
         {showAdd && (
           <form onSubmit={handleCreateProduct} className="glass-card p-6" style={{ marginBottom: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
-            <h3 style={{ fontSize: '0.9rem', fontWeight: 700, margin: 0 }}>Add New Property / Product SKU</h3>
+            <h3 style={{ fontSize: '0.9rem', fontWeight: 700, margin: 0 }}>Add New Product SKU</h3>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
               <div>
                 <label style={{ fontSize: '0.75rem', fontWeight: 600, display: 'block', marginBottom: '0.25rem' }}>Product Name *</label>
-                <input type="text" className="input-field" placeholder="e.g. 3BHK Penthouse - Powai" value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} required />
+                <input type="text" className="input-field" placeholder="e.g. Premium Tile Adhesive 20kg" value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} required />
               </div>
               <div>
                 <label style={{ fontSize: '0.75rem', fontWeight: 600, display: 'block', marginBottom: '0.25rem' }}>Category</label>
                 <select className="input-field" value={form.category} onChange={e => setForm(p => ({ ...p, category: e.target.value }))}>
-                  {['Residential', 'Commercial', 'Luxury Villa', 'Plot / Land', 'Industrial'].map(c => <option key={c}>{c}</option>)}
+                  {['Adhesives', 'Grouts & Sealants', 'Waterproofing', 'Mortars & Plasters', 'Primers', 'General Products'].map(c => <option key={c}>{c}</option>)}
                 </select>
               </div>
               <div>
                 <label style={{ fontSize: '0.75rem', fontWeight: 600, display: 'block', marginBottom: '0.25rem' }}>SKU Code</label>
-                <input type="text" className="input-field" placeholder="PROP-3BHK-POW" value={form.sku} onChange={e => setForm(p => ({ ...p, sku: e.target.value }))} />
+                <input type="text" className="input-field" placeholder="PROD-ADH-001" value={form.sku} onChange={e => setForm(p => ({ ...p, sku: e.target.value }))} />
               </div>
               <div>
                 <label style={{ fontSize: '0.75rem', fontWeight: 600, display: 'block', marginBottom: '0.25rem' }}>Official Approved Price (₹) *</label>
-                <input type="number" className="input-field" placeholder="12500000" value={form.unit_price} onChange={e => setForm(p => ({ ...p, unit_price: e.target.value }))} required />
+                <input type="number" className="input-field" placeholder="850" value={form.unit_price} onChange={e => setForm(p => ({ ...p, unit_price: e.target.value }))} required />
               </div>
             </div>
             <div>
-              <label style={{ fontSize: '0.75rem', fontWeight: 600, display: 'block', marginBottom: '0.25rem' }}>Brochure PDF URL</label>
+              <label style={{ fontSize: '0.75rem', fontWeight: 600, display: 'block', marginBottom: '0.25rem' }}>Brochure / Technical Spec PDF URL</label>
               <input type="url" className="input-field" placeholder="https://..." value={form.brochure_url} onChange={e => setForm(p => ({ ...p, brochure_url: e.target.value }))} />
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
@@ -106,7 +106,7 @@ const ProductCatalogModal = ({ isOpen, onClose }) => {
           <table className="data-table">
             <thead>
               <tr>
-                <th>Product / Property</th>
+                <th>Product Name</th>
                 <th>Category</th>
                 <th>SKU</th>
                 <th>Approved Unit Rate</th>

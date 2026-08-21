@@ -29,6 +29,7 @@ const sourceColors = {
 };
 
 const STAGES = ['New', 'Hot', 'Warm', 'Cold', 'Converted', 'Lost'];
+const SOURCES = ['All', 'WhatsApp', 'Facebook', 'Instagram', 'Website', 'Referral', 'Walk-in', 'Import / CSV'];
 const EMPTY_LEAD = { name: '', phone: '', email: '', source: 'WhatsApp', status: 'New', property_interest: '', budget: '', notes: '' };
 
 const CRM = () => {
@@ -36,6 +37,7 @@ const CRM = () => {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [activeFilter, setActiveFilter] = useState('All');
+  const [sourceFilter, setSourceFilter] = useState('All');
   const [viewMode, setViewMode] = useState('table'); // 'table' | 'kanban'
   
   // Multi-select for bulk actions
@@ -69,12 +71,14 @@ const CRM = () => {
 
   const normSearch = search.trim().toLowerCase();
   const filtered = leads.filter(l => {
-    const matchFilter = activeFilter === 'All' || l.status === activeFilter;
+    const matchStage = activeFilter === 'All' || l.status === activeFilter;
+    const matchSource = sourceFilter === 'All' || l.source === sourceFilter;
     const matchSearch = !normSearch ||
       (l.name && l.name.toLowerCase().includes(normSearch)) ||
       (l.phone && l.phone.includes(normSearch)) ||
-      (l.property_interest && l.property_interest.toLowerCase().includes(normSearch));
-    return matchFilter && matchSearch;
+      (l.property_interest && l.property_interest.toLowerCase().includes(normSearch)) ||
+      (l.source && l.source.toLowerCase().includes(normSearch));
+    return matchStage && matchSource && matchSearch;
   });
 
   const openAdd = () => { setForm(EMPTY_LEAD); setEditLead(null); setShowForm(true); };
@@ -295,14 +299,32 @@ const CRM = () => {
           <input
             type="text"
             className="input-field"
-            placeholder="Search by name, phone (+91...), property..."
+            placeholder="Search by name, phone (+91 optional), product, source..."
             value={search}
             onChange={e => setSearch(e.target.value)}
           />
         </div>
+
+        {/* Source Dropdown Filter */}
+        <select
+          className="input-field"
+          style={{ width: 'auto', fontSize: '0.75rem', padding: '0.4rem 0.65rem' }}
+          value={sourceFilter}
+          onChange={e => setSourceFilter(e.target.value)}
+        >
+          <option value="All">All Channels (Meta / WA / Web)</option>
+          <option value="Facebook">📘 Facebook Leads</option>
+          <option value="Instagram">📸 Instagram Leads</option>
+          <option value="WhatsApp">💬 WhatsApp Inquiries</option>
+          <option value="Website">🌐 Website Leads</option>
+          <option value="Import / CSV">📁 Import / CSV</option>
+          <option value="Referral">👥 Referral</option>
+          <option value="Walk-in">🏢 Walk-in</option>
+        </select>
+
         <div className="filter-bar" style={{ margin: 0 }}>
           <button className={`filter-chip ${activeFilter === 'All' ? 'active' : ''}`} onClick={() => setActiveFilter('All')}>
-            All ({leads.length})
+            All Stages ({leads.length})
           </button>
           {STAGES.map(f => (
             <button key={f} className={`filter-chip ${activeFilter === f ? 'active' : ''}`} onClick={() => setActiveFilter(f)}>
@@ -331,7 +353,7 @@ const CRM = () => {
                 <th>Phone (Normalized)</th>
                 <th>Status</th>
                 <th>AI Score</th>
-                <th>Property Interest</th>
+                <th>Product Interest</th>
                 <th>Budget</th>
                 <th>Source</th>
                 <th>Actions</th>
@@ -646,7 +668,7 @@ const CRM = () => {
                 <input type="text" className="input-field" placeholder="e.g. Rajesh Kumar" value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} required />
               </div>
               <div>
-                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Phone (Auto-Normalized) *</label>
+                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Phone Number (+91 is optional) *</label>
                 <input type="text" className="input-field" placeholder="9876543210 (or +91...)" value={form.phone} onChange={e => setForm(p => ({ ...p, phone: e.target.value }))} required />
               </div>
               <div>
@@ -658,8 +680,8 @@ const CRM = () => {
                 <input type="text" className="input-field" placeholder="₹1,00,000" value={form.budget} onChange={e => setForm(p => ({ ...p, budget: e.target.value }))} />
               </div>
               <div>
-                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Product / Interest</label>
-                <input type="text" className="input-field" placeholder="e.g. Premium Adhesive" value={form.property_interest} onChange={e => setForm(p => ({ ...p, property_interest: e.target.value }))} />
+                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Interested Product</label>
+                <input type="text" className="input-field" placeholder="e.g. Tile Adhesive & Grout" value={form.property_interest} onChange={e => setForm(p => ({ ...p, property_interest: e.target.value }))} />
               </div>
               <div>
                 <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Lead Source</label>

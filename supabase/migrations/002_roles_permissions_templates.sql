@@ -246,3 +246,12 @@ DO $$ BEGIN
 EXCEPTION WHEN OTHERS THEN NULL;
 END $$;
 
+-- 15. Ensure 'invoices' table columns exist
+DO $$ BEGIN
+  ALTER TABLE public.invoices ADD COLUMN IF NOT EXISTS invoice_number TEXT;
+  ALTER TABLE public.invoices ADD COLUMN IF NOT EXISTS pdf_url TEXT;
+  ALTER TABLE public.invoices ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+
