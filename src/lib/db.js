@@ -371,6 +371,157 @@ export async function logPaymentReminder(invoiceId, message) {
   return { error };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ORG SETTINGS (Customizable admin-controlled config values)
+// ─────────────────────────────────────────────────────────────────────────────
+const DEFAULT_ORG_SETTINGS = {
+  reminder_interval_days: '3',
+  max_reminders_per_invoice: '7',
+  auto_pause_on_promise: 'true',
+  org_name: 'Techma ERP',
+  default_currency: 'INR',
+};
+
+export async function getOrgSettings() {
+  if (isSupabaseConfigured) {
+    try {
+      const { data, error } = await supabase
+        .from('org_settings')
+        .select('key, value, description, updated_at')
+        .eq('organization_id', DEFAULT_ORG_ID);
+      if (!error && data && data.length > 0) {
+        const settings = { ...DEFAULT_ORG_SETTINGS };
+        data.forEach(row => { settings[row.key] = row.value; });
+        return { data: settings, error: null };
+      }
+    } catch (err) {
+      console.warn('[db] getOrgSettings fallback:', err.message);
+    }
+  }
+  return { data: { ...DEFAULT_ORG_SETTINGS }, error: null };
+}
+
+export async function updateOrgSetting(key, value) {
+  if (isSupabaseConfigured) {
+    try {
+      const { error } = await supabase
+        .from('org_settings')
+        .upsert({
+          organization_id: DEFAULT_ORG_ID,
+          key,
+          value: String(value),
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'organization_id,key' });
+      if (!error) {
+        logAuditEvent('settings.updated', 'org_settings', null, { key, value });
+        return { error: null };
+      }
+    } catch (err) {
+      console.warn('[db] updateOrgSetting fallback:', err.message);
+    }
+  }
+  DEFAULT_ORG_SETTINGS[key] = String(value);
+  return { error: null };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INVOICE PAYMENT PAUSE / RESUME (Smart Promise Engine)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function pauseInvoiceReminder(invoiceId, { reason = '', promisedDate = null, committedBy = 'admin_manual', notes = '' } = {}) {
+  const updates = {
+    reminder_paused: true,
+    reminder_paused_reason: reason || `Manually paused by admin on ${new Date().toLocaleDateString('en-IN')}`,
+    payment_promised_date: promisedDate || null,
+    payment_promised_at: new Date().toISOString(),
+    promise_committed_by: committedBy,
+    promise_notes: notes || '',
+  };
+
+  if (isSupabaseConfigured) {
+    try {
+      const { data, error } = await supabase
+        .from('invoices')
+        .update(updates)
+        .eq('id', invoiceId)
+        .select()
+        .single();
+      if (!error && data) {
+        logAuditEvent('invoice.reminder_paused', 'invoices', invoiceId, updates);
+        return { data, error: null };
+      }
+    } catch (err) {
+      console.warn('[db] pauseInvoiceReminder fallback:', err.message);
+    }
+  }
+
+  // Mock fallback
+  const inv = MOCK_STORE.invoices.find(i => i.id === invoiceId);
+  if (inv) {
+    Object.assign(inv, updates);
+    logAuditEvent('invoice.reminder_paused', 'invoices', invoiceId, updates);
+    return { data: inv, error: null };
+  }
+  return { data: null, error: { message: 'Invoice not found' } };
+}
+
+export async function resumeInvoiceReminder(invoiceId) {
+  const updates = {
+    reminder_paused: false,
+    reminder_paused_reason: null,
+    payment_promised_date: null,
+    payment_promised_at: null,
+    promise_committed_by: null,
+    promise_notes: null,
+  };
+
+  if (isSupabaseConfigured) {
+    try {
+      const { data, error } = await supabase
+        .from('invoices')
+        .update(updates)
+        .eq('id', invoiceId)
+        .select()
+        .single();
+      if (!error && data) {
+        logAuditEvent('invoice.reminder_resumed', 'invoices', invoiceId, {});
+        return { data, error: null };
+      }
+    } catch (err) {
+      console.warn('[db] resumeInvoiceReminder fallback:', err.message);
+    }
+  }
+
+  const inv = MOCK_STORE.invoices.find(i => i.id === invoiceId);
+  if (inv) {
+    Object.assign(inv, updates);
+    logAuditEvent('invoice.reminder_resumed', 'invoices', invoiceId, {});
+    return { data: inv, error: null };
+  }
+  return { data: null, error: { message: 'Invoice not found' } };
+}
+
+export async function updateInvoice(invoiceId, updates) {
+  if (isSupabaseConfigured) {
+    try {
+      const { data, error } = await supabase
+        .from('invoices')
+        .update(updates)
+        .eq('id', invoiceId)
+        .select()
+        .single();
+      if (!error && data) return { data, error: null };
+    } catch {}
+  }
+  const inv = MOCK_STORE.invoices.find(i => i.id === invoiceId);
+  if (inv) {
+    Object.assign(inv, updates);
+    return { data: inv, error: null };
+  }
+  return { data: null, error: { message: 'Invoice not found' } };
+}
+
+
 export async function getLeads() {
   if (!isSupabaseConfigured) return { data: MOCK_STORE.leads, error: null };
   const { data, error } = await supabase.from('leads').select('*').order('created_at', { ascending: false });

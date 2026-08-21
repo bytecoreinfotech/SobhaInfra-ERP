@@ -11,7 +11,7 @@ import { useAuth } from '../context/AuthContext';
 import {
   getSystemSafetyAndQuotas, updateSystemSafety, toggleCircuitBreaker, exportAllData,
   getRoles, createRole, updateRole, deleteRole, getPermissionMatrix, savePermissionMatrix, getTeamMembers,
-  createLead, normalizePhone
+  createLead, normalizePhone, getOrgSettings, updateOrgSetting
 } from '../lib/db';
 import './Pages.css';
 
@@ -62,6 +62,16 @@ const Settings = () => {
   const [posSuccessMsg, setPosSuccessMsg] = useState('');
   const [posLoading, setPosLoading] = useState(false);
 
+  // Payment Automation Settings State
+  const [paymentSettings, setPaymentSettings] = useState({
+    reminder_interval_days: '3',
+    max_reminders_per_invoice: '7',
+    auto_pause_on_promise: 'true',
+  });
+  const [paySettingsSaving, setPaySettingsSaving] = useState(false);
+  const [paySettingsSaved, setPaySettingsSaved] = useState(false);
+  const [paySettingsLoading, setPaySettingsLoading] = useState(false);
+
   useEffect(() => {
     loadSafety();
   }, []);
@@ -69,7 +79,31 @@ const Settings = () => {
   useEffect(() => {
     if (activeTab === 'ai_kb') loadKnowledgeBase();
     if (activeTab === 'roles_positions') loadRolesAndMatrix();
+    if (activeTab === 'payment_automation') loadPaymentSettings();
   }, [activeTab]);
+
+  const loadPaymentSettings = async () => {
+    setPaySettingsLoading(true);
+    const { data } = await getOrgSettings();
+    setPaymentSettings({
+      reminder_interval_days: data?.reminder_interval_days || '3',
+      max_reminders_per_invoice: data?.max_reminders_per_invoice || '7',
+      auto_pause_on_promise: data?.auto_pause_on_promise || 'true',
+    });
+    setPaySettingsLoading(false);
+  };
+
+  const handleSavePaymentSettings = async () => {
+    setPaySettingsSaving(true);
+    await Promise.all([
+      updateOrgSetting('reminder_interval_days', paymentSettings.reminder_interval_days),
+      updateOrgSetting('max_reminders_per_invoice', paymentSettings.max_reminders_per_invoice),
+      updateOrgSetting('auto_pause_on_promise', paymentSettings.auto_pause_on_promise),
+    ]);
+    setPaySettingsSaving(false);
+    setPaySettingsSaved(true);
+    setTimeout(() => setPaySettingsSaved(false), 3000);
+  };
 
   const loadRolesAndMatrix = async () => {
     setPosLoading(true);
@@ -233,6 +267,7 @@ const Settings = () => {
 
   const tabs = [
     { id: 'general', label: 'General', icon: <SettingsIcon size={16} /> },
+    { id: 'payment_automation', label: 'Payment Automation', icon: <Bell size={16} /> },
     { id: 'meta_leads', label: 'Meta Leads (FB & IG)', icon: <Share2 size={16} /> },
     { id: 'whatsapp', label: 'WhatsApp API', icon: <MessageCircle size={16} /> },
     { id: 'ai_kb', label: 'AI Knowledge Base', icon: <Brain size={16} /> },
@@ -292,6 +327,155 @@ const Settings = () => {
 
         {/* Content Area */}
         <div className="glass-card p-6">
+
+          {/* ══════════════════════════════════════════════════════════════
+              TAB: PAYMENT AUTOMATION SETTINGS
+             ══════════════════════════════════════════════════════════════ */}
+          {activeTab === 'payment_automation' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+              <div>
+                <h3 style={{ fontSize: '1rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <Bell size={18} color="var(--accent-primary)" /> Payment Reminder Automation Settings
+                </h3>
+                <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
+                  These settings apply to all active clients globally. Clients with a committed payment date
+                  are automatically excluded from the reminder cycle until their date passes.
+                </p>
+              </div>
+
+              {paySettingsLoading ? (
+                <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>
+                  <RefreshCw size={20} className="animate-spin" /> Loading settings...
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+
+                  {/* Reminder Interval */}
+                  <div style={{ padding: '1.25rem', background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.75rem' }}>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>🔔 Auto-Reminder Interval</div>
+                        <div style={{ fontSize: '0.73rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
+                          How many days between automatic WhatsApp payment reminders
+                        </div>
+                      </div>
+                      <span style={{ fontWeight: 800, fontSize: '1.4rem', color: 'var(--accent-primary)' }}>
+                        {paymentSettings.reminder_interval_days} days
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min="1"
+                      max="30"
+                      value={paymentSettings.reminder_interval_days}
+                      onChange={e => setPaymentSettings(p => ({ ...p, reminder_interval_days: e.target.value }))}
+                      style={{ width: '100%', accentColor: 'var(--accent-primary)', cursor: 'pointer' }}
+                    />
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
+                      <span>1 day (aggressive)</span>
+                      <span>7 days (recommended)</span>
+                      <span>30 days (lenient)</span>
+                    </div>
+                    <div style={{ marginTop: '0.65rem', display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                      {['1', '3', '5', '7', '14', '30'].map(d => (
+                        <button
+                          key={d}
+                          className="btn btn-secondary btn-sm"
+                          style={{ fontSize: '0.72rem', padding: '0.2rem 0.6rem', background: paymentSettings.reminder_interval_days === d ? 'var(--accent-primary)' : undefined, color: paymentSettings.reminder_interval_days === d ? 'white' : undefined }}
+                          onClick={() => setPaymentSettings(p => ({ ...p, reminder_interval_days: d }))}
+                        >
+                          {d}d
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Max Reminders per Invoice */}
+                  <div style={{ padding: '1.25rem', background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.75rem' }}>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>📊 Max Reminders per Invoice</div>
+                        <div style={{ fontSize: '0.73rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
+                          Stop auto-reminders after this many attempts to avoid harassing clients
+                        </div>
+                      </div>
+                      <span style={{ fontWeight: 800, fontSize: '1.4rem', color: 'var(--accent-secondary)' }}>
+                        {paymentSettings.max_reminders_per_invoice}×
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min="1"
+                      max="20"
+                      value={paymentSettings.max_reminders_per_invoice}
+                      onChange={e => setPaymentSettings(p => ({ ...p, max_reminders_per_invoice: e.target.value }))}
+                      style={{ width: '100%', accentColor: 'var(--accent-secondary)', cursor: 'pointer' }}
+                    />
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
+                      <span>1× (one-shot)</span>
+                      <span>7× (recommended)</span>
+                      <span>20× (persistent)</span>
+                    </div>
+                  </div>
+
+                  {/* Auto-Pause on WhatsApp Promise */}
+                  <div style={{ padding: '1.25rem', background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>🤖 Auto-Pause on WhatsApp Promise</div>
+                      <div style={{ fontSize: '0.73rem', color: 'var(--text-muted)', marginTop: '0.2rem', maxWidth: 380 }}>
+                        When a client replies "will pay in 15 days" or similar to a WhatsApp reminder, automatically pause their reminders until that committed date.
+                      </div>
+                    </div>
+                    <div
+                      onClick={() => setPaymentSettings(p => ({
+                        ...p,
+                        auto_pause_on_promise: p.auto_pause_on_promise === 'true' ? 'false' : 'true'
+                      }))}
+                      style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                    >
+                      {paymentSettings.auto_pause_on_promise === 'true' ? (
+                        <ToggleRight size={36} color="var(--success)" />
+                      ) : (
+                        <ToggleLeft size={36} color="var(--text-muted)" />
+                      )}
+                      <span style={{ fontSize: '0.75rem', fontWeight: 600, color: paymentSettings.auto_pause_on_promise === 'true' ? 'var(--success)' : 'var(--text-muted)' }}>
+                        {paymentSettings.auto_pause_on_promise === 'true' ? 'Enabled' : 'Disabled'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Info box */}
+                  <div style={{ padding: '0.85rem 1rem', background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: 8, fontSize: '0.75rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                    <strong>ℹ️ How Smart Pause Works:</strong>
+                    <ul style={{ margin: '0.4rem 0 0 1rem', padding: 0 }}>
+                      <li>Client replies "pay in 25 days" → auto-detected, reminders paused until that date</li>
+                      <li>Client says "paid" → invoice auto-marked for verification</li>
+                      <li>Admin can also manually pause/resume from <strong>Finance → Invoices</strong></li>
+                      <li>When the promised date passes without payment, reminders auto-resume</li>
+                      <li>Clients with <strong>automation off</strong> are never disturbed regardless of settings</li>
+                    </ul>
+                  </div>
+
+                  {/* Save button */}
+                  <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                    <button
+                      className="btn btn-primary"
+                      onClick={handleSavePaymentSettings}
+                      disabled={paySettingsSaving}
+                    >
+                      {paySettingsSaved ? (
+                        <><Check size={15} /> Settings Saved!</>
+                      ) : paySettingsSaving ? (
+                        <><RefreshCw size={15} className="animate-spin" /> Saving...</>
+                      ) : (
+                        <><Save size={15} /> Save Payment Settings</>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* ══════════════════════════════════════════════════════════════
               TAB 1: GENERAL SETTINGS
