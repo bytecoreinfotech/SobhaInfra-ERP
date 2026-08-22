@@ -66,6 +66,7 @@ const Tasks = () => {
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');
   const [assigneeFilter, setAssigneeFilter] = useState('All');
+  const [mobileActiveCol, setMobileActiveCol] = useState('All');
 
   // Task Details & Comment Drawer
   const [selectedTask, setSelectedTask] = useState(null);
@@ -539,14 +540,34 @@ const Tasks = () => {
   const matchesAssignee = (t) => {
     if (!canViewAll) {
       const uName = (user?.name || '').toLowerCase();
-      return (t.assigned_to || '').toLowerCase().includes(uName);
+      const uRole = (user?.role || '').toLowerCase();
+      const uEmail = (user?.email || '').toLowerCase();
+      const assigned = (t.assigned_to || '').toLowerCase();
+
+      // Explicit match
+      if (uName && assigned.includes(uName)) return true;
+      if (uEmail && assigned.includes(uEmail)) return true;
+      // Role match (e.g. Sales Executive, Field Agent)
+      if (uRole && (assigned.includes(uRole) || assigned.includes(uRole.replace(' executive', '')))) return true;
+      // Global task
+      if (assigned.includes('all') || assigned === '' || !t.assigned_to) return true;
+      return false;
     }
     if (assigneeFilter === 'All') return true;
     if (assigneeFilter === 'My Tasks') {
       const uName = (user?.name || '').toLowerCase();
-      return (t.assigned_to || '').toLowerCase().includes(uName);
+      const uRole = (user?.role || '').toLowerCase();
+      const assigned = (t.assigned_to || '').toLowerCase();
+      return (uName && assigned.includes(uName)) || (uRole && assigned.includes(uRole)) || assigned.includes('all');
     }
     return t.assigned_to === assigneeFilter;
+  };
+
+  const isUserTaskOwner = (task) => {
+    const uName = (user?.name || '').toLowerCase();
+    const uRole = (user?.role || '').toLowerCase();
+    const assigned = (task.assigned_to || '').toLowerCase();
+    return (uName && assigned.includes(uName)) || (uRole && assigned.includes(uRole)) || assigned.includes('all');
   };
 
   const tasksByCol = (col) => tasks.filter(t => t.status === col && matchesAssignee(t) && (!search || t.title.toLowerCase().includes(search.toLowerCase())));
@@ -554,7 +575,7 @@ const Tasks = () => {
   const statusBadge = { 'To Do': 'badge-neutral', 'In Progress': 'badge-warning', 'Under Review': 'badge-accent', 'Done': 'badge-success' };
 
   const getAllowedMoves = (task, currentCol) => {
-    const isOwnTask = (task.assigned_to || '').toLowerCase() === (user?.name || '').toLowerCase();
+    const isOwnTask = isUserTaskOwner(task);
     if (canComplete) {
       return COLUMNS.filter(c => c !== currentCol);
     }
@@ -675,10 +696,30 @@ const Tasks = () => {
             <div style={{ display: 'flex', justifyContent: 'center', padding: '3rem' }}><RefreshCw size={24} className="animate-spin" style={{ color: 'var(--text-muted)' }} /></div>
           ) : (
             <>
+              {/* Mobile Status Column Pill Switcher */}
+              <div className="tasks-mobile-col-switcher">
+                {['All', ...COLUMNS].map(col => {
+                  const count = col === 'All'
+                    ? tasks.filter(t => matchesAssignee(t)).length
+                    : tasksByCol(col).length;
+                  return (
+                    <button
+                      key={col}
+                      type="button"
+                      className={`tasks-mobile-pill ${mobileActiveCol === col ? 'active' : ''}`}
+                      onClick={() => setMobileActiveCol(col)}
+                    >
+                      <span>{col}</span>
+                      <span className="tasks-mobile-pill-count">{count}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
               {/* Kanban Board */}
               {view === 'kanban' && (
                 <div className="kanban-board">
-                  {COLUMNS.map(col => {
+                  {COLUMNS.filter(col => mobileActiveCol === 'All' || mobileActiveCol === col).map(col => {
                     const colTasks = tasksByCol(col);
                     return (
                       <div key={col} className="kanban-col">

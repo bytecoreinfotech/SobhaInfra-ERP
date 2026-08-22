@@ -5,6 +5,7 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { LiveCountsProvider } from './context/LiveCountsContext';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
+import MobileBottomNav from './components/MobileBottomNav';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import CRM from './pages/CRM';
@@ -88,6 +89,7 @@ function AppInner() {
           </Routes>
         </main>
       </div>
+      <MobileBottomNav onOpenMenu={() => setMobileOpen(true)} />
     </div>
   );
 }
