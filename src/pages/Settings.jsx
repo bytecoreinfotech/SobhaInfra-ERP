@@ -4,11 +4,13 @@ import {
   RefreshCw, Save, Check, Zap, Download, AlertTriangle, Activity,
   Server, Cpu, Database, Radio, ToggleLeft, ToggleRight, FileSpreadsheet, FileJson,
   Brain, Plus, Trash2, Edit3, BookOpen, CheckCircle2, Share2, Send, Copy, Sparkles,
-  HardDrive, AlertOctagon, ShieldAlert, HelpCircle, Layers, CheckSquare
+  HardDrive, AlertOctagon, ShieldAlert, HelpCircle, Layers, CheckSquare,
+  Building2, PlusCircle, Globe, ShieldCheck, Upload, Star
 } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
+import { useCompany } from '../context/CompanyContext';
 import {
   getSystemSafetyAndQuotas, updateSystemSafety, toggleCircuitBreaker, exportAllData,
   getRoles, createRole, updateRole, deleteRole, getPermissionMatrix, savePermissionMatrix, getTeamMembers,
@@ -22,11 +24,37 @@ const DEFAULT_ORG_ID = '00000000-0000-0000-0000-000000000001';
 
 const Settings = () => {
   const { theme, toggleTheme } = useTheme();
+  const { companyProfiles, activeCompanyId, setActiveCompanyId, saveCompany, deleteCompany, refreshCompanies } = useCompany();
   const [saved, setSaved] = useState(false);
   const [activeTab, setActiveTab] = useState('general');
   const [safety, setSafety] = useState(null);
   const [downloading, setDownloading] = useState(false);
   const [exportSuccess, setExportSuccess] = useState(false);
+
+  // Multi-Company Profile Modal State
+  const [companyModalOpen, setCompanyModalOpen] = useState(false);
+  const [editingCompany, setEditingCompany] = useState({
+    id: '',
+    company_name: '',
+    alias_names: '',
+    company_logo_url: '',
+    company_address: '',
+    gstin_number: '',
+    company_udyam_reg: '',
+    admin_email: '',
+    contact_phone: '',
+    bank_name: '',
+    bank_account_no: '',
+    bank_ifsc: '',
+    upi_id: '',
+    state_name: 'Gujarat',
+    state_code: '24',
+    jurisdiction: 'VALSAD / THANE',
+    invoice_footer_notes: 'Unpaid Invoice Will Be Charged 24% P.A. Interest After Given Credit Days. Goods Once Sold Will Not Be Taken Back.',
+    is_default: false,
+  });
+  const [companyModalSaving, setCompanyModalSaving] = useState(false);
+  const companyModalLogoRef = useRef(null);
 
   // Meta Leads Simulator state
   const [simLead, setSimLead] = useState({
@@ -194,6 +222,112 @@ const Settings = () => {
     setGeneralSaved(true);
     setPosSuccessMsg('✅ Business profile & organization settings saved safely!');
     setTimeout(() => { setGeneralSaved(false); setPosSuccessMsg(''); }, 3500);
+  };
+
+  // Multi-Company Profile Modal Handlers
+  const handleOpenAddCompany = () => {
+    setEditingCompany({
+      id: '',
+      company_name: '',
+      alias_names: '',
+      company_logo_url: '',
+      company_address: '',
+      gstin_number: '',
+      company_udyam_reg: '',
+      admin_email: '',
+      contact_phone: '',
+      bank_name: '',
+      bank_account_no: '',
+      bank_ifsc: '',
+      upi_id: '',
+      state_name: 'Gujarat',
+      state_code: '24',
+      jurisdiction: 'VALSAD / THANE',
+      invoice_footer_notes: 'Unpaid Invoice Will Be Charged 24% P.A. Interest After Given Credit Days. Goods Once Sold Will Not Be Taken Back.',
+      is_default: companyProfiles.length === 0,
+    });
+    setCompanyModalOpen(true);
+  };
+
+  const handleOpenEditCompany = (comp) => {
+    setEditingCompany({
+      id: comp.id || '',
+      company_name: comp.company_name || '',
+      alias_names: Array.isArray(comp.alias_names) ? comp.alias_names.join(', ') : (comp.alias_names || ''),
+      company_logo_url: comp.company_logo_url || '',
+      company_address: comp.company_address || '',
+      gstin_number: comp.gstin_number || '',
+      company_udyam_reg: comp.company_udyam_reg || '',
+      admin_email: comp.admin_email || '',
+      contact_phone: comp.contact_phone || '',
+      bank_name: comp.bank_name || '',
+      bank_account_no: comp.bank_account_no || '',
+      bank_ifsc: comp.bank_ifsc || '',
+      upi_id: comp.upi_id || '',
+      state_name: comp.state_name || 'Gujarat',
+      state_code: comp.state_code || '24',
+      jurisdiction: comp.jurisdiction || 'VALSAD / THANE',
+      invoice_footer_notes: comp.invoice_footer_notes || '',
+      is_default: Boolean(comp.is_default),
+    });
+    setCompanyModalOpen(true);
+  };
+
+  const handleCompanyLogoUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) {
+      alert('Logo file size should be less than 2MB.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      setEditingCompany(prev => ({ ...prev, company_logo_url: reader.result }));
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleSaveCompanyModal = async (e) => {
+    e?.preventDefault();
+    if (!editingCompany.company_name.trim()) {
+      alert('Please enter a Company Name.');
+      return;
+    }
+    setCompanyModalSaving(true);
+    try {
+      const aliasArray = editingCompany.alias_names
+        ? editingCompany.alias_names.split(',').map(s => s.trim()).filter(Boolean)
+        : [editingCompany.company_name.trim()];
+
+      await saveCompany({
+        ...editingCompany,
+        alias_names: aliasArray,
+      });
+      setCompanyModalOpen(false);
+      setPosSuccessMsg(`✅ Company profile for "${editingCompany.company_name}" saved successfully!`);
+      setTimeout(() => setPosSuccessMsg(''), 3500);
+    } catch (err) {
+      alert('Error saving company profile: ' + err.message);
+    } finally {
+      setCompanyModalSaving(false);
+    }
+  };
+
+  const handleDeleteCompanyClick = async (id, name) => {
+    if (companyProfiles.length <= 1) {
+      alert('You must have at least one active company profile.');
+      return;
+    }
+    if (!window.confirm(`Are you sure you want to delete company profile "${name}"?`)) return;
+    await deleteCompany(id);
+    setPosSuccessMsg(`🗑️ Company profile "${name}" deleted.`);
+    setTimeout(() => setPosSuccessMsg(''), 3500);
+  };
+
+  const handleSetDefaultCompany = async (comp) => {
+    await saveCompany({ ...comp, is_default: true });
+    setPosSuccessMsg(`⭐ "${comp.company_name}" is now the default primary company.`);
+    setTimeout(() => setPosSuccessMsg(''), 3500);
   };
 
   const loadStorageData = async () => {
@@ -1047,12 +1181,160 @@ const Settings = () => {
                   <RefreshCw size={20} className="animate-spin" /> Loading business profile...
                 </div>
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
                   
-                  {/* Brand Logo & Emblem Customizer */}
+                  {/* ══════════════════════════════════════════════════════════
+                      MULTI-COMPANY & MULTI-ENTITY REGISTRY
+                     ══════════════════════════════════════════════════════════ */}
+                  <div style={{
+                    padding: '1.25rem',
+                    background: 'var(--bg-secondary)',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: 'var(--radius-lg)',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.04)'
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '1rem' }}>
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 800, fontSize: '1rem' }}>
+                          <Building2 size={18} color="var(--accent-primary)" />
+                          <span>Multi-Company Profiles Registry</span>
+                          <span style={{ fontSize: '0.72rem', background: 'rgba(99,102,241,0.15)', color: 'var(--accent-primary)', padding: '0.15rem 0.5rem', borderRadius: 12, fontWeight: 700 }}>
+                            {companyProfiles.length} Companies Registered
+                          </span>
+                        </div>
+                        <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0.2rem 0 0 0' }}>
+                          Each company maintains its own independent Logo, GSTIN, Address, Bank details, and Tally alias. Tally sync automatically matches the correct company for every invoice.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn btn-primary btn-sm"
+                        onClick={handleOpenAddCompany}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}
+                      >
+                        <PlusCircle size={14} /> + Add New Company
+                      </button>
+                    </div>
+
+                    {/* Company Profile Cards Grid */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(310px, 1fr))', gap: '1rem' }}>
+                      {companyProfiles.map((comp) => {
+                        const isCurrentActive = activeCompanyId === comp.id;
+                        return (
+                          <div
+                            key={comp.id}
+                            style={{
+                              border: isCurrentActive ? '2px solid var(--accent-primary)' : '1px solid var(--border-color)',
+                              background: isCurrentActive ? 'rgba(99,102,241,0.03)' : 'var(--bg-tertiary)',
+                              borderRadius: 12,
+                              padding: '1rem',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              justifyContent: 'space-between',
+                              position: 'relative',
+                              transition: 'all 0.2s ease'
+                            }}
+                          >
+                            {/* Card Header */}
+                            <div>
+                              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '0.75rem', marginBottom: '0.75rem' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+                                  <div style={{
+                                    width: 44, height: 44, borderRadius: 10, border: '1px solid var(--border-color)',
+                                    background: 'var(--bg-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    overflow: 'hidden', flexShrink: 0
+                                  }}>
+                                    {comp.company_logo_url ? (
+                                      <img src={comp.company_logo_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                                    ) : (
+                                      <div style={{ fontWeight: 800, fontSize: '14px', color: 'var(--accent-primary)' }}>
+                                        {comp.company_name.slice(0, 2)}
+                                      </div>
+                                    )}
+                                  </div>
+                                  <div>
+                                    <div style={{ fontWeight: 800, fontSize: '0.9rem', color: 'var(--text-primary)' }}>
+                                      {comp.company_name}
+                                    </div>
+                                    <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                                      GSTIN: <strong>{comp.gstin_number || 'N/A'}</strong>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.25rem' }}>
+                                  {comp.is_default && (
+                                    <span style={{ fontSize: '0.65rem', background: '#f59e0b', color: '#000', fontWeight: 800, padding: '0.1rem 0.4rem', borderRadius: 6, display: 'inline-flex', alignItems: 'center', gap: '0.2rem' }}>
+                                      <Star size={10} fill="#000" /> Default
+                                    </span>
+                                  )}
+                                  {isCurrentActive && (
+                                    <span style={{ fontSize: '0.65rem', background: 'rgba(34,197,94,0.15)', color: 'var(--success)', fontWeight: 700, padding: '0.1rem 0.4rem', borderRadius: 6 }}>
+                                      ● Active Workspace
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Details snippet */}
+                              <div style={{ fontSize: '0.73rem', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: '0.3rem', marginBottom: '0.75rem' }}>
+                                <div>📍 {comp.company_address ? (comp.company_address.length > 60 ? comp.company_address.slice(0, 60) + '...' : comp.company_address) : 'No address set'}</div>
+                                <div>🏦 {comp.bank_name ? `${comp.bank_name} · A/C: ••••${(comp.bank_account_no || '').slice(-4)}` : 'No bank account'}</div>
+                                {comp.company_udyam_reg && <div>📜 UDYAM: {comp.company_udyam_reg}</div>}
+                                {Array.isArray(comp.alias_names) && comp.alias_names.length > 0 && (
+                                  <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+                                    🏷️ Tally Aliases: {comp.alias_names.join(', ')}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Card Actions */}
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '1px solid var(--border-color)', paddingTop: '0.65rem', gap: '0.5rem', flexWrap: 'wrap' }}>
+                              <button
+                                type="button"
+                                className="btn btn-secondary btn-sm"
+                                onClick={() => handleOpenEditCompany(comp)}
+                                style={{ fontSize: '0.72rem', display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}
+                              >
+                                <Edit3 size={12} /> Edit Profile
+                              </button>
+
+                              <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+                                {!comp.is_default && (
+                                  <button
+                                    type="button"
+                                    className="btn btn-outline btn-sm"
+                                    onClick={() => handleSetDefaultCompany(comp)}
+                                    title="Set as primary default company"
+                                    style={{ fontSize: '0.7rem' }}
+                                  >
+                                    Set Default
+                                  </button>
+                                )}
+                                {companyProfiles.length > 1 && (
+                                  <button
+                                    type="button"
+                                    className="btn btn-outline btn-sm"
+                                    onClick={() => handleDeleteCompanyClick(comp.id, comp.company_name)}
+                                    title="Delete this company profile"
+                                    style={{ color: 'var(--danger)', borderColor: 'rgba(239,68,68,0.3)', padding: '0.3rem 0.5rem' }}
+                                  >
+                                    <Trash2 size={12} />
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Primary Organization Settings Form */}
                   <div style={{ padding: '1rem', background: 'rgba(99,102,241,0.04)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: 'var(--radius-md)' }}>
                     <label style={{ fontSize: '0.82rem', fontWeight: 700, display: 'block', marginBottom: '0.5rem' }}>
-                      🏢 Official Company Brand Logo & Header Icon
+                      🏢 Primary Organization Global Branding & Defaults
                     </label>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem', flexWrap: 'wrap' }}>
                       <div style={{
@@ -2617,6 +2899,308 @@ const Settings = () => {
                 <span>{purgingKey ? 'Executing Deletion...' : 'Yes, Purge Now'}</span>
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═════════════════════════════════════════════════════════════════════
+          COMPANY PROFILE CREATE / EDIT MODAL
+         ═════════════════════════════════════════════════════════════════════ */}
+      {companyModalOpen && (
+        <div className="modal-overlay" onClick={() => setCompanyModalOpen(false)} style={{ background: 'rgba(0,0,0,0.8)', zIndex: 9999 }}>
+          <div
+            style={{
+              position: 'relative',
+              maxWidth: 720,
+              width: '92%',
+              maxHeight: '90vh',
+              background: 'var(--bg-secondary)',
+              borderRadius: 14,
+              overflow: 'hidden',
+              display: 'flex',
+              flexDirection: 'column',
+              boxShadow: '0 20px 40px rgba(0,0,0,0.4)'
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem 1.25rem', borderBottom: '1px solid var(--border-color)', background: 'var(--bg-tertiary)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 800, fontSize: '1rem' }}>
+                <Building2 size={18} color="var(--accent-primary)" />
+                <span>{editingCompany.id ? 'Edit Company Profile' : 'Add New Company Profile'}</span>
+              </div>
+              <button className="modal-close-btn" onClick={() => setCompanyModalOpen(false)}>✕</button>
+            </div>
+
+            {/* Modal Body / Form */}
+            <form onSubmit={handleSaveCompanyModal} style={{ flex: 1, overflowY: 'auto', padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              
+              {/* Logo Uploader */}
+              <div style={{ padding: '0.85rem', background: 'rgba(99,102,241,0.04)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: 10 }}>
+                <label style={{ fontSize: '0.8rem', fontWeight: 700, display: 'block', marginBottom: '0.4rem' }}>
+                  Company Brand Logo
+                </label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+                  <div style={{
+                    width: 60, height: 60, borderRadius: 10, border: '2px dashed var(--border-color)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-primary)',
+                    overflow: 'hidden'
+                  }}>
+                    {editingCompany.company_logo_url ? (
+                      <img src={editingCompany.company_logo_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                    ) : (
+                      <Building2 size={22} style={{ opacity: 0.5 }} />
+                    )}
+                  </div>
+                  <div>
+                    <input
+                      ref={companyModalLogoRef}
+                      type="file"
+                      accept="image/png,image/jpeg,image/svg+xml,image/webp"
+                      style={{ display: 'none' }}
+                      onChange={handleCompanyLogoUpload}
+                    />
+                    <div style={{ display: 'flex', gap: '0.4rem' }}>
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => companyModalLogoRef.current?.click()}
+                      >
+                        <Upload size={13} /> {editingCompany.company_logo_url ? 'Change Logo' : 'Upload Logo'}
+                      </button>
+                      {editingCompany.company_logo_url && (
+                        <button
+                          type="button"
+                          className="btn btn-outline btn-sm"
+                          style={{ color: 'var(--danger)' }}
+                          onClick={() => setEditingCompany(p => ({ ...p, company_logo_url: '' }))}
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                    <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
+                      Permanently protected from storage cleanup.
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Company Legal Name & Tally Aliases */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '0.75rem' }}>
+                <div>
+                  <label style={{ fontSize: '0.78rem', fontWeight: 700, display: 'block', marginBottom: '0.3rem' }}>
+                    Official Company Name *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    className="input-field"
+                    value={editingCompany.company_name}
+                    onChange={e => setEditingCompany(p => ({ ...p, company_name: e.target.value }))}
+                    placeholder="e.g. SHOBHA ENTERPRISES"
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: '0.78rem', fontWeight: 700, display: 'block', marginBottom: '0.3rem' }}>
+                    Tally Alias Names (comma-separated)
+                  </label>
+                  <input
+                    type="text"
+                    className="input-field"
+                    value={editingCompany.alias_names}
+                    onChange={e => setEditingCompany(p => ({ ...p, alias_names: e.target.value }))}
+                    placeholder="e.g. SHOBHA ENTERPRISES, SE, SRP"
+                  />
+                  <span style={{ fontSize: '0.67rem', color: 'var(--text-muted)' }}>Used by Tally sync to auto-match vouchers.</span>
+                </div>
+              </div>
+
+              {/* GSTIN & UDYAM */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                <div>
+                  <label style={{ fontSize: '0.78rem', fontWeight: 700, display: 'block', marginBottom: '0.3rem' }}>
+                    GSTIN Number
+                  </label>
+                  <input
+                    type="text"
+                    className="input-field"
+                    value={editingCompany.gstin_number}
+                    onChange={e => setEditingCompany(p => ({ ...p, gstin_number: e.target.value }))}
+                    placeholder="27AABCS9988P1Z3"
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: '0.78rem', fontWeight: 700, display: 'block', marginBottom: '0.3rem' }}>
+                    UDYAM / MSME Reg. No.
+                  </label>
+                  <input
+                    type="text"
+                    className="input-field"
+                    value={editingCompany.company_udyam_reg}
+                    onChange={e => setEditingCompany(p => ({ ...p, company_udyam_reg: e.target.value }))}
+                    placeholder="UDYAM-MH-01-0098765"
+                  />
+                </div>
+              </div>
+
+              {/* Address */}
+              <div>
+                <label style={{ fontSize: '0.78rem', fontWeight: 700, display: 'block', marginBottom: '0.3rem' }}>
+                  Registered Business / Factory Address
+                </label>
+                <textarea
+                  rows={2}
+                  className="input-field"
+                  value={editingCompany.company_address}
+                  onChange={e => setEditingCompany(p => ({ ...p, company_address: e.target.value }))}
+                  placeholder="Plot 12, Transport Nagar, Vapi, Gujarat - 396195"
+                />
+              </div>
+
+              {/* Email & Phone */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                <div>
+                  <label style={{ fontSize: '0.78rem', fontWeight: 700, display: 'block', marginBottom: '0.3rem' }}>
+                    Official Email
+                  </label>
+                  <input
+                    type="email"
+                    className="input-field"
+                    value={editingCompany.admin_email}
+                    onChange={e => setEditingCompany(p => ({ ...p, admin_email: e.target.value }))}
+                    placeholder="billing@shobhagroup.in"
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: '0.78rem', fontWeight: 700, display: 'block', marginBottom: '0.3rem' }}>
+                    Contact Phone / WhatsApp
+                  </label>
+                  <input
+                    type="text"
+                    className="input-field"
+                    value={editingCompany.contact_phone}
+                    onChange={e => setEditingCompany(p => ({ ...p, contact_phone: e.target.value }))}
+                    placeholder="+91 98765 11223"
+                  />
+                </div>
+              </div>
+
+              {/* Bank Remittance Info */}
+              <div style={{ padding: '0.75rem', background: 'var(--bg-tertiary)', borderRadius: 10, border: '1px solid var(--border-color)' }}>
+                <label style={{ fontSize: '0.78rem', fontWeight: 700, display: 'block', marginBottom: '0.5rem' }}>
+                  🏦 Bank Account & UPI Details (For Invoices & QR Codes)
+                </label>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.5rem' }}>
+                  <div>
+                    <label style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Bank Name</label>
+                    <input
+                      type="text"
+                      className="input-field"
+                      value={editingCompany.bank_name}
+                      onChange={e => setEditingCompany(p => ({ ...p, bank_name: e.target.value }))}
+                      placeholder="ICICI Bank Ltd."
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Account Number</label>
+                    <input
+                      type="text"
+                      className="input-field"
+                      value={editingCompany.bank_account_no}
+                      onChange={e => setEditingCompany(p => ({ ...p, bank_account_no: e.target.value }))}
+                      placeholder="001105009988"
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>IFSC Code</label>
+                    <input
+                      type="text"
+                      className="input-field"
+                      value={editingCompany.bank_ifsc}
+                      onChange={e => setEditingCompany(p => ({ ...p, bank_ifsc: e.target.value }))}
+                      placeholder="ICIC0000011"
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>UPI ID (Optional)</label>
+                    <input
+                      type="text"
+                      className="input-field"
+                      value={editingCompany.upi_id}
+                      onChange={e => setEditingCompany(p => ({ ...p, upi_id: e.target.value }))}
+                      placeholder="company@icici"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* State & Jurisdiction */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem' }}>
+                <div>
+                  <label style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>State</label>
+                  <input
+                    type="text"
+                    className="input-field"
+                    value={editingCompany.state_name}
+                    onChange={e => setEditingCompany(p => ({ ...p, state_name: e.target.value }))}
+                    placeholder="Gujarat"
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>State Code</label>
+                  <input
+                    type="text"
+                    className="input-field"
+                    value={editingCompany.state_code}
+                    onChange={e => setEditingCompany(p => ({ ...p, state_code: e.target.value }))}
+                    placeholder="24"
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Legal Jurisdiction</label>
+                  <input
+                    type="text"
+                    className="input-field"
+                    value={editingCompany.jurisdiction}
+                    onChange={e => setEditingCompany(p => ({ ...p, jurisdiction: e.target.value }))}
+                    placeholder="VALSAD / THANE"
+                  />
+                </div>
+              </div>
+
+              {/* Default checkbox */}
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8rem', cursor: 'pointer', marginTop: '0.25rem' }}>
+                <input
+                  type="checkbox"
+                  checked={editingCompany.is_default}
+                  onChange={e => setEditingCompany(p => ({ ...p, is_default: e.target.checked }))}
+                />
+                <span style={{ fontWeight: 600 }}>Set as Primary Default Company</span>
+              </label>
+
+              {/* Modal Footer Actions */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '0.75rem', borderTop: '1px solid var(--border-color)', paddingTop: '0.75rem' }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setCompanyModalOpen(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={companyModalSaving}
+                >
+                  {companyModalSaving ? (
+                    <><RefreshCw size={14} className="animate-spin" /> Saving Profile...</>
+                  ) : (
+                    <><Save size={14} /> Save Company Profile</>
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

@@ -496,6 +496,210 @@ export async function updateOrgSetting(key, value) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// MULTI-COMPANY & MULTI-ENTITY REGISTRY SERVICES
+// ─────────────────────────────────────────────────────────────────────────────
+export const DEFAULT_COMPANY_PROFILES = [
+  {
+    id: 'comp-shobha-ready-plast',
+    organization_id: DEFAULT_ORG_ID,
+    company_name: 'SHOBHA READY PLAST',
+    alias_names: ['SHOBHA READY PLAST', 'SRP', 'Shobha Ready Plast Pvt Ltd'],
+    company_logo_url: '',
+    company_address: 'NH48, NEAR KOLEI KHADI SARODHI, VALSAD, GUJARAT - 396001',
+    gstin_number: '24AGCPJ2785R1ZV',
+    company_udyam_reg: 'UDYAM-GJ-01-0012345',
+    admin_email: 'shobhareadyplast@gmail.com',
+    contact_phone: '+91 98765 43210',
+    bank_name: 'HDFC Bank Ltd.',
+    bank_account_no: '50200088991122',
+    bank_ifsc: 'HDFC0001234',
+    upi_id: 'shobhareadyplast@okhdfcbank',
+    state_name: 'Gujarat',
+    state_code: '24',
+    jurisdiction: 'VALSAD / THANE',
+    invoice_footer_notes: 'Unpaid Invoice Will Be Charged 24% P.A. Interest After Given Credit Days. Goods Once Sold Will Not Be Taken Back.',
+    is_default: true,
+  },
+  {
+    id: 'comp-shobha-enterprises',
+    organization_id: DEFAULT_ORG_ID,
+    company_name: 'SHOBHA ENTERPRISES',
+    alias_names: ['SHOBHA ENTERPRISES', 'SE', 'Shobha Enterprises Traders'],
+    company_logo_url: '',
+    company_address: 'OFFICE 204, TRADE CENTER, KOLShet ROAD, THANE WEST, MAHARASHTRA - 400607',
+    gstin_number: '27AABCS9988P1Z3',
+    company_udyam_reg: 'UDYAM-MH-01-0098765',
+    admin_email: 'enterprises@shobhagroup.in',
+    contact_phone: '+91 98765 11223',
+    bank_name: 'ICICI Bank Ltd.',
+    bank_account_no: '001105009988',
+    bank_ifsc: 'ICIC0000011',
+    upi_id: 'shobhaenterprises@icici',
+    state_name: 'Maharashtra',
+    state_code: '27',
+    jurisdiction: 'THANE / MUMBAI',
+    invoice_footer_notes: 'Interest @ 24% p.a. will be charged after credit period. Disputes subject to Thane jurisdiction.',
+    is_default: false,
+  },
+  {
+    id: 'comp-shobha-infra',
+    organization_id: DEFAULT_ORG_ID,
+    company_name: 'SHOBHA INFRA & LOGISTICS',
+    alias_names: ['SHOBHA INFRA & LOGISTICS', 'SHOBHA TRANSPORT', 'SIL'],
+    company_logo_url: '',
+    company_address: 'PLOT 12, TRANSPORT NAGAR, GIDC, VAPI, GUJARAT - 396195',
+    gstin_number: '24AAACI5544K1Z9',
+    company_udyam_reg: 'UDYAM-GJ-01-0055443',
+    admin_email: 'infra@shobhagroup.in',
+    contact_phone: '+91 98765 99887',
+    bank_name: 'State Bank of India',
+    bank_account_no: '33445566778',
+    bank_ifsc: 'SBIN0001234',
+    upi_id: 'shobhainfra@sbi',
+    state_name: 'Gujarat',
+    state_code: '24',
+    jurisdiction: 'VAPI / VALSAD',
+    invoice_footer_notes: 'All goods transport subject to carrier terms and transit insurance policies.',
+    is_default: false,
+  }
+];
+
+let inMemoryCompanyProfiles = [...DEFAULT_COMPANY_PROFILES];
+
+export async function getCompanyProfiles() {
+  if (isSupabaseConfigured) {
+    try {
+      const { data, error } = await supabase
+        .from('company_profiles')
+        .select('*')
+        .order('is_default', { ascending: false })
+        .order('company_name', { ascending: true });
+      if (!error && data && data.length > 0) {
+        inMemoryCompanyProfiles = data;
+        localStorage.setItem('erppro_company_profiles', JSON.stringify(data));
+        return { data, error: null };
+      }
+    } catch (err) {
+      console.warn('[db] getCompanyProfiles fallback:', err.message);
+    }
+  }
+
+  // Fallback to localStorage or in-memory
+  const cached = localStorage.getItem('erppro_company_profiles');
+  if (cached) {
+    try {
+      const parsed = JSON.parse(cached);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        inMemoryCompanyProfiles = parsed;
+        return { data: parsed, error: null };
+      }
+    } catch {}
+  }
+  return { data: inMemoryCompanyProfiles, error: null };
+}
+
+export async function saveCompanyProfile(profile) {
+  const isNew = !profile.id;
+  const companyId = profile.id || `comp-${Date.now()}`;
+  const now = new Date().toISOString();
+
+  const formatted = {
+    id: companyId,
+    organization_id: profile.organization_id || DEFAULT_ORG_ID,
+    company_name: (profile.company_name || 'UNNAMED COMPANY').trim().toUpperCase(),
+    alias_names: Array.isArray(profile.alias_names) ? profile.alias_names : [profile.company_name],
+    company_logo_url: profile.company_logo_url || '',
+    company_address: profile.company_address || '',
+    gstin_number: (profile.gstin_number || '').trim().toUpperCase(),
+    company_udyam_reg: (profile.company_udyam_reg || '').trim().toUpperCase(),
+    admin_email: profile.admin_email || '',
+    contact_phone: profile.contact_phone || '',
+    bank_name: profile.bank_name || '',
+    bank_account_no: profile.bank_account_no || '',
+    bank_ifsc: (profile.bank_ifsc || '').trim().toUpperCase(),
+    upi_id: profile.upi_id || '',
+    state_name: profile.state_name || 'Gujarat',
+    state_code: profile.state_code || '24',
+    jurisdiction: profile.jurisdiction || 'VALSAD / THANE',
+    invoice_footer_notes: profile.invoice_footer_notes || '',
+    is_default: Boolean(profile.is_default),
+    updated_at: now,
+  };
+
+  if (isSupabaseConfigured) {
+    try {
+      // If marked as default, unset others first
+      if (formatted.is_default) {
+        await supabase
+          .from('company_profiles')
+          .update({ is_default: false })
+          .eq('organization_id', DEFAULT_ORG_ID);
+      }
+
+      const { data, error } = await supabase
+        .from('company_profiles')
+        .upsert(formatted, { onConflict: 'id' })
+        .select()
+        .single();
+
+      if (!error && data) {
+        // Update local memory
+        const idx = inMemoryCompanyProfiles.findIndex(c => c.id === data.id);
+        if (idx >= 0) inMemoryCompanyProfiles[idx] = data;
+        else inMemoryCompanyProfiles.push(data);
+        localStorage.setItem('erppro_company_profiles', JSON.stringify(inMemoryCompanyProfiles));
+        logAuditEvent('company_profile.saved', 'company_profiles', data.id, { name: data.company_name });
+        return { data, error: null };
+      }
+    } catch (err) {
+      console.warn('[db] saveCompanyProfile fallback:', err.message);
+    }
+  }
+
+  // In-memory / LocalStorage fallback
+  if (formatted.is_default) {
+    inMemoryCompanyProfiles.forEach(c => { c.is_default = false; });
+  }
+  const idx = inMemoryCompanyProfiles.findIndex(c => c.id === companyId);
+  if (idx >= 0) inMemoryCompanyProfiles[idx] = formatted;
+  else inMemoryCompanyProfiles.push(formatted);
+  localStorage.setItem('erppro_company_profiles', JSON.stringify(inMemoryCompanyProfiles));
+
+  return { data: formatted, error: null };
+}
+
+export async function deleteCompanyProfile(id) {
+  if (isSupabaseConfigured) {
+    try {
+      const { error } = await supabase
+        .from('company_profiles')
+        .delete()
+        .eq('id', id);
+      if (!error) {
+        inMemoryCompanyProfiles = inMemoryCompanyProfiles.filter(c => c.id !== id);
+        localStorage.setItem('erppro_company_profiles', JSON.stringify(inMemoryCompanyProfiles));
+        logAuditEvent('company_profile.deleted', 'company_profiles', id);
+        return { error: null };
+      }
+    } catch (err) {
+      console.warn('[db] deleteCompanyProfile fallback:', err.message);
+    }
+  }
+  inMemoryCompanyProfiles = inMemoryCompanyProfiles.filter(c => c.id !== id);
+  localStorage.setItem('erppro_company_profiles', JSON.stringify(inMemoryCompanyProfiles));
+  return { error: null };
+}
+
+export function getActiveCompanyId() {
+  return localStorage.getItem('erppro_active_company_id') || 'all';
+}
+
+export function setActiveCompanyId(id) {
+  localStorage.setItem('erppro_active_company_id', id);
+  window.dispatchEvent(new CustomEvent('erppro:company_changed', { detail: { companyId: id } }));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // STORAGE & SUPABASE HEALTH / DATA RETENTION SERVICES
 // ─────────────────────────────────────────────────────────────────────────────
 export async function getStorageUsageSummary() {

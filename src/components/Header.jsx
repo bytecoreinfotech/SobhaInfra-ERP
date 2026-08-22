@@ -1,9 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Search, Bell, Sun, Moon, Menu, MessageCircle, CheckCircle2, AlertCircle, IndianRupee, LogOut, Users } from 'lucide-react';
+import { Search, Bell, Sun, Moon, Menu, MessageCircle, CheckCircle2, AlertCircle, IndianRupee, LogOut, Users, Building2, ChevronDown, PlusCircle, Globe, Check } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { useLiveCounts } from '../context/LiveCountsContext';
-import { useLocation } from 'react-router-dom';
+import { useCompany } from '../context/CompanyContext';
+import { useLocation, useNavigate } from 'react-router-dom';
 import './Header.css';
 
 const notifications = [
@@ -46,10 +47,14 @@ const Header = ({ onMobileMenuOpen }) => {
   const { theme, toggleTheme } = useTheme();
   const { user, signOut } = useAuth();
   const { notifications: liveNotifs } = useLiveCounts();
+  const { companyProfiles, activeCompanyId, activeCompany, isConsolidated, setActiveCompanyId } = useCompany();
   const [showNotif, setShowNotif] = useState(false);
+  const [showCompanyMenu, setShowCompanyMenu] = useState(false);
   const [readIds, setReadIds] = useState(new Set());
   const notifRef = useRef(null);
+  const companyMenuRef = useRef(null);
   const location = useLocation();
+  const navigate = useNavigate();
 
   // Icon map for notification types
   const notifIconMap = {
@@ -68,11 +73,15 @@ const Header = ({ onMobileMenuOpen }) => {
   useEffect(() => {
     const handleClickOutside = (e) => {
       if (notifRef.current && !notifRef.current.contains(e.target)) setShowNotif(false);
+      if (companyMenuRef.current && !companyMenuRef.current.contains(e.target)) setShowCompanyMenu(false);
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  const activeLabel = isConsolidated 
+    ? 'All Companies' 
+    : (activeCompany?.company_name || 'Active Company');
 
   return (
     <header className="header">
@@ -87,6 +96,181 @@ const Header = ({ onMobileMenuOpen }) => {
           <span>ERPPro</span>
           <span className="breadcrumb-sep">/</span>
           <span className="breadcrumb-current">{currentPage}</span>
+        </div>
+
+        {/* Multi-Company Switcher Pill */}
+        <div className="company-switcher-wrap" ref={companyMenuRef} style={{ position: 'relative', marginLeft: '0.75rem' }}>
+          <button
+            className="company-switcher-btn"
+            onClick={() => setShowCompanyMenu(prev => !prev)}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '0.45rem',
+              padding: '0.35rem 0.75rem',
+              borderRadius: '20px',
+              border: '1px solid var(--border-color)',
+              background: isConsolidated ? 'rgba(99, 102, 241, 0.12)' : 'var(--bg-secondary)',
+              color: isConsolidated ? 'var(--accent-primary)' : 'var(--text-primary)',
+              fontSize: '0.8rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+              transition: 'all 0.2s ease',
+              maxWidth: '220px'
+            }}
+          >
+            {isConsolidated ? (
+              <Globe size={14} color="var(--accent-primary)" />
+            ) : activeCompany?.company_logo_url ? (
+              <img
+                src={activeCompany.company_logo_url}
+                alt="Logo"
+                style={{ width: 16, height: 16, borderRadius: '4px', objectFit: 'contain' }}
+              />
+            ) : (
+              <Building2 size={14} color="var(--accent-primary)" />
+            )}
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {activeLabel}
+            </span>
+            <ChevronDown size={13} style={{ opacity: 0.6 }} />
+          </button>
+
+          {showCompanyMenu && (
+            <div
+              className="company-dropdown-menu"
+              style={{
+                position: 'absolute',
+                top: 'calc(100% + 8px)',
+                left: 0,
+                width: 280,
+                background: 'var(--bg-secondary)',
+                border: '1px solid var(--border-color)',
+                borderRadius: '12px',
+                boxShadow: '0 10px 25px rgba(0,0,0,0.3)',
+                padding: '0.5rem',
+                zIndex: 9999,
+                animation: 'fadeIn 0.15s ease'
+              }}
+            >
+              <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', padding: '0.4rem 0.6rem' }}>
+                Active Company Workspace
+              </div>
+
+              {/* Consolidated All Option */}
+              <button
+                onClick={() => {
+                  setActiveCompanyId('all');
+                  setShowCompanyMenu(false);
+                }}
+                style={{
+                  width: '100%',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '0.55rem 0.65rem',
+                  borderRadius: '8px',
+                  border: 'none',
+                  background: isConsolidated ? 'rgba(99, 102, 241, 0.15)' : 'transparent',
+                  color: isConsolidated ? 'var(--accent-primary)' : 'var(--text-primary)',
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  fontSize: '0.82rem',
+                  fontWeight: isConsolidated ? 700 : 500
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <div style={{ width: 24, height: 24, borderRadius: 6, background: 'rgba(99, 102, 241, 0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <Globe size={13} color="var(--accent-primary)" />
+                  </div>
+                  <div>
+                    <div>All Companies</div>
+                    <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>Consolidated Group Overview</div>
+                  </div>
+                </div>
+                {isConsolidated && <Check size={14} color="var(--accent-primary)" />}
+              </button>
+
+              <div style={{ height: 1, background: 'var(--border-color)', margin: '0.35rem 0' }} />
+
+              {/* Individual Company List */}
+              <div style={{ maxHeight: 200, overflowY: 'auto' }}>
+                {companyProfiles.map(comp => {
+                  const isSelected = activeCompanyId === comp.id;
+                  return (
+                    <button
+                      key={comp.id}
+                      onClick={() => {
+                        setActiveCompanyId(comp.id);
+                        setShowCompanyMenu(false);
+                      }}
+                      style={{
+                        width: '100%',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '0.5rem 0.65rem',
+                        borderRadius: '8px',
+                        border: 'none',
+                        background: isSelected ? 'rgba(99, 102, 241, 0.15)' : 'transparent',
+                        color: isSelected ? 'var(--accent-primary)' : 'var(--text-primary)',
+                        cursor: 'pointer',
+                        textAlign: 'left',
+                        fontSize: '0.8rem',
+                        fontWeight: isSelected ? 700 : 500,
+                        marginBottom: '2px'
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', overflow: 'hidden' }}>
+                        {comp.company_logo_url ? (
+                          <img
+                            src={comp.company_logo_url}
+                            alt=""
+                            style={{ width: 22, height: 22, borderRadius: 4, objectFit: 'contain' }}
+                          />
+                        ) : (
+                          <div style={{ width: 22, height: 22, borderRadius: 4, background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '9px', fontWeight: 800 }}>
+                            {comp.company_name.slice(0, 2)}
+                          </div>
+                        )}
+                        <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{comp.company_name}</div>
+                          <div style={{ fontSize: '0.67rem', color: 'var(--text-muted)' }}>{comp.gstin_number || 'No GSTIN'}</div>
+                        </div>
+                      </div>
+                      {isSelected && <Check size={14} color="var(--accent-primary)" style={{ flexShrink: 0 }} />}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div style={{ height: 1, background: 'var(--border-color)', margin: '0.35rem 0' }} />
+
+              {/* Add / Manage Companies link */}
+              <button
+                onClick={() => {
+                  setShowCompanyMenu(false);
+                  navigate('/settings');
+                }}
+                style={{
+                  width: '100%',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.5rem',
+                  padding: '0.5rem 0.65rem',
+                  borderRadius: '8px',
+                  border: 'none',
+                  background: 'transparent',
+                  color: 'var(--accent-primary)',
+                  cursor: 'pointer',
+                  fontSize: '0.78rem',
+                  fontWeight: 600
+                }}
+              >
+                <PlusCircle size={14} /> Manage Company Profiles
+              </button>
+            </div>
+          )}
         </div>
       </div>
 

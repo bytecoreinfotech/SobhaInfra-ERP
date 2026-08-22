@@ -20,6 +20,7 @@ import Settings from './pages/Settings';
 import Automations from './pages/Automations';
 import FieldOps from './pages/FieldOps';
 import CampaignStudio from './pages/CampaignStudio';
+import { CompanyProvider } from './context/CompanyContext';
 import './index.css';
 import './App.css';
 
@@ -61,22 +62,22 @@ function AppInner() {
   if (!user) return <Login />;
 
   return (
-    <div className="app-layout">
+    <div className="app-container">
       <Sidebar
-        collapsed={sidebarCollapsed}
-        onToggle={() => setSidebarCollapsed(prev => !prev)}
+        isCollapsed={sidebarCollapsed}
+        onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
         mobileOpen={mobileOpen}
         onMobileClose={() => setMobileOpen(false)}
       />
-      <div className={`app-main ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
+      <div className={`main-wrapper ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
         <Header onMobileMenuOpen={() => setMobileOpen(true)} />
         <main className="main-content">
           <Routes>
             <Route path="/"          element={<Dashboard />} />
+            <Route path="/crm"       element={<ProtectedRoute module="CRM"><CRM /></ProtectedRoute>} />
             <Route path="/whatsapp"  element={<ProtectedRoute module="WhatsApp"><WhatsApp /></ProtectedRoute>} />
             <Route path="/campaign-studio" element={<ProtectedRoute module="WhatsApp"><CampaignStudio /></ProtectedRoute>} />
-            <Route path="/chatbot"   element={<ProtectedRoute module="WhatsApp"><Chatbot /></ProtectedRoute>} />
-            <Route path="/crm"       element={<ProtectedRoute module="CRM"><CRM /></ProtectedRoute>} />
+            <Route path="/chatbot"   element={<ProtectedRoute module="Chatbot"><Chatbot /></ProtectedRoute>} />
             <Route path="/tasks"     element={<ProtectedRoute module="Tasks"><Tasks /></ProtectedRoute>} />
             <Route path="/field-ops" element={<ProtectedRoute module="Tasks"><FieldOps /></ProtectedRoute>} />
             <Route path="/payments"  element={<ProtectedRoute module="Payments"><Payments /></ProtectedRoute>} />
@@ -98,11 +99,13 @@ function App() {
   return (
     <ThemeProvider>
       <AuthProvider>
-        <LiveCountsProvider>
-          <Router>
-            <AppInner />
-          </Router>
-        </LiveCountsProvider>
+        <CompanyProvider>
+          <LiveCountsProvider>
+            <Router>
+              <AppInner />
+            </Router>
+          </LiveCountsProvider>
+        </CompanyProvider>
       </AuthProvider>
     </ThemeProvider>
   );

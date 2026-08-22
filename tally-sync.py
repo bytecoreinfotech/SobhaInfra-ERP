@@ -503,6 +503,144 @@ FMT_AMOUNT = lambda n: f"\u20b9{float(n):,.2f}"  # ₹ symbol
 FMT_DATE   = lambda d: datetime.strptime(d, "%Y%m%d").strftime("%d %b %Y") if d and len(d) == 8 else (d or "N/A")
 
 _CACHED_ORG_PROFILE = None
+_CACHED_COMPANY_PROFILES = None
+
+DEFAULT_COMPANY_REGISTRY = [
+    {
+        "id": "comp-shobha-ready-plast",
+        "company_name": "SHOBHA READY PLAST",
+        "alias_names": ["SHOBHA READY PLAST", "SRP", "Shobha Ready Plast Pvt Ltd"],
+        "company_logo_url": "",
+        "company_address": "NH48, NEAR KOLEI KHADI SARODHI, VALSAD, GUJARAT - 396001",
+        "gstin_number": "24AGCPJ2785R1ZV",
+        "company_udyam_reg": "UDYAM-GJ-01-0012345",
+        "admin_email": "shobhareadyplast@gmail.com",
+        "contact_phone": "+91 98765 43210",
+        "bank_name": "HDFC Bank Ltd.",
+        "bank_account_no": "50200088991122",
+        "bank_ifsc": "HDFC0001234",
+        "upi_id": "shobhareadyplast@okhdfcbank",
+        "state_name": "Gujarat",
+        "state_code": "24",
+        "jurisdiction": "VALSAD / THANE",
+        "invoice_footer_notes": "Unpaid Invoice Will Be Charged 24% P.A. Interest After Given Credit Days. Goods Once Sold Will Not Be Taken Back.",
+        "is_default": True,
+    },
+    {
+        "id": "comp-shobha-enterprises",
+        "company_name": "SHOBHA ENTERPRISES",
+        "alias_names": ["SHOBHA ENTERPRISES", "SE", "Shobha Enterprises Traders"],
+        "company_logo_url": "",
+        "company_address": "OFFICE 204, TRADE CENTER, KOLShet ROAD, THANE WEST, MAHARASHTRA - 400607",
+        "gstin_number": "27AABCS9988P1Z3",
+        "company_udyam_reg": "UDYAM-MH-01-0098765",
+        "admin_email": "enterprises@shobhagroup.in",
+        "contact_phone": "+91 98765 11223",
+        "bank_name": "ICICI Bank Ltd.",
+        "bank_account_no": "001105009988",
+        "bank_ifsc": "ICIC0000011",
+        "upi_id": "shobhaenterprises@icici",
+        "state_name": "Maharashtra",
+        "state_code": "27",
+        "jurisdiction": "THANE / MUMBAI",
+        "invoice_footer_notes": "Interest @ 24% p.a. will be charged after credit period. Disputes subject to Thane jurisdiction.",
+        "is_default": False,
+    },
+    {
+        "id": "comp-shobha-infra",
+        "company_name": "SHOBHA INFRA & LOGISTICS",
+        "alias_names": ["SHOBHA INFRA & LOGISTICS", "SHOBHA TRANSPORT", "SIL"],
+        "company_logo_url": "",
+        "company_address": "PLOT 12, TRANSPORT NAGAR, GIDC, VAPI, GUJARAT - 396195",
+        "gstin_number": "24AAACI5544K1Z9",
+        "company_udyam_reg": "UDYAM-GJ-01-0055443",
+        "admin_email": "infra@shobhagroup.in",
+        "contact_phone": "+91 98765 99887",
+        "bank_name": "State Bank of India",
+        "bank_account_no": "33445566778",
+        "bank_ifsc": "SBIN0001234",
+        "upi_id": "shobhainfra@sbi",
+        "state_name": "Gujarat",
+        "state_code": "24",
+        "jurisdiction": "VAPI / VALSAD",
+        "invoice_footer_notes": "All goods transport subject to carrier terms and transit insurance policies.",
+        "is_default": False,
+    }
+]
+
+
+def fetch_all_company_profiles() -> list:
+    """Fetch all registered company profiles from Supabase company_profiles table."""
+    global _CACHED_COMPANY_PROFILES
+    if _CACHED_COMPANY_PROFILES:
+        return _CACHED_COMPANY_PROFILES
+
+    profiles = list(DEFAULT_COMPANY_REGISTRY)
+
+    if SUPABASE_URL and SUPABASE_KEY:
+        try:
+            url = f"{SUPABASE_URL}/rest/v1/company_profiles?select=*&limit=100"
+            headers = {
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+            }
+            resp = requests.get(url, headers=headers, timeout=5)
+            if resp.status_code == 200:
+                rows = resp.json()
+                if rows and len(rows) > 0:
+                    profiles = rows
+        except Exception as e:
+            log.debug(f"Could not fetch company_profiles from Supabase: {e}")
+
+    _CACHED_COMPANY_PROFILES = profiles
+    return profiles
+
+
+def get_matching_company_profile(company_name: str | None = None, profiles: list | None = None) -> dict:
+    """
+    Auto-match a voucher's company name against all registered company profiles.
+    Matches by exact name, substring, or alias. Falls back to default company profile.
+    """
+    if not profiles:
+        profiles = fetch_all_company_profiles()
+
+    if not profiles:
+        return fetch_org_profile()
+
+    if not company_name:
+        # Return default
+        for p in profiles:
+            if p.get("is_default"):
+                return p
+        return profiles[0]
+
+    target = company_name.strip().upper()
+
+    # Exact name match
+    for p in profiles:
+        p_name = p.get("company_name", "").strip().upper()
+        if p_name == target:
+            return p
+
+    # Alias / Substring match
+    for p in profiles:
+        p_name = p.get("company_name", "").strip().upper()
+        if p_name in target or target in p_name:
+            return p
+
+        aliases = p.get("alias_names", [])
+        if isinstance(aliases, list):
+            for a in aliases:
+                if a and a.strip().upper() in target or target in a.strip().upper():
+                    return p
+
+    # Fallback to default
+    for p in profiles:
+        if p.get("is_default"):
+            return p
+
+    return profiles[0]
+
 
 def fetch_org_profile() -> dict:
     """
@@ -514,23 +652,8 @@ def fetch_org_profile() -> dict:
     if _CACHED_ORG_PROFILE:
         return _CACHED_ORG_PROFILE
 
-    profile = {
-        "org_name": os.environ.get("COMPANY_NAME", "SHOBHA READY PLAST"),
-        "company_logo_url": "",
-        "company_udyam_reg": "UDYAM-GJ-01-0012345",
-        "admin_email": "shobhareadyplast@gmail.com",
-        "contact_phone": "+91 98765 43210",
-        "company_address": "NH48, NEAR KOLEI KHADI SARODHI, VALSAD, GUJARAT - 396001",
-        "gstin_number": "24AGCPJ2785R1ZV",
-        "invoice_footer_notes": "Unpaid Invoice Will Be Charged 24% P.A. Interest After Given Credit Days. Goods Once Sold Will Not Be Taken Back.",
-        "default_currency": "INR",
-        "bank_name": "HDFC Bank Ltd.",
-        "bank_account_no": "50200088991122",
-        "bank_ifsc": "HDFC0001234",
-        "jurisdiction": "VALSAD / THANE",
-        "state_name": "Gujarat",
-        "state_code": "24",
-    }
+    profile = dict(DEFAULT_COMPANY_REGISTRY[0])
+    profile["org_name"] = profile["company_name"]
 
     if not SUPABASE_URL or not SUPABASE_KEY:
         _CACHED_ORG_PROFILE = profile
@@ -540,7 +663,7 @@ def fetch_org_profile() -> dict:
         url = f"{SUPABASE_URL}/rest/v1/org_settings?select=key,value&limit=50"
         headers = {
             "apikey": SUPABASE_KEY,
-            "Authorization": f"Bearer {SUPABASE_KEY}" if SUPABASE_KEY.startswith("eyJ") else f"Bearer {SUPABASE_KEY}",
+            "Authorization": f"Bearer {SUPABASE_KEY}",
         }
         resp = requests.get(url, headers=headers, timeout=5)
         if resp.status_code == 200:
@@ -550,6 +673,8 @@ def fetch_org_profile() -> dict:
                 v = r.get("value")
                 if k and v:
                     profile[k] = v
+                    if k == "org_name":
+                        profile["company_name"] = v
     except Exception as e:
         log.debug(f"Could not fetch org_settings live from Supabase: {e}")
 
@@ -669,9 +794,9 @@ def generate_invoice_pdf(voucher: dict, org_profile: dict | None = None) -> byte
     """
     if not REPORTLAB_AVAILABLE:
         return None
-
     if not org_profile:
-        org_profile = fetch_org_profile()
+        v_comp = voucher.get("company_name") or voucher.get("company") or voucher.get("tally_company")
+        org_profile = get_matching_company_profile(v_comp)
 
     inv_number   = voucher.get("invoice_number", "SRP/0570/26-27")
     party        = voucher.get("ledger_name", "VAISHNAV CONSTRUCTION")
@@ -690,18 +815,22 @@ def generate_invoice_pdf(voucher: dict, org_profile: dict | None = None) -> byte
     except Exception:
         pass
 
-    # Business profile from General Settings
-    company_name    = org_profile.get("org_name", "SHOBHA READY PLAST")
+    # Business profile resolved dynamically per company
+    company_name    = org_profile.get("company_name") or org_profile.get("org_name", "SHOBHA READY PLAST")
     company_address = org_profile.get("company_address", "NH48, NEAR KOLEI KHADI SARODHI, VALSAD, GUJARAT - 396001")
+    company_gstin   = org_profile.get("gstin_number", "24AGCPJ2785R1ZV")
     company_phone   = org_profile.get("contact_phone", "+91 98765 43210")
     company_email   = org_profile.get("admin_email", "shobhareadyplast@gmail.com")
-    company_gstin   = org_profile.get("gstin_number", "24AGCPJ2785R1ZV")
-    company_udyam   = org_profile.get("company_udyam_reg", "UDYAM-GJ-01-0012345")
     company_logo    = org_profile.get("company_logo_url", "")
-    footer_notes    = org_profile.get("invoice_footer_notes", "Unpaid Invoice Will Be Charged 24% P.A. Interest After Given Credit Days. Goods Once Sold Will Not Be Taken Back.")
+    company_udyam   = org_profile.get("company_udyam_reg", "UDYAM-GJ-01-0012345")
+    bank_name       = org_profile.get("bank_name", "HDFC Bank Ltd.")
+    bank_account_no = org_profile.get("bank_account_no", "50200088991122")
+    bank_ifsc       = org_profile.get("bank_ifsc", "HDFC0001234")
+    upi_id          = org_profile.get("upi_id", "shobhareadyplast@okhdfcbank")
     jurisdiction    = org_profile.get("jurisdiction", "VALSAD / THANE")
     state_name      = org_profile.get("state_name", "Gujarat")
     state_code      = org_profile.get("state_code", "24")
+    footer_notes    = org_profile.get("invoice_footer_notes", "Unpaid Invoice Will Be Charged 24% P.A. Interest After Given Credit Days. Goods Once Sold Will Not Be Taken Back.")
 
     # Generate synthetic or live IRN & Ack
     irn_hash = voucher.get("irn") or hashlib.sha256(f"{company_gstin}-{inv_number}-{amount}".encode()).hexdigest()
