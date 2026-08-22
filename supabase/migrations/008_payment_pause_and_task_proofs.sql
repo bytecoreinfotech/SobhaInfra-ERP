@@ -60,7 +60,7 @@ ALTER TABLE public.task_templates ADD COLUMN IF NOT EXISTS target_client_names J
 ALTER TABLE public.task_templates ADD COLUMN IF NOT EXISTS last_generated_date DATE;
 ALTER TABLE public.task_templates ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true;
 
--- 7. Seed storage retention default settings (7 days recommended for Supabase Free Tier)
+-- 7. Seed storage retention and business profile settings
 INSERT INTO public.org_settings (organization_id, key, value, description)
 VALUES 
   ('00000000-0000-0000-0000-000000000001', 'storage_auto_clean_enabled', 'true', 'Automated daily storage cleanup switch'),
@@ -70,7 +70,12 @@ VALUES
   ('00000000-0000-0000-0000-000000000001', 'auto_clean_activities', 'true', 'Auto purge activity logs'),
   ('00000000-0000-0000-0000-000000000001', 'auto_clean_site_visits', 'true', 'Auto purge site visits logs'),
   ('00000000-0000-0000-0000-000000000001', 'auto_clean_sync_errors', 'true', 'Auto purge sync error dumps'),
-  ('00000000-0000-0000-0000-000000000001', 'auto_clean_payment_reminders', 'true', 'Auto purge payment reminder logs')
+  ('00000000-0000-0000-0000-000000000001', 'auto_clean_payment_reminders', 'true', 'Auto purge payment reminder logs'),
+  ('00000000-0000-0000-0000-000000000001', 'company_logo_url', '', 'Company brand logo base64 or storage URL (Protected from purging)'),
+  ('00000000-0000-0000-0000-000000000001', 'company_udyam_reg', 'UDYAM-GJ-01-0012345', 'Udyam / MSME Registration Number'),
+  ('00000000-0000-0000-0000-000000000001', 'bank_name', 'HDFC Bank Ltd.', 'Company remittance bank name'),
+  ('00000000-0000-0000-0000-000000000001', 'bank_account_no', '50200088991122', 'Company bank account number'),
+  ('00000000-0000-0000-0000-000000000001', 'bank_ifsc', 'HDFC0001234', 'Company bank IFSC code')
 ON CONFLICT (organization_id, key) DO NOTHING;
 
 

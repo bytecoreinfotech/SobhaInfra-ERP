@@ -77,17 +77,23 @@ const Settings = () => {
   // General Business Settings State
   const [generalSettings, setGeneralSettings] = useState({
     org_name: 'Techma ERP Solutions Pvt. Ltd.',
+    company_logo_url: '',
+    company_udyam_reg: 'UDYAM-GJ-01-0012345',
     admin_email: 'admin@erppro.in',
     contact_phone: '+91 98765 43210',
     timezone: 'Asia/Kolkata (IST +05:30)',
     default_currency: 'INR',
     company_address: '101, Business Hub, Phase 1, Hinjawadi, Pune - 411057',
     gstin_number: '27AABCT2345Q1Z8',
-    invoice_footer_notes: 'Thank you for your business. For any queries, contact accounts@erppro.in.',
+    invoice_footer_notes: 'Unpaid Invoice Will Be Charged 24% P.A. Interest After Given Credit Days. Goods Once Sold Will Not Be Taken Back.',
+    bank_name: 'HDFC Bank Ltd.',
+    bank_account_no: '50200088991122',
+    bank_ifsc: 'HDFC0001234',
   });
   const [generalSaving, setGeneralSaving] = useState(false);
   const [generalSaved, setGeneralSaved] = useState(false);
   const [generalLoading, setGeneralLoading] = useState(false);
+  const logoInputRef = useRef(null);
 
   // Storage & Supabase Health State
   const [storageSummary, setStorageSummary] = useState(null);
@@ -130,6 +136,8 @@ const Settings = () => {
       setGeneralSettings(prev => ({
         ...prev,
         org_name: data.org_name || prev.org_name,
+        company_logo_url: data.company_logo_url || prev.company_logo_url,
+        company_udyam_reg: data.company_udyam_reg || prev.company_udyam_reg,
         admin_email: data.admin_email || prev.admin_email,
         contact_phone: data.contact_phone || prev.contact_phone,
         timezone: data.timezone || prev.timezone,
@@ -137,15 +145,34 @@ const Settings = () => {
         company_address: data.company_address || prev.company_address,
         gstin_number: data.gstin_number || prev.gstin_number,
         invoice_footer_notes: data.invoice_footer_notes || prev.invoice_footer_notes,
+        bank_name: data.bank_name || prev.bank_name,
+        bank_account_no: data.bank_account_no || prev.bank_account_no,
+        bank_ifsc: data.bank_ifsc || prev.bank_ifsc,
       }));
     }
     setGeneralLoading(false);
+  };
+
+  const handleLogoUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) {
+      alert('Logo file size should be less than 2MB.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      setGeneralSettings(prev => ({ ...prev, company_logo_url: reader.result }));
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleSaveGeneralSettings = async () => {
     setGeneralSaving(true);
     await Promise.all([
       updateOrgSetting('org_name', generalSettings.org_name),
+      updateOrgSetting('company_logo_url', generalSettings.company_logo_url),
+      updateOrgSetting('company_udyam_reg', generalSettings.company_udyam_reg),
       updateOrgSetting('admin_email', generalSettings.admin_email),
       updateOrgSetting('contact_phone', generalSettings.contact_phone),
       updateOrgSetting('timezone', generalSettings.timezone),
@@ -153,9 +180,15 @@ const Settings = () => {
       updateOrgSetting('company_address', generalSettings.company_address),
       updateOrgSetting('gstin_number', generalSettings.gstin_number),
       updateOrgSetting('invoice_footer_notes', generalSettings.invoice_footer_notes),
+      updateOrgSetting('bank_name', generalSettings.bank_name),
+      updateOrgSetting('bank_account_no', generalSettings.bank_account_no),
+      updateOrgSetting('bank_ifsc', generalSettings.bank_ifsc),
     ]);
     try {
       localStorage.setItem('erppro_org_name', generalSettings.org_name);
+      if (generalSettings.company_logo_url) {
+        localStorage.setItem('erppro_company_logo', generalSettings.company_logo_url);
+      }
     } catch {}
     setGeneralSaving(false);
     setGeneralSaved(true);
@@ -1015,6 +1048,65 @@ const Settings = () => {
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                  
+                  {/* Brand Logo & Emblem Customizer */}
+                  <div style={{ padding: '1rem', background: 'rgba(99,102,241,0.04)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: 'var(--radius-md)' }}>
+                    <label style={{ fontSize: '0.82rem', fontWeight: 700, display: 'block', marginBottom: '0.5rem' }}>
+                      🏢 Official Company Brand Logo & Header Icon
+                    </label>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem', flexWrap: 'wrap' }}>
+                      <div style={{
+                        width: 72, height: 72, borderRadius: 12, border: '2px dashed var(--border-color)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-tertiary)',
+                        overflow: 'hidden', position: 'relative'
+                      }}>
+                        {generalSettings.company_logo_url ? (
+                          <img src={generalSettings.company_logo_url} alt="Brand Logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                        ) : (
+                          <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.65rem' }}>
+                            <Building2 size={24} style={{ margin: '0 auto 2px', opacity: 0.6 }} />
+                            <span>No Logo</span>
+                          </div>
+                        )}
+                      </div>
+
+                      <div style={{ flex: 1, minWidth: 220 }}>
+                        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.4rem', flexWrap: 'wrap' }}>
+                          <input
+                            ref={logoInputRef}
+                            type="file"
+                            accept="image/png,image/jpeg,image/svg+xml,image/webp"
+                            style={{ display: 'none' }}
+                            onChange={handleLogoUpload}
+                          />
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => logoInputRef.current?.click()}
+                          >
+                            <Upload size={14} /> Upload Brand Logo
+                          </button>
+                          {generalSettings.company_logo_url && (
+                            <button
+                              type="button"
+                              className="btn btn-outline btn-sm"
+                              style={{ color: 'var(--danger)', borderColor: 'rgba(239,68,68,0.3)' }}
+                              onClick={() => setGeneralSettings(p => ({ ...p, company_logo_url: '' }))}
+                            >
+                              <Trash2 size={13} /> Remove
+                            </button>
+                          )}
+                        </div>
+                        <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block' }}>
+                          PNG, JPG, SVG or WebP (Max 2MB). Appears at the top-left of generated PDF Tax Invoices, e-Way bills, and client portals.
+                        </span>
+                        <div style={{ marginTop: '0.35rem', display: 'inline-flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.68rem', color: 'var(--success)', fontWeight: 600 }}>
+                          <ShieldCheck size={13} /> Protected from auto-storage cleanup — Logo is permanently preserved.
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
                   {/* Row 1: Company Name & Admin Email */}
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1rem' }}>
                     <div>
@@ -1097,7 +1189,7 @@ const Settings = () => {
                     </div>
                   </div>
 
-                  {/* Row 3: Business Address & GSTIN */}
+                  {/* Row 3: Business Address, GSTIN & UDYAM */}
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1rem' }}>
                     <div>
                       <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.4rem' }}>
@@ -1105,10 +1197,10 @@ const Settings = () => {
                       </label>
                       <textarea
                         className="input-field"
-                        rows={3}
+                        rows={4}
                         value={generalSettings.company_address}
                         onChange={e => setGeneralSettings(p => ({ ...p, company_address: e.target.value }))}
-                        placeholder="Street, Landmark, City, State, PIN"
+                        placeholder="Factory / Office Address, City, State, PIN"
                       />
                     </div>
 
@@ -1122,23 +1214,76 @@ const Settings = () => {
                           className="input-field"
                           value={generalSettings.gstin_number}
                           onChange={e => setGeneralSettings(p => ({ ...p, gstin_number: e.target.value }))}
-                          placeholder="e.g. 27AABCT2345Q1Z8"
+                          placeholder="e.g. 24AGCPJ2785R1ZV"
                         />
                       </div>
 
                       <div>
                         <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.4rem' }}>
-                          Invoice Footer Terms & Payment Note
+                          UDYAM / MSME Registration No.
                         </label>
                         <input
                           type="text"
                           className="input-field"
-                          value={generalSettings.invoice_footer_notes}
-                          onChange={e => setGeneralSettings(p => ({ ...p, invoice_footer_notes: e.target.value }))}
-                          placeholder="Thank you for your business. For any queries, contact accounts..."
+                          value={generalSettings.company_udyam_reg}
+                          onChange={e => setGeneralSettings(p => ({ ...p, company_udyam_reg: e.target.value }))}
+                          placeholder="e.g. UDYAM-GJ-01-0012345"
                         />
                       </div>
                     </div>
+                  </div>
+
+                  {/* Row 4: Bank Remittance Details (For Tax Invoices) */}
+                  <div style={{ padding: '1rem', background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)' }}>
+                    <label style={{ fontSize: '0.82rem', fontWeight: 700, display: 'block', marginBottom: '0.5rem' }}>
+                      🏦 Bank Remittance Details (Printed on Invoices & QR Payments)
+                    </label>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.75rem' }}>
+                      <div>
+                        <label style={{ fontSize: '0.75rem', fontWeight: 600, display: 'block', marginBottom: '0.3rem' }}>Bank Name</label>
+                        <input
+                          type="text"
+                          className="input-field"
+                          value={generalSettings.bank_name}
+                          onChange={e => setGeneralSettings(p => ({ ...p, bank_name: e.target.value }))}
+                          placeholder="e.g. HDFC Bank Ltd."
+                        />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: '0.75rem', fontWeight: 600, display: 'block', marginBottom: '0.3rem' }}>Account Number</label>
+                        <input
+                          type="text"
+                          className="input-field"
+                          value={generalSettings.bank_account_no}
+                          onChange={e => setGeneralSettings(p => ({ ...p, bank_account_no: e.target.value }))}
+                          placeholder="e.g. 50200088991122"
+                        />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: '0.75rem', fontWeight: 600, display: 'block', marginBottom: '0.3rem' }}>IFSC Code</label>
+                        <input
+                          type="text"
+                          className="input-field"
+                          value={generalSettings.bank_ifsc}
+                          onChange={e => setGeneralSettings(p => ({ ...p, bank_ifsc: e.target.value }))}
+                          placeholder="e.g. HDFC0001234"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Row 5: Terms & Conditions */}
+                  <div>
+                    <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.4rem' }}>
+                      Invoice Terms & Conditions / Footer Declaration
+                    </label>
+                    <textarea
+                      className="input-field"
+                      rows={2}
+                      value={generalSettings.invoice_footer_notes}
+                      onChange={e => setGeneralSettings(p => ({ ...p, invoice_footer_notes: e.target.value }))}
+                      placeholder="Unpaid Invoice Will Be Charged 24% P.A. Interest After Given Credit Days..."
+                    />
                   </div>
 
                   {/* Interface Theme */}

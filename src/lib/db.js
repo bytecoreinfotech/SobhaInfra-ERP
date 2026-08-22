@@ -428,13 +428,18 @@ export async function logPaymentReminder(invoiceId, message) {
 // ─────────────────────────────────────────────────────────────────────────────
 const DEFAULT_ORG_SETTINGS = {
   org_name: 'Techma ERP Solutions Pvt. Ltd.',
+  company_logo_url: '',
+  company_udyam_reg: 'UDYAM-GJ-01-0012345',
   admin_email: 'admin@erppro.in',
   contact_phone: '+91 98765 43210',
   timezone: 'Asia/Kolkata (IST +05:30)',
   default_currency: 'INR',
   company_address: '101, Business Hub, Phase 1, Hinjawadi, Pune - 411057',
   gstin_number: '27AABCT2345Q1Z8',
-  invoice_footer_notes: 'Thank you for your business. For any queries, contact accounts@erppro.in.',
+  invoice_footer_notes: 'Unpaid Invoice Will Be Charged 24% P.A. Interest After Given Credit Days. Goods Once Sold Will Not Be Taken Back.',
+  bank_name: 'HDFC Bank Ltd.',
+  bank_account_no: '50200088991122',
+  bank_ifsc: 'HDFC0001234',
   reminder_interval_days: '3',
   max_reminders_per_invoice: '7',
   auto_pause_on_promise: 'true',
@@ -740,6 +745,7 @@ export async function purgeStorageCategory(categoryKey, olderThanDays = 7) {
             if (files && files.length > 0) {
               const filesToDelete = files
                 .filter(f => f.name !== '.emptyFolderPlaceholder')
+                .filter(f => !f.name.toLowerCase().includes('logo') && !f.name.toLowerCase().includes('brand') && !f.name.toLowerCase().includes('avatar'))
                 .map(f => `${folder}/${f.name}`);
               if (filesToDelete.length > 0) {
                 await supabase.storage.from('whatsapp-media').remove(filesToDelete);
