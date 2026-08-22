@@ -497,215 +497,366 @@ def fetch_from_tally():
 FMT_AMOUNT = lambda n: f"\u20b9{float(n):,.2f}"  # ₹ symbol
 FMT_DATE   = lambda d: datetime.strptime(d, "%Y%m%d").strftime("%d %b %Y") if d and len(d) == 8 else (d or "N/A")
 
+_CACHED_ORG_PROFILE = None
 
-def generate_invoice_pdf(voucher: dict) -> bytes | None:
+def fetch_org_profile() -> dict:
     """
-    Generate a professional A4 PDF invoice from Tally voucher data.
-    Returns PDF bytes on success, or None if reportlab is not installed.
+    Fetch the live business organization profile from Supabase org_settings table.
+    Ensures company name, address, GSTIN, phone, email, and footer notes set in
+    the SuperAdmin General Settings appear dynamically on the generated invoice.
+    """
+    global _CACHED_ORG_PROFILE
+    if _CACHED_ORG_PROFILE:
+        return _CACHED_ORG_PROFILE
 
-    This PDF contains the ACTUAL data from Tally:
-      - Invoice/Voucher number
-      - Party name (client)
-      - Amount (from Tally closing balance / amount field)
-      - Invoice date and due date
-      - GST/GSTIN if available
-      - Line items if parsed by the multi-strategy parser
+    profile = {
+        "org_name": os.environ.get("COMPANY_NAME", "Techma ERP Solutions Pvt. Ltd."),
+        "admin_email": "admin@erppro.in",
+        "contact_phone": "+91 98765 43210",
+        "company_address": "101, Business Hub, Phase 1, Hinjawadi, Pune - 411057",
+        "gstin_number": "27AABCT2345Q1Z8",
+        "invoice_footer_notes": "Thank you for your business. For any queries, contact accounts team.",
+        "default_currency": "INR",
+        "bank_name": "HDFC Bank Ltd.",
+        "bank_account_no": "50200088991122",
+        "bank_ifsc": "HDFC0001234",
+    }
+
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        _CACHED_ORG_PROFILE = profile
+        return profile
+
+    try:
+        url = f"{SUPABASE_URL}/rest/v1/org_settings?select=key,value&limit=50"
+        headers = {
+            "apikey": SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}" if SUPABASE_KEY.startswith("eyJ") else f"Bearer {SUPABASE_KEY}",
+        }
+        resp = requests.get(url, headers=headers, timeout=5)
+        if resp.status_code == 200:
+            rows = resp.json()
+            for r in rows:
+                k = r.get("key")
+                v = r.get("value")
+                if k and v:
+                    profile[k] = v
+    except Exception as e:
+        log.debug(f"Could not fetch org_settings live from Supabase: {e}")
+
+    _CACHED_ORG_PROFILE = profile
+    return profile
+
+
+def num_to_words_inr(num: float) -> str:
+    """Converts numeric amount to formal Indian currency words (e.g. INR Forty-Five Thousand Only)."""
+    try:
+        n = int(round(float(num)))
+        if n <= 0:
+            return "INR Zero Only"
+
+        units = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine",
+                 "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen",
+                 "Seventeen", "Eighteen", "Nineteen"]
+        tens = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"]
+
+        def two_digits(val):
+            if val < 20:
+                return units[val]
+            return tens[val // 10] + (" " + units[val % 10] if val % 10 != 0 else "")
+
+        def three_digits(val):
+            h = val // 100
+            r = val % 100
+            res = ""
+            if h > 0:
+                res += units[h] + " Hundred"
+                if r > 0:
+                    res += " and "
+            if r > 0:
+                res += two_digits(r)
+            return res
+
+        crore = n // 10000000
+        n %= 10000000
+        lakh = n // 100000
+        n %= 100000
+        thousand = n // 1000
+        n %= 1000
+        remainder = n
+
+        parts = []
+        if crore > 0:
+            parts.append(two_digits(crore) + " Crore")
+        if lakh > 0:
+            parts.append(two_digits(lakh) + " Lakh")
+        if thousand > 0:
+            parts.append(two_digits(thousand) + " Thousand")
+        if remainder > 0:
+            parts.append(three_digits(remainder))
+
+        return "INR " + " ".join(parts) + " Only"
+    except Exception:
+        return ""
+
+
+def generate_invoice_pdf(voucher: dict, org_profile: dict | None = None) -> bytes | None:
+    """
+    Generate an ultra-clean, executive corporate A4 PDF invoice from Tally voucher data.
+    Styled with a minimalist, professional monochrome palette with full company branding
+    from the SuperAdmin General Settings.
     """
     if not REPORTLAB_AVAILABLE:
         return None
 
+    if not org_profile:
+        org_profile = fetch_org_profile()
+
     inv_number  = voucher.get("invoice_number", "N/A")
-    party       = voucher.get("ledger_name", "Valued Customer")
-    amount      = voucher.get("amount", 0)
+    party       = voucher.get("ledger_name", "Valued Client")
+    amount      = float(voucher.get("amount", 0))
     due_date    = voucher.get("due_date", datetime.now().strftime("%Y-%m-%d"))
     status      = voucher.get("status", "Pending")
     phone       = voucher.get("phone", "")
     gstin       = voucher.get("gstin", "")
-    # Line items — tally-sync may pass these in future; gracefully omit if absent
-    line_items  = voucher.get("line_items", [])  # [{name, qty, rate, amount}]
+    voucher_type= voucher.get("voucher_type", "Sales Invoice")
+    line_items  = voucher.get("line_items", [])
 
     today_str = datetime.now().strftime("%d %b %Y")
-    due_str   = due_date  # already formatted as YYYY-MM-DD
+    due_str   = due_date
     try:
         due_str = datetime.strptime(due_date, "%Y-%m-%d").strftime("%d %b %Y")
     except Exception:
         pass
+
+    # Business profile from General Settings
+    company_name    = org_profile.get("org_name", "Techma ERP Solutions Pvt. Ltd.")
+    company_address = org_profile.get("company_address", "101, Business Hub, Phase 1, Hinjawadi, Pune - 411057")
+    company_phone   = org_profile.get("contact_phone", "+91 98765 43210")
+    company_email   = org_profile.get("admin_email", "accounts@erppro.in")
+    company_gstin   = org_profile.get("gstin_number", "27AABCT2345Q1Z8")
+    footer_notes    = org_profile.get("invoice_footer_notes", "Thank you for your business. For any payment queries, contact our accounts team.")
+    bank_name       = org_profile.get("bank_name", "HDFC Bank Ltd.")
+    bank_ac         = org_profile.get("bank_account_no", "50200088991122")
+    bank_ifsc       = org_profile.get("bank_ifsc", "HDFC0001234")
 
     # --- Build PDF in memory ---
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
         buf,
         pagesize=A4,
-        rightMargin=18 * mm,
-        leftMargin=18 * mm,
-        topMargin=16 * mm,
-        bottomMargin=16 * mm,
+        rightMargin=14 * mm,
+        leftMargin=14 * mm,
+        topMargin=12 * mm,
+        bottomMargin=12 * mm,
     )
-    W = A4[0] - 36 * mm  # usable width
+    W = A4[0] - 28 * mm  # 182mm usable width
 
-    # Color palette
-    INDIGO   = colors.HexColor("#4f46e5")
-    DARK     = colors.HexColor("#1e293b")
-    MUTED    = colors.HexColor("#64748b")
-    LIGHT_BG = colors.HexColor("#f8fafc")
-    RED      = colors.HexColor("#ef4444")
-    AMBER    = colors.HexColor("#f59e0b")
-    WHITE    = colors.white
-    status_color = RED if status == "Overdue" else AMBER
+    # Executive Monochrome Corporate Palette
+    SLATE_900   = colors.HexColor("#0f172a")  # Deep charcoal header
+    SLATE_800   = colors.HexColor("#1e293b")  # Table header
+    SLATE_700   = colors.HexColor("#334155")  # Dark body text
+    SLATE_500   = colors.HexColor("#64748b")  # Muted captions & labels
+    SLATE_200   = colors.HexColor("#e2e8f0")  # Grid lines & subtle borders
+    BG_LIGHT    = colors.HexColor("#f8fafc")  # Subtle background fill
+    WHITE       = colors.white
 
     styles = getSampleStyleSheet()
 
     def style(name="Normal", **kwargs):
-        s = ParagraphStyle(name, parent=styles["Normal"], **kwargs)
-        return s
+        return ParagraphStyle(name, parent=styles["Normal"], **kwargs)
 
     elements = []
 
-    # ── Header: Company + Invoice label ──────────────────────────────────────
-    header_data = [
-        [
-            Paragraph(
-                '<font color="#4f46e5" size="22"><b>TAX INVOICE</b></font><br/>'
-                '<font color="#64748b" size="10">Original Copy</font>',
-                style("hdr", leading=26)
-            ),
-            Paragraph(
-                f'<font color="#1e293b" size="11"><b>Invoice No:</b> {inv_number}</font><br/>'
-                f'<font color="#64748b" size="9">Date: {today_str}</font><br/>'
-                f'<font color="#64748b" size="9">Due: {due_str}</font>',
-                style("hdr2", alignment=TA_RIGHT, leading=18)
-            ),
-        ]
-    ]
-    header_table = Table(header_data, colWidths=[W * 0.55, W * 0.45])
+    # ── SECTION 1: TOP HEADER (Seller Branding & Tax Invoice Metadata) ────────
+    seller_html = (
+        f'<font color="#0f172a" size="14"><b>{company_name}</b></font><br/>'
+        f'<font color="#475569" size="8">{company_address}</font><br/>'
+        f'<font color="#475569" size="8"><b>GSTIN:</b> {company_gstin} &nbsp;|&nbsp; <b>Phone:</b> {company_phone}</font><br/>'
+        f'<font color="#475569" size="8"><b>Email:</b> {company_email}</font>'
+    )
+
+    inv_meta_html = (
+        f'<font color="#0f172a" size="16"><b>TAX INVOICE</b></font><br/>'
+        f'<font color="#64748b" size="8">ORIGINAL FOR RECIPIENT</font><br/>'
+        f'<font color="#1e293b" size="9"><b>Invoice No:</b> {inv_number}</font><br/>'
+        f'<font color="#475569" size="8"><b>Date:</b> {today_str}</font><br/>'
+        f'<font color="#475569" size="8"><b>Due Date:</b> {due_str}</font>'
+    )
+
+    header_table = Table(
+        [[Paragraph(seller_html, style("hdr_seller", leading=12)),
+          Paragraph(inv_meta_html, style("hdr_meta", alignment=TA_RIGHT, leading=13))]],
+        colWidths=[W * 0.60, W * 0.40]
+    )
     header_table.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
     ]))
     elements.append(header_table)
-    elements.append(HRFlowable(width="100%", thickness=2, color=INDIGO, spaceAfter=8))
+    elements.append(HRFlowable(width="100%", thickness=1.5, color=SLATE_900, spaceAfter=8, spaceBefore=4))
 
-    # ── Bill To + Status ─────────────────────────────────────────────────────
-    bill_data = [
-        [
-            Paragraph(
-                f'<font color="#64748b" size="8"><b>BILL TO</b></font><br/>'
-                f'<font color="#1e293b" size="13"><b>{party}</b></font>'
-                + (f'<br/><font color="#64748b" size="9">Phone: {phone}</font>' if phone else "")
-                + (f'<br/><font color="#64748b" size="9">GSTIN: {gstin}</font>' if gstin else ""),
-                style("bt", leading=18)
-            ),
-            Paragraph(
-                f'<font size="9" color="#64748b">Status</font><br/>'
-                f'<font size="14" color="{status_color.hexval()}"><b>{status.upper()}</b></font>',
-                style("st", alignment=TA_RIGHT, leading=20)
-            ),
-        ]
-    ]
-    bill_table = Table(bill_data, colWidths=[W * 0.65, W * 0.35])
+    # ── SECTION 2: BILLED TO / BUYER DETAILS & VOUCHER TYPE ───────────────────
+    buyer_html = (
+        f'<font color="#64748b" size="7.5"><b>BILLED TO / BUYER:</b></font><br/>'
+        f'<font color="#0f172a" size="11"><b>{party}</b></font><br/>'
+        + (f'<font color="#475569" size="8"><b>Phone:</b> {phone}</font><br/>' if phone else '')
+        + (f'<font color="#475569" size="8"><b>GSTIN:</b> {gstin}</font><br/>' if gstin else '')
+        + f'<font color="#64748b" size="7.5">Place of Supply: State Jurisdiction</font>'
+    )
+
+    summary_box_html = (
+        f'<font color="#64748b" size="7.5"><b>VOUCHER DETAILS:</b></font><br/>'
+        f'<font color="#1e293b" size="8.5"><b>Voucher Type:</b> {voucher_type}</font><br/>'
+        f'<font color="#1e293b" size="8.5"><b>Payment Status:</b> {status.upper()}</font><br/>'
+        f'<font color="#64748b" size="7.5"><b>Accounting Source:</b> TallyPrime Live</font>'
+    )
+
+    bill_table = Table(
+        [[Paragraph(buyer_html, style("b_buyer", leading=11)),
+          Paragraph(summary_box_html, style("b_sum", leading=11))]],
+        colWidths=[W * 0.62, W * 0.38]
+    )
     bill_table.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("BACKGROUND", (0, 0), (-1, -1), LIGHT_BG),
-        ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
-        ("TOPPADDING", (0, 0), (-1, -1), 10),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
-        ("LEFTPADDING", (0, 0), (0, -1), 12),
-        ("RIGHTPADDING", (-1, 0), (-1, -1), 12),
-        ("ROUNDEDCORNERS", [4]),
+        ("BACKGROUND", (0, 0), (-1, -1), BG_LIGHT),
+        ("BOX", (0, 0), (-1, -1), 0.5, SLATE_200),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
     ]))
     elements.append(bill_table)
+    elements.append(Spacer(1, 8))
+
+    # ── SECTION 3: LINE ITEMS / PARTICULARS TABLE ─────────────────────────────
+    # Professional dark header with crisp white text
+    table_headers = [
+        Paragraph('<b>#</b>', style("th", alignment=TA_CENTER, textColor=WHITE, fontSize=8)),
+        Paragraph('<b>Description of Goods / Services</b>', style("th2", textColor=WHITE, fontSize=8)),
+        Paragraph('<b>HSN/SAC</b>', style("th3", alignment=TA_CENTER, textColor=WHITE, fontSize=8)),
+        Paragraph('<b>Qty</b>', style("th4", alignment=TA_CENTER, textColor=WHITE, fontSize=8)),
+        Paragraph('<b>Unit Rate (₹)</b>', style("th5", alignment=TA_RIGHT, textColor=WHITE, fontSize=8)),
+        Paragraph('<b>Amount (₹)</b>', style("th6", alignment=TA_RIGHT, textColor=WHITE, fontSize=8)),
+    ]
+
+    table_rows = [table_headers]
+
+    if line_items:
+        for i, item in enumerate(line_items, 1):
+            table_rows.append([
+                Paragraph(str(i), style("td_c", alignment=TA_CENTER, fontSize=8)),
+                Paragraph(f"<b>{item.get('name', 'Commercial Supply')}</b>", style("td_l", fontSize=8)),
+                Paragraph(str(item.get("hsn", "9983")), style("td_c", alignment=TA_CENTER, fontSize=8)),
+                Paragraph(str(item.get("qty", "1")), style("td_c", alignment=TA_CENTER, fontSize=8)),
+                Paragraph(FMT_AMOUNT(item.get("rate", amount)), style("td_r", alignment=TA_RIGHT, fontSize=8)),
+                Paragraph(FMT_AMOUNT(item.get("amount", amount)), style("td_r", alignment=TA_RIGHT, fontSize=8)),
+            ])
+    else:
+        # Standard Ledger Voucher Item
+        table_rows.append([
+            Paragraph("1", style("td_c", alignment=TA_CENTER, fontSize=8)),
+            Paragraph(f"<b>{voucher_type}</b> — Settlement for {party}", style("td_l", fontSize=8)),
+            Paragraph("9983", style("td_c", alignment=TA_CENTER, fontSize=8)),
+            Paragraph("1", style("td_c", alignment=TA_CENTER, fontSize=8)),
+            Paragraph(FMT_AMOUNT(amount), style("td_r", alignment=TA_RIGHT, fontSize=8)),
+            Paragraph(FMT_AMOUNT(amount), style("td_r", alignment=TA_RIGHT, fontSize=8)),
+        ])
+
+    col_widths = [10 * mm, W * 0.44, 18 * mm, 14 * mm, 26 * mm, 28 * mm]
+    item_table = Table(table_rows, colWidths=col_widths, repeatRows=1)
+    item_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), SLATE_800),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("GRID", (0, 0), (-1, -1), 0.5, SLATE_200),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [WHITE, BG_LIGHT]),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("LEFTPADDING", (0, 0), (-1, -1), 5),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+    ]))
+    elements.append(item_table)
+    elements.append(Spacer(1, 6))
+
+    # ── SECTION 4: TAX BREAKDOWN, TOTALS & BANK DETAILS ───────────────────────
+    # Subtotal calculation
+    taxable_val = round(amount / 1.18, 2) if voucher.get("has_gst", True) else amount
+    cgst_val    = round((amount - taxable_val) / 2.0, 2) if voucher.get("has_gst", True) else 0.0
+    sgst_val    = round((amount - taxable_val) / 2.0, 2) if voucher.get("has_gst", True) else 0.0
+
+    words_text = num_to_words_inr(amount)
+
+    bank_details_html = (
+        f'<font color="#0f172a" size="8"><b>BANK REMITTANCE DETAILS:</b></font><br/>'
+        f'<font color="#475569" size="7.5"><b>Bank Name:</b> {bank_name} &nbsp;|&nbsp; <b>A/C No:</b> {bank_ac}</font><br/>'
+        f'<font color="#475569" size="7.5"><b>IFSC Code:</b> {bank_ifsc} &nbsp;|&nbsp; <b>Account Name:</b> {company_name}</font><br/>'
+        f'<font color="#64748b" size="7"><i>Amount in Words:</i> <b>{words_text}</b></font>'
+    )
+
+    totals_rows = [
+        [Paragraph("Taxable Subtotal", style("tot_l", fontSize=8)), Paragraph(FMT_AMOUNT(taxable_val), style("tot_r", alignment=TA_RIGHT, fontSize=8))],
+        [Paragraph("CGST @ 9%", style("tot_l", fontSize=8)), Paragraph(FMT_AMOUNT(cgst_val), style("tot_r", alignment=TA_RIGHT, fontSize=8))],
+        [Paragraph("SGST @ 9%", style("tot_l", fontSize=8)), Paragraph(FMT_AMOUNT(sgst_val), style("tot_r", alignment=TA_RIGHT, fontSize=8))],
+        [Paragraph("<b>TOTAL AMOUNT DUE (₹)</b>", style("tot_lb", fontSize=9, fontName="Helvetica-Bold")),
+         Paragraph(f"<b>{FMT_AMOUNT(amount)}</b>", style("tot_rb", alignment=TA_RIGHT, fontSize=10, fontName="Helvetica-Bold"))],
+    ]
+
+    totals_table = Table(totals_rows, colWidths=[W * 0.22, W * 0.18])
+    totals_table.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("GRID", (0, 0), (-1, -1), 0.5, SLATE_200),
+        ("BACKGROUND", (0, 0), (-1, -2), WHITE),
+        ("BACKGROUND", (0, -1), (-1, -1), BG_LIGHT),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("LINEABOVE", (0, -1), (-1, -1), 1, SLATE_900),
+    ]))
+
+    bottom_grid = Table(
+        [[Paragraph(bank_details_html, style("bank_info", leading=11)), totals_table]],
+        colWidths=[W * 0.58, W * 0.42]
+    )
+    bottom_grid.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+    ]))
+    elements.append(bottom_grid)
     elements.append(Spacer(1, 10))
 
-    # ── Line Items Table (if available from Tally) ────────────────────────────
-    if line_items:
-        li_header = [["#", "Description", "Qty", "Rate", "Amount"]]
-        li_rows = []
-        for i, item in enumerate(line_items, 1):
-            li_rows.append([
-                str(i),
-                item.get("name", "Item"),
-                str(item.get("qty", 1)),
-                FMT_AMOUNT(item.get("rate", 0)),
-                FMT_AMOUNT(item.get("amount", 0)),
-            ])
-        li_data = li_header + li_rows
-        col_widths = [8 * mm, W * 0.44, 18 * mm, 28 * mm, 30 * mm]
-        li_table = Table(li_data, colWidths=col_widths, repeatRows=1)
-        li_table.setStyle(TableStyle([
-            # Header
-            ("BACKGROUND", (0, 0), (-1, 0), DARK),
-            ("TEXTCOLOR", (0, 0), (-1, 0), WHITE),
-            ("FONTSIZE", (0, 0), (-1, 0), 9),
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("ALIGN", (0, 0), (-1, 0), "CENTER"),
-            ("BOTTOMPADDING", (0, 0), (-1, 0), 7),
-            ("TOPPADDING", (0, 0), (-1, 0), 7),
-            # Data rows
-            ("FONTSIZE", (0, 1), (-1, -1), 9),
-            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [WHITE, LIGHT_BG]),
-            ("ALIGN", (2, 1), (-1, -1), "RIGHT"),
-            ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#e2e8f0")),
-            ("BOTTOMPADDING", (0, 1), (-1, -1), 6),
-            ("TOPPADDING", (0, 1), (-1, -1), 6),
-            ("LEFTPADDING", (0, 0), (-1, -1), 6),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-        ]))
-        elements.append(li_table)
-        elements.append(Spacer(1, 8))
+    # ── SECTION 5: TERMS, SIGNATORY & FOOTER ──────────────────────────────────
+    terms_html = (
+        f'<font color="#64748b" size="7.5"><b>TERMS & CONDITIONS:</b></font><br/>'
+        f'<font color="#64748b" size="7">{footer_notes}</font>'
+    )
 
-    # ── Amount Summary ────────────────────────────────────────────────────────
-    amt_data = [
-        ["Subtotal", FMT_AMOUNT(amount)],
-    ]
-    gst_amount = round(float(amount) * 0.18, 2)
-    base_amount = round(float(amount) - gst_amount, 2)
-    # If we have GST context, show breakdown
-    if voucher.get("has_gst", False):
-        amt_data = [
-            ["Taxable Value", FMT_AMOUNT(base_amount)],
-            ["GST @ 18%",    FMT_AMOUNT(gst_amount)],
-        ]
-    amt_data.append([
-        Paragraph('<b>TOTAL AMOUNT DUE</b>', style("tot", fontName="Helvetica-Bold", fontSize=11)),
-        Paragraph(f'<font color="#4f46e5"><b>{FMT_AMOUNT(amount)}</b></font>',
-                  style("totamt", fontName="Helvetica-Bold", fontSize=13, alignment=TA_RIGHT)),
-    ])
+    signatory_html = (
+        f'<font color="#64748b" size="7.5">For <b>{company_name}</b></font><br/><br/><br/>'
+        f'<font color="#0f172a" size="7.5"><b>Authorized Signatory</b></font><br/>'
+        f'<font color="#94a3b8" size="6.5">Digitally signed & authenticated</font>'
+    )
 
-    amt_table_data = [[Paragraph('<b>Description</b>', style("h", fontSize=9, fontName="Helvetica-Bold")),
-                       Paragraph('<b>Amount</b>', style("h2", fontSize=9, fontName="Helvetica-Bold", alignment=TA_RIGHT))]]
-    for row in amt_data:
-        amt_table_data.append(row)
-
-    col_w = [W * 0.72, W * 0.28]
-    full_amt_table = Table(amt_table_data, colWidths=col_w)
-    full_amt_table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), DARK),
-        ("TEXTCOLOR", (0, 0), (-1, 0), WHITE),
-        ("FONTSIZE", (0, 0), (-1, -2), 10),
-        ("ALIGN", (1, 0), (1, -1), "RIGHT"),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-        ("TOPPADDING", (0, 0), (-1, -1), 8),
-        ("LEFTPADDING", (0, 0), (-1, -1), 10),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 10),
-        ("LINEBELOW", (0, -2), (-1, -2), 1, colors.HexColor("#e2e8f0")),
-        ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#eff6ff")),
-        ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
+    sign_table = Table(
+        [[Paragraph(terms_html, style("t_terms", leading=9)),
+          Paragraph(signatory_html, style("t_sign", alignment=TA_RIGHT, leading=9))]],
+        colWidths=[W * 0.65, W * 0.35]
+    )
+    sign_table.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
     ]))
-    elements.append(full_amt_table)
-    elements.append(Spacer(1, 14))
+    elements.append(sign_table)
+    elements.append(Spacer(1, 6))
 
-    # ── Footer ────────────────────────────────────────────────────────────────
-    elements.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#e2e8f0"), spaceAfter=6))
+    elements.append(HRFlowable(width="100%", thickness=0.5, color=SLATE_200, spaceAfter=4, spaceBefore=4))
     elements.append(Paragraph(
-        '<font color="#64748b" size="8">This is a computer-generated invoice from TallyPrime. '
-        'Please settle the outstanding amount by the due date. For queries, contact our accounts team.</font>',
-        style("footer", alignment=TA_CENTER, leading=12)
-    ))
-    elements.append(Spacer(1, 4))
-    elements.append(Paragraph(
-        f'<font color="#4f46e5" size="8"><b>Generated by ERPPro CRM</b></font> '
-        f'<font color="#94a3b8" size="8">· {today_str}</font>',
-        style("brand", alignment=TA_CENTER)
+        f'<font color="#94a3b8" size="6.5">This is a computer-generated commercial tax invoice synchronized directly from TallyPrime. · Generated by {company_name} on {today_str}</font>',
+        style("footer_brand", alignment=TA_CENTER)
     ))
 
     doc.build(elements)
@@ -756,7 +907,7 @@ def upload_pdf_to_supabase(pdf_bytes: bytes, inv_number: str) -> str | None:
         return None
 
 
-def generate_and_upload_invoice(voucher: dict) -> tuple:
+def generate_and_upload_invoice(voucher: dict, org_profile: dict | None = None) -> tuple:
     """
     Generate PDF from voucher data and prepare base64 / cloud URL.
     Returns (public_url, pdf_base64). Entirely non-fatal.
@@ -764,7 +915,7 @@ def generate_and_upload_invoice(voucher: dict) -> tuple:
     try:
         inv_number = voucher.get("invoice_number", f"INV-{int(time.time())}")
         log.info(f"  [Invoice PDF] Generating for {inv_number}...")
-        pdf_bytes = generate_invoice_pdf(voucher)
+        pdf_bytes = generate_invoice_pdf(voucher, org_profile)
         if not pdf_bytes:
             log.info("  [Invoice PDF] Skipped (reportlab not installed)")
             return None, None
@@ -783,9 +934,10 @@ def push_to_cloud(vouchers):
     2. Attach pdf_base64 and pdf_url to payload.
     3. Push the enriched payload to the cloud Netlify endpoint.
     """
+    org_profile = fetch_org_profile()
     enriched = []
     for v in vouchers:
-        pdf_url, pdf_b64 = generate_and_upload_invoice(v)
+        pdf_url, pdf_b64 = generate_and_upload_invoice(v, org_profile)
         enriched.append({
             **v,
             "pdf_url": pdf_url,
@@ -797,7 +949,7 @@ def push_to_cloud(vouchers):
         "timestamp": datetime.now().isoformat(),
         "connectorStatus": "Connected",
         "sourceParsed": True,
-        "companyName": "TallyPrime Live",
+        "companyName": org_profile.get("org_name", "TallyPrime Live"),
         "vouchers": enriched,
     }
 

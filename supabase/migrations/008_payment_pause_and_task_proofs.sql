@@ -15,6 +15,7 @@ ALTER TABLE public.tasks ADD COLUMN IF NOT EXISTS approved_by TEXT;
 ALTER TABLE public.tasks ADD COLUMN IF NOT EXISTS revision_requested_at TIMESTAMPTZ;
 
 -- 2. Invoices columns for payment promise detection & reminder pause
+ALTER TABLE public.invoices ADD COLUMN IF NOT EXISTS organization_id UUID DEFAULT '00000000-0000-0000-0000-000000000001';
 ALTER TABLE public.invoices ADD COLUMN IF NOT EXISTS invoice_number TEXT;
 ALTER TABLE public.invoices ADD COLUMN IF NOT EXISTS pdf_url TEXT;
 ALTER TABLE public.invoices ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb;

@@ -146,36 +146,48 @@ exports.handler = async (event) => {
             .maybeSingle();
 
           let invErr = null;
+
+          async function executeInvoiceWrite(row, isUpdate, existingId) {
+            let attemptRow = { ...row };
+            let res = isUpdate
+              ? await supabase.from('invoices').update(attemptRow).eq('id', existingId)
+              : await supabase.from('invoices').insert([attemptRow]);
+
+            let writeError = res.error;
+
+            // Progressive fallback if schema cache lacks optional columns (organization_id, pdf_url, metadata)
+            if (writeError && writeError.message) {
+              const msg = writeError.message;
+              if (msg.includes('organization_id')) delete attemptRow.organization_id;
+              if (msg.includes('pdf_url')) delete attemptRow.pdf_url;
+              if (msg.includes('metadata')) delete attemptRow.metadata;
+
+              res = isUpdate
+                ? await supabase.from('invoices').update(attemptRow).eq('id', existingId)
+                : await supabase.from('invoices').insert([attemptRow]);
+
+              writeError = res.error;
+
+              if (writeError && writeError.message) {
+                if (writeError.message.includes('organization_id')) delete attemptRow.organization_id;
+                if (writeError.message.includes('pdf_url')) delete attemptRow.pdf_url;
+                if (writeError.message.includes('metadata')) delete attemptRow.metadata;
+
+                res = isUpdate
+                  ? await supabase.from('invoices').update(attemptRow).eq('id', existingId)
+                  : await supabase.from('invoices').insert([attemptRow]);
+
+                writeError = res.error;
+              }
+            }
+
+            return writeError;
+          }
+
           if (existing && existing.id) {
-            const { error: updateErr } = await supabase
-              .from('invoices')
-              .update(invoiceRow)
-              .eq('id', existing.id);
-            if (updateErr && updateErr.message && updateErr.message.includes('pdf_url')) {
-              // Fallback without pdf_url top-level column
-              delete invoiceRow.pdf_url;
-              const { error: fallbackErr } = await supabase
-                .from('invoices')
-                .update(invoiceRow)
-                .eq('id', existing.id);
-              invErr = fallbackErr;
-            } else {
-              invErr = updateErr;
-            }
+            invErr = await executeInvoiceWrite(invoiceRow, true, existing.id);
           } else {
-            const { error: insertErr } = await supabase
-              .from('invoices')
-              .insert([invoiceRow]);
-            if (insertErr && insertErr.message && insertErr.message.includes('pdf_url')) {
-              // Fallback without pdf_url top-level column
-              delete invoiceRow.pdf_url;
-              const { error: fallbackInsertErr } = await supabase
-                .from('invoices')
-                .insert([invoiceRow]);
-              invErr = fallbackInsertErr;
-            } else {
-              invErr = insertErr;
-            }
+            invErr = await executeInvoiceWrite(invoiceRow, false, null);
           }
 
           // Auto-upsert into ledger_mappings table for Ledger Mapping Master UI
