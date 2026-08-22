@@ -20,6 +20,7 @@ import json
 import os
 import sys
 import io
+import math
 import base64
 import hashlib
 from datetime import datetime, timedelta
@@ -30,9 +31,9 @@ try:
     from reportlab.lib.units import mm
     from reportlab.lib import colors
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable, Image
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable, Image, PageBreak
     from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
-    from reportlab.graphics.shapes import Drawing, Rect, String, Group
+    from reportlab.graphics.shapes import Drawing, Rect, String, Group, Polygon, Circle
     from reportlab.graphics.barcode.qr import QrCodeWidget
     REPORTLAB_AVAILABLE = True
 except ImportError:
@@ -698,10 +699,8 @@ def create_qr_code_flowable(text: str, size: float = 62) -> Drawing:
         d.add(Rect(0, 0, size, size, fillColor=colors.HexColor('#f8fafc'), strokeColor=colors.HexColor('#cbd5e1')))
         d.add(String(8, size / 2 - 4, "QR CODE", fontName="Helvetica-Bold", fontSize=8, fillColor=colors.HexColor('#64748b')))
         return d
-
-
-def create_logo_flowable(logo_val: str, comp_name: str = "SHOBHA READY PLAST") -> object:
-    """Create an Image flowable if a custom logo is uploaded, or draw a crisp gold crest emblem."""
+def create_logo_flowable(logo_val: str, comp_name: str = "SHOBHA READY PLAST", size: float = 68) -> object:
+    """Create an Image flowable if a custom logo is uploaded, or draw the exact sunburst rays + golden banner crest."""
     if logo_val:
         try:
             if "base64," in logo_val:
@@ -715,13 +714,33 @@ def create_logo_flowable(logo_val: str, comp_name: str = "SHOBHA READY PLAST") -
         except Exception as e:
             log.debug(f"Custom logo render notice: {e}")
 
-    # Crisp gold/orange emblem crest matching user sample
+    # Sunburst rays with golden banner matching user's exact SG logo
     initials = "".join([w[0] for w in comp_name.split()[:2]]).upper() or "SG"
-    d = Drawing(68, 68)
+    d = Drawing(size, size)
     g = Group()
-    # Sunburst golden shield background
-    g.add(Rect(4, 4, 60, 60, rx=12, ry=12, fillColor=colors.HexColor('#f59e0b'), strokeColor=colors.HexColor('#d97706'), strokeWidth=1))
-    g.add(String(16, 22, initials, fontName="Helvetica-Bold", fontSize=24, fillColor=colors.white))
+    cx = size / 2.0
+    cy = size * 0.35
+    num_rays = 13
+    ray_len = size * 0.48
+    for i in range(num_rays):
+        angle_deg = 180 - (i * (180.0 / (num_rays - 1)))
+        rad = math.radians(angle_deg)
+        rad_left = math.radians(angle_deg - 4.5)
+        rad_right = math.radians(angle_deg + 4.5)
+        x1 = cx + (ray_len * 0.40) * math.cos(rad_left)
+        y1 = cy + (ray_len * 0.40) * math.sin(rad_left)
+        x2 = cx + ray_len * math.cos(rad)
+        y2 = cy + ray_len * math.sin(rad)
+        x3 = cx + (ray_len * 0.40) * math.cos(rad_right)
+        y3 = cy + (ray_len * 0.40) * math.sin(rad_right)
+        g.add(Polygon([cx, cy, x1, y1, x2, y2, x3, y3], fillColor=colors.HexColor('#ea580c'), strokeColor=None))
+    g.add(Circle(cx, cy, size * 0.24, fillColor=colors.HexColor('#f59e0b'), strokeColor=colors.HexColor('#d97706'), strokeWidth=0.5))
+    bw = size * 0.72
+    bh = size * 0.34
+    bx = (size - bw) / 2.0
+    by = size * 0.08
+    g.add(Rect(bx, by, bw, bh, rx=4, ry=4, fillColor=colors.HexColor('#f59e0b'), strokeColor=colors.HexColor('#d97706'), strokeWidth=1))
+    g.add(String(bx + bw * 0.16, by + bh * 0.22, initials, fontName="Helvetica-Bold", fontSize=18, fillColor=colors.white))
     d.add(g)
     return d
 
@@ -778,19 +797,12 @@ def num_to_words_inr(num: float) -> str:
         return ""
 
 
-def generate_invoice_pdf(voucher: dict, org_profile: dict | None = None) -> bytes | None:
+def generate_invoice_pdf(voucher: dict, org_profile: dict | None = None, single_page: bool = False) -> bytes | None:
     """
-    Generate an exact GST Tax Invoice matching the official TallyPrime format:
-      - Top Brand Logo on left
-      - Centered Company Title & Factory / Office Addresses
-      - Tax Invoice & e-Invoice titles with dynamic QR Code on right
-      - IRN, Ack No, Ack Date metadata block
-      - Dual Billed To & Shipped To Box with State Code & GSTIN
-      - Itemized Goods Table with HSN/SAC, Quantity, Rate, Unit & Amount
-      - Tax Subtotals: OUTPUT IGST / CGST / SGST, Round Off
-      - Amount Chargeable in Words
-      - HSN/SAC Tax Schedule Breakdown Table
-      - Terms & Conditions, UDYAM REG, Declaration & Authorized Signatory
+    Generate the complete 2-Page Consignment PDF:
+      - PAGE 1: Pixel-Perfect GST Tax Invoice (Product bill with Sunburst Logo, IRN, Dual box, HSN & Bank details)
+      - PAGE 2: Pixel-Perfect Standard e-Way Bill (Truck conveyance & transport movement clearance)
+    Sent simultaneously to the customer / transporter over WhatsApp.
     """
     if not REPORTLAB_AVAILABLE:
         return None
@@ -799,21 +811,25 @@ def generate_invoice_pdf(voucher: dict, org_profile: dict | None = None) -> byte
         org_profile = get_matching_company_profile(v_comp)
 
     inv_number   = voucher.get("invoice_number", "SRP/0570/26-27")
+    inv_date     = voucher.get("invoice_date") or voucher.get("date") or "10-Aug-26"
     party        = voucher.get("ledger_name", "VAISHNAV CONSTRUCTION")
     amount       = float(voucher.get("amount", 74962.0))
-    due_date     = voucher.get("due_date", datetime.now().strftime("%Y-%m-%d"))
-    status       = voucher.get("status", "Pending")
-    phone        = voucher.get("phone", "+91 98765 00000")
     buyer_gstin  = voucher.get("gstin", "27ALPRP4116L1ZM")
-    voucher_type = voucher.get("voucher_type", "Sales Invoice")
-    line_items   = voucher.get("line_items", [])
+    hsn_code     = voucher.get("hsn_code", "25051011")
+    item_name    = voucher.get("item_name", "SAND")
+    truck_no     = voucher.get("truck_no", "MH04-4550")
+    challan_no   = voucher.get("challan_no", "10199")
+    challan_date = voucher.get("challan_date", "10-8-2026")
+    site         = voucher.get("site", "THANE")
+    quantity_str = voucher.get("quantity_str", "776 BAGS")
+    rate_str     = voucher.get("rate_str", "92.00")
+    unit_str     = voucher.get("unit", "BAGS")
+    eway_bill_no = voucher.get("eway_bill_no", "602165786131")
 
-    today_str = datetime.now().strftime("%d-%b-%y")
-    due_str   = due_date
-    try:
-        due_str = datetime.strptime(due_date, "%Y-%m-%d").strftime("%d-%b-%y")
-    except Exception:
-        pass
+    # Math calculations
+    taxable_val = float(voucher.get("taxable_amount") or (amount / 1.05))
+    igst_val    = float(voucher.get("igst_amount") or (amount - taxable_val))
+    round_off   = float(voucher.get("round_off", 0.40))
 
     # Business profile resolved dynamically per company
     company_name    = org_profile.get("company_name") or org_profile.get("org_name", "SHOBHA READY PLAST")
@@ -823,25 +839,19 @@ def generate_invoice_pdf(voucher: dict, org_profile: dict | None = None) -> byte
     company_email   = org_profile.get("admin_email", "shobhareadyplast@gmail.com")
     company_logo    = org_profile.get("company_logo_url", "")
     company_udyam   = org_profile.get("company_udyam_reg", "UDYAM-GJ-01-0012345")
-    bank_name       = org_profile.get("bank_name", "HDFC Bank Ltd.")
-    bank_account_no = org_profile.get("bank_account_no", "50200088991122")
-    bank_ifsc       = org_profile.get("bank_ifsc", "HDFC0001234")
-    upi_id          = org_profile.get("upi_id", "shobhareadyplast@okhdfcbank")
     jurisdiction    = org_profile.get("jurisdiction", "VALSAD / THANE")
     state_name      = org_profile.get("state_name", "Gujarat")
     state_code      = org_profile.get("state_code", "24")
     footer_notes    = org_profile.get("invoice_footer_notes", "Unpaid Invoice Will Be Charged 24% P.A. Interest After Given Credit Days. Goods Once Sold Will Not Be Taken Back.")
 
-    # Generate synthetic or live IRN & Ack
-    irn_hash = voucher.get("irn") or hashlib.sha256(f"{company_gstin}-{inv_number}-{amount}".encode()).hexdigest()
-    ack_no   = voucher.get("ack_no") or f"1626256{abs(hash(inv_number)) % 100000000:08d}"
-    ack_date = voucher.get("ack_date") or today_str
+    # Metadata & QR Code
+    irn_hash = voucher.get("irn") or "a45684e7e4ef9d7c7c9b29e3cf08d0919d11d1df3db16-13f50f26c11e0e32e6c"
+    ack_no   = voucher.get("ack_no") or "162625648066372"
+    ack_date = voucher.get("ack_date") or "19-Aug-26"
 
-    # QR Code content (e-Invoice verification payload or UPI payment string)
-    upi_id = org_profile.get("upi_id") or f"{company_phone.replace(' ', '').replace('+', '')}@upi"
+    upi_id = org_profile.get("upi_id") or "shobhareadyplast@okhdfcbank"
     qr_data = f"upi://pay?pa={upi_id}&pn={company_name}&am={amount:.2f}&cu=INR&tr={inv_number}"
 
-    # --- Build PDF in memory ---
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
         buf,
@@ -851,325 +861,417 @@ def generate_invoice_pdf(voucher: dict, org_profile: dict | None = None) -> byte
         topMargin=8 * mm,
         bottomMargin=8 * mm,
     )
-    W = A4[0] - 20 * mm  # 190mm usable width
-
-    # Colors
-    BLACK       = colors.black
-    DARK_TEXT   = colors.HexColor("#111827")
-    MUTED_TEXT  = colors.HexColor("#4b5563")
-    BORDER_CLR  = colors.HexColor("#374151")
-    LIGHT_BG    = colors.HexColor("#f9fafb")
-    WHITE       = colors.white
+    W = A4[0] - 20 * mm  # 190 mm
 
     styles = getSampleStyleSheet()
-
-    def style(name="Normal", **kwargs):
+    def st(name="Normal", **kwargs):
         return ParagraphStyle(name, parent=styles["Normal"], **kwargs)
 
     elements = []
 
-    # ── 1. TOP HEADER: BRAND LOGO (Left) | COMPANY TITLE (Center) | QR CODE (Right)
-    logo_flowable = create_logo_flowable(company_logo, company_name)
-    qr_flowable   = create_qr_code_flowable(qr_data, size=54)
+    # ═════════════════════════════════════════════════════════════════════════
+    # PAGE 1: GST TAX INVOICE (Exact Pixel-Perfect Client Layout)
+    # ═════════════════════════════════════════════════════════════════════════
 
-    center_header_html = (
-        f'<font size="16" color="#111827"><b>{company_name.upper()}</b></font><br/>'
-        f'<font size="7" color="#374151">{company_address}</font><br/>'
-        f'<font size="7" color="#374151"><b>Email/Contact:</b> {company_email} / {company_phone}</font><br/>'
-        f'<font size="7.5" color="#111827"><b>GSTIN:</b> {company_gstin} &nbsp;|&nbsp; <b>State:</b> {state_name} ({state_code})</font>'
+    # Top Company Header (Logo on Left, Center Details)
+    logo_f = create_logo_flowable(company_logo, company_name, size=68)
+    hdr_html = (
+        f'<font size="16" face="Times-Bold"><b>{company_name}</b></font><br/>'
+        f'<font size="7.2">Factory:Near Kolei Khadi Sarodhi, City/Village:Sarodhi, Valsad-396001, Gujrat.</font><br/>'
+        f'<font size="6.8">Corp.Office:-101, Shivam CHSL, Near Shivaji Mahajanwadi,Mira-Bhayandar Road,Mahajanwadi,Miraroad (E) Thane -401107</font><br/>'
+        f'<font size="6.8">Email/Contact:-{company_email} / {company_phone}, 8888888888</font><br/>'
+        f'<font size="7"><b>GSTIN:-{company_gstin} , State Name : {state_name}, Code : {state_code}</b></font>'
     )
+    hdr_p = Paragraph(hdr_html, st("hd", alignment=TA_CENTER, leading=9))
 
-    right_header_html = (
-        f'<div align="right">'
-        f'<font size="10" color="#111827"><b>Tax Invoice</b></font> &nbsp;&nbsp;&nbsp; '
-        f'<font size="9" color="#4b5563"><b>e-Invoice</b></font>'
-        f'</div>'
-    )
-
-    right_col_table = Table(
-        [[Paragraph(right_header_html, style("rh", alignment=TA_RIGHT, leading=12))],
-         [qr_flowable]],
-        colWidths=[52 * mm]
-    )
-    right_col_table.setStyle(TableStyle([
-        ("ALIGN", (0, 0), (-1, -1), "RIGHT"),
+    top_tbl = Table([[logo_f, hdr_p]], colWidths=[24 * mm, W - 24 * mm])
+    top_tbl.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("ALIGN", (0, 0), (0, 0), "CENTER"),
+        ("ALIGN", (1, 0), (1, 0), "CENTER"),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+    ]))
+    elements.append(top_tbl)
+    elements.append(Spacer(1, 2))
+
+    # Titles Row: Tax Invoice & e-Invoice + QR
+    qr_f = create_qr_code_flowable(qr_data, size=70)
+    irn_html = (
+        f'<b>Tax Invoice</b><br/><br/>'
+        f'<b>IRN &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;:</b> {irn_hash}<br/>'
+        f'<b>Ack No. &nbsp;&nbsp;:</b> {ack_no}<br/>'
+        f'<b>Ack Date :</b> {ack_date}'
+    )
+    irn_p = Paragraph(irn_html, st("irnp", fontSize=7.5, leading=10))
+    qr_col_p = Paragraph('<b>e-Invoice</b>', st("einv", alignment=TA_CENTER, fontSize=8.5))
+    qr_box = Table([[qr_col_p], [qr_f]], colWidths=[28 * mm])
+    qr_box.setStyle(TableStyle([
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
         ("TOPPADDING", (0, 0), (-1, -1), 0),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
         ("LEFTPADDING", (0, 0), (-1, -1), 0),
         ("RIGHTPADDING", (0, 0), (-1, -1), 0),
     ]))
 
-    top_banner_table = Table(
-        [[logo_flowable, Paragraph(center_header_html, style("ch", alignment=TA_CENTER, leading=11)), right_col_table]],
-        colWidths=[28 * mm, 110 * mm, 52 * mm]
-    )
-    top_banner_table.setStyle(TableStyle([
+    sub_hdr_tbl = Table([[irn_p, qr_box]], colWidths=[W - 28 * mm, 28 * mm])
+    sub_hdr_tbl.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("ALIGN", (0, 0), (0, 0), "LEFT"),
-        ("ALIGN", (1, 0), (1, 0), "CENTER"),
-        ("ALIGN", (2, 0), (2, 0), "RIGHT"),
-        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 1),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
         ("LEFTPADDING", (0, 0), (-1, -1), 0),
         ("RIGHTPADDING", (0, 0), (-1, -1), 0),
     ]))
-    elements.append(top_banner_table)
-    elements.append(Spacer(1, 4))
+    elements.append(sub_hdr_tbl)
+    elements.append(Spacer(1, 2))
 
-    # ── 2. IRN & ACKNOWLEDGEMENT DETAIL STRIP ─────────────────────────────────
-    irn_html = (
-        f'<font size="7" color="#111827"><b>IRN :</b> {irn_hash}</font><br/>'
-        f'<font size="7" color="#111827"><b>Ack No. :</b> {ack_no} &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <b>Ack Date :</b> {ack_date}</font>'
+    # Dual Box: Buyer (Left) & Consignee (Right)
+    b_col_w = W / 2.0
+    buyer_text = (
+        f'<font size="7.5" color="#4b5563">Details of Buyer / Billed To</font><br/>'
+        f'<font size="9.5"><b>{party}</b></font><br/>'
+        f'<font size="8">DEU APARTMENT ,</font><br/>'
+        f'<font size="8">SHOP NO 4, KOLShet UPPER VILLEGE, THANE WEST</font><br/>'
+        f'<font size="8"><b>State Name : Maharashtra , Code : 27</b></font><br/>'
+        f'<font size="8"><b>GSTIN/UIN : {buyer_gstin}</b></font>'
     )
-    irn_table = Table([[Paragraph(irn_html, style("irn", leading=9))]], colWidths=[W])
-    irn_table.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("BOX", (0, 0), (-1, -1), 0.5, BORDER_CLR),
-        ("TOPPADDING", (0, 0), (-1, -1), 3),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-        ("LEFTPADDING", (0, 0), (-1, -1), 5),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-        ("BACKGROUND", (0, 0), (-1, -1), LIGHT_BG),
+    consignee_text = (
+        f'<font size="7.5" color="#4b5563">Detail of Consignee / Shipped To</font><br/>'
+        f'<font size="9.5"><b>{party}</b></font><br/>'
+        f'<font size="8">DEU APARTMENT ,</font><br/>'
+        f'<font size="8">SHOP NO 4, KOLShet UPPER VILLEGE, THANE WEST</font><br/>'
+        f'<font size="8"><b>State Name : Maharashtra , Code : 27</b></font><br/>'
+        f'<font size="8"><b>GSTIN/UIN : {buyer_gstin}</b></font>'
+    )
+
+    buyer_sub_tbl = Table([
+        [Paragraph('ORDER NO.', st("st1", fontSize=7)), Paragraph('Dated', st("st1", fontSize=7))],
+        [Paragraph('Dispatched through', st("st1", fontSize=7)), Paragraph('Destination', st("st1", fontSize=7))],
+        [Paragraph('Reference No. & Date.', st("st1", fontSize=7)), Paragraph('Other References', st("st1", fontSize=7))],
+    ], colWidths=[b_col_w * 0.5, b_col_w * 0.5])
+    buyer_sub_tbl.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+        ("TOPPADDING", (0, 0), (-1, -1), 2),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
     ]))
-    elements.append(irn_table)
 
-    # ── 3. DUAL BOX: BUYER / BILLED TO & CONSIGNEE / SHIPPED TO ───────────────
-    buyer_box_html = (
-        f'<font size="7.5" color="#4b5563"><b>Details of Buyer / Billed To</b></font><br/>'
-        f'<font size="9.5" color="#111827"><b>{party}</b></font><br/>'
-        f'<font size="7" color="#374151">DEU APARTMENT ,<br/>'
-        f'SHOP NO 4, KHET UPPER VILLEGE, THANE WEST<br/>'
-        f'<b>State Name :</b> Maharashtra , <b>Code :</b> 27<br/>'
-        f'<b>GSTIN/UIN :</b> {buyer_gstin}<br/>'
-        f'<b>ORDER NO. :</b> PO-9912 &nbsp;&nbsp;&nbsp;&nbsp; <b>Dated :</b> {today_str}<br/>'
-        f'<b>Dispatched through :</b> Road Transport &nbsp;&nbsp;&nbsp;&nbsp; <b>Destination :</b> THANE<br/>'
-        f'<b>Reference No. & Date :</b> REF-{abs(hash(inv_number)) % 10000}</font>'
-    )
+    consignee_sub_tbl = Table([
+        [Paragraph(f'BILL NO.<br/><b>{inv_number}</b>', st("st1", fontSize=7, leading=8)),
+         Paragraph(f'Dated<br/><b>{inv_date}</b>', st("st1", fontSize=7, leading=8))],
+        [Paragraph('Delivery Note', st("st1", fontSize=7)), Paragraph('Delivery Note Date', st("st1", fontSize=7))],
+        [Paragraph('Dispatch Doc No.', st("st1", fontSize=7)), Paragraph('CREDIT DAYS', st("st1", fontSize=7))],
+    ], colWidths=[b_col_w * 0.5, b_col_w * 0.5])
+    consignee_sub_tbl.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+        ("TOPPADDING", (0, 0), (-1, -1), 2),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+    ]))
 
-    consignee_box_html = (
-        f'<font size="7.5" color="#4b5563"><b>Detail of Consignee / Shipped To</b></font><br/>'
-        f'<font size="9.5" color="#111827"><b>{party}</b></font><br/>'
-        f'<font size="7" color="#374151">DEU APARTMENT ,<br/>'
-        f'SHOP NO 4, KHET UPPER VILLEGE, THANE WEST<br/>'
-        f'<b>State Name :</b> Maharashtra , <b>Code :</b> 27<br/>'
-        f'<b>GSTIN/UIN :</b> {buyer_gstin}<br/>'
-        f'<b>BILL NO. :</b> <font color="#111827"><b>{inv_number}</b></font> &nbsp;&nbsp;&nbsp;&nbsp; <b>Dated :</b> {due_str}<br/>'
-        f'<b>Delivery Note :</b> DN-0570 &nbsp;&nbsp;&nbsp;&nbsp; <b>Delivery Note Date :</b> {today_str}<br/>'
-        f'<b>Dispatch Doc No. :</b> DOC-{abs(hash(inv_number)) % 9999} &nbsp;&nbsp;&nbsp;&nbsp; <b>CREDIT DAYS :</b> 30 Days</font>'
-    )
+    left_box = [Paragraph(buyer_text, st("bt", leading=9.5)), Spacer(1, 2), buyer_sub_tbl]
+    right_box = [Paragraph(consignee_text, st("ct", leading=9.5)), Spacer(1, 2), consignee_sub_tbl]
 
-    dual_box_table = Table(
-        [[Paragraph(buyer_box_html, style("bb", leading=9)),
-          Paragraph(consignee_box_html, style("cb", leading=9))]],
-        colWidths=[W * 0.50, W * 0.50]
-    )
-    dual_box_table.setStyle(TableStyle([
+    dual_box_tbl = Table([[left_box, right_box]], colWidths=[b_col_w, b_col_w])
+    dual_box_tbl.setStyle(TableStyle([
+        ("BOX", (0, 0), (-1, -1), 0.5, colors.black),
+        ("LINEBEFORE", (1, 0), (1, -1), 0.5, colors.black),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("BOX", (0, 0), (-1, -1), 0.5, BORDER_CLR),
-        ("INNERGRID", (0, 0), (-1, -1), 0.5, BORDER_CLR),
-        ("TOPPADDING", (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        ("LEFTPADDING", (0, 0), (-1, -1), 5),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-    ]))
-    elements.append(dual_box_table)
-
-    # ── 4. GST ITEM PARTICULARS TABLE ─────────────────────────────────────────
-    # Subtotal and tax calculations
-    taxable_val = round(amount / 1.05, 2)  # 5% IGST standard for materials or 18%
-    igst_val    = round(amount - taxable_val, 2)
-    round_off   = round(amount - (taxable_val + igst_val), 2)
-
-    item_headers = [
-        Paragraph('<b>Sl<br/>No.</b>', style("th", alignment=TA_CENTER, fontSize=7, leading=8)),
-        Paragraph('<b>Description of Goods</b>', style("th", alignment=TA_LEFT, fontSize=7, leading=8)),
-        Paragraph('<b>HSN/SAC</b>', style("th", alignment=TA_CENTER, fontSize=7, leading=8)),
-        Paragraph('<b>Truck<br/>No.</b>', style("th", alignment=TA_CENTER, fontSize=7, leading=8)),
-        Paragraph('<b>Challan<br/>No.</b>', style("th", alignment=TA_CENTER, fontSize=7, leading=8)),
-        Paragraph('<b>Challan<br/>Date</b>', style("th", alignment=TA_CENTER, fontSize=7, leading=8)),
-        Paragraph('<b>Site</b>', style("th", alignment=TA_CENTER, fontSize=7, leading=8)),
-        Paragraph('<b>Quantity</b>', style("th", alignment=TA_CENTER, fontSize=7, leading=8)),
-        Paragraph('<b>Rate</b>', style("th", alignment=TA_RIGHT, fontSize=7, leading=8)),
-        Paragraph('<b>per</b>', style("th", alignment=TA_CENTER, fontSize=7, leading=8)),
-        Paragraph('<b>Amount</b>', style("th", alignment=TA_RIGHT, fontSize=7, leading=8)),
-    ]
-
-    item_rows = [item_headers]
-
-    if line_items:
-        for idx, itm in enumerate(line_items, 1):
-            item_rows.append([
-                Paragraph(str(idx), style("td", alignment=TA_CENTER, fontSize=7.5)),
-                Paragraph(f"<b>{itm.get('name', 'SAND')}</b>", style("td", fontSize=7.5)),
-                Paragraph(str(itm.get("hsn", "25051011")), style("td", alignment=TA_CENTER, fontSize=7.5)),
-                Paragraph("MH04-1234", style("td", alignment=TA_CENTER, fontSize=7)),
-                Paragraph("10199", style("td", alignment=TA_CENTER, fontSize=7)),
-                Paragraph(today_str, style("td", alignment=TA_CENTER, fontSize=7)),
-                Paragraph("THANE", style("td", alignment=TA_CENTER, fontSize=7)),
-                Paragraph(f"<b>{itm.get('qty', '776 BAGS')}</b>", style("td", alignment=TA_CENTER, fontSize=7.5)),
-                Paragraph(f"{float(itm.get('rate', 92.0)):,.2f}", style("td", alignment=TA_RIGHT, fontSize=7.5)),
-                Paragraph("BAGS", style("td", alignment=TA_CENTER, fontSize=7)),
-                Paragraph(f"<b>{float(itm.get('amount', taxable_val)):,.2f}</b>", style("td", alignment=TA_RIGHT, fontSize=7.5)),
-            ])
-    else:
-        item_rows.append([
-            Paragraph("1", style("td", alignment=TA_CENTER, fontSize=7.5)),
-            Paragraph(f"<b>SAND & READY PLAST MATERIAL</b>", style("td", fontSize=7.5)),
-            Paragraph("25051011", style("td", alignment=TA_CENTER, fontSize=7.5)),
-            Paragraph("MH04-4550", style("td", alignment=TA_CENTER, fontSize=7)),
-            Paragraph("10199", style("td", alignment=TA_CENTER, fontSize=7)),
-            Paragraph(today_str, style("td", alignment=TA_CENTER, fontSize=7)),
-            Paragraph("THANE", style("td", alignment=TA_CENTER, fontSize=7)),
-            Paragraph("<b>776 BAGS</b>", style("td", alignment=TA_CENTER, fontSize=7.5)),
-            Paragraph("92.00", style("td", alignment=TA_RIGHT, fontSize=7.5)),
-            Paragraph("BAGS", style("td", alignment=TA_CENTER, fontSize=7)),
-            Paragraph(f"<b>{taxable_val:,.2f}</b>", style("td", alignment=TA_RIGHT, fontSize=7.5)),
-        ])
-
-    # Tax Subtotal rows
-    item_rows.append([
-        "", Paragraph("<b>OUTPUT IGST (5%)</b>", style("td", fontSize=7.5)), "", "", "", "", "", "", "", "",
-        Paragraph(f"{igst_val:,.2f}", style("td", alignment=TA_RIGHT, fontSize=7.5))
-    ])
-    if abs(round_off) > 0:
-        item_rows.append([
-            "", Paragraph("<b>ROUND OFF</b>", style("td", fontSize=7.5)), "", "", "", "", "", "", "", "",
-            Paragraph(f"{round_off:,.2f}", style("td", alignment=TA_RIGHT, fontSize=7.5))
-        ])
-
-    # Total Row
-    item_rows.append([
-        "", Paragraph("<b>Total</b>", style("td", fontSize=8)), "", "", "", "", "",
-        Paragraph("<b>776 BAGS</b>", style("td", alignment=TA_CENTER, fontSize=8)), "", "",
-        Paragraph(f"<b>\u20b9 {amount:,.2f}</b>", style("td", alignment=TA_RIGHT, fontSize=8.5, fontName="Helvetica-Bold"))
-    ])
-
-    col_w = [8 * mm, 42 * mm, 16 * mm, 16 * mm, 14 * mm, 16 * mm, 14 * mm, 18 * mm, 14 * mm, 10 * mm, 22 * mm]
-    item_table = Table(item_rows, colWidths=col_w)
-    item_table.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("BOX", (0, 0), (-1, -1), 0.5, BORDER_CLR),
-        ("INNERGRID", (0, 0), (-1, 0), 0.5, BORDER_CLR),
-        ("BACKGROUND", (0, 0), (-1, 0), LIGHT_BG),
-        ("LINEBELOW", (0, -1), (-1, -1), 0.5, BORDER_CLR),
-        ("LINEABOVE", (0, -1), (-1, -1), 0.5, BORDER_CLR),
-        ("TOPPADDING", (0, 0), (-1, -1), 2.5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5),
-        ("LEFTPADDING", (0, 0), (-1, -1), 2),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 2),
-    ]))
-    elements.append(item_table)
-
-    # ── 5. AMOUNT IN WORDS & E. & O.E ─────────────────────────────────────────
-    words_val = num_to_words_inr(amount)
-    words_html = f'<font size="7.5">Amount Chargeable (in words):<br/><b>{words_val}</b></font>'
-    words_table = Table(
-        [[Paragraph(words_html, style("w", leading=10)),
-          Paragraph('<font size="7.5"><b>E. & O.E</b></font>', style("e", alignment=TA_RIGHT))]],
-        colWidths=[W * 0.85, W * 0.15]
-    )
-    words_table.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("BOX", (0, 0), (-1, -1), 0.5, BORDER_CLR),
         ("TOPPADDING", (0, 0), (-1, -1), 3),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-        ("LEFTPADDING", (0, 0), (-1, -1), 5),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
     ]))
-    elements.append(words_table)
+    elements.append(dual_box_tbl)
 
-    # ── 6. HSN/SAC TAX SCHEDULE BREAKDOWN TABLE ───────────────────────────────
-    tax_sched_headers = [
-        Paragraph('<b>HSN/SAC</b>', style("th", alignment=TA_CENTER, fontSize=7)),
-        Paragraph('<b>Taxable Value</b>', style("th", alignment=TA_RIGHT, fontSize=7)),
-        Paragraph('<b>IGST Rate</b>', style("th", alignment=TA_CENTER, fontSize=7)),
-        Paragraph('<b>IGST Amount</b>', style("th", alignment=TA_RIGHT, fontSize=7)),
-        Paragraph('<b>Total Tax Amount</b>', style("th", alignment=TA_RIGHT, fontSize=7)),
+    # Itemized Goods Table
+    it_w = [26, 88, 48, 56, 38, 52, 40, 52, 34, 36, 68]
+    it_headers = [
+        Paragraph('<b>Sl No.</b>', st("thc", alignment=TA_CENTER, fontSize=6.5, leading=7)),
+        Paragraph('<b>Description of Goods</b>', st("thc", alignment=TA_LEFT, fontSize=7, leading=8)),
+        Paragraph('<b>HSN/SAC</b>', st("thc", alignment=TA_CENTER, fontSize=7, leading=8)),
+        Paragraph('<b>Truck<br/>No.</b>', st("thc", alignment=TA_CENTER, fontSize=7, leading=8)),
+        Paragraph('<b>Challan<br/>No.</b>', st("thc", alignment=TA_CENTER, fontSize=7, leading=8)),
+        Paragraph('<b>Challan<br/>Date</b>', st("thc", alignment=TA_CENTER, fontSize=7, leading=8)),
+        Paragraph('<b>Site</b>', st("thc", alignment=TA_CENTER, fontSize=7, leading=8)),
+        Paragraph('<b>Quantity</b>', st("thc", alignment=TA_CENTER, fontSize=7, leading=8)),
+        Paragraph('<b>Rate</b>', st("thc", alignment=TA_CENTER, fontSize=7, leading=8)),
+        Paragraph('<b>per</b>', st("thc", alignment=TA_CENTER, fontSize=7, leading=8)),
+        Paragraph('<b>Amount</b>', st("thc", alignment=TA_CENTER, fontSize=7, leading=8)),
     ]
 
-    tax_sched_rows = [
-        tax_sched_headers,
-        [
-            Paragraph("25051011", style("td", alignment=TA_CENTER, fontSize=7)),
-            Paragraph(f"{taxable_val:,.2f}", style("td", alignment=TA_RIGHT, fontSize=7)),
-            Paragraph("5%", style("td", alignment=TA_CENTER, fontSize=7)),
-            Paragraph(f"{igst_val:,.2f}", style("td", alignment=TA_RIGHT, fontSize=7)),
-            Paragraph(f"{igst_val:,.2f}", style("td", alignment=TA_RIGHT, fontSize=7)),
-        ],
-        [
-            Paragraph("<b>Total</b>", style("td", alignment=TA_CENTER, fontSize=7.5)),
-            Paragraph(f"<b>{taxable_val:,.2f}</b>", style("td", alignment=TA_RIGHT, fontSize=7.5)),
-            Paragraph("", style("td", fontSize=7)),
-            Paragraph(f"<b>{igst_val:,.2f}</b>", style("td", alignment=TA_RIGHT, fontSize=7.5)),
-            Paragraph(f"<b>{igst_val:,.2f}</b>", style("td", alignment=TA_RIGHT, fontSize=7.5)),
-        ]
+    it_row_1 = [
+        Paragraph('1', st("tc", alignment=TA_CENTER, fontSize=7.5)),
+        Paragraph(f'<b>{item_name}</b>', st("tc", fontSize=7.5)),
+        Paragraph(hsn_code, st("tc", alignment=TA_CENTER, fontSize=7.5)),
+        Paragraph(truck_no, st("tc", alignment=TA_CENTER, fontSize=7.5)),
+        Paragraph(challan_no, st("tc", alignment=TA_CENTER, fontSize=7.5)),
+        Paragraph(challan_date, st("tc", alignment=TA_CENTER, fontSize=7.5)),
+        Paragraph(site, st("tc", alignment=TA_CENTER, fontSize=7.5)),
+        Paragraph(f'<b>{quantity_str}</b>', st("tc", alignment=TA_CENTER, fontSize=7.5)),
+        Paragraph(rate_str, st("tc", alignment=TA_RIGHT, fontSize=7.5)),
+        Paragraph(unit_str, st("tc", alignment=TA_CENTER, fontSize=7.5)),
+        Paragraph(f'<b>{taxable_val:,.2f}</b>', st("tc", alignment=TA_RIGHT, fontSize=7.5)),
     ]
 
-    sched_table = Table(tax_sched_rows, colWidths=[W * 0.22, W * 0.20, W * 0.16, W * 0.20, W * 0.22])
-    sched_table.setStyle(TableStyle([
+    igst_p = Paragraph('<b>OUTPUT IGST<br/>ROUND OFF</b>', st("txl", alignment=TA_RIGHT, fontSize=7.5, leading=10))
+    igst_v = Paragraph(f'<b>{igst_val:,.2f}</b><br/>{round_off:,.2f}', st("txv", alignment=TA_RIGHT, fontSize=7.5, leading=10))
+    it_mid_row = ["", igst_p, "", "", "", "", "", "", "", "", igst_v]
+
+    total_row = [
+        "", Paragraph('<b>Total</b>', st("tot", alignment=TA_RIGHT, fontSize=8)),
+        "", "", "", "", "",
+        Paragraph(f'<b>{quantity_str}</b>', st("tot", alignment=TA_CENTER, fontSize=8)),
+        "", "",
+        Paragraph(f'<b>{amount:,.2f}</b>', st("tot", alignment=TA_RIGHT, fontSize=8.5)),
+    ]
+
+    it_tbl = Table([it_headers, it_row_1, it_mid_row, total_row], colWidths=it_w)
+    it_tbl.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("BOX", (0, 0), (-1, -1), 0.5, BORDER_CLR),
-        ("INNERGRID", (0, 0), (-1, -1), 0.5, BORDER_CLR),
-        ("BACKGROUND", (0, 0), (-1, 0), LIGHT_BG),
+        ("TOPPADDING", (0, 0), (-1, -1), 2),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+        ("SPAN", (1, 2), (9, 2)),
+    ]))
+    elements.append(it_tbl)
+
+    # Words strip
+    amt_words = num_to_words_inr(amount)
+    w_tbl = Table([
+        [Paragraph('Amount Chargeable (in words):', st("w1", fontSize=7)), Paragraph('<b>E. & O.E</b>', st("eoe", alignment=TA_RIGHT, fontSize=7.5))],
+        [Paragraph(f'<b>{amt_words}</b>', st("w2", fontSize=8)), ""]
+    ], colWidths=[W * 0.8, W * 0.2])
+    w_tbl.setStyle(TableStyle([
+        ("BOX", (0, 0), (-1, -1), 0.5, colors.black),
+        ("SPAN", (0, 1), (1, 1)),
+        ("TOPPADDING", (0, 0), (-1, -1), 1.5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 1.5),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    elements.append(w_tbl)
+
+    # HSN Schedule Table
+    hsn_w = [W * 0.35, W * 0.16, W * 0.16, W * 0.16, W * 0.17]
+    hsn_tbl = Table([
+        [Paragraph('<b>HSN/SAC</b>', st("ht", fontSize=7, alignment=TA_CENTER)),
+         Paragraph('<b>Taxable<br/>Value</b>', st("ht", fontSize=7, alignment=TA_RIGHT, leading=8)),
+         Paragraph('<b>IGST<br/>Rate</b>', st("ht", fontSize=7, alignment=TA_CENTER, leading=8)),
+         Paragraph('<b>IGST<br/>Amount</b>', st("ht", fontSize=7, alignment=TA_RIGHT, leading=8)),
+         Paragraph('<b>Total<br/>Tax Amount</b>', st("ht", fontSize=7, alignment=TA_RIGHT, leading=8))],
+        [Paragraph(hsn_code, st("ht", fontSize=7.5, alignment=TA_LEFT)),
+         Paragraph(f'{taxable_val:,.2f}', st("ht", fontSize=7.5, alignment=TA_RIGHT)),
+         Paragraph('5%', st("ht", fontSize=7.5, alignment=TA_CENTER)),
+         Paragraph(f'{igst_val:,.2f}', st("ht", fontSize=7.5, alignment=TA_RIGHT)),
+         Paragraph(f'{igst_val:,.2f}', st("ht", fontSize=7.5, alignment=TA_RIGHT))],
+        [Paragraph('<b>Total</b>', st("ht", fontSize=7.5, alignment=TA_RIGHT)),
+         Paragraph(f'<b>{taxable_val:,.2f}</b>', st("ht", fontSize=7.5, alignment=TA_RIGHT)),
+         "",
+         Paragraph(f'<b>{igst_val:,.2f}</b>', st("ht", fontSize=7.5, alignment=TA_RIGHT)),
+         Paragraph(f'<b>{igst_val:,.2f}</b>', st("ht", fontSize=7.5, alignment=TA_RIGHT))]
+    ], colWidths=hsn_w)
+    hsn_tbl.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+        ("TOPPADDING", (0, 0), (-1, -1), 1.5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 1.5),
+    ]))
+    elements.append(hsn_tbl)
+
+    # Tax Amount in words
+    tax_words = num_to_words_inr(igst_val)
+    tax_w_p = Paragraph(f'Tax Amount (in words) : <b>{tax_words}</b>', st("tw", fontSize=7.5))
+    tax_w_tbl = Table([[tax_w_p]], colWidths=[W])
+    tax_w_tbl.setStyle(TableStyle([
+        ("BOX", (0, 0), (-1, -1), 0.5, colors.black),
+        ("TOPPADDING", (0, 0), (-1, -1), 2),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    elements.append(tax_w_tbl)
+
+    # Bottom Terms & Signatures Box
+    terms_html = (
+        f'<b>Company\'s GSTIN/UIN : {company_gstin}</b><br/>'
+        f'<b>State &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: {state_name} , Code : {state_code}</b><br/>'
+        f'<b>TERMS & CONDITIONS</b><br/>'
+        f'• {footer_notes}<br/>'
+        f'• All Cheque and Remittance To Be Made / Payable to "{company_name}"<br/>'
+        f'<b>UDYAM REG.:-</b> {company_udyam}'
+    )
+    terms_p = Paragraph(terms_html, st("tmp", fontSize=7, leading=8.5))
+
+    decl_html = (
+        f'<u>Declaration :</u><br/>'
+        f'We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.'
+    )
+    decl_p = Paragraph(decl_html, st("dcp", fontSize=7, leading=8.5))
+
+    sign_row_tbl = Table([
+        [Paragraph('<b>Customer Sign</b>', st("cs", fontSize=7.5)), Paragraph(f'For <b>{company_name}</b>', st("fs", alignment=TA_RIGHT, fontSize=7.5))],
+        ["", Paragraph('<br/><br/><b>Authorised Signatory</b>', st("as", alignment=TA_RIGHT, fontSize=7.5))]
+    ], colWidths=[W * 0.25, W * 0.25])
+    sign_row_tbl.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), 1),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
+    ]))
+
+    right_sign_box = [decl_p, Spacer(1, 4), sign_row_tbl]
+    btm_tbl = Table([[terms_p, right_sign_box]], colWidths=[W * 0.5, W * 0.5])
+    btm_tbl.setStyle(TableStyle([
+        ("BOX", (0, 0), (-1, -1), 0.5, colors.black),
+        ("LINEBEFORE", (1, 0), (1, -1), 0.5, colors.black),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("TOPPADDING", (0, 0), (-1, -1), 2),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
         ("LEFTPADDING", (0, 0), (-1, -1), 4),
         ("RIGHTPADDING", (0, 0), (-1, -1), 4),
     ]))
-    elements.append(sched_table)
+    elements.append(btm_tbl)
 
-    # Tax Amount in Words
-    tax_words = num_to_words_inr(igst_val)
-    tax_words_html = f'<font size="7">Tax Amount (in words) : <b>{tax_words}</b></font>'
-    tw_table = Table([[Paragraph(tax_words_html, style("tw", leading=8))]], colWidths=[W])
-    tw_table.setStyle(TableStyle([
-        ("BOX", (0, 0), (-1, -1), 0.5, BORDER_CLR),
-        ("TOPPADDING", (0, 0), (-1, -1), 2),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
-        ("LEFTPADDING", (0, 0), (-1, -1), 5),
-    ]))
-    elements.append(tw_table)
-
-    # ── 7. TERMS & CONDITIONS, DECLARATION & AUTHORIZED SIGNATORY ─────────────
-    left_bottom_html = (
-        f'<font size="7" color="#111827"><b>Company\'s GSTIN/UIN :</b> {company_gstin} &nbsp;|&nbsp; <b>State :</b> {state_name} , <b>Code :</b> {state_code}</font><br/>'
-        f'<font size="6.5" color="#111827"><b>TERMS & CONDITIONS</b><br/>'
-        f'• {footer_notes}<br/>'
-        f'• All Cheque and Remittance To Be Made / Payable to <b>"{company_name}"</b><br/>'
-        f'• <b>UDYAM REG.:-</b> {company_udyam}</font>'
+    # Page 1 Footer
+    p1_foot = (
+        f'<font size="7" color="#4b5563">SUBJECT TO {jurisdiction} JURISDICTION<br/>This is a Computer Generated Invoice</font><br/>'
+        f'<font size="7">1</font>'
     )
+    elements.append(Spacer(1, 2))
+    elements.append(Paragraph(p1_foot, st("ft1", alignment=TA_CENTER, leading=8)))
 
-    right_bottom_html = (
-        f'<font size="6.5" color="#374151"><b>Declaration:</b><br/>'
-        f'We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.</font><br/><br/>'
-        f'<table width="100%">'
-        f'<tr>'
-        f'<td align="left"><font size="7"><b>Customer Sign</b></font></td>'
-        f'<td align="right"><font size="7">For <b>{company_name}</b><br/><br/><br/><b>Authorised Signatory</b></font></td>'
-        f'</tr>'
-        f'</table>'
-    )
+    # If single_page requested, don't append Page 2
+    if not single_page:
+        # ═════════════════════════════════════════════════════════════════════════
+        # PAGE 2: STANDARD E-WAY BILL (Truck Conveyance & Goods Movement Clearance)
+        # ═════════════════════════════════════════════════════════════════════════
+        elements.append(PageBreak())
 
-    bottom_table = Table(
-        [[Paragraph(left_bottom_html, style("lbl", leading=8)),
-          Paragraph(right_bottom_html, style("rbl", leading=8))]],
-        colWidths=[W * 0.55, W * 0.45]
-    )
-    bottom_table.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("BOX", (0, 0), (-1, -1), 0.5, BORDER_CLR),
-        ("INNERGRID", (0, 0), (-1, -1), 0.5, BORDER_CLR),
-        ("TOPPADDING", (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        ("LEFTPADDING", (0, 0), (-1, -1), 5),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-    ]))
-    elements.append(bottom_table)
+        ew_qr = create_qr_code_flowable(f"https://ewaybillgst.gov.in/view/{eway_bill_no}", size=60)
+        ew_top_r = Table([
+            [Paragraph('<b>e-Way Bill</b>', st("ewtr", alignment=TA_RIGHT, fontSize=8.5))],
+            [ew_qr]
+        ], colWidths=[28 * mm])
+        ew_top_r.setStyle(TableStyle([
+            ("ALIGN", (0, 0), (-1, -1), "RIGHT"),
+            ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+        ]))
 
-    # ── 8. JURISDICTION FOOTER ────────────────────────────────────────────────
-    footer_text = f'<font size="6.5" color="#4b5563"><b>SUBJECT TO {jurisdiction} JURISDICTION</b><br/>This is a Computer Generated Invoice</font>'
-    elements.append(Paragraph(footer_text, style("ftr", alignment=TA_CENTER, leading=8)))
+        ew_top_tbl = Table([
+            [Paragraph('<b>e-Way Bill</b>', st("ewtitle", alignment=TA_CENTER, fontSize=12)), ew_top_r]
+        ], colWidths=[W - 28 * mm, 28 * mm])
+        ew_top_tbl.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+        ]))
+        elements.append(ew_top_tbl)
+        elements.append(Spacer(1, 4))
+
+        # Metadata
+        ew_meta_html = (
+            f'<b>Doc No. &nbsp;:</b> Tax Invoice - {inv_number}<br/>'
+            f'<b>Date &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;:</b> {inv_date}<br/><br/>'
+            f'<b>IRN &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;:</b> {irn_hash.replace("-", "")}<br/>'
+            f'<b>Ack No. &nbsp;:</b> {ack_no}<br/>'
+            f'<b>Ack Date :</b> {ack_date}'
+        )
+        elements.append(Paragraph(ew_meta_html, st("ewmeta", fontSize=8, leading=10.5)))
+        elements.append(Spacer(1, 6))
+
+        # 1. e-Way Bill Details
+        elements.append(Paragraph('<b>1. e-Way Bill Details</b>', st("s1", fontSize=8.5, fontName="Helvetica-Bold")))
+        ew_d_tbl = Table([
+            [Paragraph(f'e-Way Bill No.: <b>{eway_bill_no}</b>', st("dt", fontSize=7.5)),
+             Paragraph('Mode : <b>1 - Road</b>', st("dt", fontSize=7.5)),
+             Paragraph(f'Generated Date : <b>{ack_date} 10:30 AM</b>', st("dt", fontSize=7.5))],
+            [Paragraph(f'Generated By : <b>{company_gstin}</b>', st("dt", fontSize=7.5)),
+             Paragraph('Approx Distance : <b>176 KM</b>', st("dt", fontSize=7.5)),
+             Paragraph('Valid Upto : <b>20-Aug-26 11:59 PM</b>', st("dt", fontSize=7.5))],
+            [Paragraph('Supply Type : <b>Outward-Supply</b>', st("dt", fontSize=7.5)),
+             Paragraph('Transaction Type: <b>Regular</b>', st("dt", fontSize=7.5)),
+             Paragraph('', st("dt", fontSize=7.5))]
+        ], colWidths=[W * 0.38, W * 0.31, W * 0.31])
+        ew_d_tbl.setStyle(TableStyle([
+            ("TOPPADDING", (0, 0), (-1, -1), 2),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+        ]))
+        elements.append(ew_d_tbl)
+        elements.append(Spacer(1, 6))
+
+        # 2. Address Details
+        elements.append(Paragraph('<b>2. Address Details</b>', st("s2", fontSize=8.5, fontName="Helvetica-Bold")))
+        ew_addr_tbl = Table([
+            [Paragraph('<b>From</b>', st("at", fontSize=8)), Paragraph('<b>To</b>', st("at", fontSize=8))],
+            [Paragraph(f'<b>{company_name}</b><br/>GSTIN : {company_gstin}<br/>{state_name}', st("at", fontSize=7.5, leading=9)),
+             Paragraph(f'<b>{party}</b><br/>GSTIN : {buyer_gstin}<br/>Maharashtra', st("at", fontSize=7.5, leading=9))],
+            [Paragraph(f'<b>Dispatch From</b><br/>{company_address}, UDYAM REG.:- {company_udyam}<br/>VALSAD, GUJARAT Gujarat 396001', st("at", fontSize=7.5, leading=9)),
+             Paragraph(f'<b>Ship To</b><br/>DEU APARTMENT , SHOP NO 4, KOLShet UPPER VILLEGE, THANE WEST, Maharashtra 400607', st("at", fontSize=7.5, leading=9))]
+        ], colWidths=[W * 0.5, W * 0.5])
+        ew_addr_tbl.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("TOPPADDING", (0, 0), (-1, -1), 2),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+        ]))
+        elements.append(ew_addr_tbl)
+        elements.append(Spacer(1, 6))
+
+        # 3. Goods Details
+        elements.append(Paragraph('<b>3. Goods Details</b>', st("s3", fontSize=8.5, fontName="Helvetica-Bold")))
+        ew_goods_tbl = Table([
+            [Paragraph('<b>HSN<br/>Code</b>', st("gt", fontSize=7, leading=8)),
+             Paragraph('<b>Product Name & Desc</b>', st("gt", fontSize=7, leading=8)),
+             Paragraph('<b>Quantity</b>', st("gt", fontSize=7, alignment=TA_CENTER, leading=8)),
+             Paragraph('<b>Taxable Amt</b>', st("gt", fontSize=7, alignment=TA_RIGHT, leading=8)),
+             Paragraph('<b>Tax Rate<br/>(%)</b>', st("gt", fontSize=7, alignment=TA_CENTER, leading=8))],
+            [Paragraph(hsn_code, st("gt", fontSize=7.5)),
+             Paragraph(f'{item_name} & {item_name}', st("gt", fontSize=7.5)),
+             Paragraph('776 BAG', st("gt", fontSize=7.5, alignment=TA_CENTER)),
+             Paragraph(f'{taxable_val:,.2f}', st("gt", fontSize=7.5, alignment=TA_RIGHT)),
+             Paragraph('5', st("gt", fontSize=7.5, alignment=TA_CENTER))]
+        ], colWidths=[W * 0.16, W * 0.38, W * 0.16, W * 0.18, W * 0.12])
+        ew_goods_tbl.setStyle(TableStyle([
+            ("LINEBELOW", (0, 0), (-1, 0), 0.5, colors.black),
+            ("TOPPADDING", (0, 0), (-1, -1), 2),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+        ]))
+        elements.append(ew_goods_tbl)
+        elements.append(Spacer(1, 4))
+
+        # Subtotals
+        subtot_tbl = Table([
+            [Paragraph(f'Tot. Taxable Amt : <b>{taxable_val:,.2f}</b>', st("st", fontSize=7.5)),
+             Paragraph(f'Other Amt : <b>{round_off:,.2f}</b>', st("st", fontSize=7.5)),
+             Paragraph(f'Total Inv Amt : <b>{amount:,.2f}</b>', st("st", fontSize=7.5))],
+            [Paragraph(f'IGST Amt : <b>{igst_val:,.2f}</b>', st("st", fontSize=7.5)),
+             Paragraph('', st("st")), Paragraph('', st("st"))],
+        ], colWidths=[W * 0.35, W * 0.30, W * 0.35])
+        subtot_tbl.setStyle(TableStyle([("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2)]))
+        elements.append(subtot_tbl)
+        elements.append(Spacer(1, 6))
+
+        # 4. Transportation Details
+        elements.append(Paragraph('<b>4. Transportation Details</b>', st("s4", fontSize=8.5, fontName="Helvetica-Bold")))
+        t_trans = Table([
+            [Paragraph('Transporter ID : ', st("tr", fontSize=7.5)), Paragraph('Doc No. : ', st("tr", fontSize=7.5))],
+            [Paragraph('Name : <b>SHOBHA TRANSPORT</b>', st("tr", fontSize=7.5)), Paragraph('Date : ', st("tr", fontSize=7.5))],
+        ], colWidths=[W * 0.60, W * 0.40])
+        t_trans.setStyle(TableStyle([("TOPPADDING", (0, 0), (-1, -1), 1.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 1.5)]))
+        elements.append(t_trans)
+        elements.append(Spacer(1, 6))
+
+        # 5. Vehicle Details
+        elements.append(Paragraph('<b>5. Vehicle Details</b>', st("s5", fontSize=8.5, fontName="Helvetica-Bold")))
+        t_veh = Table([
+            [Paragraph(f'Vehicle No. : <b>{truck_no}</b>', st("vh", fontSize=7.5)),
+             Paragraph(f'From : <b>Valsad, {state_name.upper()}</b>', st("vh", fontSize=7.5)),
+             Paragraph('CEWB No. : ', st("vh", fontSize=7.5))],
+        ], colWidths=[W * 0.35, W * 0.40, W * 0.25])
+        t_veh.setStyle(TableStyle([("TOPPADDING", (0, 0), (-1, -1), 1.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 1.5)]))
+        elements.append(t_veh)
+
+        # Page 2 Footer
+        elements.append(Spacer(1, 10))
+        elements.append(Paragraph('<font size="7">2</font>', st("ft2", alignment=TA_CENTER)))
 
     doc.build(elements)
     return buf.getvalue()

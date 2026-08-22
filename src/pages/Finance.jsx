@@ -782,8 +782,8 @@ const Finance = () => {
             {/* Template Selector Tabs */}
             <div style={{ display: 'flex', gap: '0.5rem', padding: '0.65rem 1.25rem', background: 'var(--bg-primary)', borderBottom: '1px solid var(--border-color)', overflowX: 'auto' }}>
               {[
-                { id: 'tax_invoice', label: '1. GST Tax Invoice (Logo & QR)', icon: '🏢' },
-                { id: 'eway_bill', label: '2. Standard e-Way Bill', icon: '🚚' },
+                { id: 'tax_invoice', label: '1. Complete 2-Page Consignment PDF (Invoice + e-Way Bill)', icon: '📦' },
+                { id: 'eway_bill', label: '2. Standard e-Way Bill (Conveyance Permit)', icon: '🚚' },
                 { id: 'pending_bills', label: '3. Bill-wise Pending Bills Statement', icon: '📊' },
                 { id: 'ledger_account', label: '4. Customer Ledger Account', icon: '📒' },
               ].map(t => (
@@ -806,11 +806,18 @@ const Finance = () => {
             </div>
 
             {/* Template Content Viewer */}
-            <div style={{ flex: 1, overflowY: 'auto', padding: '1.25rem', display: 'flex', justifyContent: 'center', background: '#e2e8f0' }}>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '1.25rem', display: 'flex', justifyContent: 'center', background: '#cbd5e1' }}>
               
-              {/* TAB 1: TAX INVOICE */}
+              {/* TAB 1: 2-PAGE CONSIGNMENT BILL (TAX INVOICE + E-WAY BILL) */}
               {selectedTemplateTab === 'tax_invoice' && (
-                <div style={{ width: '100%', maxWidth: 780, background: 'white', color: '#111', padding: '24px', borderRadius: 6, boxShadow: '0 4px 20px rgba(0,0,0,0.15)', fontFamily: 'sans-serif', fontSize: '11px', lineHeight: 1.4 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', width: '100%', maxWidth: 780 }}>
+                  <div style={{ padding: '8px 12px', background: 'rgba(99,102,241,0.1)', border: '1px solid var(--accent-primary)', borderRadius: 8, fontSize: '0.78rem', color: '#1e293b', fontWeight: 600 }}>
+                    💡 <strong>Simultaneous 2-Page Dispatch:</strong> When a truck departs, both pages (Page 1: Product Tax Invoice + Page 2: Transporter Conveyance e-Way Bill) are bundled and sent to the client on WhatsApp in a single attachment.
+                  </div>
+
+                  {/* PAGE 1 */}
+                  <div style={{ background: 'white', color: '#111', padding: '24px', borderRadius: 6, boxShadow: '0 4px 20px rgba(0,0,0,0.15)', fontFamily: 'sans-serif', fontSize: '11px', lineHeight: 1.4, position: 'relative' }}>
+                    <div style={{ position: 'absolute', top: 8, right: 12, fontSize: '10px', color: '#94a3b8', fontWeight: 700 }}>PAGE 1 OF 2</div>
                   {/* Top Header */}
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '1px solid #111', paddingBottom: '12px' }}>
                     <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
@@ -948,14 +955,103 @@ const Finance = () => {
                   </div>
 
                   <div style={{ textAlign: 'center', fontSize: '8px', color: '#6b7280', marginTop: '6px' }}>
-                    SUBJECT TO THANE JURISDICTION · This is a Computer Generated Invoice
+                    SUBJECT TO THANE JURISDICTION · This is a Computer Generated Invoice<br/>
+                    <strong>1</strong>
                   </div>
                 </div>
-              )}
 
-              {/* TAB 2: E-WAY BILL */}
-              {selectedTemplateTab === 'eway_bill' && (
-                <div style={{ width: '100%', maxWidth: 780, background: 'white', color: '#111', padding: '24px', borderRadius: 6, boxShadow: '0 4px 20px rgba(0,0,0,0.15)', fontFamily: 'sans-serif', fontSize: '10.5px', lineHeight: 1.4 }}>
+                {/* PAGE 2 (INCLUDED IN CONSIGNMENT ATTACHMENT) */}
+                <div style={{ background: 'white', color: '#111', padding: '24px', borderRadius: 6, boxShadow: '0 4px 20px rgba(0,0,0,0.15)', fontFamily: 'sans-serif', fontSize: '10.5px', lineHeight: 1.4, position: 'relative' }}>
+                  <div style={{ position: 'absolute', top: 8, right: 12, fontSize: '10px', color: '#94a3b8', fontWeight: 700 }}>PAGE 2 OF 2 (TRANSPORTER / TRUCK CONVEYANCE)</div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                    <div style={{ fontSize: '16px', fontWeight: 800 }}>e-Way Bill</div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontWeight: 700 }}>e-Way Bill</div>
+                      <div style={{ width: 52, height: 52, background: '#f8fafc', border: '1px solid #cbd5e1', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '8px', color: '#64748b' }}>[ QR ]</div>
+                    </div>
+                  </div>
+                  <div style={{ fontSize: '9.5px', marginBottom: '12px' }}>
+                    <div><strong>Doc No. :</strong> Tax Invoice - SRP/0570/26-27 &nbsp;|&nbsp; <strong>Date :</strong> 10-Aug-26</div>
+                    <div><strong>IRN :</strong> a45684e7e4ef9d7c7c9b29e3cf08d0919d11d1df3db1613f50f26c11e0e32e6c</div>
+                    <div><strong>Ack No. :</strong> 162625648066372 &nbsp;|&nbsp; <strong>Ack Date :</strong> 19-Aug-26</div>
+                  </div>
+
+                  <div style={{ fontWeight: 700, borderBottom: '1px solid #111', paddingBottom: '2px', marginBottom: '6px' }}>1. e-Way Bill Details</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px', fontSize: '9.5px', marginBottom: '12px' }}>
+                    <div><strong>e-Way Bill No.:</strong> 602165786131</div>
+                    <div><strong>Mode :</strong> 1 - Road</div>
+                    <div><strong>Generated Date :</strong> 19-Aug-26 10:30 AM</div>
+                    <div><strong>Generated By :</strong> 24AGCPJ2785R1ZV</div>
+                    <div><strong>Approx Distance :</strong> 176 KM</div>
+                    <div><strong>Valid Upto :</strong> 20-Aug-26 11:59 PM</div>
+                  </div>
+
+                  <div style={{ fontWeight: 700, borderBottom: '1px solid #111', paddingBottom: '2px', marginBottom: '6px' }}>2. Address Details</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', fontSize: '9.5px', marginBottom: '12px' }}>
+                    <div>
+                      <strong>From:</strong> SHOBHA READY PLAST (GSTIN: 24AGCPJ2785R1ZV, Gujarat)<br/>
+                      <strong>Dispatch From:</strong> NH48, NEAR KOLEI KHADI SARODHI, City/Village:Sarodhi, Valsad, Gujarat, 396001, UDYAM REG.:- UDYAM-GJ-01-0012345
+                    </div>
+                    <div>
+                      <strong>To:</strong> VAISHNAV CONSTRUCTION (GSTIN: 27ALPRP4116L1ZM, Maharashtra)<br/>
+                      <strong>Ship To:</strong> DEU APARTMENT, SHOP NO 4, KOLShet UPPER VILLEGE, THANE WEST, Maharashtra 400607
+                    </div>
+                  </div>
+
+                  <div style={{ fontWeight: 700, borderBottom: '1px solid #111', paddingBottom: '2px', marginBottom: '6px' }}>3. Goods Details</div>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '9.5px', marginBottom: '12px' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid #cbd5e1' }}>
+                        <th style={{ textAlign: 'left', padding: '3px' }}>HSN Code</th>
+                        <th style={{ textAlign: 'left', padding: '3px' }}>Product Name & Desc</th>
+                        <th style={{ textAlign: 'center', padding: '3px' }}>Quantity</th>
+                        <th style={{ textAlign: 'right', padding: '3px' }}>Taxable Amt</th>
+                        <th style={{ textAlign: 'center', padding: '3px' }}>Tax Rate (%)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td style={{ padding: '3px' }}>25051011</td>
+                        <td style={{ padding: '3px' }}>SAND & SAND</td>
+                        <td style={{ textAlign: 'center', padding: '3px' }}>776 BAG</td>
+                        <td style={{ textAlign: 'right', padding: '3px' }}>71,392.00</td>
+                        <td style={{ textAlign: 'center', padding: '3px' }}>5</td>
+                      </tr>
+                    </tbody>
+                  </table>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px', fontSize: '9.5px', marginBottom: '12px' }}>
+                    <div><strong>Tot. Taxable Amt :</strong> 71,392.00</div>
+                    <div><strong>Other Amt :</strong> 0.40</div>
+                    <div><strong>Total Inv Amt :</strong> 74,962.00</div>
+                    <div><strong>IGST Amt :</strong> 3,569.60</div>
+                  </div>
+
+                  <div style={{ fontWeight: 700, borderBottom: '1px solid #111', paddingBottom: '2px', marginBottom: '6px' }}>4. Transportation Details</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', fontSize: '9.5px', marginBottom: '12px' }}>
+                    <div><strong>Transporter ID :</strong> </div>
+                    <div><strong>Doc No. :</strong> </div>
+                    <div><strong>Name :</strong> SHOBHA TRANSPORT</div>
+                    <div><strong>Date :</strong> </div>
+                  </div>
+
+                  <div style={{ fontWeight: 700, borderBottom: '1px solid #111', paddingBottom: '2px', marginBottom: '6px' }}>5. Vehicle Details</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px', fontSize: '9.5px' }}>
+                    <div><strong>Vehicle No. :</strong> MH04-4550</div>
+                    <div><strong>From :</strong> Valsad, GUJARAT</div>
+                    <div><strong>CEWB No. :</strong> </div>
+                  </div>
+
+                  <div style={{ textAlign: 'center', fontSize: '8px', color: '#6b7280', marginTop: '14px' }}>
+                    <strong>2</strong>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB 2: E-WAY BILL */}
+            {selectedTemplateTab === 'eway_bill' && (
+              <div style={{ width: '100%', maxWidth: 780, background: 'white', color: '#111', padding: '24px', borderRadius: 6, boxShadow: '0 4px 20px rgba(0,0,0,0.15)', fontFamily: 'sans-serif', fontSize: '10.5px', lineHeight: 1.4 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
                     <div style={{ fontSize: '16px', fontWeight: 800 }}>e-Way Bill</div>
                     <div style={{ textAlign: 'right' }}>
