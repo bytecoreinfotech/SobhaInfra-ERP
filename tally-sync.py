@@ -447,7 +447,7 @@ def parse_voucher_block(block, fallback_company: str = ""):
         "invoice_number": inv_code,
         "invoice_date": inv_date_str,
         "ledger_name": party or "Client",
-        "company_name": comp_name or fallback_company or "SHOBHA READY PLAST",
+        "company_name": comp_name or fallback_company or "Tally Company",
         "phone": extract_phone(block),
         "amount": amount,
         "status": status,
@@ -496,7 +496,7 @@ def parse_ledger_block(block, fallback_company: str = ""):
         "invoice_number": f"LEDGER-{name.replace(' ', '')[:12]}",
         "invoice_date": datetime.now().strftime("%d-%b-%y"),
         "ledger_name": name,
-        "company_name": fallback_company or "SHOBHA READY PLAST",
+        "company_name": fallback_company or "Tally Company",
         "phone": extract_phone(block),
         "amount": amount,
         "status": "Pending",
@@ -557,7 +557,7 @@ def parse_any_tally_xml(xml_text, fallback_company: str = ""):
                     "invoice_number": bill_name or f"BILL-{len(records)+1}",
                     "invoice_date": datetime.now().strftime("%d-%b-%y"),
                     "ledger_name": party or bill_name or "Client",
-                    "company_name": fallback_company or "SHOBHA READY PLAST",
+                    "company_name": fallback_company or "Tally Company",
                     "phone": extract_phone(bblock),
                     "amount": amount,
                     "status": "Overdue",
@@ -583,7 +583,7 @@ def parse_any_tally_xml(xml_text, fallback_company: str = ""):
                     "invoice_number": name or f"BILL-{len(records)+1}",
                     "invoice_date": datetime.now().strftime("%d-%b-%y"),
                     "ledger_name": parent or name or "Client",
-                    "company_name": fallback_company or "SHOBHA READY PLAST",
+                    "company_name": fallback_company or "Tally Company",
                     "phone": extract_phone(bblock),
                     "amount": amount,
                     "status": "Overdue",
@@ -618,7 +618,7 @@ def parse_any_tally_xml(xml_text, fallback_company: str = ""):
                     "invoice_number": f"BAL-{name.replace(' ', '')[:12]}",
                     "invoice_date": datetime.now().strftime("%d-%b-%y"),
                     "ledger_name": name,
-                    "company_name": fallback_company or "SHOBHA READY PLAST",
+                    "company_name": fallback_company or "Tally Company",
                     "phone": "",
                     "amount": amount,
                     "status": "Pending",
@@ -629,40 +629,117 @@ def parse_any_tally_xml(xml_text, fallback_company: str = ""):
 
 
 def get_tally_loaded_companies() -> list:
-    """Fetch all open companies loaded in TallyPrime."""
-    xml = """<?xml version="1.0" encoding="utf-8"?>
+    """
+    Fetch all open / loaded companies in TallyPrime using multi-strategy Tally Collection queries:
+      Strategy A: Official Tally Collection <TYPE>Collection</TYPE><ID>Company</ID>
+      Strategy B: Tally Collection <TYPE>Collection</TYPE><ID>List of Companies</ID>
+      Strategy C: TDL Company Collection Query
+    """
+    # Strategy A: Native Collection Company
+    xml_coll_company = """<?xml version="1.0" encoding="utf-8"?>
 <ENVELOPE>
   <HEADER>
-    <TALLYREQUEST>Export Data</TALLYREQUEST>
+    <VERSION>1</VERSION>
+    <TALLYREQUEST>Export</TALLYREQUEST>
+    <TYPE>Collection</TYPE>
+    <ID>Company</ID>
   </HEADER>
   <BODY>
-    <EXPORTDATA>
-      <REQUESTDESC>
-        <REPORTNAME>List of Companies</REPORTNAME>
-        <STATICVARIABLES>
-          <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-        </STATICVARIABLES>
-      </REQUESTDESC>
-    </EXPORTDATA>
+    <DESC>
+      <STATICVARIABLES>
+        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+      </STATICVARIABLES>
+    </DESC>
   </BODY>
 </ENVELOPE>"""
-    resp = query_tally(xml, "List_Companies")
-    if not resp:
-        return []
-    names = re.findall(r'<COMPANYNAME[^>]*>([^<]+)</COMPANYNAME>', resp, re.IGNORECASE)
-    if not names:
-        names = re.findall(r'<NAME[^>]*>([^<]+)</NAME>', resp, re.IGNORECASE)
-    cleaned = []
-    for n in names:
-        n = n.strip()
-        if n and n not in cleaned and not n.startswith("$$"):
-            cleaned.append(n)
-    return cleaned
+
+    # Strategy B: Native Collection List of Companies
+    xml_coll_list = """<?xml version="1.0" encoding="utf-8"?>
+<ENVELOPE>
+  <HEADER>
+    <VERSION>1</VERSION>
+    <TALLYREQUEST>Export</TALLYREQUEST>
+    <TYPE>Collection</TYPE>
+    <ID>List of Companies</ID>
+  </HEADER>
+  <BODY>
+    <DESC>
+      <STATICVARIABLES>
+        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+      </STATICVARIABLES>
+    </DESC>
+  </BODY>
+</ENVELOPE>"""
+
+    # Strategy C: TDL Company Query
+    xml_tdl_company = """<?xml version="1.0" encoding="utf-8"?>
+<ENVELOPE>
+  <HEADER>
+    <VERSION>1</VERSION>
+    <TALLYREQUEST>Export</TALLYREQUEST>
+    <TYPE>Data</TYPE>
+    <ID>CompanyReport</ID>
+  </HEADER>
+  <BODY>
+    <DESC>
+      <STATICVARIABLES>
+        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+      </STATICVARIABLES>
+      <TDL>
+        <TDLMESSAGE>
+          <REPORT NAME="CompanyReport"><FORMS>CompanyForm</FORMS></REPORT>
+          <FORM NAME="CompanyForm"><PARTS>CompanyPart</PARTS></FORM>
+          <PART NAME="CompanyPart"><LINES>CompanyLine</LINES><REPEAT>CompanyLine : CompanyColl</REPEAT><SCROLLED>Vertical</SCROLLED></PART>
+          <LINE NAME="CompanyLine"><FIELDS>CompNameField</FIELDS></LINE>
+          <FIELD NAME="CompNameField"><SET>$Name</SET></FIELD>
+          <COLLECTION NAME="CompanyColl"><TYPE>Company</TYPE></COLLECTION>
+        </TDLMESSAGE>
+      </TDL>
+    </DESC>
+  </BODY>
+</ENVELOPE>"""
+
+    for strat_label, payload in [
+        ("Company_Collection", xml_coll_company),
+        ("List_Companies_Collection", xml_coll_list),
+        ("TDL_Company_Query", xml_tdl_company),
+    ]:
+        resp = query_tally(payload, strat_label)
+        if not resp or len(resp) < 50:
+            continue
+
+        save_debug_xml(resp, f"Discover_{strat_label}")
+
+        # Extract company names from various tags
+        names = []
+        names.extend(re.findall(r'<COMPANY[^>]+NAME="([^"]+)"', resp, re.IGNORECASE))
+        names.extend(re.findall(r'<COMPANYNAME[^>]*>([^<]+)</COMPANYNAME>', resp, re.IGNORECASE))
+        names.extend(re.findall(r'<NAME[^>]*>([^<]+)</NAME>', resp, re.IGNORECASE))
+        names.extend(re.findall(r'<SVCURRENTCOMPANY[^>]*>([^<]+)</SVCURRENTCOMPANY>', resp, re.IGNORECASE))
+        names.extend(re.findall(r'<BASICCOMPANYNAME[^>]*>([^<]+)</BASICCOMPANYNAME>', resp, re.IGNORECASE))
+
+        cleaned = []
+        for n in names:
+            n = n.strip()
+            if n and n not in cleaned and not n.startswith("$$") and not n.lower().startswith("form") and not n.lower().startswith("report") and not n.lower().startswith("line") and not n.lower().startswith("part") and len(n) > 1:
+                cleaned.append(n)
+
+        if cleaned:
+            log.info(f"  [Discovery] Found {len(cleaned)} company(ies) via {strat_label}: {', '.join(cleaned)}")
+            return cleaned
+
+    return []
 
 
-# ==============================================================================
-# MAIN SYNC LOGIC (Multi-Company Auto-Query)
-# ==============================================================================
+def inject_company_into_xml(xml_payload: str, company_name: str = "") -> str:
+    """Inject SVCURRENTCOMPANY into Tally XML request static variables."""
+    if not company_name:
+        return xml_payload
+    sv_block = f"<STATICVARIABLES>\n          <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>\n          <SVCURRENTCOMPANY>{company_name}</SVCURRENTCOMPANY>\n        </STATICVARIABLES>"
+    if re.search(r'<STATICVARIABLES>[\s\S]*?</STATICVARIABLES>', xml_payload, re.IGNORECASE):
+        return re.sub(r'<STATICVARIABLES>[\s\S]*?</STATICVARIABLES>', sv_block, xml_payload, flags=re.IGNORECASE)
+    return xml_payload
+
 
 def fetch_from_tally():
     """
@@ -685,22 +762,13 @@ def fetch_from_tally():
         comp_label = f" [{comp}]" if comp else ""
         log.info(f"--- Querying Tally Company{comp_label} ---")
 
-        if comp:
-            c_inject = f"<STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{comp}</SVCURRENTCOMPANY></STATICVARIABLES>"
-            strategies = [
-                (f"1_DayBook_{comp}", DAYBOOK_XML.replace("<STATICVARIABLES>\n          <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>\n        </STATICVARIABLES>", c_inject)),
-                (f"2_Vouchers_{comp}", VOUCHERS_XML.replace("<STATICVARIABLES>\n          <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>\n        </STATICVARIABLES>", c_inject)),
-                (f"3_Outstanding_{comp}", OUTSTANDING_XML.replace("<STATICVARIABLES>\n          <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>\n        </STATICVARIABLES>", c_inject)),
-                (f"4_Accounts_{comp}", ACCOUNTS_XML.replace("<STATICVARIABLES>\n          <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>\n        </STATICVARIABLES>", c_inject)),
-            ]
-        else:
-            strategies = [
-                ("1_DayBook",       DAYBOOK_XML),
-                ("2_Vouchers",      VOUCHERS_XML),
-                ("3_Outstanding",   OUTSTANDING_XML),
-                ("4_Accounts",      ACCOUNTS_XML),
-                ("5_BalanceSheet",  COLLECTION_XML),
-            ]
+        strategies = [
+            (f"1_DayBook_{comp}" if comp else "1_DayBook", inject_company_into_xml(DAYBOOK_XML, comp)),
+            (f"2_Vouchers_{comp}" if comp else "2_Vouchers", inject_company_into_xml(VOUCHERS_XML, comp)),
+            (f"3_Outstanding_{comp}" if comp else "3_Outstanding", inject_company_into_xml(OUTSTANDING_XML, comp)),
+            (f"4_Accounts_{comp}" if comp else "4_Accounts", inject_company_into_xml(ACCOUNTS_XML, comp)),
+            ("5_BalanceSheet", inject_company_into_xml(COLLECTION_XML, comp)),
+        ]
 
         comp_records = []
         for label, xml_payload in strategies:
@@ -715,15 +783,19 @@ def fetch_from_tally():
 
             save_debug_xml(xml_data, label)
 
-            recs = parse_any_tally_xml(xml_data, fallback_company=comp)
+            # Auto-extract current company from response if comp was empty
+            detected_comp = comp or extract_tag_value(xml_data, "SVCURRENTCOMPANY") or extract_tag_value(xml_data, "COMPANYNAME") or extract_tag_value(xml_data, "SVCOMPANYNAME") or "Tally Company"
+
+            recs = parse_any_tally_xml(xml_data, fallback_company=detected_comp)
             if recs:
-                log.info(f"  [{label}] SUCCESS: Extracted {len(recs)} records for {comp or 'active company'}!")
+                log.info(f"  [{label}] SUCCESS: Extracted {len(recs)} records for {detected_comp}!")
                 comp_records = recs
                 break
 
         for r in comp_records:
-            if comp and not r.get("company_name"):
-                r["company_name"] = comp
+            if not r.get("company_name") or r.get("company_name") == "Tally Company":
+                if comp:
+                    r["company_name"] = comp
             all_records.append(r)
 
     if not all_records:
