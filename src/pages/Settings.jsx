@@ -55,6 +55,7 @@ const Settings = () => {
   });
   const [companyModalSaving, setCompanyModalSaving] = useState(false);
   const companyModalLogoRef = useRef(null);
+  const companyModalQrRef = useRef(null);
 
   // Meta Leads Simulator state
   const [simLead, setSimLead] = useState({
@@ -106,6 +107,7 @@ const Settings = () => {
   const [generalSettings, setGeneralSettings] = useState({
     org_name: 'Techma ERP Solutions Pvt. Ltd.',
     company_logo_url: '',
+    company_qr_code_url: '',
     company_udyam_reg: 'UDYAM-GJ-01-0012345',
     admin_email: 'admin@erppro.in',
     contact_phone: '+91 98765 43210',
@@ -117,11 +119,13 @@ const Settings = () => {
     bank_name: 'HDFC Bank Ltd.',
     bank_account_no: '50200088991122',
     bank_ifsc: 'HDFC0001234',
+    upi_id: 'shobhareadyplast@okhdfcbank',
   });
   const [generalSaving, setGeneralSaving] = useState(false);
   const [generalSaved, setGeneralSaved] = useState(false);
   const [generalLoading, setGeneralLoading] = useState(false);
   const logoInputRef = useRef(null);
+  const qrInputRef = useRef(null);
 
   // Storage & Supabase Health State
   const [storageSummary, setStorageSummary] = useState(null);
@@ -195,11 +199,26 @@ const Settings = () => {
     reader.readAsDataURL(file);
   };
 
+  const handleQrUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) {
+      alert('QR Code file size should be less than 2MB.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      setGeneralSettings(prev => ({ ...prev, company_qr_code_url: reader.result }));
+    };
+    reader.readAsDataURL(file);
+  };
+
   const handleSaveGeneralSettings = async () => {
     setGeneralSaving(true);
     await Promise.all([
       updateOrgSetting('org_name', generalSettings.org_name),
       updateOrgSetting('company_logo_url', generalSettings.company_logo_url),
+      updateOrgSetting('company_qr_code_url', generalSettings.company_qr_code_url),
       updateOrgSetting('company_udyam_reg', generalSettings.company_udyam_reg),
       updateOrgSetting('admin_email', generalSettings.admin_email),
       updateOrgSetting('contact_phone', generalSettings.contact_phone),
@@ -211,16 +230,20 @@ const Settings = () => {
       updateOrgSetting('bank_name', generalSettings.bank_name),
       updateOrgSetting('bank_account_no', generalSettings.bank_account_no),
       updateOrgSetting('bank_ifsc', generalSettings.bank_ifsc),
+      updateOrgSetting('upi_id', generalSettings.upi_id),
     ]);
     try {
       localStorage.setItem('erppro_org_name', generalSettings.org_name);
       if (generalSettings.company_logo_url) {
         localStorage.setItem('erppro_company_logo', generalSettings.company_logo_url);
       }
+      if (generalSettings.company_qr_code_url) {
+        localStorage.setItem('erppro_company_qr', generalSettings.company_qr_code_url);
+      }
     } catch {}
     setGeneralSaving(false);
     setGeneralSaved(true);
-    setPosSuccessMsg('✅ Business profile & organization settings saved safely!');
+    setPosSuccessMsg('✅ Business profile, Bank & QR settings saved safely!');
     setTimeout(() => { setGeneralSaved(false); setPosSuccessMsg(''); }, 3500);
   };
 
@@ -231,6 +254,7 @@ const Settings = () => {
       company_name: '',
       alias_names: '',
       company_logo_url: '',
+      company_qr_code_url: '',
       company_address: '',
       gstin_number: '',
       company_udyam_reg: '',
@@ -255,6 +279,7 @@ const Settings = () => {
       company_name: comp.company_name || '',
       alias_names: Array.isArray(comp.alias_names) ? comp.alias_names.join(', ') : (comp.alias_names || ''),
       company_logo_url: comp.company_logo_url || '',
+      company_qr_code_url: comp.company_qr_code_url || '',
       company_address: comp.company_address || '',
       gstin_number: comp.gstin_number || '',
       company_udyam_reg: comp.company_udyam_reg || '',
@@ -283,6 +308,20 @@ const Settings = () => {
     const reader = new FileReader();
     reader.onload = () => {
       setEditingCompany(prev => ({ ...prev, company_logo_url: reader.result }));
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleCompanyQrUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) {
+      alert('QR Code file size should be less than 2MB.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      setEditingCompany(prev => ({ ...prev, company_qr_code_url: reader.result }));
     };
     reader.readAsDataURL(file);
   };
@@ -1550,6 +1589,61 @@ const Settings = () => {
                           onChange={e => setGeneralSettings(p => ({ ...p, bank_ifsc: e.target.value }))}
                           placeholder="e.g. HDFC0001234"
                         />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: '0.75rem', fontWeight: 600, display: 'block', marginBottom: '0.3rem' }}>UPI ID (Auto QR)</label>
+                        <input
+                          type="text"
+                          className="input-field"
+                          value={generalSettings.upi_id}
+                          onChange={e => setGeneralSettings(p => ({ ...p, upi_id: e.target.value }))}
+                          placeholder="e.g. shobhareadyplast@okhdfcbank"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Custom QR Code Standee Upload for Primary Profile */}
+                    <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px dashed var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                        <div style={{ width: 44, height: 44, borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--bg-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+                          {generalSettings.company_qr_code_url ? (
+                            <img src={generalSettings.company_qr_code_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                          ) : (
+                            <QrCode size={20} style={{ opacity: 0.5 }} />
+                          )}
+                        </div>
+                        <div>
+                          <div style={{ fontSize: '0.76rem', fontWeight: 700 }}>Custom QR Code Standee Image (Optional)</div>
+                          <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>If you already have a physical Paytm / PhonePe / BharatPe QR standee, upload its image here.</div>
+                        </div>
+                      </div>
+                      <div>
+                        <input
+                          ref={qrInputRef}
+                          type="file"
+                          accept="image/png,image/jpeg,image/svg+xml,image/webp"
+                          style={{ display: 'none' }}
+                          onChange={handleQrUpload}
+                        />
+                        <div style={{ display: 'flex', gap: '0.4rem' }}>
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => qrInputRef.current?.click()}
+                          >
+                            <Upload size={13} /> {generalSettings.company_qr_code_url ? 'Change QR' : 'Upload Standee QR'}
+                          </button>
+                          {generalSettings.company_qr_code_url && (
+                            <button
+                              type="button"
+                              className="btn btn-outline btn-sm"
+                              style={{ color: 'var(--danger)' }}
+                              onClick={() => setGeneralSettings(p => ({ ...p, company_qr_code_url: '' }))}
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -3123,14 +3217,60 @@ const Settings = () => {
                     />
                   </div>
                   <div>
-                    <label style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>UPI ID (Optional)</label>
+                    <label style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>UPI ID (Auto QR)</label>
                     <input
                       type="text"
                       className="input-field"
                       value={editingCompany.upi_id}
                       onChange={e => setEditingCompany(p => ({ ...p, upi_id: e.target.value }))}
-                      placeholder="company@icici"
+                      placeholder="e.g. shobhareadyplast@okhdfcbank"
                     />
+                  </div>
+                </div>
+
+                {/* Custom QR Code Standee Image Upload */}
+                <div style={{ marginTop: '0.65rem', paddingTop: '0.65rem', borderTop: '1px dashed var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                    <div style={{ width: 44, height: 44, borderRadius: 6, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+                      {editingCompany.company_qr_code_url ? (
+                        <img src={editingCompany.company_qr_code_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                      ) : (
+                        <QrCode size={20} style={{ opacity: 0.5 }} />
+                      )}
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '0.74rem', fontWeight: 700 }}>Custom QR Standee Image (Optional)</div>
+                      <div style={{ fontSize: '0.66rem', color: 'var(--text-muted)' }}>Upload physical Paytm / PhonePe / BharatPe QR standee image.</div>
+                    </div>
+                  </div>
+                  <div>
+                    <input
+                      ref={companyModalQrRef}
+                      type="file"
+                      accept="image/png,image/jpeg,image/svg+xml,image/webp"
+                      style={{ display: 'none' }}
+                      onChange={handleCompanyQrUpload}
+                    />
+                    <div style={{ display: 'flex', gap: '0.35rem' }}>
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        style={{ fontSize: '0.72rem', padding: '0.25rem 0.5rem' }}
+                        onClick={() => companyModalQrRef.current?.click()}
+                      >
+                        <Upload size={11} /> {editingCompany.company_qr_code_url ? 'Change QR' : 'Upload QR'}
+                      </button>
+                      {editingCompany.company_qr_code_url && (
+                        <button
+                          type="button"
+                          className="btn btn-outline btn-sm"
+                          style={{ color: 'var(--danger)', fontSize: '0.72rem', padding: '0.25rem 0.5rem' }}
+                          onClick={() => setEditingCompany(p => ({ ...p, company_qr_code_url: '' }))}
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>

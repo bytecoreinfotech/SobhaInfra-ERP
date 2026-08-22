@@ -23,6 +23,7 @@ import io
 import math
 import base64
 import hashlib
+import urllib.parse
 from datetime import datetime, timedelta
 
 # Check if reportlab is available
@@ -954,7 +955,28 @@ def create_qr_code_flowable(text: str, size: float = 62) -> object:
     """
     Create a 100% crisp, high-resolution QR code image flowable scannable by
     all phone cameras, UPI payment apps (Google Pay, PhonePe, Paytm, BHIM), and Google Lens.
+    Supports both dynamic UPI payloads and custom uploaded standee QR images.
     """
+    if not text:
+        text = "upi://pay?pa=accounts@upi&pn=Company&cu=INR"
+
+    dim_mm = (size * 0.352778) * mm if size > 30 else size * mm
+
+    # 1. Check if custom uploaded QR image
+    if str(text).startswith("http") or "base64," in str(text):
+        try:
+            if "base64," in str(text):
+                b64_data = str(text).split("base64,")[1]
+                img_bytes = base64.b64decode(b64_data)
+                return Image(io.BytesIO(img_bytes), width=dim_mm, height=dim_mm)
+            elif str(text).startswith("http"):
+                resp = requests.get(str(text), timeout=4)
+                if resp.status_code == 200:
+                    return Image(io.BytesIO(resp.content), width=dim_mm, height=dim_mm)
+        except Exception as e:
+            log.debug(f"Custom QR image load notice: {e}")
+
+    # 2. Generate crisp 300 DPI dynamic QR code with qrcode engine
     try:
         import qrcode
         qr = qrcode.QRCode(
@@ -969,9 +991,6 @@ def create_qr_code_flowable(text: str, size: float = 62) -> object:
         buf = io.BytesIO()
         img.save(buf, format="PNG")
         buf.seek(0)
-
-        # Scale appropriately in mm
-        dim_mm = (size * 0.352778) * mm if size > 30 else size * mm
         return Image(buf, width=dim_mm, height=dim_mm)
     except Exception as e:
         log.debug(f"Pillow QR generator error, trying ReportLab widget: {e}")
@@ -1138,8 +1157,14 @@ def generate_invoice_pdf(voucher: dict, org_profile: dict | None = None, single_
     ack_no   = voucher.get("ack_no") or "162625648066372"
     ack_date = voucher.get("ack_date") or "19-Aug-26"
 
-    upi_id = org_profile.get("upi_id") or "shobhareadyplast@okhdfcbank"
-    qr_data = f"upi://pay?pa={upi_id}&pn={company_name}&am={amount:.2f}&cu=INR&tr={inv_number}"
+    custom_qr = org_profile.get("company_qr_code_url") or org_profile.get("company_qr_url")
+    if custom_qr and (str(custom_qr).startswith("http") or "base64," in str(custom_qr)):
+        qr_data = custom_qr
+    else:
+        upi_id = org_profile.get("upi_id") or "shobhareadyplast@okhdfcbank"
+        safe_pn = urllib.parse.quote(company_name)
+        safe_tr = re.sub(r'[^a-zA-Z0-9]', '', str(inv_number))
+        qr_data = f"upi://pay?pa={upi_id}&pn={safe_pn}&am={amount:.2f}&cu=INR&tr={safe_tr}"
 
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
