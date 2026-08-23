@@ -70,10 +70,10 @@ const Login = () => {
             <Building2 size={30} color="white" />
           </div>
           <h1 style={{ color: 'white', fontSize: '1.75rem', fontWeight: 800, margin: 0, letterSpacing: '-0.02em' }}>
-            ERP<span style={{ color: '#6366f1' }}>Pro</span>
+            SobhaInfra <span style={{ color: '#6366f1' }}>ERP</span>
           </h1>
           <p style={{ color: '#64748b', fontSize: '0.875rem', marginTop: '0.35rem' }}>
-            Real Estate Business Platform
+            Enterprise Infra & Real Estate Platform
           </p>
         </div>
 

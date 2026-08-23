@@ -71,9 +71,9 @@ const Sidebar = ({ collapsed, onToggle, mobileOpen, onMobileClose }) => {
         {/* Header */}
         <div className="sidebar-header">
           <div className="logo-container">
-            <div className="logo-icon">E</div>
+            <div className="logo-icon">S</div>
             {!collapsed && (
-              <span className="logo-text">ERP<span>Pro</span></span>
+              <span className="logo-text">SobhaInfra <span>ERP</span></span>
             )}
           </div>
           <button

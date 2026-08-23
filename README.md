@@ -1,16 +1,78 @@
-# React + Vite
+# SobhaInfra ERP
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Enterprise Infra & Real Estate WhatsApp Automation, AI CRM, Field Operations, and TallyPrime Accounting Suite.
 
-Currently, two official plugins are available:
+---
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## 🏗️ Overview
 
-## React Compiler
+SobhaInfra ERP is a modern enterprise management platform combining:
+- **WhatsApp Cloud API Integration**: Real-time two-way messaging, campaigns, template sync, interactive quick replies, and human agent handoff.
+- **AI Sales Assistant & Auto-Reply**: OpenAI GPT-4o powered conversational agent with business guardrails and auto-qualifying leads.
+- **Lead & CRM Management**: Kanban pipeline, customer 360 profile, multi-channel lead capture (Facebook Lead Ads, Webhook, CSV).
+- **Field Operations & GPS Tracking**: Live agent check-ins, geo-tagged photo proof, route logs, and client visit logs.
+- **Payment & Accounts Follow-up**: Automated payment reminders, ledger statements, UPI QR code generation, and invoice tracking.
+- **TallyPrime Bi-directional Sync**: Local connector bridge for automated sync of ledgers, vouchers, outstanding balances, and inventory items.
+- **Multi-Tenant & Role-Based Access (RBAC)**: Super Admin, Manager, Sales Executive, Field Agent, and Accounts roles with custom permissions.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+---
 
-## Expanding the Oxlint configuration
+## 🚀 Tech Stack
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+- **Frontend**: React 19, Vite, React Router v7, Lucide Icons, Leaflet (Maps)
+- **Backend / Serverless**: Netlify Serverless Functions (Node.js)
+- **Database & Auth**: Supabase PostgreSQL with Row Level Security (RLS) and Realtime WebSockets
+- **Accounting Engine**: TallyPrime XML Server Bridge (Python / Node.js)
+- **AI Engine**: OpenAI GPT-4o API
+- **Messaging**: Meta WhatsApp Cloud API (v20.0+)
+
+---
+
+## 🛠️ Quick Start
+
+### 1. Install Dependencies
+```bash
+npm install
+```
+
+### 2. Environment Variables
+Copy `.env.example` to `.env` and fill in the required API keys and credentials:
+```bash
+cp .env.example .env
+```
+
+### 3. Run Development Server
+```bash
+npm run dev
+```
+
+### 4. Build for Production
+```bash
+npm run build
+```
+
+---
+
+## 📂 Project Structure
+
+```
+├── netlify/functions/     # Serverless backend functions (webhooks, sync, AI engine)
+├── public/                # Static assets, icons, manifest
+├── scripts/               # TallyPrime local connector bridge scripts
+├── src/
+│   ├── components/        # Reusable UI components (Sidebar, Modals, Header, Maps)
+│   ├── context/           # React Contexts (Auth, Theme, Company, LiveCounts)
+│   ├── lib/               # Database client, Supabase integration, API handlers
+│   ├── pages/             # Application views (CRM, WhatsApp, Tasks, Finance, etc.)
+│   └── main.jsx           # Application entry point
+├── supabase/
+│   ├── migrations/        # SQL migration files for Supabase
+│   └── seed/              # Initial seed data for test tenants and users
+└── tally-sync.py          # Standalone Python daemon for TallyPrime synchronization
+```
+
+---
+
+## 🛡️ License
+
+Proprietary — Bytecore Infotech / SobhaInfra ERP. All Rights Reserved.
