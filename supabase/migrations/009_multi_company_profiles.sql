@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS public.company_profiles (
   company_name TEXT NOT NULL,
   alias_names JSONB DEFAULT '[]'::jsonb,
   company_logo_url TEXT DEFAULT '',
+  company_qr_code_url TEXT DEFAULT '',
   company_address TEXT,
   gstin_number TEXT,
   company_udyam_reg TEXT,
@@ -32,6 +33,10 @@ ALTER TABLE public.company_profiles ENABLE ROW LEVEL SECURITY;
 -- Allow public / anon read/write for now
 CREATE POLICY "Allow all access to company_profiles" ON public.company_profiles
   FOR ALL USING (true) WITH CHECK (true);
+
+-- Ensure invoices and tally tables have company_name column
+ALTER TABLE public.invoices ADD COLUMN IF NOT EXISTS company_name TEXT;
+ALTER TABLE public.tally_outstandings ADD COLUMN IF NOT EXISTS company_name TEXT;
 
 -- Seed initial company profiles
 INSERT INTO public.company_profiles (
