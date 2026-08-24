@@ -371,7 +371,12 @@ export async function getInvoices() {
     console.warn('[db] getInvoices error:', error.message);
     return { data: [], error };
   }
-  return { data: data || [], error: null };
+  const normalized = (data || []).map(inv => ({
+    ...inv,
+    invoice_number: inv.invoice_number || inv.tally_voucher_number || `INV-${inv.id?.slice(0, 8)}`,
+    tally_voucher_number: inv.tally_voucher_number || inv.invoice_number || '',
+  }));
+  return { data: normalized, error: null };
 }
 
 export async function logPaymentReminder(invoiceId, message) {

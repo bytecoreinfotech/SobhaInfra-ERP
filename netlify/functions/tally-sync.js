@@ -62,11 +62,11 @@ exports.handler = async (event) => {
       // 1. Update tally_connections table for live status on Finance Dashboard
       try {
         await supabase.from('tally_connections').upsert({
-          id: '00000000-0000-0000-0000-000000000001',
           organization_id: '00000000-0000-0000-0000-000000000001',
-          status: 'ONLINE',
-          tally_host: '127.0.0.1:9000',
-          tally_company: companyName || 'TallyPrime Live',
+          company_name: companyName || 'TallyPrime Live',
+          connector_token: EXPECTED_TOKEN,
+          sync_status: 'Connected',
+          tally_host: 'http://localhost:9000',
           last_sync_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         }, { onConflict: 'organization_id' });
@@ -85,7 +85,7 @@ exports.handler = async (event) => {
 
       for (const v of vouchers) {
         try {
-          const invNum = v.invoice_number || `INV-${Date.now()}`;
+          const invNum = v.invoice_number || v.tally_voucher_number || `INV-${Date.now()}`;
           const normVoucherPhone = normalizePhone(v.phone);
 
           // Find matching lead by normalized phone or exact name
@@ -123,12 +123,14 @@ exports.handler = async (event) => {
 
           const invoiceRow = {
             organization_id: '00000000-0000-0000-0000-000000000001',
+            tally_voucher_number: invNum,
             invoice_number: invNum,
             client_name: v.ledger_name || 'Client',
             client_phone: normVoucherPhone || (matchedLead ? matchedLead.phone : ''),
             amount: Number(v.amount) || 0,
             status: v.status || 'Pending',
             due_date: v.due_date || null,
+            invoice_date: v.date ? (v.date.length === 8 ? `${v.date.slice(0,4)}-${v.date.slice(4,6)}-${v.date.slice(6,8)}` : v.date) : new Date().toISOString().split('T')[0],
             pdf_url: finalPdfUrl || null,
             metadata: {
               pdf_url: finalPdfUrl,
@@ -139,11 +141,24 @@ exports.handler = async (event) => {
           };
 
           // Check if invoice already exists
-          const { data: existing } = await supabase
-            .from('invoices')
-            .select('id')
-            .eq('invoice_number', invNum)
-            .maybeSingle();
+          let existing = null;
+          try {
+            const { data } = await supabase
+              .from('invoices')
+              .select('id')
+              .eq('tally_voucher_number', invNum)
+              .maybeSingle();
+            existing = data;
+          } catch (e) {
+            try {
+              const { data } = await supabase
+                .from('invoices')
+                .select('id')
+                .eq('invoice_number', invNum)
+                .maybeSingle();
+              existing = data;
+            } catch (e2) {}
+          }
 
           let invErr = null;
 
@@ -155,11 +170,11 @@ exports.handler = async (event) => {
 
             let writeError = res.error;
 
-            // Progressive fallback if schema cache lacks optional columns (organization_id, pdf_url, metadata)
             if (writeError && writeError.message) {
               const msg = writeError.message;
-              if (msg.includes('organization_id')) delete attemptRow.organization_id;
+              if (msg.includes('invoice_number') && !msg.includes('null value')) delete attemptRow.invoice_number;
               if (msg.includes('pdf_url')) delete attemptRow.pdf_url;
+              if (msg.includes('organization_id')) delete attemptRow.organization_id;
               if (msg.includes('metadata')) delete attemptRow.metadata;
 
               res = isUpdate
@@ -167,18 +182,6 @@ exports.handler = async (event) => {
                 : await supabase.from('invoices').insert([attemptRow]);
 
               writeError = res.error;
-
-              if (writeError && writeError.message) {
-                if (writeError.message.includes('organization_id')) delete attemptRow.organization_id;
-                if (writeError.message.includes('pdf_url')) delete attemptRow.pdf_url;
-                if (writeError.message.includes('metadata')) delete attemptRow.metadata;
-
-                res = isUpdate
-                  ? await supabase.from('invoices').update(attemptRow).eq('id', existingId)
-                  : await supabase.from('invoices').insert([attemptRow]);
-
-                writeError = res.error;
-              }
             }
 
             return writeError;
@@ -190,8 +193,17 @@ exports.handler = async (event) => {
             invErr = await executeInvoiceWrite(invoiceRow, false, null);
           }
 
-          // Auto-upsert into ledger_mappings table for Ledger Mapping Master UI
+          // Auto-upsert into tally_mappings & ledger_mappings table
           if (v.ledger_name) {
+            try {
+              await supabase.from('tally_mappings').upsert({
+                organization_id: '00000000-0000-0000-0000-000000000001',
+                tally_ledger_name: v.ledger_name,
+                mapping_status: matchedLead ? 'exact_match' : 'possible_match',
+                confidence_score: matchedLead ? 1.0 : 0.0,
+                updated_at: new Date().toISOString(),
+              }, { onConflict: 'organization_id,tally_ledger_name' });
+            } catch (mapErr) {}
             try {
               await supabase.from('ledger_mappings').upsert({
                 organization_id: '00000000-0000-0000-0000-000000000001',
@@ -203,9 +215,7 @@ exports.handler = async (event) => {
                 match_confidence: matchedLead ? 1.0 : 0.0,
                 updated_at: new Date().toISOString(),
               }, { onConflict: 'organization_id,tally_ledger_name' });
-            } catch (mapErr) {
-              // Non-fatal
-            }
+            } catch (mapErr2) {}
           }
 
           if (!invErr) {
