@@ -51,17 +51,34 @@ if sys.platform == 'win32':
     except Exception:
         pass
 
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Auto-load .env file if present in script directory
+env_path = os.path.join(SCRIPT_DIR, ".env")
+if os.path.exists(env_path):
+    try:
+        with open(env_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    k = k.strip()
+                    v = v.strip().strip("'\"")
+                    if k and k not in os.environ:
+                        os.environ[k] = v
+    except Exception as e:
+        pass
+
 # -- Configuration --
 TALLY_HOST        = os.environ.get("TALLY_HOST", "http://localhost:9000")
-CLOUD_URL         = os.environ.get("ERPPRO_CLOUD_URL", "http://localhost:5173/.netlify/functions/tally-sync")
+CLOUD_URL         = os.environ.get("ERPPRO_CLOUD_URL", "https://sobhainfra-erp.netlify.app/.netlify/functions/tally-sync")
 CONNECTOR_TOKEN   = os.environ.get("TALLY_CONNECTOR_TOKEN", "erppro_tally_sec_token_2026")
 ORGANIZATION_ID   = os.environ.get("ORGANIZATION_ID", "00000000-0000-0000-0000-000000000001")
-SYNC_INTERVAL_SEC = int(os.environ.get("SYNC_INTERVAL_MINS", "60")) * 60
-SCRIPT_DIR        = os.path.dirname(os.path.abspath(__file__))
+SYNC_INTERVAL_SEC = int(os.environ.get("SYNC_INTERVAL_MINS", "15")) * 60
 
 # Supabase Storage (for uploading invoice PDFs)
-SUPABASE_URL      = os.environ.get("SUPABASE_URL", "https://jbgkeeubevwopphekwfj.supabase.co")
-SUPABASE_KEY      = os.environ.get("SUPABASE_ANON_KEY", "sb_publishable_thqXkofcI9pNt3rrXQ23Zw_PJpnhxIB")
+SUPABASE_URL      = os.environ.get("SUPABASE_URL", "https://mcgmppnvnwnilioapbli.supabase.co")
+SUPABASE_KEY      = os.environ.get("SUPABASE_ANON_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1jZ21wcG52bnduaWxpb2FwYmxpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc1NzE5ODIsImV4cCI6MjEwMzE0Nzk4Mn0.27BrkeNVxcEfG0R1W2gzlV2ueuK6NBS7MuD98Y5iDME")
 STORAGE_BUCKET    = "whatsapp-media"
 
 # -- Logging (ASCII only for Windows) --
