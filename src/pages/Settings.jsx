@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Settings as SettingsIcon, Bell, Shield, Palette, MessageCircle,
   RefreshCw, Save, Check, Zap, Download, AlertTriangle, Activity,
