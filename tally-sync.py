@@ -97,8 +97,13 @@ log = logging.getLogger("tally-sync")
 # TDL XML REQUEST TEMPLATES (5 different strategies)
 # ==============================================================================
 
-# Strategy 1: Day Book (captures ALL vouchers regardless of type)
-DAYBOOK_XML = """<?xml version="1.0" encoding="utf-8"?>
+# Strategy 1: Day Book (captures ALL vouchers — 2 full financial years to catch previous-FY outstanding bills)
+_today = datetime.now()
+_fy_start_year = (_today.year if _today.month >= 4 else _today.year - 1) - 1  # Go 1 extra FY back
+_fy_from = f"{_fy_start_year}0401"
+_fy_to   = _today.strftime("%Y%m%d")
+
+DAYBOOK_XML = f"""<?xml version="1.0" encoding="utf-8"?>
 <ENVELOPE>
   <HEADER>
     <TALLYREQUEST>Export Data</TALLYREQUEST>
@@ -109,6 +114,8 @@ DAYBOOK_XML = """<?xml version="1.0" encoding="utf-8"?>
         <REPORTNAME>Day Book</REPORTNAME>
         <STATICVARIABLES>
           <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+          <SVFROMDATE>{_fy_from}</SVFROMDATE>
+          <SVTODATE>{_fy_to}</SVTODATE>
         </STATICVARIABLES>
       </REQUESTDESC>
     </EXPORTDATA>
@@ -133,8 +140,8 @@ VOUCHERS_XML = """<?xml version="1.0" encoding="utf-8"?>
   </BODY>
 </ENVELOPE>"""
 
-# Strategy 3: Bills Outstanding
-OUTSTANDING_XML = """<?xml version="1.0" encoding="utf-8"?>
+# Strategy 3: Bills Outstanding (with full 2-FY date range)
+OUTSTANDING_XML = f"""<?xml version="1.0" encoding="utf-8"?>
 <ENVELOPE>
   <HEADER>
     <TALLYREQUEST>Export Data</TALLYREQUEST>
@@ -145,6 +152,8 @@ OUTSTANDING_XML = """<?xml version="1.0" encoding="utf-8"?>
         <REPORTNAME>Bills Outstanding</REPORTNAME>
         <STATICVARIABLES>
           <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+          <SVFROMDATE>{_fy_from}</SVFROMDATE>
+          <SVTODATE>{_fy_to}</SVTODATE>
         </STATICVARIABLES>
       </REQUESTDESC>
     </EXPORTDATA>
@@ -410,6 +419,27 @@ def parse_voucher_block(block, fallback_company: str = ""):
     if amount == 0:
         return None
 
+    # Bug 3 fix: Extract real taxable amount and GST from voucher XML ledger entries
+    taxable_amount = None
+    igst_amount    = None
+    cgst_amount    = None
+    sgst_amount    = None
+    for ledger_entry in re.findall(r'<(?:ALLLLEDGERENTRIES|ALLLEDGERENTRIES|LEDGERENTRIES)\.LIST[^>]*>([\s\S]*?)</(?:ALLLLEDGERENTRIES|ALLLEDGERENTRIES|LEDGERENTRIES)\.LIST>', block, re.IGNORECASE):
+        entry_name = (extract_tag_value(ledger_entry, "LEDGERNAME") or "").upper()
+        entry_amt  = parse_number(extract_tag_value(ledger_entry, "AMOUNT") or "0")
+        if "IGST" in entry_name and entry_amt > 0:
+            igst_amount = entry_amt
+        elif "CGST" in entry_name and entry_amt > 0:
+            cgst_amount = entry_amt
+        elif "SGST" in entry_name and entry_amt > 0:
+            sgst_amount = entry_amt
+    # Derive taxable
+    total_tax = (igst_amount or 0) + (cgst_amount or 0) + (sgst_amount or 0)
+    if total_tax > 0:
+        taxable_amount = amount - total_tax
+    else:
+        taxable_amount = None  # Will fall back to amount/1.05 formula in PDF generator
+
     due_date = datetime.now().strftime("%Y-%m-%d")
     inv_date_str = datetime.now().strftime("%d-%b-%y")
     if raw_date and len(raw_date) == 8:
@@ -420,7 +450,14 @@ def parse_voucher_block(block, fallback_company: str = ""):
         except ValueError:
             pass
 
-    status = "Paid" if "receipt" in vch_type.lower() else "Pending"
+    # Bug 2 fix: Receipt/Payment/Journal/Contra vouchers are internal entries, NOT customer invoices
+    # Only Sales and Debit Note vouchers should be saved as invoices
+    SKIP_TYPES = {"receipt", "payment", "journal", "contra", "bank payment", "bank receipt", "cash payment", "cash receipt"}
+    vch_type_lower = vch_type.lower()
+    if any(s in vch_type_lower for s in SKIP_TYPES):
+        return None  # Skip — not a customer invoice
+
+    status = "Pending"  # Sales vouchers start as Pending
 
     # Extract truck number from narration or block (e.g. MH04-4550, GJ01-AB1234)
     truck_match = re.search(r'([A-Z]{2}[-\s]?\d{1,2}[-\s]?[A-Z]{1,3}[-\s]?\d{4})', narration or block, re.IGNORECASE)
@@ -481,6 +518,10 @@ def parse_voucher_block(block, fallback_company: str = ""):
         "quantity_str": line_items[0]["qty"] if line_items else "776 BAGS",
         "rate_str": f"{line_items[0]['rate']:,.2f}" if line_items else "92.00",
         "unit": "BAGS",
+        "taxable_amount": taxable_amount,
+        "igst_amount": igst_amount,
+        "cgst_amount": cgst_amount,
+        "sgst_amount": sgst_amount,
         "line_items": line_items,
     }
 
@@ -962,40 +1003,52 @@ def get_matching_company_profile(company_name: str | None = None, profiles: list
                     return p
 
     # If company is newly created in Tally, dynamically construct a real profile for it!
+    # Bug 7 fix: include organization_id so it appears in Settings UI
+    # Bug 6 fix: correct conflict resolution key for upsert
     clean_id = f"comp-{re.sub(r'[^a-zA-Z0-9]', '-', company_name).lower()}"
     clean_tag = re.sub(r'[^a-zA-Z0-9]', '', company_name).lower() or 'company'
     new_profile = {
         "id": clean_id,
+        "organization_id": ORGANIZATION_ID,
         "company_name": company_name.strip(),
         "alias_names": [company_name.strip()],
         "company_logo_url": "",
         "company_address": f"Registered Office, {company_name.strip()}",
-        "gstin_number": "24AGCPJ2785R1ZV",
-        "company_udyam_reg": "UDYAM-REG-01-00000",
-        "admin_email": f"accounts@{clean_tag}.com",
-        "contact_phone": "+91 98765 43210",
-        "bank_name": "HDFC Bank Ltd.",
-        "bank_account_no": "50200088991122",
-        "bank_ifsc": "HDFC0001234",
-        "upi_id": f"{clean_tag}@okhdfcbank",
+        "gstin_number": "",  # Admin must fill in Settings
+        "company_udyam_reg": "",
+        "admin_email": "",
+        "contact_phone": "",
+        "bank_name": "",
+        "bank_account_no": "",
+        "bank_ifsc": "",
+        "upi_id": "",
         "state_name": "Gujarat",
         "state_code": "24",
-        "jurisdiction": f"{company_name.strip()} JURISDICTION",
+        "jurisdiction": "",
         "invoice_footer_notes": "Unpaid Invoice Will Be Charged 24% P.A. Interest After Given Credit Days.",
         "is_default": False,
     }
 
-    # Auto-register in Supabase if connection available
+    # Auto-register in Supabase — Bug 6 fix: correct conflict key
     if SUPABASE_URL and SUPABASE_KEY:
         try:
-            requests.post(
-                f"{SUPABASE_URL}/rest/v1/company_profiles",
+            resp = requests.post(
+                f"{SUPABASE_URL}/rest/v1/company_profiles?on_conflict=organization_id,company_name",
                 json=new_profile,
-                headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Prefer": "resolution=merge-duplicates"},
-                timeout=3
+                headers={
+                    "apikey": SUPABASE_KEY,
+                    "Authorization": f"Bearer {SUPABASE_KEY}",
+                    "Content-Type": "application/json",
+                    "Prefer": "resolution=merge-duplicates,return=minimal",
+                },
+                timeout=5
             )
-        except Exception:
-            pass
+            if resp.status_code in (200, 201):
+                log.info(f"  [Company Auto-Seed] New company registered: '{company_name}' → appears in Settings dashboard!")
+            else:
+                log.debug(f"  [Company Auto-Seed] Supabase returned {resp.status_code}: {resp.text[:200]}")
+        except Exception as e:
+            log.debug(f"  [Company Auto-Seed] Non-fatal: {e}")
 
     return new_profile
 
@@ -1223,10 +1276,30 @@ def generate_invoice_pdf(voucher: dict, org_profile: dict | None = None, single_
     unit_str     = voucher.get("unit", "BAGS")
     eway_bill_no = voucher.get("eway_bill_no", "602165786131")
 
-    # Math calculations
-    taxable_val = float(voucher.get("taxable_amount") or (amount / 1.05))
-    igst_val    = float(voucher.get("igst_amount") or (amount - taxable_val))
-    round_off   = float(voucher.get("round_off", 0.40))
+    # Bug 3 fix: Use real taxable and GST amounts from Tally XML if available,
+    # only fall back to 5% formula when Tally didn't provide them
+    raw_taxable = voucher.get("taxable_amount")
+    raw_igst    = voucher.get("igst_amount")
+    raw_cgst    = voucher.get("cgst_amount")
+    raw_sgst    = voucher.get("sgst_amount")
+
+    if raw_taxable and float(raw_taxable) > 0:
+        taxable_val = float(raw_taxable)
+        igst_val    = float(raw_igst or 0)
+        cgst_val    = float(raw_cgst or 0)
+        sgst_val    = float(raw_sgst or 0)
+        total_tax   = igst_val + cgst_val + sgst_val
+        # Cross-check: taxable + tax should ≈ amount (allow ₹1 rounding)
+        if abs(taxable_val + total_tax - amount) > 1.5:
+            # Something doesn't add up — fall back to formula
+            taxable_val = round(amount / 1.05, 2)
+            igst_val    = round(amount - taxable_val, 2)
+    else:
+        # Fallback: assume 5% IGST (sand/material typical rate)
+        taxable_val = round(amount / 1.05, 2)
+        igst_val    = round(amount - taxable_val, 2)
+
+    round_off   = float(voucher.get("round_off", 0))
 
     # Business profile resolved dynamically per company
     company_name    = org_profile.get("company_name") or org_profile.get("org_name", "SHOBHA READY PLAST")

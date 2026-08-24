@@ -12,6 +12,7 @@ import {
   sendPaymentReminderWhatsApp, getLeads, normalizePhone,
   pauseInvoiceReminder, resumeInvoiceReminder
 } from '../lib/db';
+import { useCompany } from '../context/CompanyContext';
 import './Pages.css';
 
 const statusConfig = {
@@ -22,10 +23,11 @@ const statusConfig = {
 };
 
 const Finance = () => {
+  const { activeCompany, isConsolidated, activeCompanyId } = useCompany();
   const [activeTab, setActiveTab] = useState('invoices'); // 'invoices' | 'tally' | 'mappings' | 'errors'
   
   // Invoices & Outstandings State
-  const [invoices, setInvoices] = useState([]);
+  const [allInvoices, setAllInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('All');
   const [search, setSearch] = useState('');
@@ -63,6 +65,21 @@ const Finance = () => {
     loadAllFinanceData();
   }, []);
 
+  // Re-filter when company switcher changes (no re-fetch needed — just filter from allInvoices)
+  const invoices = isConsolidated
+    ? allInvoices
+    : allInvoices.filter(inv => {
+        if (!activeCompany) return true;
+        const compName = (activeCompany.company_name || '').toUpperCase();
+        const aliases = Array.isArray(activeCompany.alias_names)
+          ? activeCompany.alias_names.map(a => a.toUpperCase())
+          : [];
+        const allNames = [compName, ...aliases];
+        const invCompany = (inv.company_name || inv.tally_company || '').toUpperCase();
+        if (!invCompany) return true; // No company tag = show in all views
+        return allNames.some(n => n && (invCompany.includes(n) || n.includes(invCompany)));
+      });
+
   const loadAllFinanceData = async () => {
     setLoading(true);
     const [invRes, tallyRes, mapRes, errRes, leadsRes] = await Promise.all([
@@ -72,7 +89,7 @@ const Finance = () => {
       getSyncErrors(),
       getLeads(),
     ]);
-    setInvoices(invRes.data || []);
+    setAllInvoices(invRes.data || []);
     setTallyStatus(tallyRes.data || null);
     setMappings(mapRes.data || []);
     setSyncErrors(errRes.data || []);
@@ -112,15 +129,23 @@ const Finance = () => {
     e.preventDefault();
     if (!pauseModal?.invoice) return;
     setPausingSaving(true);
+
+    // Derive committedBy channel label from reason
+    let committedBy = 'admin_manual';
+    if (pauseReason?.includes('phone call')) committedBy = 'admin_phone_call';
+    else if (pauseReason?.includes('in-person')) committedBy = 'admin_in_person';
+    else if (pauseReason?.includes('WhatsApp message')) committedBy = 'admin_whatsapp_manual';
+    else if (pauseReason?.includes('Email')) committedBy = 'admin_email';
+
     const { data } = await pauseInvoiceReminder(pauseModal.invoice.id, {
       reason: pauseReason || 'Paused by admin',
       promisedDate: pausePromisedDate || null,
-      committedBy: 'admin_manual',
+      committedBy,
       notes: pauseNotes,
     });
     if (data) {
-      setInvoices(prev => prev.map(i => i.id === pauseModal.invoice.id ? { ...i, ...data } : i));
-      setReminderToast(`✅ Reminders paused for ${pauseModal.invoice.client_name}${pausePromisedDate ? ` until ${new Date(pausePromisedDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}` : ''}`);
+      setAllInvoices(prev => prev.map(i => i.id === pauseModal.invoice.id ? { ...i, ...data } : i));
+      setReminderToast(`✅ Reminders paused for ${pauseModal.invoice.client_name}${pausePromisedDate ? ` until ${new Date(pausePromisedDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}` : ' (indefinitely)'}`);
     }
     setPauseModal(null);
     setPauseReason('');
@@ -133,7 +158,7 @@ const Finance = () => {
   const handleResumeReminder = async (inv) => {
     const { data } = await resumeInvoiceReminder(inv.id);
     if (data) {
-      setInvoices(prev => prev.map(i => i.id === inv.id ? { ...i, ...data } : i));
+      setAllInvoices(prev => prev.map(i => i.id === inv.id ? { ...i, ...data } : i));
       setReminderToast(`▶️ Reminders resumed for ${inv.client_name}`);
       setTimeout(() => setReminderToast(null), 3500);
     }
@@ -378,7 +403,14 @@ const Finance = () => {
                             )}
                             {inv.promise_committed_by && (
                               <span style={{ fontSize: '0.6rem', color: 'var(--text-muted)' }}>
-                                via {inv.promise_committed_by === 'whatsapp_auto' ? '🤖 WhatsApp AI' : '👤 Admin'}
+                                via {
+                                  inv.promise_committed_by === 'whatsapp_auto' ? '🤖 WhatsApp AI' :
+                                  inv.promise_committed_by === 'admin_phone_call' ? '📞 Phone Call' :
+                                  inv.promise_committed_by === 'admin_in_person' ? '🤝 In-Person' :
+                                  inv.promise_committed_by === 'admin_email' ? '📧 Email' :
+                                  inv.promise_committed_by === 'admin_whatsapp_manual' ? '💬 WhatsApp (Manual)' :
+                                  '👤 Admin'
+                                }
                               </span>
                             )}
                           </div>
@@ -401,16 +433,16 @@ const Finance = () => {
                             </button>
                           ) : null}
 
-                          {/* Remind / Settled */}
+                          {/* Remind / Settled — Admin can ALWAYS send manually, even during pause */}
                           {inv.status !== 'Paid' ? (
                             <button
                               className="btn btn-whatsapp btn-sm"
-                              style={{ padding: '0.25rem 0.6rem', fontSize: '0.72rem' }}
+                              style={{ padding: '0.25rem 0.6rem', fontSize: '0.72rem', opacity: (inv.reminder_paused === true || inv.reminder_paused === 'true') ? 0.75 : 1 }}
                               onClick={() => handleSendReminder(inv)}
-                              disabled={remindingId === inv.id || inv.reminder_paused === true || inv.reminder_paused === 'true'}
-                              title={inv.reminder_paused ? 'Reminders paused for this client' : 'Send WhatsApp reminder'}
+                              disabled={remindingId === inv.id}
+                              title={(inv.reminder_paused === true || inv.reminder_paused === 'true') ? '⚠️ Auto-reminders are paused, but you can still send manually' : 'Send WhatsApp payment reminder'}
                             >
-                              <Send size={12} /> {remindingId === inv.id ? 'Sending...' : 'Remind on WA'}
+                              <Send size={12} /> {remindingId === inv.id ? 'Sending...' : (inv.reminder_paused === true || inv.reminder_paused === 'true') ? 'Send Anyway' : 'Remind on WA'}
                             </button>
                           ) : (
                             <span style={{ fontSize: '0.72rem', color: 'var(--success)', fontWeight: 600 }}>Settled</span>
@@ -699,10 +731,35 @@ const Finance = () => {
             </div>
 
             <form onSubmit={handlePauseReminder} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+
+              {/* How was the promise communicated? */}
+              <div>
+                <label style={{ fontSize: '0.78rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>
+                  <MessageSquare size={13} style={{ display: 'inline', marginRight: 4 }} />
+                  How did the client communicate the payment promise? *
+                </label>
+                <select
+                  className="input-field"
+                  value={pauseReason}
+                  onChange={e => setPauseReason(e.target.value)}
+                  required
+                >
+                  <option value="">-- Select Channel --</option>
+                  <option value="Client committed date on phone call">📞 Phone call with admin/manager</option>
+                  <option value="Client in-person payment promise">🤝 In-person / Office visit promise</option>
+                  <option value="Client committed via WhatsApp message">💬 WhatsApp message (manual review)</option>
+                  <option value="Email commitment received">📧 Email commitment received</option>
+                  <option value="Partial payment received, balance pending">💰 Partial payment received — balance pending</option>
+                  <option value="Payment arrangement under discussion">🗓️ Under payment arrangement discussion</option>
+                  <option value="Account dispute / verification pending">⚠️ Account dispute / verification pending</option>
+                  <option value="Client requested pause">📩 Client specifically requested pause</option>
+                </select>
+              </div>
+
               <div>
                 <label style={{ fontSize: '0.78rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>
                   <CalendarClock size={13} style={{ display: 'inline', marginRight: 4 }} />
-                  Client's Committed Payment Date (Optional)
+                  Payment Promised By (Date) *
                 </label>
                 <input
                   type="date"
@@ -712,25 +769,10 @@ const Finance = () => {
                   onChange={e => setPausePromisedDate(e.target.value)}
                 />
                 <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
-                  If set, reminders auto-resume on this date if unpaid. Leave blank for indefinite pause.
+                  {pausePromisedDate
+                    ? `⚡ Auto-reminders will resume on ${new Date(pausePromisedDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} if payment is still pending.`
+                    : 'Leave blank for indefinite pause (admin must manually resume).'}
                 </div>
-              </div>
-
-              <div>
-                <label style={{ fontSize: '0.78rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Pause Reason</label>
-                <select
-                  className="input-field"
-                  value={pauseReason}
-                  onChange={e => setPauseReason(e.target.value)}
-                >
-                  <option value="">-- Select Reason --</option>
-                  <option value="Client committed date on phone call">📞 Client committed date on phone call</option>
-                  <option value="Client in-person payment promise">🤝 In-person payment promise</option>
-                  <option value="Partial payment received, balance pending">💰 Partial payment received</option>
-                  <option value="Payment arrangement under discussion">🗓️ Under payment arrangement discussion</option>
-                  <option value="Client requested pause">📩 Client specifically requested pause</option>
-                  <option value="Account dispute / verification pending">⚠️ Account dispute / verification pending</option>
-                </select>
               </div>
 
               <div>
@@ -738,10 +780,14 @@ const Finance = () => {
                 <textarea
                   className="input-field textarea-field"
                   rows={2}
-                  placeholder="e.g. Spoke to Rakesh on 22 Aug, will pay by 30th via NEFT..."
+                  placeholder="e.g. Spoke to Rakesh on 22 Aug, will pay by 30th via NEFT from ICICI..."
                   value={pauseNotes}
                   onChange={e => setPauseNotes(e.target.value)}
                 />
+              </div>
+
+              <div style={{ padding: '0.65rem 0.85rem', background: 'rgba(99,102,241,0.07)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: 8, fontSize: '0.72rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                💡 <strong>Note:</strong> Even after pausing, you can still click <strong>"Send Anyway"</strong> on the invoice row to send a manual WhatsApp reminder at any time.
               </div>
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
@@ -752,7 +798,7 @@ const Finance = () => {
                   disabled={pausingSaving}
                   style={{ background: 'var(--warning)', color: 'black', fontWeight: 700 }}
                 >
-                  {pausingSaving ? 'Pausing...' : '⏸ Pause Reminders'}
+                  {pausingSaving ? 'Pausing...' : '⏸ Pause Auto-Reminders'}
                 </button>
               </div>
             </form>

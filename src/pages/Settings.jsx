@@ -5,7 +5,7 @@ import {
   Server, Cpu, Database, Radio, ToggleLeft, ToggleRight, FileSpreadsheet, FileJson,
   Brain, Plus, Trash2, Edit3, BookOpen, CheckCircle2, Share2, Send, Copy, Sparkles,
   HardDrive, AlertOctagon, ShieldAlert, HelpCircle, Layers, CheckSquare,
-  Building2, PlusCircle, Globe, ShieldCheck, Upload, Star
+  Building2, PlusCircle, Globe, ShieldCheck, Upload, Star, QrCode
 } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { useTheme } from '../context/ThemeContext';

@@ -8,22 +8,36 @@ import {
 import { getDashboardStats, getActivityFeed, getTasks, getLeads, getCampaigns, getInvoices, getTeamMembers, getEmployeeLivePings, getSiteVisits } from '../lib/db';
 import { isSupabaseConfigured } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
+import { useCompany } from '../context/CompanyContext';
 import './Pages.css';
 
 const Dashboard = () => {
   const { user, hasPermission } = useAuth();
+  const { activeCompany, isConsolidated } = useCompany();
   const [stats, setStats] = useState(null);
   const [activities, setActivities] = useState([]);
   const [taskList, setTaskList] = useState([]);
   const [leads, setLeads] = useState([]);
   const [campaigns, setCampaigns] = useState([]);
-  const [invoices, setInvoices] = useState([]);
+  const [allInvoices, setAllInvoices] = useState([]);
   const [teamMembers, setTeamMembers] = useState([]);
   const [livePings, setLivePings] = useState([]);
   const [recentVisits, setRecentVisits] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => { loadData(); }, []);
+
+  // Filter invoices by active company
+  const invoices = isConsolidated
+    ? allInvoices
+    : allInvoices.filter(inv => {
+        if (!activeCompany) return true;
+        const compName = (activeCompany.company_name || '').toUpperCase();
+        const aliases = Array.isArray(activeCompany.alias_names) ? activeCompany.alias_names.map(a => a.toUpperCase()) : [];
+        const invCompany = (inv.company_name || inv.tally_company || '').toUpperCase();
+        if (!invCompany) return true;
+        return [compName, ...aliases].some(n => n && (invCompany.includes(n) || n.includes(invCompany)));
+      });
 
   const loadData = async () => {
     setLoading(true);
@@ -43,7 +57,7 @@ const Dashboard = () => {
     setTaskList(taskRes.data || []);
     setLeads(leadRes.data || []);
     setCampaigns(campRes.data || []);
-    setInvoices(invRes.data || []);
+    setAllInvoices(invRes.data || []);
     setTeamMembers(membersRes.data || []);
     setLivePings(liveRes.data || []);
     setRecentVisits(visitsRes.data || []);

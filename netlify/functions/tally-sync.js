@@ -121,6 +121,17 @@ exports.handler = async (event) => {
             }
           }
 
+          // Resolve invoice_date: Python sends 'invoice_date', fallback to 'date' (raw 8-digit YYYYMMDD)
+          const rawDate = v.invoice_date || v.date || '';
+          let invoiceDateStr = new Date().toISOString().split('T')[0];
+          if (rawDate) {
+            if (rawDate.length === 8 && /^\d{8}$/.test(rawDate)) {
+              invoiceDateStr = `${rawDate.slice(0,4)}-${rawDate.slice(4,6)}-${rawDate.slice(6,8)}`;
+            } else if (rawDate.includes('-') || rawDate.includes('/')) {
+              try { invoiceDateStr = new Date(rawDate).toISOString().split('T')[0]; } catch {}
+            }
+          }
+
           const invoiceRow = {
             organization_id: '00000000-0000-0000-0000-000000000001',
             tally_voucher_number: invNum,
@@ -130,14 +141,16 @@ exports.handler = async (event) => {
             amount: Number(v.amount) || 0,
             status: v.status || 'Pending',
             due_date: v.due_date || null,
-            invoice_date: v.date ? (v.date.length === 8 ? `${v.date.slice(0,4)}-${v.date.slice(4,6)}-${v.date.slice(6,8)}` : v.date) : new Date().toISOString().split('T')[0],
+            invoice_date: invoiceDateStr,
             pdf_url: finalPdfUrl || null,
             metadata: {
               pdf_url: finalPdfUrl,
               pdf_generated_at: new Date().toISOString(),
               tally_ledger: v.ledger_name,
+              tally_company: v.company_name || companyName || '',
               sync_source: 'TallyPrime XML Bridge',
             },
+            company_name: v.company_name || companyName || '',
           };
 
           // Check if invoice already exists

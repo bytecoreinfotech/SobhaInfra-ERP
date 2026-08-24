@@ -4,10 +4,12 @@ import {
   MessageCircle, Phone, RefreshCw, IndianRupee, Plus
 } from 'lucide-react';
 import { getInvoices, logPaymentReminder } from '../lib/db';
+import { useCompany } from '../context/CompanyContext';
 import './Pages.css';
 
 const Payments = () => {
-  const [invoices, setInvoices] = useState([]);
+  const { activeCompany, isConsolidated } = useCompany();
+  const [allInvoices, setAllInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [remindingId, setRemindingId] = useState(null);
   const [sentIds, setSentIds] = useState([]);
@@ -15,10 +17,22 @@ const Payments = () => {
 
   useEffect(() => { loadInvoices(); }, []);
 
+  // Filter by active company (instant, no refetch)
+  const invoices = isConsolidated
+    ? allInvoices
+    : allInvoices.filter(inv => {
+        if (!activeCompany) return true;
+        const compName = (activeCompany.company_name || '').toUpperCase();
+        const aliases = Array.isArray(activeCompany.alias_names) ? activeCompany.alias_names.map(a => a.toUpperCase()) : [];
+        const invCompany = (inv.company_name || inv.tally_company || '').toUpperCase();
+        if (!invCompany) return true;
+        return [compName, ...aliases].some(n => n && (invCompany.includes(n) || n.includes(invCompany)));
+      });
+
   const loadInvoices = async () => {
     setLoading(true);
     const { data } = await getInvoices();
-    setInvoices(data || []);
+    setAllInvoices(data || []);
     setLoading(false);
   };
 
