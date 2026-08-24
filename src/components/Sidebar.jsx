@@ -9,7 +9,8 @@ import { useAuth } from '../context/AuthContext';
 import { useLiveCounts } from '../context/LiveCountsContext';
 import './Sidebar.css';
 
-const Sidebar = ({ collapsed, onToggle, mobileOpen, onMobileClose }) => {
+const Sidebar = ({ collapsed, isCollapsed, onToggle, mobileOpen, onMobileClose }) => {
+  const isSideCollapsed = collapsed ?? isCollapsed ?? false;
   const { user, hasPermission } = useAuth();
   const { whatsapp, leads, tasks, payments } = useLiveCounts();
 
@@ -67,21 +68,23 @@ const Sidebar = ({ collapsed, onToggle, mobileOpen, onMobileClose }) => {
         <div className="sidebar-mobile-overlay" onClick={onMobileClose} />
       )}
 
-      <aside className={`sidebar ${collapsed ? 'collapsed' : ''} ${mobileOpen ? 'mobile-open' : ''}`}>
+      <aside className={`sidebar ${isSideCollapsed ? 'collapsed' : ''} ${mobileOpen ? 'mobile-open' : ''}`}>
         {/* Header */}
         <div className="sidebar-header">
           <div className="logo-container">
             <div className="logo-icon">S</div>
-            {!collapsed && (
+            {!isSideCollapsed && (
               <span className="logo-text">SobhaInfra <span>ERP</span></span>
             )}
           </div>
           <button
             className="sidebar-toggle-btn desktop-toggle"
             onClick={onToggle}
-            title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            type="button"
+            title={isSideCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            aria-label={isSideCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           >
-            {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+            {isSideCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
           </button>
         </div>
 
@@ -98,7 +101,7 @@ const Sidebar = ({ collapsed, onToggle, mobileOpen, onMobileClose }) => {
                       end={item.end}
                       className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
                       onClick={onMobileClose}
-                      title={collapsed ? item.name : undefined}
+                      title={isSideCollapsed ? item.name : undefined}
                     >
                       <span className="nav-icon">{item.icon}</span>
                       <span className="nav-label">{item.name}</span>

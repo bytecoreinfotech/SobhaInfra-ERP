@@ -122,6 +122,8 @@ body {
   display: flex;
   min-height: 100vh;
   position: relative;
+  width: 100%;
+  overflow-x: hidden;
 }
 
 .app-main {
@@ -130,11 +132,13 @@ body {
   flex-direction: column;
   min-width: 0;
   margin-left: var(--sidebar-width);
-  transition: margin-left 0.3s ease;
+  width: calc(100% - var(--sidebar-width));
+  transition: margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1), width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .app-main.sidebar-collapsed {
   margin-left: 68px;
+  width: calc(100% - 68px);
 }
 
 .main-content {
@@ -142,6 +146,17 @@ body {
   padding: 2rem;
   overflow-y: auto;
   min-height: calc(100vh - var(--header-height));
+}
+
+@media (max-width: 768px) {
+  .app-main {
+    margin-left: 0 !important;
+    width: 100% !important;
+  }
+  .main-content {
+    padding: 1rem;
+    padding-bottom: 5rem;
+  }
 }
 
 /* =====================

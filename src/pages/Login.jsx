@@ -1,16 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Building2, Eye, EyeOff, ArrowRight, MessageCircle } from 'lucide-react';
-
-const demoCredentials = [
-  { role: 'Super Admin', email: 'admin@erppro.in', password: 'demo1234', name: 'Admin User', badge: 'danger' },
-  { role: 'Manager', email: 'manager@erppro.in', password: 'demo1234', name: 'Priya Sharma', badge: 'accent' },
-  { role: 'Field Employee / Agent', email: 'field@erppro.in', password: 'demo1234', name: 'Anand Sharma', badge: 'warning' },
-  { role: 'Sales Executive', email: 'sales@erppro.in', password: 'demo1234', name: 'Rajesh Kumar', badge: 'success' },
-  { role: 'Accounts & Billing', email: 'accounts@erppro.in', password: 'demo1234', name: 'Sunita Patel', badge: 'neutral' },
-  { role: 'Support Agent', email: 'neha@erppro.in', password: 'demo1234', name: 'Neha Gupta', badge: 'accent' },
-  { role: 'Senior Field Sales', email: 'vikram@erppro.in', password: 'demo1234', name: 'Vikram Singh', badge: 'warning' },
-];
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { Building2, Eye, EyeOff, ArrowRight, Database, AlertTriangle, CheckCircle2, RefreshCw } from 'lucide-react';
 
 const Login = () => {
   const { signIn } = useAuth();
@@ -19,20 +10,69 @@ const Login = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  
+  // Database status state
+  const [dbStatus, setDbStatus] = useState('checking'); // 'checking' | 'seeded' | 'not_seeded' | 'disconnected'
+  const [dbUsers, setDbUsers] = useState([]);
+  const [checkingDb, setCheckingDb] = useState(false);
+
+  const checkDatabaseStatus = async () => {
+    if (!isSupabaseConfigured) {
+      setDbStatus('disconnected');
+      return;
+    }
+
+    setCheckingDb(true);
+    try {
+      const { data, error: err } = await supabase
+        .from('users')
+        .select('id, full_name, email, role, avatar, is_active')
+        .order('created_at', { ascending: true });
+
+      if (err || !data || data.length === 0) {
+        setDbStatus('not_seeded');
+        setDbUsers([]);
+      } else {
+        setDbStatus('seeded');
+        setDbUsers(data);
+      }
+    } catch {
+      setDbStatus('not_seeded');
+      setDbUsers([]);
+    } finally {
+      setCheckingDb(false);
+    }
+  };
+
+  useEffect(() => {
+    checkDatabaseStatus();
+  }, []);
 
   const handleLogin = async (e) => {
     e.preventDefault();
     setError('');
+    
+    if (dbStatus === 'not_seeded') {
+      setError('Database is not seeded in Supabase yet. Please run supabase/combined_complete_setup.sql in your Supabase SQL Editor.');
+      return;
+    }
+
     setLoading(true);
     const { error: err } = await signIn(email, password);
     if (err) setError(err.message);
     setLoading(false);
   };
 
-  const quickLogin = async (cred) => {
+  const quickLogin = async (userRecord) => {
     setError('');
+    
+    if (dbStatus === 'not_seeded') {
+      setError('Database is not seeded in Supabase yet. Please run supabase/combined_complete_setup.sql in your Supabase SQL Editor.');
+      return;
+    }
+
     setLoading(true);
-    const { error: err } = await signIn(cred.email, cred.password);
+    const { error: err } = await signIn(userRecord.email, 'demo1234');
     if (err) setError(err.message);
     setLoading(false);
   };
@@ -58,28 +98,105 @@ const Login = () => {
         pointerEvents: 'none'
       }} />
 
-      <div style={{ width: '100%', maxWidth: 440 }}>
-        {/* Logo */}
-        <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
+      <div style={{ width: '100%', maxWidth: 460 }}>
+        {/* Logo Header */}
+        <div style={{ textAlign: 'center', marginBottom: '1.75rem' }}>
           <div style={{
             display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-            width: 64, height: 64, borderRadius: 16,
+            width: 60, height: 60, borderRadius: 16,
             background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
-            marginBottom: '1rem', boxShadow: '0 0 40px rgba(99,102,241,0.4)'
+            marginBottom: '0.85rem', boxShadow: '0 0 40px rgba(99,102,241,0.4)'
           }}>
-            <Building2 size={30} color="white" />
+            <Building2 size={28} color="white" />
           </div>
           <h1 style={{ color: 'white', fontSize: '1.75rem', fontWeight: 800, margin: 0, letterSpacing: '-0.02em' }}>
             SobhaInfra <span style={{ color: '#6366f1' }}>ERP</span>
           </h1>
-          <p style={{ color: '#64748b', fontSize: '0.875rem', marginTop: '0.35rem' }}>
-            Enterprise Infra & Real Estate Platform
+          <p style={{ color: '#64748b', fontSize: '0.85rem', marginTop: '0.35rem' }}>
+            Enterprise Real Estate & Infrastructure Management Suite
           </p>
         </div>
 
+        {/* Database Status Alert Banner */}
+        {dbStatus === 'not_seeded' && (
+          <div style={{
+            marginBottom: '1.25rem',
+            padding: '1rem',
+            borderRadius: 14,
+            background: 'rgba(234, 88, 12, 0.12)',
+            border: '1px solid rgba(234, 88, 12, 0.35)',
+            backdropFilter: 'blur(10px)',
+            color: '#fdba74',
+            fontSize: '0.82rem',
+            lineHeight: 1.5
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 700, color: '#fb923c', marginBottom: '0.35rem' }}>
+              <AlertTriangle size={17} />
+              <span>Database Setup Required</span>
+            </div>
+            <div>
+              Supabase is connected, but database tables & accounts are not seeded yet.
+              Please run <strong>supabase/combined_complete_setup.sql</strong> in your <strong>Supabase SQL Editor</strong>.
+            </div>
+            <button
+              onClick={checkDatabaseStatus}
+              disabled={checkingDb}
+              style={{
+                marginTop: '0.65rem',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.4rem',
+                padding: '0.35rem 0.75rem',
+                borderRadius: 8,
+                background: 'rgba(234, 88, 12, 0.25)',
+                border: '1px solid rgba(234, 88, 12, 0.4)',
+                color: '#ffedd5',
+                fontSize: '0.75rem',
+                fontWeight: 600,
+                cursor: checkingDb ? 'not-allowed' : 'pointer'
+              }}
+            >
+              <RefreshCw size={12} className={checkingDb ? 'spin-anim' : ''} />
+              {checkingDb ? 'Checking Supabase...' : 'Re-check Database Status'}
+            </button>
+          </div>
+        )}
+
+        {dbStatus === 'seeded' && (
+          <div style={{
+            marginBottom: '1.25rem',
+            padding: '0.6rem 0.9rem',
+            borderRadius: 12,
+            background: 'rgba(16, 185, 129, 0.1)',
+            border: '1px solid rgba(16, 185, 129, 0.3)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            color: '#6ee7b7',
+            fontSize: '0.78rem',
+            fontWeight: 600
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+              <CheckCircle2 size={15} color="#10b981" />
+              <span>Supabase Database Connected & Seeded ({dbUsers.length} Users)</span>
+            </div>
+            <button
+              onClick={checkDatabaseStatus}
+              disabled={checkingDb}
+              style={{
+                background: 'none', border: 'none', color: '#a7f3d0', cursor: 'pointer',
+                display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.72rem'
+              }}
+              title="Refresh"
+            >
+              <RefreshCw size={11} className={checkingDb ? 'spin-anim' : ''} />
+            </button>
+          </div>
+        )}
+
         {/* Login Card */}
         <div style={{
-          background: 'rgba(17,24,39,0.8)',
+          background: 'rgba(17,24,39,0.85)',
           border: '1px solid rgba(255,255,255,0.08)',
           borderRadius: 20, padding: '2rem',
           backdropFilter: 'blur(20px)',
@@ -98,7 +215,7 @@ const Login = () => {
                 type="email"
                 value={email}
                 onChange={e => setEmail(e.target.value)}
-                placeholder="you@company.com"
+                placeholder="admin@erppro.in"
                 required
                 style={{
                   width: '100%', padding: '0.75rem 1rem', borderRadius: 10,
@@ -146,9 +263,9 @@ const Login = () => {
 
             {error && (
               <div style={{
-                padding: '0.65rem 1rem', borderRadius: 8,
-                background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
-                color: '#f87171', fontSize: '0.82rem'
+                padding: '0.75rem 1rem', borderRadius: 10,
+                background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)',
+                color: '#f87171', fontSize: '0.82rem', lineHeight: 1.4
               }}>
                 ⚠ {error}
               </div>
@@ -156,53 +273,90 @@ const Login = () => {
 
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || dbStatus === 'not_seeded'}
               style={{
                 width: '100%', padding: '0.85rem', borderRadius: 10,
-                background: loading ? '#374151' : 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+                background: (loading || dbStatus === 'not_seeded') ? '#374151' : 'linear-gradient(135deg, #6366f1, #8b5cf6)',
                 border: 'none', color: 'white', fontSize: '0.95rem', fontWeight: 700,
-                cursor: loading ? 'not-allowed' : 'pointer', display: 'flex',
+                cursor: (loading || dbStatus === 'not_seeded') ? 'not-allowed' : 'pointer', display: 'flex',
                 alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
-                transition: 'all 0.2s', boxShadow: loading ? 'none' : '0 4px 15px rgba(99,102,241,0.4)'
+                transition: 'all 0.2s', boxShadow: (loading || dbStatus === 'not_seeded') ? 'none' : '0 4px 15px rgba(99,102,241,0.4)',
+                opacity: dbStatus === 'not_seeded' ? 0.6 : 1
               }}
             >
-              {loading ? 'Signing in...' : <><span>Sign In</span><ArrowRight size={16} /></>}
+              {loading ? 'Authenticating with Supabase...' : (
+                dbStatus === 'not_seeded' ? 'Database Not Seeded' : (
+                  <><span>Sign In</span><ArrowRight size={16} /></>
+                )
+              )}
             </button>
           </form>
 
-          {/* Demo Credentials */}
-          <div style={{ marginTop: '1.5rem', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '1.5rem' }}>
-            <p style={{ color: '#64748b', fontSize: '0.75rem', fontWeight: 600, marginBottom: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              🎯 Demo Quick Login
-            </p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-              {demoCredentials.map(cred => (
-                <button
-                  key={cred.email}
-                  onClick={() => quickLogin(cred)}
-                  disabled={loading}
-                  style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    padding: '0.65rem 0.875rem', borderRadius: 8,
-                    background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)',
-                    cursor: 'pointer', transition: 'all 0.2s', textAlign: 'left'
-                  }}
-                  onMouseEnter={e => e.currentTarget.style.background = 'rgba(99,102,241,0.08)'}
-                  onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,0.03)'}
-                >
-                  <div>
-                    <div style={{ color: 'white', fontSize: '0.82rem', fontWeight: 600 }}>{cred.role} <span style={{ color: '#94a3b8', fontWeight: 400, fontSize: '0.75rem' }}>({cred.name})</span></div>
-                    <div style={{ color: '#64748b', fontSize: '0.72rem' }}>{cred.email} · {cred.password}</div>
-                  </div>
-                  <ArrowRight size={14} color="#6366f1" />
-                </button>
-              ))}
+          {/* Seeded Accounts from Database */}
+          <div style={{ marginTop: '1.5rem', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '1.25rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+              <p style={{ color: '#64748b', fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', margin: 0 }}>
+                {dbStatus === 'seeded' ? '⚡ Seeded Supabase Accounts' : '⚡ Quick Login Accounts'}
+              </p>
+              {dbStatus === 'seeded' && (
+                <span style={{ fontSize: '0.7rem', color: '#10b981', fontWeight: 600 }}>Database Active</span>
+              )}
             </div>
+
+            {dbStatus === 'not_seeded' ? (
+              <div style={{
+                padding: '0.85rem',
+                borderRadius: 10,
+                background: 'rgba(255,255,255,0.02)',
+                border: '1px dashed rgba(255,255,255,0.1)',
+                textAlign: 'center',
+                color: '#64748b',
+                fontSize: '0.78rem'
+              }}>
+                Accounts will appear here once <strong>supabase/combined_complete_setup.sql</strong> is executed in your Supabase SQL Editor.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem', maxHeight: 220, overflowY: 'auto' }}>
+                {dbUsers.map(userItem => (
+                  <button
+                    key={userItem.email}
+                    onClick={() => quickLogin(userItem)}
+                    disabled={loading}
+                    style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      padding: '0.6rem 0.8rem', borderRadius: 8,
+                      background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)',
+                      cursor: 'pointer', transition: 'all 0.2s', textAlign: 'left'
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = 'rgba(99,102,241,0.1)'}
+                    onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,0.03)'}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+                      <div style={{
+                        width: 28, height: 28, borderRadius: '50%',
+                        background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: '0.72rem', fontWeight: 700, color: 'white'
+                      }}>
+                        {userItem.avatar || (userItem.full_name ? userItem.full_name.slice(0, 2).toUpperCase() : 'U')}
+                      </div>
+                      <div>
+                        <div style={{ color: 'white', fontSize: '0.82rem', fontWeight: 600 }}>
+                          {userItem.full_name} <span style={{ color: '#818cf8', fontWeight: 500, fontSize: '0.72rem' }}>({userItem.role})</span>
+                        </div>
+                        <div style={{ color: '#64748b', fontSize: '0.7rem' }}>{userItem.email}</div>
+                      </div>
+                    </div>
+                    <ArrowRight size={13} color="#6366f1" />
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
-        <p style={{ textAlign: 'center', color: '#374151', fontSize: '0.75rem', marginTop: '1.5rem' }}>
-          Demo Mode · No real data is stored or transmitted
+        <p style={{ textAlign: 'center', color: '#475569', fontSize: '0.75rem', marginTop: '1.25rem' }}>
+          Connected to Supabase Project · Multi-Tenant RBAC Active
         </p>
       </div>
     </div>

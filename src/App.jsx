@@ -62,14 +62,14 @@ function AppInner() {
   if (!user) return <Login />;
 
   return (
-    <div className="app-container">
+    <div className="app-layout">
       <Sidebar
-        isCollapsed={sidebarCollapsed}
+        collapsed={sidebarCollapsed}
         onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
         mobileOpen={mobileOpen}
         onMobileClose={() => setMobileOpen(false)}
       />
-      <div className={`main-wrapper ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
+      <div className={`app-main ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
         <Header onMobileMenuOpen={() => setMobileOpen(true)} />
         <main className="main-content">
           <Routes>

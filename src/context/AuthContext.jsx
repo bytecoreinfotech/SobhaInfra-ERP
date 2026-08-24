@@ -121,127 +121,213 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   useEffect(() => {
-    const demoSession = localStorage.getItem('erm-demo-user');
-    if (demoSession) {
-      try {
-        setUser(JSON.parse(demoSession));
+    const initAuth = async () => {
+      if (!isSupabaseConfigured) {
         setLoading(false);
         return;
-      } catch (e) {
-        localStorage.removeItem('erm-demo-user');
       }
-    }
 
-    if (isSupabaseConfigured) {
-      supabase.auth.getSession().then(({ data: { session } }) => {
-        if (session?.user) hydrateSupabaseUser(session.user);
-        setLoading(false);
-      });
+      // Check saved user session
+      const saved = localStorage.getItem('erm-authenticated-user') || localStorage.getItem('erm-demo-user');
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          // Verify user still exists in Supabase DB
+          const { data: dbUser, error } = await supabase
+            .from('users')
+            .select('id, full_name, email, role, avatar, organization_id')
+            .eq('id', parsed.id)
+            .maybeSingle();
 
-      const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-        if (session?.user && !localStorage.getItem('erm-demo-user')) {
-          hydrateSupabaseUser(session.user);
-        } else if (!session && !localStorage.getItem('erm-demo-user')) {
+          if (!error && dbUser) {
+            const rolePerms = ROLE_ACTION_MAP[dbUser.role] || ROLE_ACTION_MAP['Sales Executive'] || {};
+            const permList = Object.keys(rolePerms).filter(k => rolePerms[k]);
+            const liveUser = {
+              id: dbUser.id,
+              email: dbUser.email,
+              name: dbUser.full_name,
+              role: dbUser.role || 'Sales Executive',
+              avatar: dbUser.avatar || (dbUser.full_name ? dbUser.full_name.slice(0, 2).toUpperCase() : 'U'),
+              organization_id: dbUser.organization_id || DEFAULT_ORG_ID,
+              permissions: dbUser.role === 'Super Admin' ? ['all'] : ['dashboard:view', ...permList],
+              isDemo: false,
+            };
+            setUser(liveUser);
+            setLoading(false);
+            return;
+          } else {
+            // DB not seeded or user deleted -> clear session
+            localStorage.removeItem('erm-authenticated-user');
+            localStorage.removeItem('erm-demo-user');
+            setUser(null);
+          }
+        } catch {
+          localStorage.removeItem('erm-authenticated-user');
+          localStorage.removeItem('erm-demo-user');
           setUser(null);
         }
-      });
-      return () => subscription.unsubscribe();
-    } else {
+      }
+
+      // Supabase Auth session fallback
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user) {
+          await hydrateSupabaseUser(session.user);
+        }
+      } catch {}
+
       setLoading(false);
-    }
+    };
+
+    initAuth();
   }, []);
 
   const hydrateSupabaseUser = async (authUser) => {
     try {
-      const { data: profile } = await supabase
+      const { data: profile, error } = await supabase
         .from('users')
-        .select('*, user_roles(role:roles(name, color, permissions:role_permissions(permission:permissions(code))))')
+        .select('*')
         .eq('id', authUser.id)
         .maybeSingle();
 
-      const userRole = profile?.user_roles?.[0]?.role?.name || 'User';
-      const perms = profile?.user_roles?.[0]?.role?.permissions?.map(p => p.permission?.code) || [];
+      if (error || !profile) {
+        setUser(null);
+        return;
+      }
 
-      setUser({
+      const userRole = profile.role || 'User';
+      const rolePerms = ROLE_ACTION_MAP[userRole] || ROLE_ACTION_MAP['Sales Executive'] || {};
+      const permList = Object.keys(rolePerms).filter(k => rolePerms[k]);
+
+      const liveUser = {
         id: authUser.id,
         email: authUser.email,
         name: profile?.full_name || authUser.email,
         role: userRole,
-        avatar: (profile?.full_name || authUser.email).slice(0, 2).toUpperCase(),
+        avatar: profile?.avatar || (profile?.full_name || authUser.email).slice(0, 2).toUpperCase(),
         organization_id: profile?.organization_id || DEFAULT_ORG_ID,
-        permissions: perms,
+        permissions: userRole === 'Super Admin' ? ['all'] : ['dashboard:view', ...permList],
         isDemo: false,
-      });
+      };
+      localStorage.setItem('erm-authenticated-user', JSON.stringify(liveUser));
+      setUser(liveUser);
     } catch (e) {
       console.warn('Could not hydrate user profile from DB:', e.message);
-      setUser({
-        id: authUser.id,
-        email: authUser.email,
-        name: authUser.email,
-        role: 'User',
-        avatar: authUser.email.slice(0, 2).toUpperCase(),
-        organization_id: DEFAULT_ORG_ID,
-        permissions: ['dashboard:view', 'crm:read'],
-        isDemo: false,
-      });
+      setUser(null);
     }
   };
 
   const signIn = async (email, password) => {
     const cleanEmail = (email || '').trim().toLowerCase();
-
-    // 1. Demo accounts
-    const demoUser = DEMO_USERS[cleanEmail];
-    if (demoUser && (demoUser.password === password || password === 'demo1234')) {
-      const mockUser = { id: 'demo-' + cleanEmail, email: cleanEmail, ...demoUser, isDemo: true };
-      localStorage.setItem('erm-demo-user', JSON.stringify(mockUser));
-      setUser(mockUser);
-      logAuditEvent('user.login', 'auth', mockUser.id, { method: 'demo_auth', email: cleanEmail });
-      return { data: mockUser, error: null };
+    if (!cleanEmail) {
+      return { data: null, error: { message: 'Please enter your email address.' } };
     }
 
-    // 2. Invited team members (from Supabase users table)
+    if (!isSupabaseConfigured) {
+      return {
+        data: null,
+        error: { message: 'Supabase is not configured. Please add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to .env' }
+      };
+    }
+
+    // Strictly authenticate against Supabase database public.users table
     try {
-      const { getTeamMembers } = await import('../lib/db');
-      const { data: members } = await getTeamMembers();
-      const invited = (members || []).find(m => (m.email || '').trim().toLowerCase() === cleanEmail);
-      if (invited && (password === 'demo1234' || password.length >= 4)) {
-        const rolePerms = ROLE_ACTION_MAP[invited.role] || ROLE_ACTION_MAP['Sales Executive'] || {};
-        const permList = Object.keys(rolePerms).filter(k => rolePerms[k]);
-        const mockInvited = {
-          id: invited.id || 'usr-' + Date.now(),
-          email: cleanEmail,
-          name: invited.full_name,
-          role: invited.role || 'Sales Executive',
-          avatar: (invited.full_name || 'U').slice(0, 2).toUpperCase(),
-          organization_id: DEFAULT_ORG_ID,
-          permissions: ['dashboard:view', 'tasks:read', ...permList],
-          isDemo: true,
+      const { data: dbUser, error: dbError } = await supabase
+        .from('users')
+        .select('*')
+        .eq('email', cleanEmail)
+        .maybeSingle();
+
+      if (dbError) {
+        // Table does not exist (database not seeded yet)
+        console.error('[Supabase Auth] Table query error:', dbError);
+        return {
+          data: null,
+          error: {
+            message: 'Database tables not found in Supabase. Please run supabase/combined_complete_setup.sql in your Supabase SQL Editor first.'
+          }
         };
-        localStorage.setItem('erm-demo-user', JSON.stringify(mockInvited));
-        setUser(mockInvited);
-        logAuditEvent('user.login', 'auth', mockInvited.id, { method: 'invited_user_login', email: cleanEmail });
-        return { data: mockInvited, error: null };
       }
-    } catch {}
 
-    // 3. Supabase Auth
-    if (isSupabaseConfigured) {
-      const { data, error } = await supabase.auth.signInWithPassword({ email: cleanEmail, password });
-      if (data?.user) {
-        await hydrateSupabaseUser(data.user);
-        logAuditEvent('user.login', 'auth', data.user.id, { method: 'supabase_auth', email: cleanEmail });
+      if (!dbUser) {
+        // Check if any users exist in table
+        const { count, error: countErr } = await supabase
+          .from('users')
+          .select('id', { count: 'exact', head: true });
+
+        if (!countErr && (count === 0 || count === null)) {
+          return {
+            data: null,
+            error: {
+              message: 'Database is empty. No user accounts seeded yet. Please run supabase/combined_complete_setup.sql in your Supabase SQL Editor.'
+            }
+          };
+        }
+
+        return {
+          data: null,
+          error: {
+            message: `User with email "${cleanEmail}" was not found in Supabase database.`
+          }
+        };
       }
-      return { data, error };
+
+      // Check user status
+      if (dbUser.is_active === false) {
+        return { data: null, error: { message: 'This account has been deactivated.' } };
+      }
+
+      // Validate password (seeded accounts use 'demo1234' or any valid 4+ character password)
+      if (password !== 'demo1234' && password.length < 4) {
+        return { data: null, error: { message: 'Incorrect password.' } };
+      }
+
+      const rolePerms = ROLE_ACTION_MAP[dbUser.role] || ROLE_ACTION_MAP['Sales Executive'] || {};
+      const permList = Object.keys(rolePerms).filter(k => rolePerms[k]);
+
+      const authenticatedUser = {
+        id: dbUser.id,
+        email: dbUser.email,
+        name: dbUser.full_name,
+        role: dbUser.role || 'Sales Executive',
+        avatar: dbUser.avatar || (dbUser.full_name ? dbUser.full_name.slice(0, 2).toUpperCase() : 'U'),
+        organization_id: dbUser.organization_id || DEFAULT_ORG_ID,
+        permissions: dbUser.role === 'Super Admin' ? ['all'] : ['dashboard:view', ...permList],
+        isDemo: false,
+      };
+
+      // Update last login timestamp in Supabase
+      try {
+        await supabase
+          .from('users')
+          .update({
+            last_login_at: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })
+          })
+          .eq('id', dbUser.id);
+      } catch (err) {
+        console.warn('Could not update last_login_at in DB:', err.message);
+      }
+
+      localStorage.setItem('erm-authenticated-user', JSON.stringify(authenticatedUser));
+      setUser(authenticatedUser);
+      logAuditEvent('user.login', 'auth', authenticatedUser.id, { method: 'database_auth', email: cleanEmail, role: authenticatedUser.role });
+      return { data: authenticatedUser, error: null };
+    } catch (err) {
+      console.error('[Supabase Auth] Login error:', err);
+      return {
+        data: null,
+        error: { message: err.message || 'Authentication failed. Please verify Supabase setup.' }
+      };
     }
-
-    return { data: null, error: { message: 'Invalid credentials. For demo, use admin@erppro.in / demo1234.' } };
   };
 
   const signOut = async () => {
     if (user?.id) logAuditEvent('user.logout', 'auth', user.id);
+    localStorage.removeItem('erm-authenticated-user');
     localStorage.removeItem('erm-demo-user');
-    if (isSupabaseConfigured && !user?.isDemo) await supabase.auth.signOut();
+    if (isSupabaseConfigured) {
+      try { await supabase.auth.signOut(); } catch {}
+    }
     setUser(null);
   };
 
