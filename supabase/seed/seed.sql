@@ -51,23 +51,35 @@ ON CONFLICT (organization_id, name) DO NOTHING;
 
 -- 4. Map All Permissions to Super Admin
 INSERT INTO public.role_permissions (role_id, permission_id)
-SELECT '00000000-0000-0000-0000-000000000010', id FROM public.permissions
+SELECT r.id, p.id 
+FROM public.roles r
+CROSS JOIN public.permissions p
+WHERE r.name = 'Super Admin' AND r.organization_id = '00000000-0000-0000-0000-000000000001'
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
 -- 5. Map Manager Permissions
 INSERT INTO public.role_permissions (role_id, permission_id)
-SELECT '00000000-0000-0000-0000-000000000020', id FROM public.permissions
-WHERE code NOT IN ('roles:manage', 'settings:manage')
+SELECT r.id, p.id 
+FROM public.roles r
+CROSS JOIN public.permissions p
+WHERE r.name = 'Manager' AND r.organization_id = '00000000-0000-0000-0000-000000000001'
+  AND p.code NOT IN ('roles:manage', 'settings:manage')
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
 -- 6. Map Sales Executive Permissions
 INSERT INTO public.role_permissions (role_id, permission_id)
-SELECT '00000000-0000-0000-0000-000000000030', id FROM public.permissions
-WHERE code IN ('dashboard:view', 'whatsapp:view', 'whatsapp:send', 'crm:read', 'crm:write', 'tasks:read', 'tasks:write', 'ai:view')
+SELECT r.id, p.id 
+FROM public.roles r
+CROSS JOIN public.permissions p
+WHERE r.name = 'Sales Executive' AND r.organization_id = '00000000-0000-0000-0000-000000000001'
+  AND p.code IN ('dashboard:view', 'whatsapp:view', 'whatsapp:send', 'crm:read', 'crm:write', 'tasks:read', 'tasks:write', 'ai:view')
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
 -- 7. Map Accounts Permissions
 INSERT INTO public.role_permissions (role_id, permission_id)
-SELECT '00000000-0000-0000-0000-000000000040', id FROM public.permissions
-WHERE code IN ('dashboard:view', 'finance:read', 'finance:sync', 'finance:remind', 'crm:read', 'tasks:read')
+SELECT r.id, p.id 
+FROM public.roles r
+CROSS JOIN public.permissions p
+WHERE r.name = 'Accounts' AND r.organization_id = '00000000-0000-0000-0000-000000000001'
+  AND p.code IN ('dashboard:view', 'finance:read', 'finance:sync', 'finance:remind', 'crm:read', 'tasks:read')
 ON CONFLICT (role_id, permission_id) DO NOTHING;

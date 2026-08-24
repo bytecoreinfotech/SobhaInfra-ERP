@@ -1,5 +1,5 @@
 -- ==============================================================================
--- COMPLETE SOBHAINFRA ERP DATABASE SCHEMA & SEED DATA
+-- COMPLETE SOBHAINFRA ERP DATABASE SCHEMA & SEED DATA (FIXED CONSTRAINTS & ROLES)
 -- Run this script in your Supabase SQL Editor
 -- ==============================================================================
 
@@ -23,26 +23,43 @@ CREATE TABLE IF NOT EXISTS public.organizations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name TEXT NOT NULL,
     slug TEXT UNIQUE NOT NULL,
-    subscription_tier TEXT NOT NULL DEFAULT 'free', -- free, starter, pro, enterprise
+    subscription_tier TEXT NOT NULL DEFAULT 'pro', -- free, starter, pro, enterprise
     is_active BOOLEAN NOT NULL DEFAULT true,
     settings JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- 3. Users Profile (Extends Supabase auth.users)
+INSERT INTO public.organizations (id, name, slug, subscription_tier, is_active)
+VALUES ('00000000-0000-0000-0000-000000000001', 'Techma ERPPro Real Estate', 'techma-erppro', 'pro', true)
+ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, is_active = true;
+
+-- 3. Users Profile (Application users & team members)
 CREATE TABLE IF NOT EXISTS public.users (
-    id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
     email TEXT UNIQUE NOT NULL,
     full_name TEXT NOT NULL,
+    avatar TEXT DEFAULT '',
     avatar_url TEXT,
-    phone TEXT,
+    phone TEXT DEFAULT '',
+    role TEXT DEFAULT 'Sales Executive',
     is_active BOOLEAN NOT NULL DEFAULT true,
-    last_login_at TIMESTAMPTZ,
+    last_login_at TEXT DEFAULT 'Never',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Ensure no strict auth.users foreign key constraint blocks seeded/invited team accounts
+DO $$ BEGIN
+  ALTER TABLE public.users DROP CONSTRAINT IF EXISTS users_id_fkey;
+  ALTER TABLE public.users ALTER COLUMN id SET DEFAULT gen_random_uuid();
+  ALTER TABLE public.users ADD COLUMN IF NOT EXISTS avatar TEXT DEFAULT '';
+  ALTER TABLE public.users ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'Sales Executive';
+  ALTER TABLE public.users ALTER COLUMN last_login_at TYPE TEXT USING last_login_at::TEXT;
+  ALTER TABLE public.users ALTER COLUMN last_login_at SET DEFAULT 'Never';
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
 
 -- 4. Roles Master
 CREATE TABLE IF NOT EXISTS public.roles (
@@ -1722,24 +1739,36 @@ ON CONFLICT (organization_id, name) DO NOTHING;
 
 -- 4. Map All Permissions to Super Admin
 INSERT INTO public.role_permissions (role_id, permission_id)
-SELECT '00000000-0000-0000-0000-000000000010', id FROM public.permissions
+SELECT r.id, p.id 
+FROM public.roles r
+CROSS JOIN public.permissions p
+WHERE r.name = 'Super Admin' AND r.organization_id = '00000000-0000-0000-0000-000000000001'
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
 -- 5. Map Manager Permissions
 INSERT INTO public.role_permissions (role_id, permission_id)
-SELECT '00000000-0000-0000-0000-000000000020', id FROM public.permissions
-WHERE code NOT IN ('roles:manage', 'settings:manage')
+SELECT r.id, p.id 
+FROM public.roles r
+CROSS JOIN public.permissions p
+WHERE r.name = 'Manager' AND r.organization_id = '00000000-0000-0000-0000-000000000001'
+  AND p.code NOT IN ('roles:manage', 'settings:manage')
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
 -- 6. Map Sales Executive Permissions
 INSERT INTO public.role_permissions (role_id, permission_id)
-SELECT '00000000-0000-0000-0000-000000000030', id FROM public.permissions
-WHERE code IN ('dashboard:view', 'whatsapp:view', 'whatsapp:send', 'crm:read', 'crm:write', 'tasks:read', 'tasks:write', 'ai:view')
+SELECT r.id, p.id 
+FROM public.roles r
+CROSS JOIN public.permissions p
+WHERE r.name = 'Sales Executive' AND r.organization_id = '00000000-0000-0000-0000-000000000001'
+  AND p.code IN ('dashboard:view', 'whatsapp:view', 'whatsapp:send', 'crm:read', 'crm:write', 'tasks:read', 'tasks:write', 'ai:view')
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
 -- 7. Map Accounts Permissions
 INSERT INTO public.role_permissions (role_id, permission_id)
-SELECT '00000000-0000-0000-0000-000000000040', id FROM public.permissions
-WHERE code IN ('dashboard:view', 'finance:read', 'finance:sync', 'finance:remind', 'crm:read', 'tasks:read')
+SELECT r.id, p.id 
+FROM public.roles r
+CROSS JOIN public.permissions p
+WHERE r.name = 'Accounts' AND r.organization_id = '00000000-0000-0000-0000-000000000001'
+  AND p.code IN ('dashboard:view', 'finance:read', 'finance:sync', 'finance:remind', 'crm:read', 'tasks:read')
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 

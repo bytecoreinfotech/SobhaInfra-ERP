@@ -426,7 +426,7 @@ const Dashboard = () => {
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.5rem' }}>
             {[
-              { label: 'WhatsApp Delivery', val: totalWaSent > 0 ? Math.round((totalWaDelivered / totalWaSent) * 100) : 96, color: 'var(--whatsapp)' },
+              { label: 'WhatsApp Delivery', val: totalWaSent > 0 ? Math.round((totalWaDelivered / totalWaSent) * 100) : 0, color: 'var(--whatsapp)' },
               { label: 'Lead Conversion', val: totalLeads > 0 ? Math.round((convertedLeads / totalLeads) * 100) : 0, color: 'var(--accent-primary)' },
               { label: 'Task Completion', val: taskList.length > 0 ? Math.round((taskList.filter(t => t.status === 'Done').length / taskList.length) * 100) : 0, color: 'var(--success)' },
               { label: 'Payment Collection', val: invoices.length > 0 ? Math.round((invoices.filter(i => i.status === 'Paid').length / invoices.length) * 100) : 0, color: 'var(--warning)' },

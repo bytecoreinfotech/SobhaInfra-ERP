@@ -221,44 +221,7 @@ const MOCK_STORE = {
   automation_rules: [],
   automation_runs: [],
   business_events: [],
-  site_visits: [
-    {
-      id: 'visit-101',
-      employee_name: 'Anand Sharma',
-      employee_id: 'usr-3',
-      site_name: 'Grand Palm Residency - Tower B',
-      client_name: 'Vikram Malhotra',
-      lead_phone: '+919876543210',
-      purpose: 'Client Site Visit & Floor Plan Walkthrough',
-      lat: 28.5355,
-      lng: 77.3910,
-      address: 'Sector 62, Noida, Uttar Pradesh 201309',
-      accuracy: 6,
-      status: 'In Progress',
-      check_in_time: new Date(Date.now() - 35 * 60 * 1000).toISOString(),
-      photo_url: 'https://images.unsplash.com/photo-1545324418-cc1a3fa10c00?auto=format&fit=crop&w=600&q=80',
-      notes: 'Client liked the 3BHK East-facing unit. Requested quotation for 4th floor.',
-      created_at: new Date(Date.now() - 35 * 60 * 1000).toISOString(),
-    },
-    {
-      id: 'visit-102',
-      employee_name: 'Priya Verma',
-      employee_id: 'usr-4',
-      site_name: 'Skyline Royal Heights',
-      client_name: 'Sunil Mehta',
-      lead_phone: '+919812345678',
-      purpose: 'Construction Milestone Inspection',
-      lat: 28.4595,
-      lng: 77.0266,
-      address: 'Golf Course Road, Sector 54, Gurugram, Haryana 122002',
-      accuracy: 4,
-      status: 'Completed',
-      check_in_time: new Date(Date.now() - 120 * 60 * 1000).toISOString(),
-      photo_url: 'https://images.unsplash.com/photo-1503387762-592deb58ef4e?auto=format&fit=crop&w=600&q=80',
-      notes: 'Rooftop casting completed. Safety nets installed as per standard.',
-      created_at: new Date(Date.now() - 120 * 60 * 1000).toISOString(),
-    }
-  ],
+  site_visits: [],
   system_safety: {
     daily_request_limit: 100000,
     daily_requests_used: 0,
@@ -2903,7 +2866,7 @@ export async function getSiteVisits() {
         .from('site_visits')
         .select('*')
         .order('check_in_time', { ascending: false });
-      if (!error && data && data.length > 0) return { data, error: null };
+      if (!error && data) return { data, error: null };
     } catch (err) {
       console.warn('[db] getSiteVisits fallback:', err.message);
     }
