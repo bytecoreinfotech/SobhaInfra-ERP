@@ -466,73 +466,12 @@ export async function updateOrgSetting(key, value) {
 // ─────────────────────────────────────────────────────────────────────────────
 // MULTI-COMPANY & MULTI-ENTITY REGISTRY SERVICES
 // ─────────────────────────────────────────────────────────────────────────────
-export const DEFAULT_COMPANY_PROFILES = [
-  {
-    id: 'comp-shobha-ready-plast',
-    organization_id: DEFAULT_ORG_ID,
-    company_name: 'SHOBHA READY PLAST',
-    alias_names: ['SHOBHA READY PLAST', 'SRP', 'Shobha Ready Plast Pvt Ltd'],
-    company_logo_url: '',
-    company_address: 'NH48, NEAR KOLEI KHADI SARODHI, VALSAD, GUJARAT - 396001',
-    gstin_number: '24AGCPJ2785R1ZV',
-    company_udyam_reg: 'UDYAM-GJ-01-0012345',
-    admin_email: 'shobhareadyplast@gmail.com',
-    contact_phone: '+91 98765 43210',
-    bank_name: 'HDFC Bank Ltd.',
-    bank_account_no: '50200088991122',
-    bank_ifsc: 'HDFC0001234',
-    upi_id: 'shobhareadyplast@okhdfcbank',
-    state_name: 'Gujarat',
-    state_code: '24',
-    jurisdiction: 'VALSAD / THANE',
-    invoice_footer_notes: 'Unpaid Invoice Will Be Charged 24% P.A. Interest After Given Credit Days. Goods Once Sold Will Not Be Taken Back.',
-    is_default: true,
-  },
-  {
-    id: 'comp-shobha-enterprises',
-    organization_id: DEFAULT_ORG_ID,
-    company_name: 'SHOBHA ENTERPRISES',
-    alias_names: ['SHOBHA ENTERPRISES', 'SE', 'Shobha Enterprises Traders'],
-    company_logo_url: '',
-    company_address: 'OFFICE 204, TRADE CENTER, KOLShet ROAD, THANE WEST, MAHARASHTRA - 400607',
-    gstin_number: '27AABCS9988P1Z3',
-    company_udyam_reg: 'UDYAM-MH-01-0098765',
-    admin_email: 'enterprises@shobhagroup.in',
-    contact_phone: '+91 98765 11223',
-    bank_name: 'ICICI Bank Ltd.',
-    bank_account_no: '001105009988',
-    bank_ifsc: 'ICIC0000011',
-    upi_id: 'shobhaenterprises@icici',
-    state_name: 'Maharashtra',
-    state_code: '27',
-    jurisdiction: 'THANE / MUMBAI',
-    invoice_footer_notes: 'Interest @ 24% p.a. will be charged after credit period. Disputes subject to Thane jurisdiction.',
-    is_default: false,
-  },
-  {
-    id: 'comp-shobha-infra',
-    organization_id: DEFAULT_ORG_ID,
-    company_name: 'SHOBHA INFRA & LOGISTICS',
-    alias_names: ['SHOBHA INFRA & LOGISTICS', 'SHOBHA TRANSPORT', 'SIL'],
-    company_logo_url: '',
-    company_address: 'PLOT 12, TRANSPORT NAGAR, GIDC, VAPI, GUJARAT - 396195',
-    gstin_number: '24AAACI5544K1Z9',
-    company_udyam_reg: 'UDYAM-GJ-01-0055443',
-    admin_email: 'infra@shobhagroup.in',
-    contact_phone: '+91 98765 99887',
-    bank_name: 'State Bank of India',
-    bank_account_no: '33445566778',
-    bank_ifsc: 'SBIN0001234',
-    upi_id: 'shobhainfra@sbi',
-    state_name: 'Gujarat',
-    state_code: '24',
-    jurisdiction: 'VAPI / VALSAD',
-    invoice_footer_notes: 'All goods transport subject to carrier terms and transit insurance policies.',
-    is_default: false,
-  }
-];
+// Company profiles are 100% dynamic — auto-seeded from Tally at sync time.
+// The empty array is the intentional default; real data always comes from Supabase.
+export const DEFAULT_COMPANY_PROFILES = [];
 
-let inMemoryCompanyProfiles = [...DEFAULT_COMPANY_PROFILES];
+let inMemoryCompanyProfiles = [];
+
 
 export async function getCompanyProfiles() {
   if (isSupabaseConfigured) {

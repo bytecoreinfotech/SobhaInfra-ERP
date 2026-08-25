@@ -21,13 +21,13 @@ const { createClient } = require('@supabase/supabase-js');
 const crypto = require('crypto');
 
 // ─── Environment Variables ────────────────────────────────────────────────────
-const VERIFY_TOKEN   = process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN || 'erppro_wa_sec_9f8b2c4e1a7d6e5c8302';
-const WA_TOKEN       = process.env.WHATSAPP_TOKEN;
-const PHONE_ID       = process.env.WHATSAPP_PHONE_ID;
-const WA_APP_SECRET  = process.env.WHATSAPP_APP_SECRET;
+const VERIFY_TOKEN   = process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN || 'erppro_webhook_2026';
+const WA_TOKEN       = process.env.WHATSAPP_TOKEN || 'EAAZAoFJNWmo4BSXS3ZBJrD7sk039yowup2fxSWYZAQFTiTvEfOm5XsRNmyRZC4RnkYyjvFaXaxN3fhqNVvvyBqe0CXwoWClgcBx6X8UhqaNWTUjNFt0XMkufGVKkF9FSOP2V2SXSwxreUpX3UALTRW8TC8feqyWyYdyyamSrkF8qWvqkuSEEkatiTGvaGZC1AYwZDZD';
+const PHONE_ID       = process.env.WHATSAPP_PHONE_ID || '1213997841806162';
+const WA_APP_SECRET  = process.env.WHATSAPP_APP_SECRET || '845391164b6f66cecd3e96f03a353be4';
 // Supabase: try env var first, then hardcoded fallback (anon key is safe to embed — protected by RLS)
-const SUPABASE_URL   = process.env.SUPABASE_URL   || 'https://jbgkeeubevwopphekwfj.supabase.co';
-const SUPABASE_KEY   = process.env.SUPABASE_ANON_KEY || 'sb_publishable_thqXkofcI9pNt3rrXQ23Zw_PJpnhxIB';
+const SUPABASE_URL   = process.env.SUPABASE_URL   || 'https://mcgmppnvnwnilioapbli.supabase.co';
+const SUPABASE_KEY   = process.env.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1jZ21wcG52bnduaWxpb2FwYmxpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc1NzE5ODIsImV4cCI6MjEwMzE0Nzk4Mn0.27BrkeNVxcEfG0R1W2gzlV2ueuK6NBS7MuD98Y5iDME';
 const GEMINI_KEY     = process.env.GEMINI_API_KEY;
 const OPENAI_KEY     = process.env.OPENAI_API_KEY;
 const HF_KEY         = process.env.HUGGING_FACE_API_KEY || '';

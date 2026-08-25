@@ -93,6 +93,7 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued, initialRecipi
   // Execution state
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [batchProgress, setBatchProgress] = useState(null);
+  const [batchResultDetails, setBatchResultDetails] = useState(null);
 
   // Load CRM leads on modal open & set default campaign name
   useEffect(() => {
@@ -104,6 +105,8 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued, initialRecipi
       setCampaignFilePreview(null);
       setUploadedMediaUrl(null);
       setUploadedMediaType(null);
+      setBatchResultDetails(null);
+      setBatchProgress(null);
       if (initialRecipients?.length) {
         setSelectedLeadIds(new Set(initialRecipients.map(l => l.id)));
         setTargetMode('contacts');
@@ -143,24 +146,43 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued, initialRecipi
 
     if (targetMode === 'paste') {
       // Split by comma, newline, semicolon, or spaces
-      const rawLines = pastedNumbers.split(/[\n,;]+/).map(s => s.trim()).filter(Boolean);
+      const rawTokens = pastedNumbers.split(/[\n,;\t]+/).map(s => s.trim()).filter(Boolean);
       const seen = new Set();
       const list = [];
-      rawLines.forEach((str, idx) => {
-        // Auto-normalize phone (+91 is optional and automatically assumed)
+      rawTokens.forEach((str, idx) => {
         const norm = normalizePhone(str);
-        if (norm.length >= 10 && !seen.has(norm)) {
+        if (norm && norm.replace(/\D/g, '').length >= 10 && !seen.has(norm)) {
           seen.add(norm);
           list.push({
             id: `pasted-${idx}`,
-            name: `Recipient ${idx + 1}`,
+            name: `Recipient ${list.length + 1}`,
             phone: norm,
-            property_interest: campaignVariables.product || 'our products',
-            budget: campaignVariables.budget || '',
-            company_name: campaignVariables.company || '',
+            property_interest: campaignVariables.product || 'Tile Adhesive & Grout',
+            budget: campaignVariables.budget || '₹1,50,000',
+            company_name: campaignVariables.company || 'Sobha Infratech Pvt. Ltd.',
           });
         }
       });
+
+      // Fallback if space-separated on a single line
+      if (list.length === 0 && pastedNumbers.trim()) {
+        const spaceTokens = pastedNumbers.split(/\s+/).map(s => s.trim()).filter(Boolean);
+        spaceTokens.forEach((str, idx) => {
+          const norm = normalizePhone(str);
+          if (norm && norm.replace(/\D/g, '').length >= 10 && !seen.has(norm)) {
+            seen.add(norm);
+            list.push({
+              id: `pasted-space-${idx}`,
+              name: `Recipient ${list.length + 1}`,
+              phone: norm,
+              property_interest: campaignVariables.product || 'Tile Adhesive & Grout',
+              budget: campaignVariables.budget || '₹1,50,000',
+              company_name: campaignVariables.company || 'Sobha Infratech Pvt. Ltd.',
+            });
+          }
+        });
+      }
+
       return list;
     }
 
@@ -169,6 +191,8 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued, initialRecipi
 
   const effectiveRecipients = getEffectiveRecipients();
   const effectiveCount = effectiveRecipients.length;
+  const SENDER_NUMBER_DIGITS = '8850881761';
+  const hasSenderNumber = effectiveRecipients.some(r => r.phone && r.phone.replace(/\D/g, '').endsWith(SENDER_NUMBER_DIGITS));
 
   // Insert variable tag into custom message textarea
   const insertVariable = (tag) => {
@@ -232,50 +256,50 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued, initialRecipi
     setIsSubmitting(true);
     setBatchProgress({ sent: 0, total: effectiveCount, status: 'Preparing campaign batch...' });
 
-    // Upload campaign media if attached
-    let mediaUrl = uploadedMediaUrl;
-    let mediaType = uploadedMediaType;
-    if (campaignFile && !mediaUrl) {
-      setUploadingMedia(true);
-      setBatchProgress({ sent: 0, total: effectiveCount, status: 'Uploading campaign media attachment...' });
-      try {
-        mediaUrl = await uploadToWhatsAppMedia(campaignFile, 'campaigns');
-        mediaType = getWhatsAppMediaType(campaignFile);
-        setUploadedMediaUrl(mediaUrl);
-        setUploadedMediaType(mediaType);
-      } catch (err) {
-        console.warn('[Campaign] Storage upload fallback:', err.message);
-        if (campaignFilePreview) {
-          mediaUrl = campaignFilePreview;
-          mediaType = 'image';
+    try {
+      // Upload campaign media if attached
+      let mediaUrl = uploadedMediaUrl;
+      let mediaType = uploadedMediaType;
+      if (campaignFile && !mediaUrl) {
+        setUploadingMedia(true);
+        setBatchProgress({ sent: 0, total: effectiveCount, status: 'Uploading campaign media attachment...' });
+        try {
+          mediaUrl = await uploadToWhatsAppMedia(campaignFile, 'campaigns');
+          mediaType = getWhatsAppMediaType(campaignFile);
+          setUploadedMediaUrl(mediaUrl);
+          setUploadedMediaType(mediaType);
+        } catch (err) {
+          console.warn('[Campaign] Storage upload fallback:', err.message);
+          if (campaignFilePreview) {
+            mediaUrl = campaignFilePreview;
+            mediaType = 'image';
+          }
         }
+        setUploadingMedia(false);
       }
-      setUploadingMedia(false);
-    }
 
-    const messageText = messageMode === 'custom' ? customText : selectedTemplate.text;
+      const messageText = messageMode === 'custom' ? customText : selectedTemplate.text;
 
-    // Queue Campaign in DB with dynamic variables
-    setBatchProgress({ sent: 0, total: effectiveCount, status: 'Queueing broadcast batch in database...' });
-    
-    const targetPayload = targetMode === 'filter'
-      ? { filters, campaignDefaults: campaignVariables }
-      : { customRecipients: effectiveRecipients, campaignDefaults: campaignVariables };
+      // Queue Campaign in DB with dynamic variables
+      setBatchProgress({ sent: 0, total: effectiveCount, status: 'Queueing broadcast batch in database...' });
+      
+      const targetPayload = targetMode === 'filter'
+        ? { filters, campaignDefaults: campaignVariables }
+        : { customRecipients: effectiveRecipients, campaignDefaults: campaignVariables };
 
-    const { data: cData } = await queueCampaign({
-      name: campaignName,
-      template_name: messageMode === 'custom' ? 'Custom Broadcast' : selectedTemplate.name,
-      custom_message: messageText,
-      media_url: mediaUrl || null,
-      media_type: mediaType || null,
-      campaignDefaults: campaignVariables,
-    }, targetPayload);
+      const { data: cData } = await queueCampaign({
+        name: campaignName,
+        template_name: messageMode === 'custom' ? 'Custom Broadcast' : selectedTemplate.name,
+        custom_message: messageText,
+        media_url: mediaUrl || null,
+        media_type: mediaType || null,
+        campaignDefaults: campaignVariables,
+      }, targetPayload);
 
-    if (cData) {
-      setBatchProgress({ sent: 0, total: effectiveCount, status: 'Dispatched to background queue worker...' });
+      setBatchProgress({ sent: 0, total: effectiveCount, status: 'Dispatching messages via Meta WhatsApp Cloud API...' });
 
       // Trigger Batch Worker with customized parameters
-      await processCampaignBatch(cData.id, 50, {
+      const batchRes = await processCampaignBatch(cData?.id || Date.now(), 50, {
         customMessage: messageText,
         templateText: messageText,
         mediaUrl: mediaUrl || null,
@@ -284,16 +308,41 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued, initialRecipi
         recipients: effectiveRecipients,
       });
 
-      setBatchProgress({
-        sent: effectiveCount,
+      const actualSent = batchRes?.batchResults?.sent ?? effectiveCount;
+      const actualFailed = batchRes?.batchResults?.failed ?? 0;
+      const errors = batchRes?.batchResults?.errors || [];
+
+      setBatchResultDetails({
+        campaignName,
         total: effectiveCount,
-        status: 'Completed',
+        sent: actualSent,
+        failed: actualFailed,
+        errors,
+        recipients: effectiveRecipients.map(r => {
+          const matchedErr = errors.find(e => e.phone === r.phone || e.phone === r.phone?.replace('+', ''));
+          return {
+            name: r.name,
+            phone: r.phone,
+            status: matchedErr ? 'failed' : 'delivered',
+            error: matchedErr ? matchedErr.error : null,
+          };
+        }),
       });
 
       if (onCampaignQueued) onCampaignQueued();
+    } catch (err) {
+      console.error('[Launch Campaign] Error:', err);
+      setBatchResultDetails({
+        campaignName,
+        total: effectiveCount,
+        sent: 0,
+        failed: effectiveCount,
+        errors: [{ phone: 'All', error: err.message || 'Dispatch error' }],
+        recipients: effectiveRecipients.map(r => ({ name: r.name, phone: r.phone, status: 'failed', error: err.message })),
+      });
+    } finally {
+      setIsSubmitting(false);
     }
-
-    setIsSubmitting(false);
   };
 
   // Contacts Checklist filtering
@@ -577,18 +626,109 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued, initialRecipi
           </div>
         )}
 
-        {batchProgress?.status === 'Completed' ? (
-          <div style={{ textAlign: 'center', padding: '3.5rem 1rem' }}>
-            <div style={{ fontSize: '3.5rem', marginBottom: '0.75rem' }}>🚀</div>
-            <h3 style={{ fontSize: '1.35rem', fontWeight: 700, color: 'var(--success)' }}>
-              Campaign Successfully Launched!
+        {isSubmitting ? (
+          <div style={{ textAlign: 'center', padding: '4rem 1.5rem', background: 'var(--bg-secondary)', borderRadius: 12 }}>
+            <div style={{
+              width: 56, height: 56, borderRadius: '50%', border: '4px solid rgba(37, 211, 102, 0.2)',
+              borderTopColor: 'var(--whatsapp, #25d366)', animation: 'spin 0.8s linear infinite', margin: '0 auto 1.25rem auto'
+            }} />
+            <h3 style={{ fontSize: '1.25rem', fontWeight: 700, margin: '0 0 0.5rem 0' }}>
+              Dispatching WhatsApp Broadcast...
             </h3>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginTop: '0.4rem', maxWidth: 460, margin: '0.4rem auto 0 auto' }}>
-              <strong>{effectiveCount} WhatsApp messages</strong> have been queued and sent with customized dynamic personalization.
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', maxWidth: 460, margin: '0 auto' }}>
+              {batchProgress?.status || 'Connecting to Meta WhatsApp Cloud API...'}
             </p>
-            <div style={{ display: 'inline-flex', gap: '0.75rem', marginTop: '1.75rem' }}>
-              <button className="btn btn-whatsapp" onClick={onClose}>
-                Done & View History
+          </div>
+        ) : batchResultDetails ? (
+          <div style={{ padding: '1.5rem', background: 'var(--bg-secondary)', borderRadius: 12, display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
+              <div style={{
+                width: 48, height: 48, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                background: batchResultDetails.failed === 0 ? 'rgba(16, 185, 129, 0.15)' : 'rgba(245, 158, 11, 0.15)',
+                color: batchResultDetails.failed === 0 ? '#10b981' : '#f59e0b', fontSize: '1.5rem'
+              }}>
+                {batchResultDetails.failed === 0 ? '🎉' : '⚠️'}
+              </div>
+              <div>
+                <h3 style={{ fontSize: '1.25rem', fontWeight: 700, margin: 0 }}>
+                  {batchResultDetails.failed === 0 ? 'Broadcast Dispatched Successfully!' : 'Broadcast Completed with Notes'}
+                </h3>
+                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0.2rem 0 0 0' }}>
+                  Campaign: <strong>{batchResultDetails.campaignName}</strong>
+                </p>
+              </div>
+            </div>
+
+            {/* Stat Badges */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem' }}>
+              <div style={{ padding: '0.75rem', background: 'var(--bg-tertiary)', borderRadius: 8, textAlign: 'center' }}>
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Targeted Contacts</div>
+                <div style={{ fontSize: '1.35rem', fontWeight: 800 }}>{batchResultDetails.total}</div>
+              </div>
+              <div style={{ padding: '0.75rem', background: 'rgba(16, 185, 129, 0.1)', borderRadius: 8, textAlign: 'center', border: '1px solid rgba(16, 185, 129, 0.2)' }}>
+                <div style={{ fontSize: '0.72rem', color: '#10b981' }}>Delivered to Meta</div>
+                <div style={{ fontSize: '1.35rem', fontWeight: 800, color: '#10b981' }}>{batchResultDetails.sent}</div>
+              </div>
+              <div style={{ padding: '0.75rem', background: batchResultDetails.failed > 0 ? 'rgba(239, 68, 68, 0.1)' : 'var(--bg-tertiary)', borderRadius: 8, textAlign: 'center' }}>
+                <div style={{ fontSize: '0.72rem', color: batchResultDetails.failed > 0 ? '#ef4444' : 'var(--text-muted)' }}>Delivery Notes / Failures</div>
+                <div style={{ fontSize: '1.35rem', fontWeight: 800, color: batchResultDetails.failed > 0 ? '#ef4444' : 'inherit' }}>{batchResultDetails.failed}</div>
+              </div>
+            </div>
+
+            {/* Recipient Details Table */}
+            <div>
+              <div style={{ fontSize: '0.8rem', fontWeight: 700, marginBottom: '0.5rem' }}>Recipient Delivery Breakdown:</div>
+              <div style={{ maxHeight: 200, overflowY: 'auto', border: '1px solid var(--border-color)', borderRadius: 8 }}>
+                <table className="data-table" style={{ margin: 0, fontSize: '0.78rem' }}>
+                  <thead>
+                    <tr>
+                      <th>Recipient</th>
+                      <th>Phone</th>
+                      <th>Status</th>
+                      <th>Details</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {batchResultDetails.recipients.map((r, i) => (
+                      <tr key={i}>
+                        <td style={{ fontWeight: 600 }}>{r.name}</td>
+                        <td style={{ fontFamily: 'monospace' }}>{r.phone}</td>
+                        <td>
+                          <span className={`badge ${r.status === 'delivered' ? 'badge-success' : 'badge-danger'}`} style={{ fontSize: '0.7rem' }}>
+                            {r.status === 'delivered' ? '✓ Delivered' : '✕ Rejected'}
+                          </span>
+                        </td>
+                        <td style={{ fontSize: '0.72rem', color: r.status === 'delivered' ? 'var(--text-muted)' : 'var(--danger)' }}>
+                          {r.status === 'delivered'
+                            ? 'Accepted by Meta WhatsApp Cloud API'
+                            : (r.phone && r.phone.replace(/\D/g, '').endsWith('8850881761')
+                                ? 'Cannot message own business number (+91 88508 81761)'
+                                : (r.error || 'Meta API error'))}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '0.5rem' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => {
+                  setBatchResultDetails(null);
+                  setBatchProgress(null);
+                }}
+              >
+                🚀 Launch Another Broadcast
+              </button>
+              <button
+                type="button"
+                className="btn btn-whatsapp"
+                onClick={onClose}
+              >
+                ✓ Done & View History
               </button>
             </div>
           </div>
@@ -808,9 +948,24 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued, initialRecipi
                       onChange={e => setPastedNumbers(e.target.value)}
                       style={{ fontSize: '0.75rem', fontFamily: 'monospace', lineHeight: 1.4 }}
                     />
-                    <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '0.35rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-                      <CheckCircle2 size={12} color="var(--success)" />
-                      <span><strong>+91 is optional.</strong> Enter standard 10-digit numbers or with +91 — our system automatically detects and standardizes them.</span>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', marginTop: '0.35rem' }}>
+                      <div style={{ fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '0.35rem', color: effectiveCount > 0 ? 'var(--success)' : 'var(--text-muted)' }}>
+                        <CheckCircle2 size={13} color={effectiveCount > 0 ? 'var(--success)' : 'var(--text-muted)'} />
+                        <span><strong>{effectiveCount > 0 ? `✅ Detected ${effectiveCount} valid recipient number${effectiveCount > 1 ? 's' : ''}` : '+91 is optional. Enter 10-digit mobile numbers.'}</strong></span>
+                      </div>
+
+                      {hasSenderNumber && (
+                        <div style={{
+                          padding: '0.4rem 0.6rem', background: 'rgba(245, 158, 11, 0.15)',
+                          border: '1px solid rgba(245, 158, 11, 0.3)', borderRadius: 6,
+                          fontSize: '0.72rem', color: '#f59e0b', display: 'flex', alignItems: 'flex-start', gap: '0.35rem'
+                        }}>
+                          <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 2 }} />
+                          <span>
+                            <strong>Note:</strong> <code>+91 88508 81761</code> is your own WhatsApp Business Sender number. Meta does not allow a business to message itself. Please enter a different personal mobile number to test delivery.
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}

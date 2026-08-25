@@ -422,16 +422,60 @@ const Finance = () => {
                       </td>
                       <td>
                         <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                          {/* PDF Button */}
-                          {(inv.pdf_url || inv.metadata?.pdf_url) ? (
-                            <button
-                              className="btn btn-secondary btn-sm"
-                              style={{ padding: '0.25rem 0.55rem', fontSize: '0.72rem', color: 'var(--accent-primary)', display: 'flex', alignItems: 'center', gap: '0.25rem' }}
-                              onClick={() => setPreviewPdfUrl(inv.pdf_url || inv.metadata?.pdf_url)}
-                            >
-                              <FileText size={12} /> View PDF
-                            </button>
-                          ) : null}
+                          {/* All 4 PDF Types */}
+                          {(() => {
+                            const meta = inv.metadata || {};
+                            const consignmentUrl = inv.pdf_url || meta.pdf_url;
+                            const ewayUrl = meta.eway_pdf_url;
+                            const pendingUrl = meta.pending_pdf_url;
+                            const ledgerUrl = meta.ledger_pdf_url;
+                            if (!consignmentUrl && !ewayUrl && !pendingUrl && !ledgerUrl) return null;
+                            return (
+                              <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap' }}>
+                                {consignmentUrl && (
+                                  <button
+                                    className="btn btn-secondary btn-sm"
+                                    style={{ padding: '0.2rem 0.45rem', fontSize: '0.68rem', color: 'var(--accent-primary)', display: 'flex', alignItems: 'center', gap: '0.2rem' }}
+                                    onClick={() => setPreviewPdfUrl(consignmentUrl)}
+                                    title="Tax Invoice + e-Way Bill (2-Page Consignment Bill)"
+                                  >
+                                    <FileText size={11} /> Tax Bill
+                                  </button>
+                                )}
+                                {ewayUrl && (
+                                  <button
+                                    className="btn btn-secondary btn-sm"
+                                    style={{ padding: '0.2rem 0.45rem', fontSize: '0.68rem', color: '#10b981', display: 'flex', alignItems: 'center', gap: '0.2rem' }}
+                                    onClick={() => setPreviewPdfUrl(ewayUrl)}
+                                    title="Standalone e-Way Bill / Conveyance Note"
+                                  >
+                                    <FileText size={11} /> e-Way
+                                  </button>
+                                )}
+                                {pendingUrl && (
+                                  <button
+                                    className="btn btn-secondary btn-sm"
+                                    style={{ padding: '0.2rem 0.45rem', fontSize: '0.68rem', color: '#f59e0b', display: 'flex', alignItems: 'center', gap: '0.2rem' }}
+                                    onClick={() => setPreviewPdfUrl(pendingUrl)}
+                                    title="Pending Bills Statement for this client"
+                                  >
+                                    <FileText size={11} /> Pending
+                                  </button>
+                                )}
+                                {ledgerUrl && (
+                                  <button
+                                    className="btn btn-secondary btn-sm"
+                                    style={{ padding: '0.2rem 0.45rem', fontSize: '0.68rem', color: '#a78bfa', display: 'flex', alignItems: 'center', gap: '0.2rem' }}
+                                    onClick={() => setPreviewPdfUrl(ledgerUrl)}
+                                    title="Customer Ledger Account"
+                                  >
+                                    <FileText size={11} /> Ledger
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })()}
+
 
                           {/* Remind / Settled — Admin can ALWAYS send manually, even during pause */}
                           {inv.status !== 'Paid' ? (

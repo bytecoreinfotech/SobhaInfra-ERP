@@ -901,6 +901,13 @@ def fetch_from_tally():
     loaded_companies = get_tally_loaded_companies()
     if loaded_companies:
         log.info(f"Detected {len(loaded_companies)} open company(ies) in TallyPrime: {', '.join(loaded_companies)}")
+        # Auto-seed every detected company to Supabase so it appears in Settings
+        global _CACHED_COMPANY_PROFILES
+        _CACHED_COMPANY_PROFILES = None  # Invalidate cache before seeding
+        for comp_name in loaded_companies:
+            if comp_name:
+                auto_seed_tally_company(comp_name)
+        _CACHED_COMPANY_PROFILES = None  # Invalidate again so fresh profiles are fetched
     else:
         log.info("Querying Tally for active open company vouchers.")
         loaded_companies = [""]
@@ -911,6 +918,7 @@ def fetch_from_tally():
     for comp in loaded_companies:
         comp_label = f" [{comp}]" if comp else ""
         log.info(f"--- Querying Tally Company{comp_label} ---")
+
 
         strategies = [
             (f"1_DayBook_{comp}" if comp else "1_DayBook", inject_company_into_xml(DAYBOOK_XML, comp)),
@@ -970,68 +978,68 @@ FMT_DATE   = lambda d: datetime.strptime(d, "%Y%m%d").strftime("%d %b %Y") if d 
 _CACHED_ORG_PROFILE = None
 _CACHED_COMPANY_PROFILES = None
 
-DEFAULT_COMPANY_REGISTRY = [
-    {
-        "id": "comp-shobha-ready-plast",
-        "company_name": "SHOBHA READY PLAST",
-        "alias_names": ["SHOBHA READY PLAST", "SRP", "Shobha Ready Plast Pvt Ltd"],
+# DEFAULT_COMPANY_REGISTRY is intentionally EMPTY.
+# Companies are 100% dynamic — auto-seeded from Tally at runtime.
+# Admin fills in GSTIN/bank/logo details via the Settings UI after auto-seed.
+DEFAULT_COMPANY_REGISTRY = []
+
+
+
+def auto_seed_tally_company(company_name: str) -> dict:
+    """
+    Called for EVERY company detected in Tally at sync start.
+    Upserts a real profile into Supabase company_profiles with tally_sourced=True.
+    Admin can then edit GSTIN/bank/logo via Settings UI.
+    Returns the profile dict.
+    """
+    clean_id  = f"tally-{re.sub(r'[^a-zA-Z0-9]', '-', company_name).lower().strip('-')}"
+    new_profile = {
+        "id": clean_id,
+        "organization_id": ORGANIZATION_ID,
+        "company_name": company_name.strip(),
+        "alias_names": [company_name.strip()],
         "company_logo_url": "",
-        "company_address": "NH48, NEAR KOLEI KHADI SARODHI, VALSAD, GUJARAT - 396001",
-        "gstin_number": "24AGCPJ2785R1ZV",
-        "company_udyam_reg": "UDYAM-GJ-01-0012345",
-        "admin_email": "shobhareadyplast@gmail.com",
-        "contact_phone": "+91 98765 43210",
-        "bank_name": "HDFC Bank Ltd.",
-        "bank_account_no": "50200088991122",
-        "bank_ifsc": "HDFC0001234",
-        "upi_id": "shobhareadyplast@okhdfcbank",
-        "state_name": "Gujarat",
-        "state_code": "24",
-        "jurisdiction": "VALSAD / THANE",
-        "invoice_footer_notes": "Unpaid Invoice Will Be Charged 24% P.A. Interest After Given Credit Days. Goods Once Sold Will Not Be Taken Back.",
-        "is_default": True,
-    },
-    {
-        "id": "comp-shobha-enterprises",
-        "company_name": "SHOBHA ENTERPRISES",
-        "alias_names": ["SHOBHA ENTERPRISES", "SE", "Shobha Enterprises Traders"],
-        "company_logo_url": "",
-        "company_address": "OFFICE 204, TRADE CENTER, KOLShet ROAD, THANE WEST, MAHARASHTRA - 400607",
-        "gstin_number": "27AABCS9988P1Z3",
-        "company_udyam_reg": "UDYAM-MH-01-0098765",
-        "admin_email": "enterprises@shobhagroup.in",
-        "contact_phone": "+91 98765 11223",
-        "bank_name": "ICICI Bank Ltd.",
-        "bank_account_no": "001105009988",
-        "bank_ifsc": "ICIC0000011",
-        "upi_id": "shobhaenterprises@icici",
-        "state_name": "Maharashtra",
-        "state_code": "27",
-        "jurisdiction": "THANE / MUMBAI",
-        "invoice_footer_notes": "Interest @ 24% p.a. will be charged after credit period. Disputes subject to Thane jurisdiction.",
-        "is_default": False,
-    },
-    {
-        "id": "comp-shobha-infra",
-        "company_name": "SHOBHA INFRA & LOGISTICS",
-        "alias_names": ["SHOBHA INFRA & LOGISTICS", "SHOBHA TRANSPORT", "SIL"],
-        "company_logo_url": "",
-        "company_address": "PLOT 12, TRANSPORT NAGAR, GIDC, VAPI, GUJARAT - 396195",
-        "gstin_number": "24AAACI5544K1Z9",
-        "company_udyam_reg": "UDYAM-GJ-01-0055443",
-        "admin_email": "infra@shobhagroup.in",
-        "contact_phone": "+91 98765 99887",
-        "bank_name": "State Bank of India",
-        "bank_account_no": "33445566778",
-        "bank_ifsc": "SBIN0001234",
-        "upi_id": "shobhainfra@sbi",
-        "state_name": "Gujarat",
-        "state_code": "24",
-        "jurisdiction": "VAPI / VALSAD",
-        "invoice_footer_notes": "All goods transport subject to carrier terms and transit insurance policies.",
+        "company_address": "",
+        "gstin_number": "",
+        "company_udyam_reg": "",
+        "admin_email": "",
+        "contact_phone": "",
+        "bank_name": "",
+        "bank_account_no": "",
+        "bank_ifsc": "",
+        "upi_id": "",
+        "state_name": "",
+        "state_code": "",
+        "jurisdiction": "",
+        "invoice_footer_notes": "Unpaid Invoice Will Be Charged 24% P.A. Interest After Given Credit Days.",
+        "tally_sourced": True,
         "is_default": False,
     }
-]
+
+    if SUPABASE_URL and SUPABASE_KEY:
+        try:
+            resp = requests.post(
+                f"{SUPABASE_URL}/rest/v1/company_profiles?on_conflict=organization_id,company_name",
+                json=new_profile,
+                headers={
+                    "apikey": SUPABASE_KEY,
+                    "Authorization": f"Bearer {SUPABASE_KEY}",
+                    "Content-Type": "application/json",
+                    "Prefer": "resolution=merge-duplicates,return=representation",
+                },
+                timeout=5
+            )
+            if resp.status_code in (200, 201):
+                result = resp.json()
+                if isinstance(result, list) and result:
+                    log.info(f"  [Company Seed] '{company_name}' → synced to Settings dashboard (✅ tally_sourced=true)")
+                    return result[0]
+            else:
+                log.debug(f"  [Company Seed] Upsert {resp.status_code}: {resp.text[:150]}")
+        except Exception as e:
+            log.debug(f"  [Company Seed] Non-fatal error: {e}")
+
+    return new_profile
 
 
 def fetch_all_company_profiles() -> list:
@@ -1040,7 +1048,7 @@ def fetch_all_company_profiles() -> list:
     if _CACHED_COMPANY_PROFILES:
         return _CACHED_COMPANY_PROFILES
 
-    profiles = list(DEFAULT_COMPANY_REGISTRY)
+    profiles = []
 
     if SUPABASE_URL and SUPABASE_KEY:
         try:
@@ -2334,64 +2342,122 @@ def save_document_templates_locally():
         log.debug(f"Template saving notice: {e}")
 
 
-def generate_and_upload_invoice(voucher: dict, org_profile: dict | None = None) -> tuple:
+def generate_and_upload_all_pdfs(voucher: dict, org_profile: dict | None = None) -> dict:
     """
-    Generate the 2-Page Consignment PDF from voucher data and save BOTH locally and to Supabase storage.
-    Returns (public_url, pdf_base64). Entirely non-fatal.
+    Generate all 4 bill/document types for a single voucher:
+      1. 2-Page Consignment Tax Invoice (Tax Invoice + e-Way Bill)
+      2. Standalone e-Way Bill / Conveyance Note
+      3. Pending Bills Statement (all unpaid bills for this party)
+      4. Customer Ledger Account (full transaction history)
+    Returns dict of {pdf_url, eway_pdf_url, pending_pdf_url, ledger_pdf_url, pdf_base64}
     """
+    result = {
+        "pdf_url": None,
+        "eway_pdf_url": None,
+        "pending_pdf_url": None,
+        "ledger_pdf_url": None,
+        "pdf_base64": None,
+    }
+
+    inv_number = voucher.get("invoice_number", f"INV-{int(time.time())}")
+    comp_name = voucher.get("company_name") or "Company"
+    party_name = voucher.get("ledger_name") or voucher.get("client_name") or "Client"
+
+    # Auto-match company profile for THIS voucher's specific company
+    v_profile = get_matching_company_profile(comp_name)
+
+    clean_comp = re.sub(r'[^a-zA-Z0-9_-]', '_', comp_name)
+    clean_inv = re.sub(r'[^a-zA-Z0-9_-]', '_', str(inv_number))
+    comp_dir = os.path.join(SCRIPT_DIR, "invoices", clean_comp)
+    os.makedirs(comp_dir, exist_ok=True)
+
+    # ── PDF 1: 2-Page Consignment Tax Invoice ─────────────────────────────────
     try:
-        inv_number = voucher.get("invoice_number", f"INV-{int(time.time())}")
-        comp_name = voucher.get("company_name") or (org_profile.get("company_name") if org_profile else "Company")
-        log.info(f"  [Invoice PDF] Generating 2-page consignment PDF for {inv_number} ({comp_name})...")
-
-        # Auto-match or fetch profile for THIS voucher's specific company
-        v_profile = get_matching_company_profile(comp_name)
-        pdf_bytes = generate_invoice_pdf(voucher, v_profile)
-        if not pdf_bytes:
-            log.info("  [Invoice PDF] Skipped (reportlab not available)")
-            return None, None
-
-        # 1. SAVE LOCAL COPY in ./invoices/<clean_company_name>/<clean_invoice_number>.pdf
-        try:
-            clean_comp = re.sub(r'[^a-zA-Z0-9_-]', '_', comp_name)
-            clean_inv = re.sub(r'[^a-zA-Z0-9_-]', '_', str(inv_number))
-            comp_dir = os.path.join(SCRIPT_DIR, "invoices", clean_comp)
-            os.makedirs(comp_dir, exist_ok=True)
-            local_pdf_path = os.path.join(comp_dir, f"{clean_inv}.pdf")
-            with open(local_pdf_path, "wb") as f:
-                f.write(pdf_bytes)
-            log.info(f"  [Invoice PDF] Saved local copy: {local_pdf_path}")
-        except Exception as local_e:
-            log.debug(f"Local file write notice: {local_e}")
-
-        # 2. UPLOAD TO SUPABASE STORAGE
-        pdf_b64 = base64.b64encode(pdf_bytes).decode('utf-8')
-        url = upload_pdf_to_supabase(pdf_bytes, inv_number)
-        return url, pdf_b64
+        log.info(f"  [PDF 1/4] Generating 2-page consignment bill for {inv_number}...")
+        pdf1 = generate_invoice_pdf(voucher, v_profile)
+        if pdf1:
+            local1 = os.path.join(comp_dir, f"{clean_inv}_consignment.pdf")
+            with open(local1, "wb") as f: f.write(pdf1)
+            url1 = upload_pdf_to_supabase(pdf1, f"{inv_number}_consignment")
+            result["pdf_url"] = url1
+            result["pdf_base64"] = base64.b64encode(pdf1).decode("utf-8")
+            log.info(f"  [PDF 1/4] ✅ Consignment bill saved: {local1}")
     except Exception as e:
-        log.warning(f"  [Invoice PDF] Non-fatal notice: {e}")
-        return None, None
+        log.debug(f"  [PDF 1/4] Non-fatal: {e}")
+
+    # ── PDF 2: Standalone e-Way Bill ──────────────────────────────────────────
+    try:
+        log.info(f"  [PDF 2/4] Generating e-Way Bill for {inv_number}...")
+        pdf2 = generate_eway_bill_pdf(voucher, v_profile)
+        if pdf2:
+            local2 = os.path.join(comp_dir, f"{clean_inv}_eway.pdf")
+            with open(local2, "wb") as f: f.write(pdf2)
+            url2 = upload_pdf_to_supabase(pdf2, f"{inv_number}_eway")
+            result["eway_pdf_url"] = url2
+            log.info(f"  [PDF 2/4] ✅ e-Way Bill saved: {local2}")
+    except Exception as e:
+        log.debug(f"  [PDF 2/4] Non-fatal: {e}")
+
+    # ── PDF 3: Pending Bills Statement (all bills for this party) ─────────────
+    try:
+        log.info(f"  [PDF 3/4] Generating Pending Bills Statement for {party_name}...")
+        pdf3 = generate_pending_bills_pdf(party_name, [voucher], v_profile)
+        if pdf3:
+            clean_party = re.sub(r'[^a-zA-Z0-9_-]', '_', party_name)
+            local3 = os.path.join(comp_dir, f"{clean_party}_pending_statement.pdf")
+            with open(local3, "wb") as f: f.write(pdf3)
+            url3 = upload_pdf_to_supabase(pdf3, f"{clean_party}_pending_statement")
+            result["pending_pdf_url"] = url3
+            log.info(f"  [PDF 3/4] ✅ Pending Bills Statement saved: {local3}")
+    except Exception as e:
+        log.debug(f"  [PDF 3/4] Non-fatal: {e}")
+
+    # ── PDF 4: Customer Ledger Account ────────────────────────────────────────
+    try:
+        log.info(f"  [PDF 4/4] Generating Customer Ledger for {party_name}...")
+        pdf4 = generate_ledger_account_pdf(party_name, [voucher], v_profile)
+        if pdf4:
+            clean_party = re.sub(r'[^a-zA-Z0-9_-]', '_', party_name)
+            local4 = os.path.join(comp_dir, f"{clean_party}_ledger.pdf")
+            with open(local4, "wb") as f: f.write(pdf4)
+            url4 = upload_pdf_to_supabase(pdf4, f"{clean_party}_ledger")
+            result["ledger_pdf_url"] = url4
+            log.info(f"  [PDF 4/4] ✅ Customer Ledger saved: {local4}")
+    except Exception as e:
+        log.debug(f"  [PDF 4/4] Non-fatal: {e}")
+
+    return result
 
 
 def push_to_cloud(vouchers):
     """
-    1. Generate real 2-page PDF invoices for all Tally vouchers with their real company profiles.
-    2. Save copies locally and upload to cloud storage.
-    3. Generate 4 document templates locally in ./invoices/templates/.
-    4. Push the enriched multi-company payload to Netlify endpoint.
+    1. Generate all 4 PDF types per Tally voucher.
+    2. Save copies locally and upload all 4 to cloud storage.
+    3. Push the enriched multi-company payload to Netlify endpoint.
     """
     enriched = []
     for v in vouchers:
-        pdf_url, pdf_b64 = generate_and_upload_invoice(v)
+        pdfs = generate_and_upload_all_pdfs(v)
         enriched.append({
             **v,
             "company_name": v.get("company_name", "TallyPrime Live"),
-            "pdf_url": pdf_url,
-            "pdf_base64": pdf_b64,
+            # Primary PDF (consignment) stays in pdf_url for backward compat
+            "pdf_url": pdfs["pdf_url"],
+            "pdf_base64": pdfs["pdf_base64"],
+            # All 4 URLs stored in metadata for Finance page to show all buttons
+            "metadata": {
+                **(v.get("metadata") or {}),
+                "pdf_url": pdfs["pdf_url"],
+                "eway_pdf_url": pdfs["eway_pdf_url"],
+                "pending_pdf_url": pdfs["pending_pdf_url"],
+                "ledger_pdf_url": pdfs["ledger_pdf_url"],
+                "pdfs_generated_at": datetime.now().isoformat(),
+            },
         })
 
     # Save document template samples locally for user verification
     save_document_templates_locally()
+
 
     # Determine primary company or group label
     unique_comps = list(dict.fromkeys([v.get("company_name") for v in vouchers if v.get("company_name")]))
