@@ -3,7 +3,7 @@ import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, Users, CheckSquare, IndianRupee,
   MessageCircle, Bot, CreditCard, Shield, BarChart3,
-  Settings, ChevronLeft, ChevronRight, MapPin, Sparkles
+  Settings, ChevronLeft, ChevronRight, MapPin, Sparkles, Mail
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useLiveCounts } from '../context/LiveCountsContext';
@@ -30,6 +30,7 @@ const Sidebar = ({ collapsed, isCollapsed, onToggle, mobileOpen, onMobileClose }
       items: [
         { name: 'WhatsApp Campaign',    path: '/whatsapp',        icon: <MessageCircle size={18} />, badge: badge(whatsapp), module: 'WhatsApp' },
         { name: 'Campaign Studio',      path: '/campaign-studio', icon: <Sparkles size={18} />,                              module: 'WhatsApp' },
+        { name: 'Gmail & Email Center', path: '/email-hub',       icon: <Mail size={18} />,                                  module: 'CRM' },
         { name: 'Chatbot & Auto-Reply', path: '/chatbot',         icon: <Bot size={18} />,                                  module: 'WhatsApp' },
         { name: 'CRM & Leads',          path: '/crm',             icon: <Users size={18} />,         badge: badge(leads),    module: 'CRM' },
       ]

@@ -5,7 +5,7 @@ import {
   Server, Cpu, Database, Radio, ToggleLeft, ToggleRight, FileSpreadsheet, FileJson,
   Brain, Plus, Trash2, Edit3, BookOpen, CheckCircle2, Share2, Send, Copy, Sparkles,
   HardDrive, AlertOctagon, ShieldAlert, HelpCircle, Layers, CheckSquare,
-  Building2, PlusCircle, Globe, ShieldCheck, Upload, Star, QrCode
+  Building2, PlusCircle, Globe, ShieldCheck, Upload, Star, QrCode, Mail, Eye, EyeOff
 } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { useTheme } from '../context/ThemeContext';
@@ -15,7 +15,8 @@ import {
   getSystemSafetyAndQuotas, updateSystemSafety, toggleCircuitBreaker, exportAllData,
   getRoles, createRole, updateRole, deleteRole, getPermissionMatrix, savePermissionMatrix, getTeamMembers,
   createLead, normalizePhone, getOrgSettings, updateOrgSetting,
-  getStorageUsageSummary, purgeStorageCategory, purgeAllExpiredStorage, runAutoStorageCleanupIfDue
+  getStorageUsageSummary, purgeStorageCategory, purgeAllExpiredStorage, runAutoStorageCleanupIfDue,
+  sendDirectEmail
 } from '../lib/db';
 import './Pages.css';
 
@@ -30,6 +31,20 @@ const Settings = () => {
   const [safety, setSafety] = useState(null);
   const [downloading, setDownloading] = useState(false);
   const [exportSuccess, setExportSuccess] = useState(false);
+
+  // Email & Gmail SMTP State
+  const [emailConfig, setEmailConfig] = useState({
+    gmail_user: localStorage.getItem('erppro_gmail_user') || '',
+    gmail_app_password: localStorage.getItem('erppro_gmail_app_password') || '',
+    sender_name: localStorage.getItem('erppro_email_sender_name') || 'Sobha Infratech Pvt. Ltd.',
+    smtp_host: 'smtp.gmail.com',
+    smtp_port: '465',
+  });
+  const [showAppPassword, setShowAppPassword] = useState(false);
+  const [testEmailRecipient, setTestEmailRecipient] = useState('');
+  const [testingEmail, setTestingEmail] = useState(false);
+  const [testEmailResult, setTestEmailResult] = useState(null);
+  const [emailConfigSaved, setEmailConfigSaved] = useState(false);
 
   // Multi-Company Profile Modal State
   const [companyModalOpen, setCompanyModalOpen] = useState(false);
@@ -627,8 +642,72 @@ const Settings = () => {
     setSimulating(false);
   };
 
+  const handleSaveEmailConfig = async () => {
+    localStorage.setItem('erppro_gmail_user', emailConfig.gmail_user);
+    localStorage.setItem('erppro_gmail_app_password', emailConfig.gmail_app_password);
+    localStorage.setItem('erppro_email_sender_name', emailConfig.sender_name);
+
+    if (isSupabaseConfigured) {
+      await updateOrgSetting('gmail_user', emailConfig.gmail_user);
+      await updateOrgSetting('email_sender_name', emailConfig.sender_name);
+    }
+    setEmailConfigSaved(true);
+    setTimeout(() => setEmailConfigSaved(false), 3000);
+  };
+
+  const handleTestEmailDispatch = async (e) => {
+    e.preventDefault();
+    if (!testEmailRecipient || !testEmailRecipient.includes('@')) {
+      setTestEmailResult({ success: false, message: 'Please enter a valid recipient email address for testing.' });
+      return;
+    }
+    setTestingEmail(true);
+    setTestEmailResult(null);
+
+    const payload = {
+      to: testEmailRecipient.trim(),
+      recipientName: 'Test Recipient',
+      subject: `[TEST] Gmail SMTP Connectivity Verification — ${emailConfig.sender_name || 'SobhaInfra ERP'}`,
+      html: `<div style="font-family: sans-serif; padding: 15px;">
+        <h2 style="color: #4f46e5; margin: 0 0 10px 0;">🎉 Gmail SMTP Verification Successful!</h2>
+        <p>This is an official test email sent from your <strong>SobhaInfra ERP Panel</strong>.</p>
+        <p>Your Gmail credentials and SMTP configurations are working properly.</p>
+        <div style="background: #f1f5f9; padding: 10px 14px; border-radius: 6px; font-size: 13px; margin: 15px 0;">
+          <strong>Sender:</strong> ${emailConfig.sender_name} (${emailConfig.gmail_user || 'Default'})<br/>
+          <strong>Timestamp:</strong> ${new Date().toLocaleString('en-IN')}
+        </div>
+      </div>`,
+      senderName: emailConfig.sender_name,
+      senderEmail: emailConfig.gmail_user,
+      smtpConfig: {
+        host: emailConfig.smtp_host,
+        port: emailConfig.smtp_port,
+        user: emailConfig.gmail_user,
+        pass: emailConfig.gmail_app_password,
+        fromName: emailConfig.sender_name,
+      },
+    };
+
+    const res = await sendDirectEmail(payload);
+    if (res.success) {
+      setTestEmailResult({
+        success: true,
+        message: res.data?.simulated
+          ? 'Simulation successful! Enter a live 16-character Google App Password for actual inbox delivery.'
+          : `✅ Live email delivered successfully to ${testEmailRecipient}! Check your inbox.`,
+      });
+    } else {
+      setTestEmailResult({
+        success: false,
+        message: `❌ Dispatch Failed: ${res.error || 'Check Gmail address and App Password.'}`,
+      });
+    }
+    setTestingEmail(false);
+  };
+
   const tabs = [
     { id: 'general', label: 'General', icon: <SettingsIcon size={16} /> },
+    { id: 'email_smtp', label: 'Email & Gmail SMTP', icon: <Mail size={16} /> },
     { id: 'storage', label: 'Storage & Supabase Health', icon: <Database size={16} /> },
     { id: 'payment_automation', label: 'Payment Automation', icon: <Bell size={16} /> },
     { id: 'meta_leads', label: 'Meta Leads (FB & IG)', icon: <Share2 size={16} /> },
@@ -683,6 +762,220 @@ const Settings = () => {
 
         {/* Content Area */}
         <div className="glass-card p-6 settings-content-card">
+
+          {/* ══════════════════════════════════════════════════════════════
+              TAB: EMAIL & GMAIL SMTP CONFIGURATION
+             ══════════════════════════════════════════════════════════════ */}
+          {activeTab === 'email_smtp' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+              {/* Header */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.75rem' }}>
+                <div>
+                  <h3 style={{ fontSize: '1.1rem', fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <Mail size={20} color="var(--accent-primary)" /> Gmail & SMTP Outbound Mail Center
+                  </h3>
+                  <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: '0.25rem 0 0 0' }}>
+                    Connect your official Gmail account to send quotations, brochures, site visit confirmations, and invoices directly to clients from the panel.
+                  </p>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span style={{
+                    display: 'inline-flex', alignItems: 'center', gap: '0.35rem',
+                    padding: '0.25rem 0.65rem', borderRadius: '20px', fontSize: '0.75rem', fontWeight: 700,
+                    background: (emailConfig.gmail_user && emailConfig.gmail_app_password) ? 'rgba(16, 185, 129, 0.15)' : 'rgba(245, 158, 11, 0.15)',
+                    color: (emailConfig.gmail_user && emailConfig.gmail_app_password) ? '#10b981' : '#f59e0b',
+                    border: `1px solid ${(emailConfig.gmail_user && emailConfig.gmail_app_password) ? 'rgba(16, 185, 129, 0.3)' : 'rgba(245, 158, 11, 0.3)'}`
+                  }}>
+                    {(emailConfig.gmail_user && emailConfig.gmail_app_password) ? <CheckCircle2 size={13} /> : <AlertTriangle size={13} />}
+                    {(emailConfig.gmail_user && emailConfig.gmail_app_password) ? 'Gmail SMTP Configured' : 'Credentials Needed'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Step-by-Step Google App Password Guide */}
+              <div style={{
+                background: 'rgba(99, 102, 241, 0.05)',
+                border: '1px solid rgba(99, 102, 241, 0.25)',
+                borderRadius: '12px', padding: '1.25rem'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                  <span style={{ fontSize: '1.1rem' }}>🔐</span>
+                  <strong style={{ fontSize: '0.9rem', color: 'var(--text-primary)' }}>
+                    How to generate your 16-character Google App Password (2 Minutes):
+                  </strong>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0.75rem', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                  <div style={{ background: 'rgba(0,0,0,0.15)', padding: '0.75rem', borderRadius: '8px' }}>
+                    <div style={{ fontWeight: 700, color: 'var(--primary, #6366f1)', marginBottom: '0.2rem' }}>1. Security Page</div>
+                    <div>Open <a href="https://myaccount.google.com/security" target="_blank" rel="noopener noreferrer" style={{ color: '#818cf8', textDecoration: 'underline' }}>Google Account Security</a>.</div>
+                  </div>
+
+                  <div style={{ background: 'rgba(0,0,0,0.15)', padding: '0.75rem', borderRadius: '8px' }}>
+                    <div style={{ fontWeight: 700, color: 'var(--primary, #6366f1)', marginBottom: '0.2rem' }}>2. 2-Step Verification</div>
+                    <div>Ensure <strong>2-Step Verification</strong> is switched ON for your Google account.</div>
+                  </div>
+
+                  <div style={{ background: 'rgba(0,0,0,0.15)', padding: '0.75rem', borderRadius: '8px' }}>
+                    <div style={{ fontWeight: 700, color: 'var(--primary, #6366f1)', marginBottom: '0.2rem' }}>3. App Passwords</div>
+                    <div>Search <strong>"App passwords"</strong> in the top search bar of Google Account.</div>
+                  </div>
+
+                  <div style={{ background: 'rgba(0,0,0,0.15)', padding: '0.75rem', borderRadius: '8px' }}>
+                    <div style={{ fontWeight: 700, color: 'var(--primary, #6366f1)', marginBottom: '0.2rem' }}>4. Create & Paste</div>
+                    <div>Enter App Name <strong>SobhaInfra ERP</strong>, click Create, and copy the 16-letter password below.</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* SMTP Credentials Form */}
+              <div style={{
+                background: 'var(--bg-secondary)', border: '1px solid var(--border-color)',
+                borderRadius: '12px', padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '1rem'
+              }}>
+                <div style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                  <SettingsIcon size={16} /> SMTP Account Credentials
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1rem' }}>
+                  <div>
+                    <label style={{ fontSize: '0.78rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>
+                      Official Gmail Address *
+                    </label>
+                    <input
+                      type="email"
+                      className="input-field"
+                      placeholder="e.g. shobhainfra2026@gmail.com"
+                      value={emailConfig.gmail_user}
+                      onChange={e => setEmailConfig(p => ({ ...p, gmail_user: e.target.value }))}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: '0.78rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>
+                      Sender Display Name *
+                    </label>
+                    <input
+                      type="text"
+                      className="input-field"
+                      placeholder="e.g. Sobha Infratech Pvt. Ltd."
+                      value={emailConfig.sender_name}
+                      onChange={e => setEmailConfig(p => ({ ...p, sender_name: e.target.value }))}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: '0.78rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>
+                      Google 16-Character App Password *
+                    </label>
+                    <div style={{ position: 'relative' }}>
+                      <input
+                        type={showAppPassword ? 'text' : 'password'}
+                        className="input-field"
+                        style={{ width: '100%', paddingRight: '2.5rem', fontFamily: showAppPassword ? 'monospace' : 'inherit' }}
+                        placeholder="xxxx xxxx xxxx xxxx"
+                        value={emailConfig.gmail_app_password}
+                        onChange={e => setEmailConfig(p => ({ ...p, gmail_app_password: e.target.value }))}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowAppPassword(!showAppPassword)}
+                        style={{
+                          position: 'absolute', right: 8, top: 8, background: 'transparent',
+                          border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '2px 6px'
+                        }}
+                      >
+                        {showAppPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: '0.78rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>
+                      SMTP Host & Port
+                    </label>
+                    <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '0.5rem' }}>
+                      <input
+                        type="text"
+                        className="input-field"
+                        value={emailConfig.smtp_host}
+                        onChange={e => setEmailConfig(p => ({ ...p, smtp_host: e.target.value }))}
+                        placeholder="smtp.gmail.com"
+                      />
+                      <input
+                        type="text"
+                        className="input-field"
+                        value={emailConfig.smtp_port}
+                        onChange={e => setEmailConfig(p => ({ ...p, smtp_port: e.target.value }))}
+                        placeholder="465"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={handleSaveEmailConfig}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem' }}
+                  >
+                    {emailConfigSaved ? <><Check size={14} /> Saved!</> : <><Save size={14} /> Save Email Credentials</>}
+                  </button>
+                </div>
+              </div>
+
+              {/* Live SMTP Test Console */}
+              <div style={{
+                background: 'rgba(0,0,0,0.15)', border: '1px solid var(--border-color)',
+                borderRadius: '12px', padding: '1.25rem'
+              }}>
+                <div style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-primary)', marginBottom: '0.4rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                  <Send size={15} color="var(--primary, #6366f1)" /> Live SMTP Dispatch Tester
+                </div>
+                <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0 0 1rem 0' }}>
+                  Test your configuration immediately by sending a verification email to your personal or client inbox.
+                </p>
+
+                {testEmailResult && (
+                  <div style={{
+                    padding: '0.75rem 1rem', borderRadius: '8px', marginBottom: '1rem', fontSize: '0.82rem',
+                    display: 'flex', alignItems: 'center', gap: '0.5rem',
+                    background: testEmailResult.success ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                    color: testEmailResult.success ? '#10b981' : '#ef4444',
+                    border: `1px solid ${testEmailResult.success ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`
+                  }}>
+                    {testEmailResult.success ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
+                    <span>{testEmailResult.message}</span>
+                  </div>
+                )}
+
+                <form onSubmit={handleTestEmailDispatch} style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <div style={{ flex: 1, minWidth: 260 }}>
+                    <input
+                      type="email"
+                      className="input-field"
+                      style={{ width: '100%', fontSize: '0.85rem' }}
+                      placeholder="Enter recipient email (e.g. your-email@gmail.com)"
+                      value={testEmailRecipient}
+                      onChange={e => setTestEmailRecipient(e.target.value)}
+                      required
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    className="btn btn-primary"
+                    disabled={testingEmail || !testEmailRecipient}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem' }}
+                  >
+                    {testingEmail ? <RefreshCw size={14} className="spin" /> : <Send size={14} />}
+                    {testingEmail ? 'Sending Test...' : '⚡ Send Test Email'}
+                  </button>
+                </form>
+              </div>
+            </div>
+          )}
 
           {/* ══════════════════════════════════════════════════════════════
               TAB: STORAGE & SUPABASE HEALTH

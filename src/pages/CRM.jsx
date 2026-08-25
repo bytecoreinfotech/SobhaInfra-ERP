@@ -11,6 +11,7 @@ import Customer360Modal from '../components/Customer360Modal';
 import ProductCatalogModal from '../components/ProductCatalogModal';
 import BulkImportModal from '../components/BulkImportModal';
 import CampaignBuilderModal from '../components/CampaignBuilderModal';
+import EmailComposeModal from '../components/EmailComposeModal';
 import './Pages.css';
 
 const statusConfig = {
@@ -40,6 +41,9 @@ const CRM = () => {
   const [sourceFilter, setSourceFilter] = useState('All');
   const [viewMode, setViewMode] = useState('table'); // 'table' | 'kanban'
   
+  // Email Compose State
+  const [emailModalLead, setEmailModalLead] = useState(null);
+
   // Multi-select for bulk actions
   const [selectedLeadIds, setSelectedLeadIds] = useState(new Set());
 
@@ -430,6 +434,17 @@ const CRM = () => {
                           <button className="btn-icon" title="View Customer 360" onClick={() => setSelected360LeadId(lead.id)}>
                             <Eye size={14} color="var(--accent-primary)" />
                           </button>
+                          <button
+                            className="btn-icon"
+                            title={lead.email ? `Send Email to ${lead.email}` : "Send Direct Email"}
+                            onClick={e => {
+                              e.stopPropagation();
+                              setEmailModalLead(lead);
+                            }}
+                            style={{ color: lead.email ? 'var(--primary, #6366f1)' : 'var(--text-muted)' }}
+                          >
+                            <Mail size={14} />
+                          </button>
                           <button className="btn-icon" title="Edit" onClick={e => openEdit(lead, e)}>
                             <Edit2 size={14} />
                           </button>
@@ -708,6 +723,17 @@ const CRM = () => {
             </form>
           </div>
         </div>
+      )}
+
+      {/* Direct Email Compose Modal */}
+      {emailModalLead && (
+        <EmailComposeModal
+          lead={emailModalLead}
+          onClose={() => setEmailModalLead(null)}
+          onEmailSent={() => {
+            fetchLeads();
+          }}
+        />
       )}
     </div>
   );

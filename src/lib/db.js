@@ -2955,5 +2955,167 @@ export async function reverseGeocode(lat, lng) {
   return `GPS: ${Number(lat).toFixed(4)}°, ${Number(lng).toFixed(4)}°`;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// EMAIL SERVICE & TEMPLATES (GMAIL SMTP DISPATCH & SUPABASE LOGS)
+// ─────────────────────────────────────────────────────────────────────────────
 
+export const DEFAULT_EMAIL_TEMPLATES = [
+  {
+    id: 'tpl-quote',
+    name: 'Quotation & Pricing Proposal',
+    category: 'Sales',
+    subject: 'Quotation Proposal for {{property_interest}} — {{company_name}}',
+    body: `<p>Dear <strong>{{client_name}}</strong>,</p>
+<p>Thank you for expressing interest in our premium product offerings. As requested, we are pleased to provide you with the formal quotation and pricing structure below:</p>
+<table style="width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 14px;">
+  <thead>
+    <tr style="background: #f1f5f9; text-align: left;">
+      <th style="padding: 10px; border: 1px solid #cbd5e1;">Product / Requirement</th>
+      <th style="padding: 10px; border: 1px solid #cbd5e1;">Estimated Budget</th>
+      <th style="padding: 10px; border: 1px solid #cbd5e1;">GST / Terms</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td style="padding: 10px; border: 1px solid #cbd5e1;"><strong>{{property_interest}}</strong></td>
+      <td style="padding: 10px; border: 1px solid #cbd5e1;">{{budget}}</td>
+      <td style="padding: 10px; border: 1px solid #cbd5e1;">18% GST Applicable / Standard Credit</td>
+    </tr>
+  </tbody>
+</table>
+<p>This quotation is valid for 15 days from the date of issue. Should you have any technical specifications or volume queries, please feel free to reach back to us directly.</p>
+<p>Warm regards,<br/><strong>{{sender_name}}</strong><br/>{{company_name}}<br/>Phone: {{sender_phone}}</p>`,
+  },
+  {
+    id: 'tpl-brochure',
+    name: 'Product Brochure & Catalog',
+    category: 'Marketing',
+    subject: 'Product Catalog & Technical Specifications — {{company_name}}',
+    body: `<p>Dear <strong>{{client_name}}</strong>,</p>
+<p>Greetings from <strong>{{company_name}}</strong>!</p>
+<p>We are delighted to share our official product catalog and technical specification sheet regarding your interest in <strong>{{property_interest}}</strong>.</p>
+<div style="background: #eff6ff; border-left: 4px solid #3b82f6; padding: 14px; margin: 18px 0; border-radius: 4px;">
+  <p style="margin: 0 0 6px 0; font-weight: 600; color: #1d4ed8;">⭐ Key Product Features & Highlights:</p>
+  <ul style="margin: 0; padding-left: 20px; color: #1e3a8a;">
+    <li>Industrial grade polymer-modified tensile bonding strength</li>
+    <li>Zero-sag formula optimized for heavy-duty tiles and exterior cladding</li>
+    <li>Full ISI & Green Building certified durability standards</li>
+  </ul>
+</div>
+<p>Our sales engineer is available to arrange a sample demonstration at your site or warehouse at your earliest convenience.</p>
+<p>Warm regards,<br/><strong>{{sender_name}}</strong><br/>{{company_name}}</p>`,
+  },
+  {
+    id: 'tpl-sitevisit',
+    name: 'Site Visit & Meeting Confirmation',
+    category: 'Operations',
+    subject: 'Site Visit Confirmation — {{company_name}}',
+    body: `<p>Dear <strong>{{client_name}}</strong>,</p>
+<p>This is to confirm our upcoming scheduled site visit and technical assessment meeting.</p>
+<div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin: 16px 0;">
+  <p style="margin: 0 0 8px 0;"><strong>Client Name:</strong> {{client_name}}</p>
+  <p style="margin: 0 0 8px 0;"><strong>Contact Number:</strong> {{client_phone}}</p>
+  <p style="margin: 0 0 8px 0;"><strong>Requirement / Project:</strong> {{property_interest}}</p>
+  <p style="margin: 0;"><strong>Assigned Executive:</strong> {{sender_name}} ({{sender_phone}})</p>
+</div>
+<p>Our technical executive will arrive with product samples and testing meters at the designated slot. Please let us know if any rescheduling is required.</p>
+<p>Best regards,<br/><strong>{{company_name}} Team</strong></p>`,
+  },
+  {
+    id: 'tpl-payment',
+    name: 'Payment Reminder & Invoice Summary',
+    category: 'Accounts',
+    subject: 'Payment Follow-up & Bank Details — {{company_name}}',
+    body: `<p>Dear <strong>{{client_name}}</strong>,</p>
+<p>We hope this email finds you well. This is a gentle reminder regarding the outstanding balance for your account.</p>
+<div style="background: #fef2f2; border-left: 4px solid #ef4444; padding: 14px; margin: 16px 0; border-radius: 4px;">
+  <p style="margin: 0 0 6px 0; font-weight: 700; color: #991b1b;">Pending Invoice Summary</p>
+  <p style="margin: 0; color: #7f1d1d;"><strong>Due Amount:</strong> {{budget}}</p>
+</div>
+<p>Kindly process the settlement via RTGS / NEFT / UPI using the bank details provided below:</p>
+<div style="background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; padding: 14px; margin: 14px 0; font-size: 13px;">
+  <p style="margin: 0 0 4px 0;"><strong>Account Name:</strong> {{company_name}}</p>
+  <p style="margin: 0 0 4px 0;"><strong>Bank Name:</strong> HDFC Bank Ltd.</p>
+  <p style="margin: 0 0 4px 0;"><strong>Account Number:</strong> 50200084920194</p>
+  <p style="margin: 0 0 4px 0;"><strong>IFSC Code:</strong> HDFC0001234</p>
+  <p style="margin: 0;"><strong>UPI ID:</strong> sobhainfra@hdfcbank</p>
+</div>
+<p>If you have already initiated the transfer, please reply with the payment reference / UTR receipt.</p>
+<p>Sincerely,<br/><strong>Accounts & Finance Team</strong><br/>{{company_name}}</p>`,
+  },
+  {
+    id: 'tpl-welcome',
+    name: 'Welcome & Lead Introduction',
+    category: 'General',
+    subject: 'Welcome to {{company_name}} — Building Partnerships',
+    body: `<p>Dear <strong>{{client_name}}</strong>,</p>
+<p>Thank you for reaching out to <strong>{{company_name}}</strong>. We are thrilled to connect with you.</p>
+<p>We are a leading manufacturer and distributor of advanced construction chemicals, polymer tile adhesives, epoxy grouts, and waterproofing systems.</p>
+<p>Our dedicated account manager, <strong>{{sender_name}}</strong>, will be assisting you with all technical sizing, pricing discounts, and logistics coordination.</p>
+<p>Feel free to reach us on WhatsApp or call at <strong>{{sender_phone}}</strong> anytime.</p>
+<p>Warm regards,<br/><strong>{{company_name}}</strong></p>`,
+  },
+];
 
+// Send direct email via Netlify Serverless Function with Supabase logging
+export async function sendDirectEmail(payload) {
+  try {
+    const res = await fetch('/.netlify/functions/send-email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await res.json();
+    return { success: res.ok && data.success, data, error: !res.ok ? data.error : null };
+  } catch (err) {
+    console.error('Direct email dispatch error:', err);
+    return { success: false, data: null, error: err.message || 'Failed to dispatch email' };
+  }
+}
+
+// Fetch all email logs from Supabase with memory fallback
+export async function getEmailLogs({ limit = 50, leadId = null } = {}) {
+  if (isSupabaseConfigured) {
+    try {
+      let q = supabase
+        .from('email_logs')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(limit);
+
+      if (leadId) q = q.eq('lead_id', leadId);
+
+      const { data, error } = await q;
+      if (!error && data) return { data, error: null };
+    } catch (e) {
+      console.warn('Supabase getEmailLogs fallback:', e.message);
+    }
+  }
+
+  // Local storage / mock fallback
+  const localLogs = JSON.parse(localStorage.getItem('erppro_email_logs') || '[]');
+  let filtered = localLogs;
+  if (leadId) {
+    filtered = localLogs.filter(l => l.lead_id === leadId);
+  }
+  return { data: filtered.slice(0, limit), error: null };
+}
+
+// Record local email log in case offline
+export function recordLocalEmailLog(logItem) {
+  try {
+    const existing = JSON.parse(localStorage.getItem('erppro_email_logs') || '[]');
+    const newLog = {
+      id: 'elog-' + Date.now(),
+      created_at: new Date().toISOString(),
+      status: 'SENT',
+      ...logItem,
+    };
+    existing.unshift(newLog);
+    localStorage.setItem('erppro_email_logs', JSON.stringify(existing.slice(0, 100)));
+    return newLog;
+  } catch (_) {
+    return null;
+  }
+}

@@ -3,10 +3,11 @@ import {
   X, User, MessageCircle, Phone, Mail, FileText, CheckCircle2,
   Clock, IndianRupee, Send, AlertTriangle, Shield, Building2,
   TrendingUp, Calendar, Tag, ChevronRight, Plus, RefreshCw, Zap,
-  Paperclip, UploadCloud, Image, Film, Music, FileIcon
+  Paperclip, UploadCloud, Image, Film, Music, FileIcon, Eye
 } from 'lucide-react';
-import { getCustomer360, addCustomerNote, createDeal, logPaymentReminder, sendWhatsAppMessage, updateConversationMode, deleteWhatsAppMessage, clearWhatsAppChat } from '../lib/db';
+import { getCustomer360, addCustomerNote, createDeal, logPaymentReminder, sendWhatsAppMessage, updateConversationMode, deleteWhatsAppMessage, clearWhatsAppChat, getEmailLogs } from '../lib/db';
 import { uploadToWhatsAppMedia, getWhatsAppMediaType, parseMessageMedia } from '../lib/storage';
+import EmailComposeModal from './EmailComposeModal';
 import './Customer360Modal.css';
 
 const Customer360Modal = ({ leadId, onClose, onLeadUpdated }) => {
@@ -16,6 +17,11 @@ const Customer360Modal = ({ leadId, onClose, onLeadUpdated }) => {
   const [noteText, setNoteText] = useState('');
   const [savingNote, setSavingNote] = useState(false);
   
+  // Email Integration State
+  const [emailLogs, setEmailLogs] = useState([]);
+  const [emailComposeOpen, setEmailComposeOpen] = useState(false);
+  const [viewingEmailLog, setViewingEmailLog] = useState(null);
+
   // Deal Form
   const [showAddDeal, setShowAddDeal] = useState(false);
   const [dealForm, setDealForm] = useState({ title: '', value: '', stage: 'Quotation', expected_close_date: '' });
@@ -63,8 +69,12 @@ const Customer360Modal = ({ leadId, onClose, onLeadUpdated }) => {
 
   const load360Data = async (silent = false) => {
     if (!silent) setLoading(true);
-    const res = await getCustomer360(leadId);
+    const [res, emailRes] = await Promise.all([
+      getCustomer360(leadId),
+      getEmailLogs({ leadId })
+    ]);
     if (res.data) setData(res.data);
+    if (emailRes?.data) setEmailLogs(emailRes.data);
     if (!silent) setLoading(false);
   };
 
@@ -257,6 +267,14 @@ const Customer360Modal = ({ leadId, onClose, onLeadUpdated }) => {
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+            <button
+              className="btn btn-primary btn-sm"
+              onClick={() => setEmailComposeOpen(true)}
+              title="Compose Direct Email"
+              style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.78rem', background: 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)' }}
+            >
+              <Mail size={13} /> Send Email
+            </button>
             <button className="btn btn-secondary btn-sm" onClick={load360Data} title="Refresh 360 Profile">
               <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
             </button>
@@ -286,6 +304,7 @@ const Customer360Modal = ({ leadId, onClose, onLeadUpdated }) => {
           {[
             { id: 'overview', label: 'Overview & AI Insights', icon: <Zap size={14} /> },
             { id: 'whatsapp', label: `WhatsApp Thread (${data?.messages?.length || 0})`, icon: <MessageCircle size={14} /> },
+            { id: 'email', label: `Emails (${emailLogs.length})`, icon: <Mail size={14} /> },
             { id: 'deals', label: `Deals & Quotes (${(data?.deals?.length || 0) + (data?.quotations?.length || 0)})`, icon: <TrendingUp size={14} /> },
             { id: 'finance', label: `Tally Invoices (${data?.invoices?.length || 0})`, icon: <IndianRupee size={14} /> },
             { id: 'timeline', label: `Activity & Notes (${data?.activities?.length || 0})`, icon: <Clock size={14} /> },
@@ -735,6 +754,97 @@ const Customer360Modal = ({ leadId, onClose, onLeadUpdated }) => {
                 </div>
               )}
 
+              {/* TAB: EMAIL COMMUNICATIONS */}
+              {activeTab === 'email' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+                    <div>
+                      <span className="section-title" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                        <Mail size={16} style={{ color: 'var(--primary, #6366f1)' }} /> Official Email Communications
+                      </span>
+                      <p style={{ margin: '2px 0 0', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                        Client Email: <strong>{data.lead?.email || 'No email saved on lead'}</strong>
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-sm"
+                      onClick={() => setEmailComposeOpen(true)}
+                      style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8rem', background: 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)' }}
+                    >
+                      <Send size={13} /> Compose New Email
+                    </button>
+                  </div>
+
+                  {(!emailLogs || emailLogs.length === 0) ? (
+                    <div style={{
+                      padding: '3rem 1.5rem', textAlign: 'center', color: 'var(--text-muted)',
+                      background: 'rgba(0,0,0,0.1)', borderRadius: '10px', border: '1px dashed var(--border-color)'
+                    }}>
+                      <Mail size={36} style={{ margin: '0 auto 0.75rem', opacity: 0.4 }} />
+                      <h4 style={{ margin: 0, fontSize: '0.95rem', color: 'var(--text-primary)' }}>No Emails Sent to this Contact Yet</h4>
+                      <p style={{ margin: '0.35rem 0 1rem', fontSize: '0.8rem' }}>
+                        Send formal product quotations, catalogs, site visit confirmations, or payment reminders directly.
+                      </p>
+                      <button
+                        type="button"
+                        className="btn btn-primary btn-sm"
+                        onClick={() => setEmailComposeOpen(true)}
+                        style={{ fontSize: '0.8rem' }}
+                      >
+                        Send First Email
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="table-container">
+                      <table className="data-table" style={{ fontSize: '0.82rem' }}>
+                        <thead>
+                          <tr>
+                            <th>Subject</th>
+                            <th>Template</th>
+                            <th>Status</th>
+                            <th>Sent By</th>
+                            <th>Date & Time</th>
+                            <th style={{ textAlign: 'right' }}>Action</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {emailLogs.map(elog => (
+                            <tr key={elog.id}>
+                              <td style={{ fontWeight: 600, color: 'var(--text-primary)', maxWidth: 220 }}>
+                                <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                  {elog.subject}
+                                </div>
+                              </td>
+                              <td><span className="badge badge-neutral">{elog.template_used || 'Custom'}</span></td>
+                              <td>
+                                <span className={`badge ${elog.status === 'SENT' ? 'badge-success' : elog.status === 'SIMULATED' ? 'badge-accent' : 'badge-danger'}`}>
+                                  {elog.status}
+                                </span>
+                              </td>
+                              <td style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{elog.sent_by_name || 'Admin'}</td>
+                              <td style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                                {new Date(elog.created_at).toLocaleString('en-IN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                              </td>
+                              <td style={{ textAlign: 'right' }}>
+                                <button
+                                  type="button"
+                                  className="btn btn-outline btn-sm"
+                                  onClick={() => setViewingEmailLog(elog)}
+                                  style={{ padding: '0.25rem 0.5rem', fontSize: '0.72rem' }}
+                                >
+                                  <Eye size={12} /> View
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* TAB 4: TALLY INVOICES */}
               {activeTab === 'finance' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
@@ -796,6 +906,75 @@ const Customer360Modal = ({ leadId, onClose, onLeadUpdated }) => {
             </>
           )}
         </div>
+
+        {/* Compose Email Modal Trigger */}
+        {emailComposeOpen && (
+          <EmailComposeModal
+            lead={data?.lead}
+            defaultTo={data?.lead?.email || ''}
+            onClose={() => setEmailComposeOpen(false)}
+            onEmailSent={() => {
+              load360Data(true);
+            }}
+          />
+        )}
+
+        {/* Email Preview Modal */}
+        {viewingEmailLog && (
+          <div className="modal-overlay" onClick={() => setViewingEmailLog(null)} style={{
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+            background: 'rgba(11, 13, 26, 0.8)', backdropFilter: 'blur(4px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            zIndex: 99999, padding: '1rem'
+          }}>
+            <div
+              className="modal-container"
+              onClick={e => e.stopPropagation()}
+              style={{
+                background: 'var(--bg-secondary, #13172b)',
+                border: '1px solid var(--border-color)',
+                borderRadius: '16px', width: '100%', maxWidth: '640px',
+                maxHeight: '85vh', display: 'flex', flexDirection: 'column',
+                boxShadow: '0 20px 40px rgba(0,0,0,0.5)', overflow: 'hidden'
+              }}
+            >
+              <div style={{
+                padding: '1.25rem', borderBottom: '1px solid var(--border-color)',
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between'
+              }}>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '1rem', color: 'var(--text-primary)' }}>
+                    {viewingEmailLog.subject}
+                  </h3>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                    To: <strong>{viewingEmailLog.recipient_name}</strong> ({viewingEmailLog.recipient_email})
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-outline btn-sm"
+                  onClick={() => setViewingEmailLog(null)}
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div style={{ padding: '1.5rem', overflowY: 'auto', flex: 1, background: '#ffffff', color: '#1e293b' }}>
+                <div dangerouslySetInnerHTML={{ __html: viewingEmailLog.body_html || viewingEmailLog.body_text }} />
+              </div>
+
+              <div style={{ padding: '0.75rem 1.25rem', borderTop: '1px solid var(--border-color)', textAlign: 'right' }}>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  onClick={() => setViewingEmailLog(null)}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
