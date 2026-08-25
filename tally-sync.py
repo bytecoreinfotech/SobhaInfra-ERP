@@ -196,6 +196,57 @@ COLLECTION_XML = """<?xml version="1.0" encoding="utf-8"?>
   </BODY>
 </ENVELOPE>"""
 
+# Strategy 6: TDL Collection — Sundry Debtors closing balances
+# This is the most reliable way to get party-wise outstanding when DayBook has few entries
+SUNDRY_DEBTORS_XML = """<?xml version="1.0" encoding="utf-8"?>
+<ENVELOPE>
+  <HEADER>
+    <VERSION>1</VERSION>
+    <TALLYREQUEST>Export</TALLYREQUEST>
+    <TYPE>Collection</TYPE>
+    <ID>Sundry Debtors List</ID>
+  </HEADER>
+  <BODY>
+    <DESC>
+      <STATICVARIABLES>
+        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+      </STATICVARIABLES>
+      <TDL>
+        <TDLMESSAGE>
+          <COLLECTION NAME="Sundry Debtors List" ISMODIFY="No">
+            <TYPE>Ledger</TYPE>
+            <BELONGSTO>Sundry Debtors</BELONGSTO>
+            <FETCH>NAME, PARENT, CLOSINGBALANCE, OPENINGBALANCE, LEDPHONENO, LEDMOBILE, ADDRESS, PINCODE, EMAIL, GSTIN</FETCH>
+          </COLLECTION>
+        </TDLMESSAGE>
+      </TDL>
+    </DESC>
+  </BODY>
+</ENVELOPE>"""
+
+# Strategy 7: Ledger Vouchers — get all vouchers for Sundry Debtors (party-wise)
+LEDGER_VOUCHERS_XML = f"""<?xml version="1.0" encoding="utf-8"?>
+<ENVELOPE>
+  <HEADER>
+    <TALLYREQUEST>Export Data</TALLYREQUEST>
+  </HEADER>
+  <BODY>
+    <EXPORTDATA>
+      <REQUESTDESC>
+        <REPORTNAME>Ledger Vouchers</REPORTNAME>
+        <STATICVARIABLES>
+          <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+          <SVFROMDATE>{_fy_from}</SVFROMDATE>
+          <SVTODATE>{_fy_to}</SVTODATE>
+          <LEDGERNAME>Sundry Debtors</LEDGERNAME>
+        </STATICVARIABLES>
+      </REQUESTDESC>
+    </EXPORTDATA>
+  </BODY>
+</ENVELOPE>"""
+
+
+
 
 # ==============================================================================
 # HELPERS
@@ -450,14 +501,29 @@ def parse_voucher_block(block, fallback_company: str = ""):
         except ValueError:
             pass
 
-    # Bug 2 fix: Receipt/Payment/Journal/Contra vouchers are internal entries, NOT customer invoices
-    # Only Sales and Debit Note vouchers should be saved as invoices
-    SKIP_TYPES = {"receipt", "payment", "journal", "contra", "bank payment", "bank receipt", "cash payment", "cash receipt"}
+    # Smarter voucher type filter:
+    # - Skip PURELY internal bookkeeping entries that never involve a customer
+    # - Keep Sales, Debit Note, Purchase (may be relevant), Journal (could be adjustment)
+    # - Keep Receipt / Payment but mark them as Paid (they represent money movement with parties)
+    # - Only skip Contra (bank-to-bank) which has NO party involvement
+    SKIP_TYPES = {"contra", "bank contra", "cash contra"}
+    NON_INVOICE_TYPES = {"receipt", "payment", "bank payment", "bank receipt", "cash payment", "cash receipt"}
     vch_type_lower = vch_type.lower()
-    if any(s in vch_type_lower for s in SKIP_TYPES):
-        return None  # Skip — not a customer invoice
 
-    status = "Pending"  # Sales vouchers start as Pending
+    if any(s == vch_type_lower for s in SKIP_TYPES):
+        log.debug(f"  [Skip] Voucher {vch_number} type '{vch_type}' is contra/internal — skipped")
+        return None
+
+    if not party:
+        # No party ledger name means it's purely internal (e.g. depreciation journal)
+        log.debug(f"  [Skip] Voucher {vch_number} has no party ledger name — skipped")
+        return None
+
+    # Receipts/Payments: mark as Paid (they represent settlement of an invoice)
+    if any(s in vch_type_lower for s in NON_INVOICE_TYPES):
+        status = "Paid"
+    else:
+        status = "Pending"  # Sales, Debit Note, Journal, etc.
 
     # Extract truck number from narration or block (e.g. MH04-4550, GJ01-AB1234)
     truck_match = re.search(r'([A-Z]{2}[-\s]?\d{1,2}[-\s]?[A-Z]{1,3}[-\s]?\d{4})', narration or block, re.IGNORECASE)
@@ -539,15 +605,32 @@ def parse_ledger_block(block, fallback_company: str = ""):
     if not name or amount == 0:
         return None
 
-    # Skip system/group ledgers
-    skip = ['cash-in-hand', 'profit & loss', 'capital account',
-            'duties & taxes', 'bank', 'stock-in-hand',
-            'reserves', 'fixed assets', 'investments',
-            'indirect expenses', 'direct expenses',
-            'indirect incomes', 'direct incomes',
-            'purchase accounts', 'sales accounts',
-            'opening stock', 'closing stock']
-    if name.lower() in skip or parent.lower() in ['primary', '']:
+    # Only skip pure system/group accounts (capital, banks, tax accounts, etc.)
+    # We WANT Sundry Debtors / party ledgers — keep anything with a non-zero balance
+    # that looks like a customer/party account
+    parent_lower = (parent or '').lower()
+    name_lower = name.lower()
+
+    # Skip system ledger groups
+    skip_names = ['profit & loss', 'capital account', 'duties & taxes',
+                  'opening stock', 'closing stock', 'bank od a/c']
+    skip_parents = ['capital account', 'bank accounts', 'bank od a/c',
+                    'duties & taxes', 'fixed assets', 'investments',
+                    'current liabilities', 'provisions', 'reserves & surplus',
+                    'suspense a/c', 'cash-in-hand', 'stock-in-hand',
+                    'indirect expenses', 'direct expenses',
+                    'indirect incomes', 'direct incomes',
+                    'purchase accounts', 'sales accounts']
+
+    if name_lower in skip_names:
+        return None
+    if any(sp in parent_lower for sp in skip_parents):
+        return None
+    # Keep 'primary' and '' parents only if they look like a party/debtor/creditor
+    if parent_lower in ('primary', '') and not any(kw in name_lower for kw in
+            ['debtor', 'creditor', 'customer', 'party', 'client',
+             'construction', 'enterprises', 'pvt', 'ltd', 'infra',
+             'trading', 'supplier', 'vendor']):
         return None
 
     return {
@@ -581,8 +664,17 @@ def parse_any_tally_xml(xml_text, fallback_company: str = ""):
             rec = parse_voucher_block(vblock, fallback_company)
             if rec:
                 records.append(rec)
+        log.info(f"  Parser: {len(records)} vouchers kept after type filter (of {len(voucher_blocks)} found)")
         if records:
             return records
+        # Vouchers found but all filtered — log the types to help debug
+        types_found = []
+        for vblock in voucher_blocks[:5]:
+            vt = extract_tag_value(vblock, "VOUCHERTYPENAME") or extract_tag_value(vblock, "VOUCHERTYPE") or "Unknown"
+            party = extract_tag_value(vblock, "BASICBUYERNAME") or extract_tag_value(vblock, "PARTYLEDGERNAME") or "(no party)"
+            types_found.append(f"{vt}/{party}")
+        log.info(f"  Parser: All vouchers filtered. Types seen: {', '.join(types_found)}")
+
 
     # --- Pass 2: BILLFIXED / BILLCL blocks (Bills Outstanding report) ---
     bill_blocks = re.findall(r'<(?:BILLFIXED|BILLCL)[^>]*>([\s\S]*?)</(?:BILLFIXED|BILLCL)>', xml_text, re.IGNORECASE)
@@ -826,6 +918,8 @@ def fetch_from_tally():
             (f"3_Outstanding_{comp}" if comp else "3_Outstanding", inject_company_into_xml(OUTSTANDING_XML, comp)),
             (f"4_Accounts_{comp}" if comp else "4_Accounts", inject_company_into_xml(ACCOUNTS_XML, comp)),
             ("5_BalanceSheet", inject_company_into_xml(COLLECTION_XML, comp)),
+            (f"6_SundryDebtors_{comp}" if comp else "6_SundryDebtors", inject_company_into_xml(SUNDRY_DEBTORS_XML, comp)),
+            (f"7_LedgerVouchers_{comp}" if comp else "7_LedgerVouchers", inject_company_into_xml(LEDGER_VOUCHERS_XML, comp)),
         ]
 
         comp_records = []
