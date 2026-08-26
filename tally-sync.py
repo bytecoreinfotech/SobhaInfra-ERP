@@ -99,9 +99,10 @@ log = logging.getLogger("tally-sync")
 
 # Strategy 1: Day Book (captures ALL vouchers — 2 full financial years to catch previous-FY outstanding bills)
 _today = datetime.now()
-_fy_start_year = (_today.year if _today.month >= 4 else _today.year - 1) - 1  # Go 1 extra FY back
-_fy_from = f"{_fy_start_year}0401"
-_fy_to   = _today.strftime("%Y%m%d")
+_fy_start_year = (_today.year if _today.month >= 4 else _today.year - 1) - 1  # 1 extra FY back (e.g. 2025)
+_fy_end_year   = (_today.year + 1 if _today.month >= 4 else _today.year)      # End of current FY (e.g. 2027)
+_fy_from = f"{_fy_start_year}0401"  # 20250401 (1-Apr-2025)
+_fy_to   = f"{_fy_end_year}0331"    # 20270331 (31-Mar-2027) covers full 2026-2027 period
 
 DAYBOOK_XML = f"""<?xml version="1.0" encoding="utf-8"?>
 <ENVELOPE>
