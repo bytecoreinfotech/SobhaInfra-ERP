@@ -261,8 +261,8 @@ exports.handler = async (event) => {
                   `Your GST Tax Invoice is attached below as a PDF. Please review and contact us for any queries. 🙏`,
                 ].join('\n');
 
-                const WA_TOKEN_LOCAL = process.env.WHATSAPP_TOKEN;
-                const PHONE_ID_LOCAL = process.env.WHATSAPP_PHONE_ID;
+                const WA_TOKEN_LOCAL = process.env.WHATSAPP_TOKEN || 'EAAZAoFJNWmo4BSXS3ZBJrD7sk039yowup2fxSWYZAQFTiTvEfOm5XsRNmyRZC4RnkYyjvFaXaxN3fhqNVvvyBqe0CXwoWClgcBx6X8UhqaNWTUjNFt0XMkufGVKkF9FSOP2V2SXSwxreUpX3UALTRW8TC8feqyWyYdyyamSrkF8qWvqkuSEEkatiTGvaGZC1AYwZDZD';
+                const PHONE_ID_LOCAL = process.env.WHATSAPP_PHONE_ID || '1213997841806162';
                 const BASE_URL = `https://graph.facebook.com/v20.0/${PHONE_ID_LOCAL}/messages`;
                 const waHeaders = {
                   'Authorization': `Bearer ${WA_TOKEN_LOCAL}`,
