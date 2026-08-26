@@ -102,7 +102,7 @@ export const CompanyProvider = ({ children }) => {
         loading,
       }}
     >
-      {/* Animated Company Switching Banner / Toast */}
+      {/* Animated Company Switching Banner / Toast (Light Theme) */}
       {switchToast && (
         <div
           style={{
@@ -113,13 +113,13 @@ export const CompanyProvider = ({ children }) => {
             zIndex: 99999,
             display: 'flex',
             alignItems: 'center',
-            gap: '10px',
-            background: 'linear-gradient(135deg, rgba(30, 41, 59, 0.95), rgba(15, 23, 42, 0.98))',
-            color: '#ffffff',
-            padding: '10px 22px',
+            gap: '12px',
+            background: 'linear-gradient(135deg, #ffffff, #f8fafc)',
+            color: '#0f172a',
+            padding: '9px 20px',
             borderRadius: '9999px',
-            border: '1.5px solid rgba(99, 102, 241, 0.6)',
-            boxShadow: '0 12px 36px rgba(0, 0, 0, 0.5), 0 0 24px rgba(99, 102, 241, 0.35)',
+            border: '1.5px solid rgba(99, 102, 241, 0.3)',
+            boxShadow: '0 12px 32px rgba(99, 102, 241, 0.16), 0 4px 12px rgba(15, 23, 42, 0.06)',
             backdropFilter: 'blur(12px)',
             animation: 'companySwitchPulse 0.4s cubic-bezier(0.16, 1, 0.3, 1)',
             pointerEvents: 'none',
@@ -127,27 +127,27 @@ export const CompanyProvider = ({ children }) => {
         >
           <div
             style={{
-              width: 28,
-              height: 28,
+              width: 30,
+              height: 30,
               borderRadius: '50%',
-              background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+              background: 'linear-gradient(135deg, #6366f1, #4f46e5)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              boxShadow: '0 0 12px rgba(99, 102, 241, 0.8)',
+              boxShadow: '0 2px 8px rgba(99, 102, 241, 0.4)',
             }}
           >
             <Building2 size={16} color="#ffffff" />
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column' }}>
-            <span style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              Switched Workspace
+          <div style={{ display: 'flex', flexDirection: 'column', textAlign: 'left' }}>
+            <span style={{ fontSize: '10px', color: '#6366f1', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+              Active Workspace
             </span>
-            <span style={{ fontSize: '14px', fontWeight: 700, color: '#f8fafc', letterSpacing: '-0.01em' }}>
+            <span style={{ fontSize: '13.5px', fontWeight: 700, color: '#1e293b', letterSpacing: '-0.01em' }}>
               {switchToast.name}
             </span>
           </div>
-          <Sparkles size={16} color="#818cf8" style={{ marginLeft: 4 }} />
+          <Sparkles size={15} color="#6366f1" style={{ marginLeft: 2 }} />
         </div>
       )}
       {children}

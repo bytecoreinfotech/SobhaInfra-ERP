@@ -91,18 +91,21 @@ const Sidebar = ({ collapsed, isCollapsed, onToggle, mobileOpen, onMobileClose }
           </button>
         </div>
 
-        {/* Company Switcher */}
+        {/* Company Switcher (Light Theme) */}
         {!isSideCollapsed && companyProfiles.length > 0 && (
           <div style={{
-            margin: '8px 12px 4px',
+            margin: '8px 12px 6px',
             padding: '8px 10px',
-            background: 'rgba(99,102,241,0.1)',
+            background: '#ffffff',
             borderRadius: '10px',
-            border: '1px solid rgba(99,102,241,0.25)',
+            border: '1px solid #e2e8f0',
+            boxShadow: '0 2px 6px rgba(99, 102, 241, 0.05)',
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
-              <Building2 size={13} style={{ color: '#818cf8' }} />
-              <span style={{ fontSize: 10, fontWeight: 700, color: '#818cf8', letterSpacing: '0.05em', textTransform: 'uppercase' }}>Active Company</span>
+              <Building2 size={12} style={{ color: '#6366f1' }} />
+              <span style={{ fontSize: 10, fontWeight: 700, color: '#6366f1', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+                Active Company
+              </span>
             </div>
             <select
               id="sidebar-company-switcher"
@@ -110,16 +113,19 @@ const Sidebar = ({ collapsed, isCollapsed, onToggle, mobileOpen, onMobileClose }
               onChange={e => setActiveCompanyId(e.target.value)}
               style={{
                 width: '100%',
-                background: 'rgba(15,23,42,0.8)',
-                color: '#e2e8f0',
-                border: '1px solid rgba(99,102,241,0.3)',
+                background: '#f8fafc',
+                color: '#1e293b',
+                border: '1.5px solid #cbd5e1',
                 borderRadius: 7,
-                padding: '5px 8px',
+                padding: '6px 8px',
                 fontSize: 12,
                 fontWeight: 600,
                 cursor: 'pointer',
                 outline: 'none',
+                transition: 'border-color 0.2s, box-shadow 0.2s',
               }}
+              onFocus={e => { e.target.style.borderColor = '#6366f1'; e.target.style.boxShadow = '0 0 0 3px rgba(99, 102, 241, 0.15)'; }}
+              onBlur={e => { e.target.style.borderColor = '#cbd5e1'; e.target.style.boxShadow = 'none'; }}
             >
               <option value="all">🏢 All Companies</option>
               {companyProfiles.map(c => (

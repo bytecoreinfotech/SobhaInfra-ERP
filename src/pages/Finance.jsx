@@ -12,7 +12,9 @@ import {
   sendPaymentReminderWhatsApp, getLeads, normalizePhone,
   pauseInvoiceReminder, resumeInvoiceReminder, createLead
 } from '../lib/db';
+import { supabase } from '../lib/supabase';
 import { useCompany } from '../context/CompanyContext';
+import LedgerDetailDrawer from '../components/LedgerDetailDrawer';
 import './Pages.css';
 
 
@@ -50,6 +52,7 @@ const Finance = () => {
   const [showMapModal, setShowMapModal] = useState(false);
   const [selectedMapping, setSelectedMapping] = useState(null);
   const [targetLeadId, setTargetLeadId] = useState('');
+  const [drawerMapping, setDrawerMapping] = useState(null); // <-- row detail drawer
 
   // Sync Errors State
   const [syncErrors, setSyncErrors] = useState([]);
@@ -783,10 +786,18 @@ const Finance = () => {
                   mappings.map(m => {
                     const isLinked = m.mapping_status === 'MAPPED' || m.mapping_status === 'AUTO_FOUND';
                     return (
-                      <tr key={m.id} style={{ transition: 'background 0.2s' }}>
+                      <tr
+                        key={m.id}
+                        style={{ transition: 'background 0.15s', cursor: 'pointer' }}
+                        onClick={() => setDrawerMapping(m)}
+                        title={`Click to view full details for ${m.tally_ledger_name}`}
+                      >
                         <td>
-                          <div style={{ fontWeight: 700, fontSize: '0.85rem', color: 'var(--text-primary)' }}>
-                            {m.tally_ledger_name}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <div style={{ fontWeight: 700, fontSize: '0.85rem', color: 'var(--text-primary)' }}>
+                              {m.tally_ledger_name}
+                            </div>
+                            <span style={{ fontSize: '0.68rem', color: 'var(--accent-secondary)', opacity: 0.7 }}>→</span>
                           </div>
                           {(m.invoice_count > 0 || m.total_billed > 0) && (
                             <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 2 }}>
@@ -818,12 +829,12 @@ const Finance = () => {
                             {m.mapping_status === 'MAPPED' ? '✓ MAPPED' : m.mapping_status === 'AUTO_FOUND' ? '⚡ AUTO DETECTED' : '⏳ PENDING LINK'}
                           </span>
                         </td>
-                        <td>
+                        <td onClick={e => e.stopPropagation()}>
                           <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
                             <button
                               className="btn btn-secondary btn-sm"
                               style={{ fontSize: '0.72rem', padding: '0.25rem 0.55rem' }}
-                              onClick={() => { setSelectedMapping(m); setTargetLeadId(m.lead_id || ''); setShowMapModal(true); }}
+                              onClick={e => { e.stopPropagation(); setSelectedMapping(m); setTargetLeadId(m.lead_id || ''); setShowMapModal(true); }}
                               title="Link this Tally ledger to a CRM customer"
                             >
                               {isLinked ? 'Edit Link' : 'Map Lead'}
@@ -832,7 +843,7 @@ const Finance = () => {
                               <button
                                 className="btn btn-primary btn-sm"
                                 style={{ fontSize: '0.72rem', padding: '0.25rem 0.55rem', background: 'linear-gradient(135deg, #4f46e5, #6366f1)' }}
-                                onClick={() => handleQuickCreateLead(m)}
+                                onClick={e => { e.stopPropagation(); handleQuickCreateLead(m); }}
                                 title="Automatically create this party as a new lead in CRM"
                               >
                                 + Quick Add CRM
@@ -849,6 +860,23 @@ const Finance = () => {
           </div>
         </div>
       )}
+
+      {/* ── Ledger Detail Drawer ── */}
+      {drawerMapping && (
+        <LedgerDetailDrawer
+          mapping={drawerMapping}
+          allInvoices={allInvoices}
+          supabaseClient={supabase}
+          onClose={() => setDrawerMapping(null)}
+          onEditLink={() => {
+            setSelectedMapping(drawerMapping);
+            setTargetLeadId(drawerMapping.lead_id || '');
+            setShowMapModal(true);
+            setDrawerMapping(null);
+          }}
+        />
+      )}
+
 
       {/* =========================================================================
           TAB 4: SYNC ERRORS & AUDIT LOG
