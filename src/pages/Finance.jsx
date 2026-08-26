@@ -31,6 +31,9 @@ const Finance = () => {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('All');
   const [search, setSearch] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [sortBy, setSortBy] = useState('date_desc'); // date_desc | date_asc | amount_desc | amount_asc
   const [previewPdfUrl, setPreviewPdfUrl] = useState(null);
   const [remindingId, setRemindingId] = useState(null);
   const [reminderToast, setReminderToast] = useState(null);
@@ -172,20 +175,34 @@ const Finance = () => {
   const totalOverdue = invoices.filter(i => i.status === 'Overdue').reduce((s, i) => s + Number(i.amount || 0), 0);
   const totalPending = invoices.filter(i => i.status === 'Pending').reduce((s, i) => s + Number(i.amount || 0), 0);
 
-  // Filter by aging / status
+  // Filter by status, search, and date range
   const filtered = invoices.filter(inv => {
     const matchSearch = !search ||
       inv.invoice_number?.toLowerCase().includes(search.toLowerCase()) ||
       inv.client_name?.toLowerCase().includes(search.toLowerCase()) ||
-      inv.client_phone?.includes(search);
-
+      inv.client_phone?.includes(search) ||
+      inv.company_name?.toLowerCase().includes(search.toLowerCase());
     if (!matchSearch) return false;
+
+    // Date range filter (uses due_date or invoice_date or created_at)
+    const invDate = inv.due_date || inv.invoice_date || inv.created_at;
+    if (dateFrom && invDate && new Date(invDate) < new Date(dateFrom)) return false;
+    if (dateTo && invDate && new Date(invDate) > new Date(dateTo + 'T23:59:59')) return false;
+
     if (filter === 'All') return true;
     if (filter === 'Overdue') return inv.status === 'Overdue';
     if (filter === 'Pending') return inv.status === 'Pending';
     if (filter === 'Paid') return inv.status === 'Paid';
     if (filter === 'Paused') return inv.reminder_paused === true || inv.reminder_paused === 'true';
     return true;
+  }).sort((a, b) => {
+    const da = new Date(a.due_date || a.invoice_date || a.created_at || 0);
+    const db = new Date(b.due_date || b.invoice_date || b.created_at || 0);
+    if (sortBy === 'date_desc') return db - da;
+    if (sortBy === 'date_asc') return da - db;
+    if (sortBy === 'amount_desc') return Number(b.amount || 0) - Number(a.amount || 0);
+    if (sortBy === 'amount_asc') return Number(a.amount || 0) - Number(b.amount || 0);
+    return db - da;
   });
 
   const pausedCount = invoices.filter(i => i.reminder_paused === true || i.reminder_paused === 'true').length;
@@ -313,18 +330,69 @@ const Finance = () => {
             ))}
           </div>
 
-          {/* Search & Filter Bar */}
-          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-            <div className="input-group" style={{ flex: 1, minWidth: 240 }}>
+          {/* Search, Date Filter & Sort Bar */}
+          <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap', alignItems: 'center' }}>
+            {/* Search */}
+            <div className="input-group" style={{ flex: 1, minWidth: 200 }}>
               <Search size={15} className="input-icon" />
               <input
                 type="text"
                 className="input-field"
-                placeholder="Search invoice number, client name, phone..."
+                placeholder="Search invoice, client, phone, company..."
                 value={search}
                 onChange={e => setSearch(e.target.value)}
               />
             </div>
+
+            {/* Date From */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+              <label style={{ fontSize: '0.72rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>From</label>
+              <input
+                type="date"
+                className="input-field"
+                style={{ padding: '0.35rem 0.55rem', fontSize: '0.78rem', width: 135 }}
+                value={dateFrom}
+                onChange={e => setDateFrom(e.target.value)}
+              />
+            </div>
+
+            {/* Date To */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+              <label style={{ fontSize: '0.72rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>To</label>
+              <input
+                type="date"
+                className="input-field"
+                style={{ padding: '0.35rem 0.55rem', fontSize: '0.78rem', width: 135 }}
+                value={dateTo}
+                onChange={e => setDateTo(e.target.value)}
+              />
+            </div>
+
+            {/* Sort */}
+            <select
+              className="input-field"
+              style={{ padding: '0.35rem 0.55rem', fontSize: '0.78rem', width: 145 }}
+              value={sortBy}
+              onChange={e => setSortBy(e.target.value)}
+            >
+              <option value="date_desc">⬇ Date (Newest)</option>
+              <option value="date_asc">⬆ Date (Oldest)</option>
+              <option value="amount_desc">⬇ Amount (High)</option>
+              <option value="amount_asc">⬆ Amount (Low)</option>
+            </select>
+
+            {/* Clear Filters */}
+            {(search || dateFrom || dateTo || sortBy !== 'date_desc' || filter !== 'All') && (
+              <button
+                className="btn btn-secondary"
+                style={{ fontSize: '0.75rem', padding: '0.35rem 0.65rem', whiteSpace: 'nowrap' }}
+                onClick={() => { setSearch(''); setDateFrom(''); setDateTo(''); setSortBy('date_desc'); setFilter('All'); }}
+              >
+                ✕ Clear
+              </button>
+            )}
+
+            {/* Status Filter Chips */}
             <div className="filter-bar" style={{ margin: 0 }}>
               {['All', 'Overdue', 'Pending', 'Paid'].map(f => (
                 <button
@@ -343,6 +411,9 @@ const Finance = () => {
                 ⏸ Paused {pausedCount > 0 && <span style={{ background: 'rgba(255,165,0,0.2)', color: 'var(--warning)', borderRadius: 8, padding: '0 4px', marginLeft: 3, fontSize: '0.68rem', fontWeight: 800 }}>{pausedCount}</span>}
               </button>
             </div>
+
+            {/* Result count */}
+            <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{filtered.length} result{filtered.length !== 1 ? 's' : ''}</span>
           </div>
 
           {/* Invoices Data Table */}

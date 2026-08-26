@@ -35,9 +35,10 @@ const Dashboard = () => {
         const compName = (activeCompany.company_name || '').toUpperCase();
         const aliases = Array.isArray(activeCompany.alias_names) ? activeCompany.alias_names.map(a => a.toUpperCase()) : [];
         const invCompany = (inv.company_name || inv.tally_company || '').toUpperCase();
-        if (!invCompany) return true;
+        if (!invCompany) return false;
         return [compName, ...aliases].some(n => n && (invCompany.includes(n) || n.includes(invCompany)));
       });
+
 
   const loadData = async () => {
     setLoading(true);

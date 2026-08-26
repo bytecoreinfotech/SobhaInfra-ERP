@@ -1562,28 +1562,47 @@ def generate_invoice_pdf(voucher: dict, org_profile: dict | None = None, single_
         f'<font size="8"><b>GSTIN/UIN : {buyer_gstin}</b></font>'
     )
 
-    buyer_sub_tbl = Table([
-        [Paragraph('ORDER NO.', st("st1", fontSize=7)), Paragraph('Dated', st("st1", fontSize=7))],
-        [Paragraph('Dispatched through', st("st1", fontSize=7)), Paragraph('Destination', st("st1", fontSize=7))],
-        [Paragraph('Reference No. & Date.', st("st1", fontSize=7)), Paragraph('Other References', st("st1", fontSize=7))],
-    ], colWidths=[b_col_w * 0.5, b_col_w * 0.5])
-    buyer_sub_tbl.setStyle(TableStyle([
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
-        ("TOPPADDING", (0, 0), (-1, -1), 2),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
-    ]))
+    # Ordered reference values from voucher
+    order_no     = voucher.get("order_number", "")
+    dispatch_via = voucher.get("dispatch_through", "")
+    destination  = voucher.get("destination", "")
+    ref_no       = voucher.get("reference_number", "")
+    delivery_note= voucher.get("delivery_note", "")
+    del_note_date= voucher.get("delivery_note_date", "")
+    dispatch_doc = voucher.get("dispatch_doc_no", "")
+    credit_days  = str(voucher.get("credit_days", "30"))
 
+    half_w = b_col_w * 0.5
+    sub_row_style = TableStyle([
+        ("GRID",         (0, 0), (-1, -1), 0.4, colors.black),
+        ("TOPPADDING",   (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING",(0, 0), (-1, -1), 3),
+        ("LEFTPADDING",  (0, 0), (-1, -1), 3),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+        ("VALIGN",       (0, 0), (-1, -1), "MIDDLE"),
+    ])
+
+    # Left sub-table: Order / Dispatch info
+    buyer_sub_tbl = Table([
+        [Paragraph(f'<b>ORDER NO.</b>', st("st1", fontSize=6.5)),  Paragraph(f'<b>Dated</b>', st("st1", fontSize=6.5))],
+        [Paragraph(order_no or '', st("st1", fontSize=7)),         Paragraph('', st("st1", fontSize=7))],
+        [Paragraph('<b>Dispatched through</b>', st("st1", fontSize=6.5)), Paragraph('<b>Destination</b>', st("st1", fontSize=6.5))],
+        [Paragraph(dispatch_via or '', st("st1", fontSize=7)),     Paragraph(destination or '', st("st1", fontSize=7))],
+        [Paragraph('<b>Reference No. &amp; Date.</b>', st("st1", fontSize=6.5)), Paragraph('<b>Other References</b>', st("st1", fontSize=6.5))],
+        [Paragraph(ref_no or '', st("st1", fontSize=7)),           Paragraph('', st("st1", fontSize=7))],
+    ], colWidths=[half_w, half_w])
+    buyer_sub_tbl.setStyle(sub_row_style)
+
+    # Right sub-table: Bill No. / Delivery info
     consignee_sub_tbl = Table([
-        [Paragraph(f'BILL NO.<br/><b>{inv_number}</b>', st("st1", fontSize=7, leading=8)),
-         Paragraph(f'Dated<br/><b>{inv_date}</b>', st("st1", fontSize=7, leading=8))],
-        [Paragraph('Delivery Note', st("st1", fontSize=7)), Paragraph('Delivery Note Date', st("st1", fontSize=7))],
-        [Paragraph('Dispatch Doc No.', st("st1", fontSize=7)), Paragraph('CREDIT DAYS', st("st1", fontSize=7))],
-    ], colWidths=[b_col_w * 0.5, b_col_w * 0.5])
-    consignee_sub_tbl.setStyle(TableStyle([
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
-        ("TOPPADDING", (0, 0), (-1, -1), 2),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
-    ]))
+        [Paragraph('<b>BILL NO.</b>', st("st1", fontSize=6.5)),    Paragraph('<b>Dated</b>', st("st1", fontSize=6.5))],
+        [Paragraph(f'<b><font color="#1e40af">{inv_number}</font></b>', st("st1", fontSize=7.5)), Paragraph(f'<b>{inv_date}</b>', st("st1", fontSize=7))],
+        [Paragraph('<b>Delivery Note</b>', st("st1", fontSize=6.5)), Paragraph('<b>Delivery Note Date</b>', st("st1", fontSize=6.5))],
+        [Paragraph(delivery_note or '', st("st1", fontSize=7)),    Paragraph(del_note_date or '', st("st1", fontSize=7))],
+        [Paragraph('<b>Dispatch Doc No.</b>', st("st1", fontSize=6.5)), Paragraph('<b>CREDIT DAYS</b>', st("st1", fontSize=6.5))],
+        [Paragraph(dispatch_doc or '', st("st1", fontSize=7)),     Paragraph(credit_days, st("st1", fontSize=7))],
+    ], colWidths=[half_w, half_w])
+    consignee_sub_tbl.setStyle(sub_row_style)
 
     left_box = [Paragraph(buyer_text, st("bt", leading=9.5)), Spacer(1, 2), buyer_sub_tbl]
     right_box = [Paragraph(consignee_text, st("ct", leading=9.5)), Spacer(1, 2), consignee_sub_tbl]
@@ -1599,6 +1618,7 @@ def generate_invoice_pdf(voucher: dict, org_profile: dict | None = None, single_
         ("RIGHTPADDING", (0, 0), (-1, -1), 4),
     ]))
     elements.append(dual_box_tbl)
+
 
     # Itemized Goods Table
     it_w = [26, 88, 48, 56, 38, 52, 40, 52, 34, 36, 68]
@@ -2495,6 +2515,47 @@ def push_to_cloud(vouchers):
 
     # Save document template samples locally for user verification
     save_document_templates_locally()
+
+    # ── Auto-upsert Ledger Mappings ──────────────────────────────────────────
+    # Populates Finance → Ledger Mappings tab with party names from Tally
+    try:
+        seen_ledgers = set()
+        for v in enriched:
+            ledger = (v.get("ledger_name") or v.get("client_name") or "").strip()
+            if not ledger or ledger in seen_ledgers:
+                continue
+            seen_ledgers.add(ledger)
+            phone = (v.get("client_phone") or v.get("ledger_phone") or "").strip()
+            comp_name = v.get("company_name", "")
+            mapping_id = re.sub(r'[^a-z0-9]', '-', ledger.lower())[:60]
+            mapping_payload = {
+                "id": f"tally-{mapping_id}",
+                "organization_id": ORGANIZATION_ID,
+                "tally_ledger_name": ledger,
+                "tally_company": comp_name,
+                "normalized_phone": re.sub(r'[^0-9]', '', phone)[-10:] if phone else None,
+                "match_confidence": "auto",
+                "status": "mapped" if phone else "unmatched",
+                "updated_at": datetime.now().isoformat(),
+            }
+            try:
+                requests.post(
+                    f"{SUPABASE_URL}/rest/v1/ledger_mappings?on_conflict=id",
+                    json=mapping_payload,
+                    headers={
+                        "apikey": SUPABASE_KEY,
+                        "Authorization": f"Bearer {SUPABASE_KEY}",
+                        "Content-Type": "application/json",
+                        "Prefer": "resolution=merge-duplicates",
+                    },
+                    timeout=8,
+                )
+            except Exception:
+                pass
+        if seen_ledgers:
+            log.info(f"  [Ledger Map] Auto-upserted {len(seen_ledgers)} party ledger(s) → Supabase ledger_mappings")
+    except Exception as e:
+        log.debug(f"  [Ledger Map] Non-fatal: {e}")
 
 
     # Determine primary company or group label
