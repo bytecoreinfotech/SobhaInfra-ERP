@@ -1564,6 +1564,7 @@ def generate_invoice_pdf(voucher: dict, org_profile: dict | None = None, single_
 
     # Ordered reference values from voucher
     order_no     = voucher.get("order_number", "")
+    order_date   = voucher.get("order_date", "")
     dispatch_via = voucher.get("dispatch_through", "")
     destination  = voucher.get("destination", "")
     ref_no       = voucher.get("reference_number", "")
@@ -1572,52 +1573,67 @@ def generate_invoice_pdf(voucher: dict, org_profile: dict | None = None, single_
     dispatch_doc = voucher.get("dispatch_doc_no", "")
     credit_days  = str(voucher.get("credit_days", "30"))
 
-    half_w = b_col_w * 0.5
-    sub_row_style = TableStyle([
-        ("GRID",         (0, 0), (-1, -1), 0.4, colors.black),
-        ("TOPPADDING",   (0, 0), (-1, -1), 3),
-        ("BOTTOMPADDING",(0, 0), (-1, -1), 3),
-        ("LEFTPADDING",  (0, 0), (-1, -1), 3),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 3),
-        ("VALIGN",       (0, 0), (-1, -1), "MIDDLE"),
-    ])
+    half_w = W / 4.0  # 4 equal columns for exact alignment across the full width
 
-    # Left sub-table: Order / Dispatch info
-    buyer_sub_tbl = Table([
-        [Paragraph(f'<b>ORDER NO.</b>', st("st1", fontSize=6.5)),  Paragraph(f'<b>Dated</b>', st("st1", fontSize=6.5))],
-        [Paragraph(order_no or '', st("st1", fontSize=7)),         Paragraph('', st("st1", fontSize=7))],
-        [Paragraph('<b>Dispatched through</b>', st("st1", fontSize=6.5)), Paragraph('<b>Destination</b>', st("st1", fontSize=6.5))],
-        [Paragraph(dispatch_via or '', st("st1", fontSize=7)),     Paragraph(destination or '', st("st1", fontSize=7))],
-        [Paragraph('<b>Reference No. &amp; Date.</b>', st("st1", fontSize=6.5)), Paragraph('<b>Other References</b>', st("st1", fontSize=6.5))],
-        [Paragraph(ref_no or '', st("st1", fontSize=7)),           Paragraph('', st("st1", fontSize=7))],
-    ], colWidths=[half_w, half_w])
-    buyer_sub_tbl.setStyle(sub_row_style)
+    # Single Unified Master Grid: Top row has Buyer / Consignee (spanned 2 cols each);
+    # Rows 1-3 have 4 aligned columns across the exact same horizontal grid.
+    dual_grid_tbl = Table(
+        [
+            [
+                Paragraph(buyer_text, st("bt", leading=9.5)),
+                '',
+                Paragraph(consignee_text, st("ct", leading=9.5)),
+                '',
+            ],
+            [
+                Paragraph(f'<b>ORDER NO.</b><br/>{order_no or "&nbsp;"}', st("st1", fontSize=6.5, leading=8)),
+                Paragraph(f'<b>Dated</b><br/>{order_date or "&nbsp;"}', st("st1", fontSize=6.5, leading=8)),
+                Paragraph(f'<b>BILL NO.</b><br/><b><font color="#1e40af">{inv_number}</font></b>', st("st1", fontSize=6.5, leading=8)),
+                Paragraph(f'<b>Dated</b><br/><b>{inv_date}</b>', st("st1", fontSize=6.5, leading=8)),
+            ],
+            [
+                Paragraph(f'<b>Dispatched through</b><br/>{dispatch_via or "&nbsp;"}', st("st1", fontSize=6.5, leading=8)),
+                Paragraph(f'<b>Destination</b><br/>{destination or "&nbsp;"}', st("st1", fontSize=6.5, leading=8)),
+                Paragraph(f'<b>Delivery Note</b><br/>{delivery_note or "&nbsp;"}', st("st1", fontSize=6.5, leading=8)),
+                Paragraph(f'<b>Delivery Note Date</b><br/>{del_note_date or "&nbsp;"}', st("st1", fontSize=6.5, leading=8)),
+            ],
+            [
+                Paragraph(f'<b>Reference No. &amp; Date.</b><br/>{ref_no or "&nbsp;"}', st("st1", fontSize=6.5, leading=8)),
+                Paragraph('<b>Other References</b><br/>&nbsp;', st("st1", fontSize=6.5, leading=8)),
+                Paragraph(f'<b>Dispatch Doc No.</b><br/>{dispatch_doc or "&nbsp;"}', st("st1", fontSize=6.5, leading=8)),
+                Paragraph(f'<b>CREDIT DAYS</b><br/>{credit_days}', st("st1", fontSize=6.5, leading=8)),
+            ],
+        ],
+        colWidths=[half_w, half_w, half_w, half_w]
+    )
 
-    # Right sub-table: Bill No. / Delivery info
-    consignee_sub_tbl = Table([
-        [Paragraph('<b>BILL NO.</b>', st("st1", fontSize=6.5)),    Paragraph('<b>Dated</b>', st("st1", fontSize=6.5))],
-        [Paragraph(f'<b><font color="#1e40af">{inv_number}</font></b>', st("st1", fontSize=7.5)), Paragraph(f'<b>{inv_date}</b>', st("st1", fontSize=7))],
-        [Paragraph('<b>Delivery Note</b>', st("st1", fontSize=6.5)), Paragraph('<b>Delivery Note Date</b>', st("st1", fontSize=6.5))],
-        [Paragraph(delivery_note or '', st("st1", fontSize=7)),    Paragraph(del_note_date or '', st("st1", fontSize=7))],
-        [Paragraph('<b>Dispatch Doc No.</b>', st("st1", fontSize=6.5)), Paragraph('<b>CREDIT DAYS</b>', st("st1", fontSize=6.5))],
-        [Paragraph(dispatch_doc or '', st("st1", fontSize=7)),     Paragraph(credit_days, st("st1", fontSize=7))],
-    ], colWidths=[half_w, half_w])
-    consignee_sub_tbl.setStyle(sub_row_style)
-
-    left_box = [Paragraph(buyer_text, st("bt", leading=9.5)), Spacer(1, 2), buyer_sub_tbl]
-    right_box = [Paragraph(consignee_text, st("ct", leading=9.5)), Spacer(1, 2), consignee_sub_tbl]
-
-    dual_box_tbl = Table([[left_box, right_box]], colWidths=[b_col_w, b_col_w])
-    dual_box_tbl.setStyle(TableStyle([
+    dual_grid_tbl.setStyle(TableStyle([
+        # Span Buyer address across cols 0-1 and Consignee address across cols 2-3
+        ("SPAN", (0, 0), (1, 0)),
+        ("SPAN", (2, 0), (3, 0)),
+        # Outer Border
         ("BOX", (0, 0), (-1, -1), 0.5, colors.black),
-        ("LINEBEFORE", (1, 0), (1, -1), 0.5, colors.black),
+        # Center vertical dividing line straight down from top to bottom
+        ("LINEBEFORE", (2, 0), (2, -1), 0.5, colors.black),
+        # Horizontal dividing line between address block and reference grid
+        ("LINEBELOW", (0, 0), (-1, 0), 0.5, colors.black),
+        # Grid lines inside the 3 reference rows
+        ("INNERGRID", (0, 1), (-1, -1), 0.4, colors.black),
+        # Vertical alignment
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("TOPPADDING", (0, 0), (-1, -1), 3),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
-        ("LEFTPADDING", (0, 0), (-1, -1), 4),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        # Top Address row padding
+        ("TOPPADDING", (0, 0), (-1, 0), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, 0), 3),
+        ("LEFTPADDING", (0, 0), (-1, 0), 4),
+        ("RIGHTPADDING", (0, 0), (-1, 0), 4),
+        # Reference grid rows padding
+        ("TOPPADDING", (0, 1), (-1, -1), 2.5),
+        ("BOTTOMPADDING", (0, 1), (-1, -1), 2.5),
+        ("LEFTPADDING", (0, 1), (-1, -1), 3),
+        ("RIGHTPADDING", (0, 1), (-1, -1), 3),
     ]))
-    elements.append(dual_box_tbl)
+    elements.append(dual_grid_tbl)
+
 
 
     # Itemized Goods Table
