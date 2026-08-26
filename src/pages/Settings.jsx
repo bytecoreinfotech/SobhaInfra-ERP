@@ -380,9 +380,12 @@ const Settings = () => {
 
   const handleSetDefaultCompany = async (comp) => {
     await saveCompany({ ...comp, is_default: true });
+    // ✅ Also switch the active company in context so all pages filter immediately
+    setActiveCompanyId(comp.id);
     setPosSuccessMsg(`⭐ "${comp.company_name}" is now the default primary company.`);
     setTimeout(() => setPosSuccessMsg(''), 3500);
   };
+
 
   const loadStorageData = async () => {
     setStorageLoading(true);

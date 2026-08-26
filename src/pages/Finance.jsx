@@ -66,7 +66,7 @@ const Finance = () => {
 
   useEffect(() => {
     loadAllFinanceData();
-  }, []);
+  }, [activeCompanyId]); // reload when company changes
 
   // Re-filter when company switcher changes
   const invoices = isConsolidated

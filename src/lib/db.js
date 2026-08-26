@@ -298,9 +298,28 @@ export async function triggerTallySyncNow() {
 
 export async function getLedgerMappings() {
   if (!isSupabaseConfigured) return { data: MOCK_STORE.ledger_mappings, error: null };
-  const { data, error } = await supabase.from('ledger_mappings').select('*').order('tally_ledger_name', { ascending: true });
-  return { data: data || [], error };
+  // NOTE: The live table is tally_mappings (ledger_mappings doesn't exist in this schema).
+  // We map tally_mappings columns to the shape Finance.jsx expects.
+  const { data, error } = await supabase
+    .from('tally_mappings')
+    .select('id, tally_ledger_name, mapping_status, confidence_score, customer_id, updated_at, organization_id')
+    .order('tally_ledger_name', { ascending: true });
+  if (error) return { data: [], error };
+  // Normalise to shape expected by Finance > Ledger Mappings tab
+  const normalised = (data || []).map(row => ({
+    id: row.id,
+    tally_ledger_name: row.tally_ledger_name,
+    lead_id: row.customer_id || null,
+    lead_name: null,
+    lead_phone: null,
+    mapping_status: row.mapping_status || 'UNMAPPED',
+    match_confidence: row.confidence_score || 0,
+    updated_at: row.updated_at,
+    organization_id: row.organization_id,
+  }));
+  return { data: normalised, error: null };
 }
+
 
 export async function updateLedgerMapping(mappingId, leadId, tallyLedgerName) {
   if (!isSupabaseConfigured) {

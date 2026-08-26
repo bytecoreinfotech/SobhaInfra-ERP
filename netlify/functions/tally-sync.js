@@ -235,7 +235,82 @@ exports.handler = async (event) => {
             results.upsertedInvoices++;
             if (matchedLead) results.mappedLedgers++;
             else results.unmappedLedgers++;
+
+            // ── AUTO-SEND NEW INVOICE VIA WHATSAPP ─────────────────────────
+            // Only send for NEW invoices (not updates) and when phone is available
+            const isNewInvoice = !existing;
+            const recipientPhone = normVoucherPhone || (matchedLead ? matchedLead.phone : '');
+
+            if (isNewInvoice && recipientPhone && finalPdfUrl) {
+              try {
+                const fmtAmt = (n) => '₹' + Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 });
+                const clientName = v.ledger_name || 'Customer';
+                const company = v.company_name || companyName || 'Shobha Infra';
+
+                // 1. Send text notification first
+                const textMsg = [
+                  `🧾 *New Invoice from ${company}*`,
+                  ``,
+                  `Hello ${clientName}! Your new invoice has been generated.`,
+                  ``,
+                  `📋 *Invoice No:* ${invNum}`,
+                  `📅 *Date:* ${invoiceDateStr}`,
+                  `💰 *Amount:* *${fmtAmt(invoiceRow.amount)}*`,
+                  `📌 *Status:* ${invoiceRow.status}`,
+                  ``,
+                  `Your GST Tax Invoice is attached below as a PDF. Please review and contact us for any queries. 🙏`,
+                ].join('\n');
+
+                const WA_TOKEN_LOCAL = process.env.WHATSAPP_TOKEN;
+                const PHONE_ID_LOCAL = process.env.WHATSAPP_PHONE_ID;
+                const BASE_URL = `https://graph.facebook.com/v20.0/${PHONE_ID_LOCAL}/messages`;
+                const waHeaders = {
+                  'Authorization': `Bearer ${WA_TOKEN_LOCAL}`,
+                  'Content-Type': 'application/json',
+                };
+                const cleanPhone = String(recipientPhone).replace(/[^\d]/g, '');
+
+                if (WA_TOKEN_LOCAL && PHONE_ID_LOCAL) {
+                  // Send text summary
+                  await fetch(BASE_URL, {
+                    method: 'POST',
+                    headers: waHeaders,
+                    body: JSON.stringify({
+                      messaging_product: 'whatsapp',
+                      to: cleanPhone,
+                      type: 'text',
+                      text: { body: textMsg },
+                    }),
+                  });
+
+                  // Small delay then send PDF document
+                  await new Promise(r => setTimeout(r, 500));
+
+                  const safePdfName = String(invNum).replace(/[^a-zA-Z0-9_-]/g, '_') + '.pdf';
+                  await fetch(BASE_URL, {
+                    method: 'POST',
+                    headers: waHeaders,
+                    body: JSON.stringify({
+                      messaging_product: 'whatsapp',
+                      to: cleanPhone,
+                      type: 'document',
+                      document: {
+                        link: finalPdfUrl,
+                        filename: safePdfName,
+                        caption: `${invNum} | ${fmtAmt(invoiceRow.amount)} | ${company}`,
+                      },
+                    }),
+                  });
+
+                  console.log(`[AutoSend] Invoice ${invNum} sent via WhatsApp to ${recipientPhone}`);
+                  results.autoSentWhatsApp = (results.autoSentWhatsApp || 0) + 1;
+                }
+              } catch (waSendErr) {
+                console.warn('[AutoSend] Non-fatal WhatsApp send error:', waSendErr.message);
+              }
+            }
           } else {
+
             console.error(`[Tally] Invoice save failed for ${invNum}:`, invErr.message);
             results.errors.push({ voucher: invNum, error: invErr.message, code: invErr.code });
           }

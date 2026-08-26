@@ -3,16 +3,18 @@ import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, Users, CheckSquare, IndianRupee,
   MessageCircle, Bot, CreditCard, Shield, BarChart3,
-  Settings, ChevronLeft, ChevronRight, MapPin, Sparkles, Mail
+  Settings, ChevronLeft, ChevronRight, MapPin, Sparkles, Mail, Building2
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useLiveCounts } from '../context/LiveCountsContext';
+import { useCompany } from '../context/CompanyContext';
 import './Sidebar.css';
 
 const Sidebar = ({ collapsed, isCollapsed, onToggle, mobileOpen, onMobileClose }) => {
   const isSideCollapsed = collapsed ?? isCollapsed ?? false;
   const { user, hasPermission } = useAuth();
   const { whatsapp, leads, tasks, payments } = useLiveCounts();
+  const { companyProfiles, activeCompanyId, setActiveCompanyId, isConsolidated, activeCompany } = useCompany();
 
   // Badge values: only show when > 0, cap display at 99
   const badge = (n) => (n > 0 ? (n > 99 ? '99+' : String(n)) : null);
@@ -88,6 +90,49 @@ const Sidebar = ({ collapsed, isCollapsed, onToggle, mobileOpen, onMobileClose }
             {isSideCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
           </button>
         </div>
+
+        {/* Company Switcher */}
+        {!isSideCollapsed && companyProfiles.length > 0 && (
+          <div style={{
+            margin: '8px 12px 4px',
+            padding: '8px 10px',
+            background: 'rgba(99,102,241,0.1)',
+            borderRadius: '10px',
+            border: '1px solid rgba(99,102,241,0.25)',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
+              <Building2 size={13} style={{ color: '#818cf8' }} />
+              <span style={{ fontSize: 10, fontWeight: 700, color: '#818cf8', letterSpacing: '0.05em', textTransform: 'uppercase' }}>Active Company</span>
+            </div>
+            <select
+              id="sidebar-company-switcher"
+              value={activeCompanyId || 'all'}
+              onChange={e => setActiveCompanyId(e.target.value)}
+              style={{
+                width: '100%',
+                background: 'rgba(15,23,42,0.8)',
+                color: '#e2e8f0',
+                border: '1px solid rgba(99,102,241,0.3)',
+                borderRadius: 7,
+                padding: '5px 8px',
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: 'pointer',
+                outline: 'none',
+              }}
+            >
+              <option value="all">🏢 All Companies</option>
+              {companyProfiles.map(c => (
+                <option key={c.id} value={c.id}>
+                  {c.company_name === 'SOBHAINFRA TECH PRIVATE LIMITED' ? 'SOBHAINFRA TECH' :
+                   c.company_name === 'SHOBHA READY PLAST' ? 'SHOBHA READY PLAST' :
+                   c.company_name === 'SHOBHA BUILDTECH' ? 'SHOBHA BUILDTECH' :
+                   c.company_name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         {/* Navigation */}
         <nav className="sidebar-nav">

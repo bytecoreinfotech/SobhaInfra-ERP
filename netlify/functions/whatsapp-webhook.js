@@ -103,6 +103,153 @@ async function sendWhatsAppMessage(to, text) {
   }
 }
 
+// ─── 3b. Send WhatsApp Document (PDF) ───────────────────────────────────────
+async function sendWhatsAppDocument(to, pdfUrl, filename, caption) {
+  if (!WA_TOKEN || !PHONE_ID) {
+    console.log(JSON.stringify({ step: 'send_wa_doc', status: 'simulated', reason: 'no_credentials' }));
+    return { success: true };
+  }
+  try {
+    const cleanPhone = String(to).replace(/[^\d]/g, '');
+    const res = await fetch(`https://graph.facebook.com/v20.0/${PHONE_ID}/messages`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${WA_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        to: cleanPhone,
+        type: 'document',
+        document: {
+          link: pdfUrl,
+          filename: filename || 'Invoice.pdf',
+          caption: caption || '',
+        },
+      }),
+    });
+    const data = await res.json();
+    if (data.error) {
+      console.error(JSON.stringify({ step: 'send_wa_doc', error: data.error }));
+      return { success: false, error: data.error };
+    }
+    console.log(JSON.stringify({ step: 'send_wa_doc', status: 'delivered', messageId: data.messages?.[0]?.id }));
+    return { success: true, messages: data.messages };
+  } catch (err) {
+    console.error(JSON.stringify({ step: 'send_wa_doc', exception: err.message }));
+    return { success: false, error: err.message };
+  }
+}
+
+// ─── 3c. Detect Invoice / Bill Request Intent ─────────────────────────────────
+function detectInvoiceIntent(text) {
+  const lower = (text || '').toLowerCase();
+  // Hindi / English / Hinglish bill-related keywords
+  const triggers = [
+    'bill', 'receipt', 'invoice', 'payment receipt', 'payment bill',
+    'my invoice', 'my bill', 'mera bill', 'meri receipt', 'mera invoice',
+    'outstanding', 'bakaya', 'due amount', 'pending amount', 'due balance',
+    'baaki', 'baki payment', 'kitna baaki', 'balance due', 'pending payment',
+    'send bill', 'bill bhejo', 'bill send', 'invoice send', 'receipt send',
+    'bill chahiye', 'bill do', 'bill de do', 'invoice chahiye',
+    'tax invoice', 'gst bill', 'gst invoice', 'tax bill',
+    'puchta hun bill', 'bill kahan hai', 'bill nahi mila',
+    'show my bill', 'share bill', 'download bill', 'get bill',
+  ];
+  return triggers.some(t => lower.includes(t));
+}
+
+// ─── 3d. Fetch & Send Customer Invoice(s) by Phone ───────────────────────────
+async function handleInvoiceRequest(supabase, fromPhone, contactName, conversationId) {
+  if (!supabase) {
+    await sendWhatsAppMessage(fromPhone, `Hello ${contactName}! 📄 I'm fetching your invoice records. Please hold on...`);
+    return false;
+  }
+
+  try {
+    const cleanDigits = fromPhone.replace(/[^\d]/g, '');
+    // Search by all common phone formats
+    const { data: invoices } = await supabase
+      .from('invoices')
+      .select('invoice_number, client_name, amount, status, due_date, invoice_date, pdf_url, metadata, company_name')
+      .or([
+        `client_phone.eq.${fromPhone}`,
+        `client_phone.eq.+${cleanDigits}`,
+        `client_phone.eq.${cleanDigits}`,
+        `client_phone.eq.+91${cleanDigits.slice(-10)}`,
+      ].join(','))
+      .order('invoice_date', { ascending: false })
+      .limit(5);
+
+    if (!invoices || invoices.length === 0) {
+      // No invoices found — soft response, don't alarm
+      const noInvReply = `Hello ${contactName}! 📋 I couldn't find any invoice records linked to your number.\n\nThis might be because:\n• Your number may not be registered with us\n• Bills may be under a different contact\n\nPlease contact our team and we'll assist you right away! 📞`;
+      await sendWhatsAppMessage(fromPhone, noInvReply);
+      return true;
+    }
+
+    // Build outstanding summary
+    const totalDue = invoices
+      .filter(i => i.status !== 'Paid')
+      .reduce((s, i) => s + Number(i.amount || 0), 0);
+    const totalPaid = invoices
+      .filter(i => i.status === 'Paid')
+      .reduce((s, i) => s + Number(i.amount || 0), 0);
+    const overdue = invoices.filter(i => i.status === 'Overdue').length;
+
+    const fmtAmount = (n) => '₹' + Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 });
+    const fmtDate = (d) => { try { return new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }); } catch { return d || '—'; } };
+
+    // Build invoice list lines
+    const invLines = invoices.map((inv, i) => {
+      const statusIcon = inv.status === 'Paid' ? '✅' : inv.status === 'Overdue' ? '🔴' : '🟡';
+      return `${statusIcon} *${inv.invoice_number}*\n   Dated: ${fmtDate(inv.invoice_date || inv.due_date)}\n   Amount: ${fmtAmount(inv.amount)} | ${inv.status}`;
+    }).join('\n\n');
+
+    const summaryMsg = [
+      `Hello ${contactName}! 📄 Here are your invoice records:\n`,
+      invLines,
+      `\n📊 *Summary:*`,
+      `• Total Outstanding: *${fmtAmount(totalDue)}*`,
+      totalPaid > 0 ? `• Paid Till Date: *${fmtAmount(totalPaid)}*` : null,
+      overdue > 0 ? `• ⚠️ Overdue Bills: *${overdue}*` : null,
+      `\nPlease contact us if you have any queries! 📞`,
+    ].filter(Boolean).join('\n');
+
+    await sendWhatsAppMessage(fromPhone, summaryMsg);
+
+    // Send the most recent PDF(s) if available
+    let pdfsSent = 0;
+    for (const inv of invoices.slice(0, 2)) {  // Max 2 most recent PDFs
+      const pdfUrl = inv.pdf_url || inv.metadata?.pdf_url;
+      if (pdfUrl && pdfUrl.startsWith('http')) {
+        const safeName = (inv.invoice_number || 'Invoice').replace(/[^a-zA-Z0-9_-]/g, '_');
+        const caption = `Invoice ${inv.invoice_number} | ${fmtAmount(inv.amount)} | ${inv.status}`;
+        const docResult = await sendWhatsAppDocument(fromPhone, pdfUrl, `${safeName}.pdf`, caption);
+        if (docResult.success) pdfsSent++;
+        await new Promise(r => setTimeout(r, 400)); // small delay between sends
+      }
+    }
+
+    // Log outbound message
+    if (conversationId) {
+      try {
+        await supabase.from('whatsapp_messages').insert([{
+          organization_id: DEFAULT_ORG_ID,
+          conversation_id: conversationId,
+          direction: 'outbound',
+          sender_type: 'system',
+          body: `[Invoice Request Fulfilled] ${invoices.length} bill(s) sent. PDFs sent: ${pdfsSent}`,
+          status: 'sent',
+        }]);
+      } catch {}
+    }
+
+    console.log(JSON.stringify({ step: 'invoice_request', invoicesFound: invoices.length, pdfsSent }));
+    return true; // handled — skip AI
+  } catch (err) {
+    console.warn(JSON.stringify({ step: 'invoice_request', error: err.message }));
+    return false;
+  }
+}
+
 // ─── 3b. Interactive Quick Reply & Action Buttons Dispatcher ─────────────────
 async function sendWhatsAppInteractive(to, text, buttons = [], headerMedia = null, footerText = null) {
   if (!WA_TOKEN || !PHONE_ID) {
@@ -375,6 +522,11 @@ function deterministicReply(text, name) {
     return `Hello ${name}! 💬 I completely understand. Let me connect you with our sales team who handles all pricing discussions and customized payment plans. You'll receive a call shortly! 📞`;
   }
 
+  // Invoice / Bill request (handled upstream by handleInvoiceRequest but fallback here too)
+  if (detectInvoiceIntent(lower)) {
+    return `Hello ${name}! 📄 I am fetching your invoice and outstanding details right now. You will receive your bill PDF shortly!`;
+  }
+
   // Price / product queries
   if (lower.includes('price') || lower.includes('rate') || lower.includes('kitna') || lower.includes('how much') || lower.includes('cost')) {
     return `Hello ${name}! 💰 For accurate pricing details, let me connect you with our sales team. They can provide you with the latest rates and any ongoing offers. Would you like a callback?`;
@@ -391,7 +543,7 @@ function deterministicReply(text, name) {
   }
 
   // Greeting / default
-  return `Hello ${name}! 👋 Welcome! I'm your AI Assistant — I can help with:\n\n• 💰 Product & pricing information\n• 📅 Scheduling meetings\n• 📞 Sales team connection\n\nWhat would you like to know?`;
+  return `Hello ${name}! 👋 Welcome! I'm your AI Assistant — I can help with:\n\n• 📄 View your bills & invoices\n• 💰 Product & pricing information\n• 📅 Scheduling meetings\n• 📞 Sales team connection\n\nType *"my bill"* to get your latest invoice! 🧾`;
 }
 
 // ─── 8. Delivery & Read Receipt Handler (Spec §11, §15) ─────────────────────
@@ -857,6 +1009,16 @@ exports.handler = async (event) => {
         } catch {}
       }
       return { statusCode: 200, headers, body: JSON.stringify({ status: 'quote_dispatched' }) };
+    }
+
+    // ── INVOICE / BILL REQUEST HANDLER (before AI — highest priority self-service) ──
+    // Intercepts any message asking for bill, receipt, outstanding, etc.
+    if (detectInvoiceIntent(messageText)) {
+      const invoiceHandled = await handleInvoiceRequest(supabase, fromPhone, contactName, conversationId);
+      if (invoiceHandled) {
+        return { statusCode: 200, headers, body: JSON.stringify({ status: 'invoice_request_fulfilled' }) };
+      }
+      // If invoice lookup failed, fall through to AI for graceful reply
     }
 
     // Suppress AI if explicitly paused or closed
