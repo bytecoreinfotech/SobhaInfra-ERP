@@ -65,23 +65,25 @@ const Finance = () => {
     loadAllFinanceData();
   }, []);
 
-  // Re-filter when company switcher changes (no re-fetch needed — just filter from allInvoices)
+  // Re-filter when company switcher changes
   const invoices = isConsolidated
     ? allInvoices
     : allInvoices.filter(inv => {
-        if (!activeCompany) return true;
+        if (!activeCompany) return true;  // 'All Companies' — show everything
         const compName = (activeCompany.company_name || '').toUpperCase();
         const aliases = Array.isArray(activeCompany.alias_names)
           ? activeCompany.alias_names.map(a => a.toUpperCase())
           : [];
         const allNames = [compName, ...aliases];
         const invCompany = (inv.company_name || inv.tally_company || '').toUpperCase();
-        if (!invCompany) return true; // No company tag = show in all views
+        // If invoice has no company tag and a specific company is selected,
+        // hide it — it shouldn't bleed into another company's view
+        if (!invCompany) return false;
         return allNames.some(n => n && (invCompany.includes(n) || n.includes(invCompany)));
       });
 
-  const loadAllFinanceData = async () => {
-    setLoading(true);
+  const loadAllFinanceData = async (showSpinner = true) => {
+    if (showSpinner) setLoading(true);
     const [invRes, tallyRes, mapRes, errRes, leadsRes] = await Promise.all([
       getInvoices(),
       getTallyConnectionStatus(),
@@ -94,7 +96,7 @@ const Finance = () => {
     setMappings(mapRes.data || []);
     setSyncErrors(errRes.data || []);
     setLeads(leadsRes.data || []);
-    setLoading(false);
+    if (showSpinner) setLoading(false);
   };
 
   const handleSyncNow = async () => {
@@ -274,8 +276,13 @@ const Finance = () => {
             >
               <FileText size={14} /> 📑 Document Templates
             </button>
-            <button className="btn btn-secondary" onClick={loadAllFinanceData}>
-              <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
+            <button
+              className="btn btn-secondary"
+              onClick={() => loadAllFinanceData(false)}
+              title="Refresh data from Supabase"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.8rem' }}
+            >
+              <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Refresh
             </button>
           </div>
         </div>
@@ -372,6 +379,18 @@ const Finance = () => {
                         {inv.invoice_number}
                         {inv.reminder_count > 0 && (
                           <div style={{ fontSize: '0.62rem', color: 'var(--text-muted)', fontWeight: 400 }}>#{inv.reminder_count} reminder{inv.reminder_count !== 1 ? 's' : ''} sent</div>
+                        )}
+                        {/* Show company badge only in All Companies view */}
+                        {isConsolidated && inv.company_name && (
+                          <div style={{
+                            fontSize: '0.58rem', fontWeight: 700, marginTop: '0.15rem',
+                            display: 'inline-flex', alignItems: 'center', gap: '0.2rem',
+                            padding: '0.1rem 0.4rem', borderRadius: '10px',
+                            background: 'rgba(99,102,241,0.12)', color: 'var(--accent-primary)',
+                            border: '1px solid rgba(99,102,241,0.2)', fontFamily: 'sans-serif'
+                          }}>
+                            <Building2 size={8} /> {inv.company_name.length > 20 ? inv.company_name.slice(0, 20) + '…' : inv.company_name}
+                          </div>
                         )}
                       </td>
                       <td style={{ fontWeight: 600 }}>{inv.client_name}</td>

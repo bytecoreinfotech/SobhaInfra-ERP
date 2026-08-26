@@ -466,11 +466,45 @@ export async function updateOrgSetting(key, value) {
 // ─────────────────────────────────────────────────────────────────────────────
 // MULTI-COMPANY & MULTI-ENTITY REGISTRY SERVICES
 // ─────────────────────────────────────────────────────────────────────────────
-// Company profiles are 100% dynamic — auto-seeded from Tally at sync time.
-// The empty array is the intentional default; real data always comes from Supabase.
-export const DEFAULT_COMPANY_PROFILES = [];
+// The 3 exact real TallyPrime companies for this client.
+// company_name MUST match exactly what Tally sends in vouchers for filtering to work.
+export const DEFAULT_COMPANY_PROFILES = [
+  {
+    id: 'tally-sobhainfra-tech-private-limited',
+    organization_id: DEFAULT_ORG_ID,
+    company_name: 'SOBHAINFRA TECH PRIVATE LIMITED',
+    alias_names: ['SOBHAINFRA TECH PRIVATE LIMITED', 'SOBHAINFRA', 'Sobha Infra Tech', 'SOBHAINFRA TECH'],
+    company_address: 'Registered Office, Gujarat',
+    gstin_number: '',
+    state_name: 'Gujarat',
+    state_code: '24',
+    is_default: true,
+  },
+  {
+    id: 'tally-shobha-buildtech',
+    organization_id: DEFAULT_ORG_ID,
+    company_name: 'SHOBHA BUILDTECH',
+    alias_names: ['SHOBHA BUILDTECH', 'SB', 'Shobha Buildtech', 'SHOBHA BUILD TECH'],
+    company_address: 'Valsad, Gujarat',
+    gstin_number: '',
+    state_name: 'Gujarat',
+    state_code: '24',
+    is_default: false,
+  },
+  {
+    id: 'tally-shobha-ready-plast',
+    organization_id: DEFAULT_ORG_ID,
+    company_name: 'SHOBHA READY PLAST',
+    alias_names: ['SHOBHA READY PLAST', 'SRP', 'Shobha Ready Plast', 'SHOBHA READYPLAST'],
+    company_address: 'NH48, Near Kolei Khadi Sarodhi, Valsad, Gujarat - 396001',
+    gstin_number: '24AGCPJ2785R1ZV',
+    state_name: 'Gujarat',
+    state_code: '24',
+    is_default: false,
+  },
+];
 
-let inMemoryCompanyProfiles = [];
+let inMemoryCompanyProfiles = [...DEFAULT_COMPANY_PROFILES];
 
 
 export async function getCompanyProfiles() {

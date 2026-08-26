@@ -74,7 +74,7 @@ TALLY_HOST        = os.environ.get("TALLY_HOST", "http://localhost:9000")
 CLOUD_URL         = os.environ.get("ERPPRO_CLOUD_URL", "https://sobhainfra-erp.netlify.app/.netlify/functions/tally-sync")
 CONNECTOR_TOKEN   = os.environ.get("TALLY_CONNECTOR_TOKEN", "erppro_tally_sec_token_2026")
 ORGANIZATION_ID   = os.environ.get("ORGANIZATION_ID", "00000000-0000-0000-0000-000000000001")
-SYNC_INTERVAL_SEC = int(os.environ.get("SYNC_INTERVAL_MINS", "15")) * 60
+SYNC_INTERVAL_SEC = int(os.environ.get("SYNC_INTERVAL_MINS", "5")) * 60
 
 # Supabase Storage (for uploading invoice PDFs)
 SUPABASE_URL      = os.environ.get("SUPABASE_URL", "https://mcgmppnvnwnilioapbli.supabase.co")
@@ -978,10 +978,47 @@ FMT_DATE   = lambda d: datetime.strptime(d, "%Y%m%d").strftime("%d %b %Y") if d 
 _CACHED_ORG_PROFILE = None
 _CACHED_COMPANY_PROFILES = None
 
-# DEFAULT_COMPANY_REGISTRY is intentionally EMPTY.
-# Companies are 100% dynamic — auto-seeded from Tally at runtime.
-# Admin fills in GSTIN/bank/logo details via the Settings UI after auto-seed.
-DEFAULT_COMPANY_REGISTRY = []
+# The 3 real TallyPrime companies for this client.
+# Exact names match what Tally reports in Company_Collection XML.
+# These are used for voucher-to-company matching when syncing.
+DEFAULT_COMPANY_REGISTRY = [
+    {
+        "id": "tally-shobha-buildtech",
+        "organization_id": ORGANIZATION_ID,
+        "company_name": "SHOBHA BUILDTECH",
+        "alias_names": ["SHOBHA BUILDTECH", "SB", "Shobha Buildtech", "SHOBHAB", "SHOBHA BUILD TECH"],
+        "company_address": "Valsad, Gujarat",
+        "gstin_number": "",
+        "state_name": "Gujarat",
+        "state_code": "24",
+        "is_default": False,
+        "tally_sourced": True,
+    },
+    {
+        "id": "tally-shobha-ready-plast",
+        "organization_id": ORGANIZATION_ID,
+        "company_name": "SHOBHA READY PLAST",
+        "alias_names": ["SHOBHA READY PLAST", "SRP", "Shobha Ready Plast", "SHOBHARP", "SHOBHA READYPLAST"],
+        "company_address": "NH48, Near Kolei Khadi Sarodhi, Valsad, Gujarat - 396001",
+        "gstin_number": "24AGCPJ2785R1ZV",
+        "state_name": "Gujarat",
+        "state_code": "24",
+        "is_default": False,
+        "tally_sourced": True,
+    },
+    {
+        "id": "tally-sobhainfra-tech-private-limited",
+        "organization_id": ORGANIZATION_ID,
+        "company_name": "SOBHAINFRA TECH PRIVATE LIMITED",
+        "alias_names": ["SOBHAINFRA TECH PRIVATE LIMITED", "SOBHAINFRA", "Sobha Infra Tech", "SOBHAINFRA TECH", "SOBHA INFRA TECH"],
+        "company_address": "Registered Office, Gujarat",
+        "gstin_number": "",
+        "state_name": "Gujarat",
+        "state_code": "24",
+        "is_default": True,
+        "tally_sourced": True,
+    },
+]
 
 
 
