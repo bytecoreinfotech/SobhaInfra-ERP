@@ -1,6 +1,13 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Outfit:wght@400;600;700;800&display=swap');
 
+@keyframes companySwitchPulse {
+  0% { opacity: 0; transform: translate(-50%, -20px) scale(0.92); }
+  60% { transform: translate(-50%, 4px) scale(1.02); }
+  100% { opacity: 1; transform: translate(-50%, 0) scale(1); }
+}
+
 /* =====================
+
    DARK THEME (default)
    ===================== */
 :root,

@@ -10,10 +10,11 @@ import {
   getInvoices, getTallyConnectionStatus, triggerTallySyncNow,
   getLedgerMappings, updateLedgerMapping, getSyncErrors,
   sendPaymentReminderWhatsApp, getLeads, normalizePhone,
-  pauseInvoiceReminder, resumeInvoiceReminder
+  pauseInvoiceReminder, resumeInvoiceReminder, createLead
 } from '../lib/db';
 import { useCompany } from '../context/CompanyContext';
 import './Pages.css';
+
 
 const statusConfig = {
   'Paid':    { badge: 'badge-success', icon: <CheckCircle2 size={13} /> },
@@ -127,8 +128,33 @@ const Finance = () => {
     await updateLedgerMapping(selectedMapping.id, targetLeadId, selectedMapping.tally_ledger_name);
     setShowMapModal(false);
     setSelectedMapping(null);
-    loadAllFinanceData();
+    setReminderToast(`✅ Linked "${selectedMapping.tally_ledger_name}" to CRM Customer!`);
+    setTimeout(() => setReminderToast(null), 3500);
+    loadAllFinanceData(false);
   };
+
+  const handleQuickCreateLead = async (m) => {
+    if (!m) return;
+    const phone = m.lead_phone && m.lead_phone !== '—' ? m.lead_phone : '+919876543210';
+    const newLeadRes = await createLead({
+      name: m.tally_ledger_name,
+      phone: phone,
+      company: m.tally_ledger_name,
+      source: 'Tally Accounting',
+      status: 'Qualified',
+      notes: `Auto-created from Tally Ledger (${m.invoice_count || 0} vouchers, ₹${(m.total_billed || 0).toLocaleString('en-IN')})`,
+    });
+
+    if (newLeadRes?.data?.id) {
+      await updateLedgerMapping(m.id, newLeadRes.data.id, m.tally_ledger_name);
+      setShowMapModal(false);
+      setSelectedMapping(null);
+      setReminderToast(`🎉 Created CRM Profile & Linked "${m.tally_ledger_name}"!`);
+      setTimeout(() => setReminderToast(null), 3500);
+      loadAllFinanceData(false);
+    }
+  };
+
 
   const handlePauseReminder = async (e) => {
     e.preventDefault();
@@ -720,10 +746,17 @@ const Finance = () => {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div>
-              <h2 style={{ fontSize: '1.05rem', fontWeight: 700, margin: 0 }}>Ledger & Customer Mapping Master (Section 30)</h2>
+              <h2 style={{ fontSize: '1.05rem', fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Link size={18} color="var(--accent-primary)" /> Ledger &amp; Customer Mapping Master (Section 30)
+              </h2>
               <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0.2rem 0 0 0' }}>
-                Bridges Tally accounting ledgers with CRM customer profiles via normalized phone matching.
+                Bridges Tally accounting ledgers with CRM customer profiles so automated WhatsApp notifications and payment statements know where to reach.
               </p>
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              <span className="badge badge-neutral" style={{ fontSize: '0.75rem' }}>
+                {mappings.filter(m => m.mapping_status === 'MAPPED' || m.mapping_status === 'AUTO_FOUND').length} / {mappings.length} Linked
+              </span>
             </div>
           </div>
 
@@ -731,43 +764,86 @@ const Finance = () => {
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Tally Ledger Name</th>
+                  <th>Tally Ledger / Party Name</th>
                   <th>Mapped CRM Customer</th>
-                  <th>Normalized Phone</th>
+                  <th>Contact Phone</th>
                   <th>Match Confidence</th>
-                  <th>Status</th>
+                  <th>Sync Status</th>
                   <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {mappings.map(m => (
-                  <tr key={m.id}>
-                    <td style={{ fontWeight: 700, fontSize: '0.85rem' }}>{m.tally_ledger_name}</td>
-                    <td style={{ color: m.mapping_status === 'MAPPED' ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                      {m.lead_name || '—'}
-                    </td>
-                    <td style={{ fontFamily: 'monospace', fontSize: '0.78rem' }}>{m.lead_phone || '—'}</td>
-                    <td>
-                      <span className="badge badge-neutral" style={{ fontWeight: 700 }}>
-                        {((m.match_confidence || 0) * 100).toFixed(0)}%
-                      </span>
-                    </td>
-                    <td>
-                      <span className={`badge ${m.mapping_status === 'MAPPED' ? 'badge-success' : m.mapping_status === 'AMBIGUOUS' ? 'badge-warning' : 'badge-danger'}`}>
-                        {m.mapping_status}
-                      </span>
-                    </td>
-                    <td>
-                      <button
-                        className="btn btn-secondary btn-sm"
-                        style={{ fontSize: '0.72rem', padding: '0.2rem 0.5rem' }}
-                        onClick={() => { setSelectedMapping(m); setShowMapModal(true); }}
-                      >
-                        Map Lead
-                      </button>
+                {mappings.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} style={{ textAlign: 'center', padding: '2.5rem', color: 'var(--text-muted)' }}>
+                      No Tally ledger mappings found. Click "Test / Trigger Sync Now" to pull accounting ledgers from Tally.
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  mappings.map(m => {
+                    const isLinked = m.mapping_status === 'MAPPED' || m.mapping_status === 'AUTO_FOUND';
+                    return (
+                      <tr key={m.id} style={{ transition: 'background 0.2s' }}>
+                        <td>
+                          <div style={{ fontWeight: 700, fontSize: '0.85rem', color: 'var(--text-primary)' }}>
+                            {m.tally_ledger_name}
+                          </div>
+                          {(m.invoice_count > 0 || m.total_billed > 0) && (
+                            <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 2 }}>
+                              📦 {m.invoice_count} voucher(s) • <span style={{ fontWeight: 600, color: 'var(--accent-secondary)' }}>₹{Number(m.total_billed || 0).toLocaleString('en-IN')}</span>
+                            </div>
+                          )}
+                        </td>
+                        <td>
+                          {m.lead_name ? (
+                            <span style={{ fontWeight: 600, color: 'var(--success)', display: 'flex', alignItems: 'center', gap: 4 }}>
+                              <CheckCircle2 size={13} /> {m.lead_name}
+                            </span>
+                          ) : (
+                            <span style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>
+                              Unlinked (No CRM contact linked)
+                            </span>
+                          )}
+                        </td>
+                        <td style={{ fontFamily: 'monospace', fontSize: '0.8rem', color: m.lead_phone && m.lead_phone !== '—' ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                          {m.lead_phone || '—'}
+                        </td>
+                        <td>
+                          <span className={`badge ${m.match_confidence >= 0.8 ? 'badge-success' : m.match_confidence >= 0.4 ? 'badge-warning' : 'badge-neutral'}`} style={{ fontWeight: 700 }}>
+                            {((m.match_confidence || 0) * 100).toFixed(0)}%
+                          </span>
+                        </td>
+                        <td>
+                          <span className={`badge ${m.mapping_status === 'MAPPED' ? 'badge-success' : m.mapping_status === 'AUTO_FOUND' ? 'badge-info' : 'badge-warning'}`}>
+                            {m.mapping_status === 'MAPPED' ? '✓ MAPPED' : m.mapping_status === 'AUTO_FOUND' ? '⚡ AUTO DETECTED' : '⏳ PENDING LINK'}
+                          </span>
+                        </td>
+                        <td>
+                          <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+                            <button
+                              className="btn btn-secondary btn-sm"
+                              style={{ fontSize: '0.72rem', padding: '0.25rem 0.55rem' }}
+                              onClick={() => { setSelectedMapping(m); setTargetLeadId(m.lead_id || ''); setShowMapModal(true); }}
+                              title="Link this Tally ledger to a CRM customer"
+                            >
+                              {isLinked ? 'Edit Link' : 'Map Lead'}
+                            </button>
+                            {!isLinked && (
+                              <button
+                                className="btn btn-primary btn-sm"
+                                style={{ fontSize: '0.72rem', padding: '0.25rem 0.55rem', background: 'linear-gradient(135deg, #4f46e5, #6366f1)' }}
+                                onClick={() => handleQuickCreateLead(m)}
+                                title="Automatically create this party as a new lead in CRM"
+                              >
+                                + Quick Add CRM
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
               </tbody>
             </table>
           </div>
@@ -779,24 +855,27 @@ const Finance = () => {
          ========================================================================= */}
       {activeTab === 'errors' && (
         <div className="glass-card table-container">
-          <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span className="section-title">Tally Synchronization Audit & Error Log</span>
-            <button className="btn btn-secondary btn-sm" onClick={loadAllFinanceData}><RefreshCw size={13} /> Refresh</button>
-          </div>
           <table className="data-table">
             <thead>
-              <tr><th>Error ID</th><th>Entity</th><th>Voucher / Ledger ID</th><th>Error Detail</th><th>Logged At</th><th>Resolution</th></tr>
+              <tr>
+                <th>Voucher Number</th>
+                <th>Error Reason</th>
+                <th>Timestamp</th>
+                <th>Action</th>
+              </tr>
             </thead>
             <tbody>
               {syncErrors.length === 0 ? (
-                <tr><td colSpan={6} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>No sync errors. All vouchers cleanly synchronized.</td></tr>
+                <tr>
+                  <td colSpan={4} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>
+                    No sync errors reported. All Tally records ingested cleanly.
+                  </td>
+                </tr>
               ) : (
-                syncErrors.map(err => (
-                  <tr key={err.id}>
-                    <td style={{ fontFamily: 'monospace', fontSize: '0.75rem' }}>{err.id}</td>
-                    <td><span className="badge badge-neutral">{err.entity_type}</span></td>
-                    <td style={{ fontWeight: 700, fontFamily: 'monospace', color: 'var(--accent-secondary)' }}>{err.entity_id}</td>
-                    <td style={{ fontSize: '0.78rem', color: 'var(--danger)', maxWidth: 300 }}>{err.error_message}</td>
+                syncErrors.map((err, i) => (
+                  <tr key={i}>
+                    <td style={{ fontWeight: 700 }}>{err.voucher_number || 'Unknown'}</td>
+                    <td style={{ color: 'var(--danger)' }}>{err.error_message}</td>
                     <td style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{new Date(err.created_at).toLocaleTimeString()}</td>
                     <td>
                       <button className="btn btn-secondary btn-sm" style={{ fontSize: '0.7rem', padding: '0.15rem 0.4rem' }} onClick={handleSyncNow}>
@@ -814,30 +893,63 @@ const Finance = () => {
       {/* Manual Ledger Mapping Modal */}
       {showMapModal && selectedMapping && (
         <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) setShowMapModal(false); }}>
-          <div className="modal-content animate-fade-in" style={{ maxWidth: 500 }}>
+          <div className="modal-content animate-fade-in" style={{ maxWidth: 520, padding: '1.5rem' }}>
             <button className="modal-close-btn" onClick={() => setShowMapModal(false)} title="Close Modal (Esc)" aria-label="Close">
               <X size={18} />
             </button>
-            <h2 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '1.25rem', paddingRight: '2.5rem' }}>
-              Map Tally Ledger to CRM Customer
-            </h2>
-            <form onSubmit={handleSaveMapping} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              <div>
-                <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.25rem' }}>Tally Ledger Name</label>
-                <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>{selectedMapping.tally_ledger_name}</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: '1rem' }}>
+              <div style={{ width: 34, height: 34, borderRadius: '50%', background: 'rgba(99,102,241,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Link size={18} color="var(--accent-primary)" />
               </div>
               <div>
-                <label style={{ fontSize: '0.78rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Select Matching CRM Lead *</label>
-                <select className="input-field" value={targetLeadId} onChange={e => setTargetLeadId(e.target.value)} required>
-                  <option value="">-- Choose CRM Lead --</option>
+                <h2 style={{ fontSize: '1.1rem', fontWeight: 700, margin: 0 }}>
+                  Link Tally Ledger to CRM Profile
+                </h2>
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Connect accounting party with customer messaging records</span>
+              </div>
+            </div>
+
+            <div style={{ padding: '0.85rem 1rem', background: 'var(--bg-tertiary)', borderRadius: 8, marginBottom: '1.25rem' }}>
+              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700 }}>Tally Ledger Name</div>
+              <div style={{ fontWeight: 700, fontSize: '1rem', color: 'var(--text-primary)', marginTop: 2 }}>{selectedMapping.tally_ledger_name}</div>
+              {selectedMapping.lead_phone && selectedMapping.lead_phone !== '—' && (
+                <div style={{ fontSize: '0.78rem', color: 'var(--accent-secondary)', marginTop: 4 }}>
+                  📱 Detected Phone: <strong>{selectedMapping.lead_phone}</strong>
+                </div>
+              )}
+            </div>
+
+            <form onSubmit={handleSaveMapping} style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
+              <div>
+                <label style={{ fontSize: '0.78rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>
+                  Option A: Choose Existing CRM Lead
+                </label>
+                <select className="input-field" value={targetLeadId} onChange={e => setTargetLeadId(e.target.value)}>
+                  <option value="">-- Choose Existing CRM Lead --</option>
                   {leads.map(l => (
-                    <option key={l.id} value={l.id}>{l.name} ({l.phone})</option>
+                    <option key={l.id} value={l.id}>{l.name} ({l.phone || 'No phone'})</option>
                   ))}
                 </select>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.5rem' }}>
+
+              <div style={{ textAlign: 'center', position: 'relative', margin: '0.2rem 0' }}>
+                <span style={{ background: 'var(--bg-card)', padding: '0 10px', color: 'var(--text-muted)', fontSize: '0.75rem', fontWeight: 600 }}>OR</span>
+              </div>
+
+              <div>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  style={{ width: '100%', justifyContent: 'center', borderColor: 'var(--accent-primary)', color: 'var(--accent-secondary)', fontWeight: 600 }}
+                  onClick={() => handleQuickCreateLead(selectedMapping)}
+                >
+                  ➕ Create &amp; Link New CRM Customer for "{selectedMapping.tally_ledger_name}"
+                </button>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.5rem', borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
                 <button type="button" className="btn btn-secondary" onClick={() => setShowMapModal(false)}>Cancel</button>
-                <button type="submit" className="btn btn-primary">Save Ledger Mapping</button>
+                <button type="submit" className="btn btn-primary" disabled={!targetLeadId}>Save Ledger Mapping</button>
               </div>
             </form>
           </div>

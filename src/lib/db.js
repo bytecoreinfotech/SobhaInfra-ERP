@@ -298,28 +298,69 @@ export async function triggerTallySyncNow() {
 
 export async function getLedgerMappings() {
   if (!isSupabaseConfigured) return { data: MOCK_STORE.ledger_mappings, error: null };
-  // NOTE: The live table is tally_mappings (ledger_mappings doesn't exist in this schema).
-  // We map tally_mappings columns to the shape Finance.jsx expects.
-  const { data, error } = await supabase
-    .from('tally_mappings')
-    .select('id, tally_ledger_name, mapping_status, confidence_score, customer_id, updated_at, organization_id')
-    .order('tally_ledger_name', { ascending: true });
-  if (error) return { data: [], error };
-  // Normalise to shape expected by Finance > Ledger Mappings tab
-  const normalised = (data || []).map(row => ({
-    id: row.id,
-    tally_ledger_name: row.tally_ledger_name,
-    lead_id: row.customer_id || null,
-    lead_name: null,
-    lead_phone: null,
-    mapping_status: row.mapping_status || 'UNMAPPED',
-    match_confidence: row.confidence_score || 0,
-    updated_at: row.updated_at,
-    organization_id: row.organization_id,
-  }));
-  return { data: normalised, error: null };
-}
+  try {
+    // 1. Fetch raw tally_mappings
+    const { data: mappingsData, error: mapErr } = await supabase
+      .from('tally_mappings')
+      .select('id, tally_ledger_name, mapping_status, confidence_score, customer_id, updated_at, organization_id')
+      .order('tally_ledger_name', { ascending: true });
 
+    if (mapErr) return { data: [], error: mapErr };
+
+    // 2. Fetch leads & invoices in parallel to enrich the mapping records
+    const [leadsRes, invsRes] = await Promise.all([
+      supabase.from('leads').select('id, name, phone, company, status'),
+      supabase.from('invoices').select('client_name, client_phone, amount, status, invoice_number, company_name'),
+    ]);
+
+    const allLeads = leadsRes.data || [];
+    const allInvoices = invsRes.data || [];
+
+    // 3. Normalise and enrich each Tally ledger
+    const enriched = (mappingsData || []).map(row => {
+      const ledgerName = (row.tally_ledger_name || '').trim();
+      
+      // Match with lead by customer_id or exact name
+      const matchedLead = allLeads.find(l => 
+        (row.customer_id && l.id === row.customer_id) ||
+        (l.name && l.name.trim().toLowerCase() === ledgerName.toLowerCase())
+      );
+
+      // Match with related invoices
+      const relatedInvoices = allInvoices.filter(inv => 
+        inv.client_name && inv.client_name.trim().toLowerCase() === ledgerName.toLowerCase()
+      );
+
+      const phoneFromInvoice = relatedInvoices.find(i => i.client_phone)?.client_phone || '';
+      const totalAmount = relatedInvoices.reduce((s, i) => s + Number(i.amount || 0), 0);
+      const invoiceCount = relatedInvoices.length;
+
+      const isMapped = Boolean(matchedLead || row.customer_id);
+      const displayStatus = isMapped ? 'MAPPED' : (phoneFromInvoice ? 'AUTO_FOUND' : 'UNLINKED');
+      const confidence = isMapped ? 1.0 : (phoneFromInvoice ? 0.85 : (row.confidence_score || 0));
+
+      return {
+        id: row.id,
+        tally_ledger_name: ledgerName,
+        lead_id: matchedLead ? matchedLead.id : (row.customer_id || null),
+        lead_name: matchedLead ? matchedLead.name : null,
+        lead_phone: (matchedLead && matchedLead.phone) ? matchedLead.phone : (phoneFromInvoice || '—'),
+        mapping_status: displayStatus,
+        match_confidence: confidence,
+        invoice_count: invoiceCount,
+        total_billed: totalAmount,
+        invoices: relatedInvoices.slice(0, 5),
+        updated_at: row.updated_at,
+        organization_id: row.organization_id,
+      };
+    });
+
+    return { data: enriched, error: null };
+  } catch (err) {
+    console.warn('[db] getLedgerMappings exception:', err);
+    return { data: [], error: err };
+  }
+}
 
 export async function updateLedgerMapping(mappingId, leadId, tallyLedgerName) {
   if (!isSupabaseConfigured) {
@@ -334,22 +375,23 @@ export async function updateLedgerMapping(mappingId, leadId, tallyLedgerName) {
         mapping_status: 'MAPPED',
         match_confidence: 1.0,
       };
-      logAuditEvent('ledger.mapped', 'ledger_mappings', mappingId, { leadId, tallyLedgerName });
+      logAuditEvent('ledger.mapped', 'tally_mappings', mappingId, { leadId, tallyLedgerName });
       return { data: MOCK_STORE.ledger_mappings[idx], error: null };
     }
     return { data: null, error: { message: 'Mapping not found' } };
   }
 
   const { data, error } = await supabase
-    .from('ledger_mappings')
-    .update({ lead_id: leadId, mapping_status: 'MAPPED', match_confidence: 1.0 })
+    .from('tally_mappings')
+    .update({ customer_id: leadId, mapping_status: 'MAPPED', confidence_score: 1.0, updated_at: new Date().toISOString() })
     .eq('id', mappingId)
     .select()
     .single();
 
-  if (data) logAuditEvent('ledger.mapped', 'ledger_mappings', mappingId, { leadId, tallyLedgerName });
+  if (data) logAuditEvent('ledger.mapped', 'tally_mappings', mappingId, { leadId, tallyLedgerName });
   return { data, error };
 }
+
 
 export async function getSyncErrors() {
   if (!isSupabaseConfigured) return { data: MOCK_STORE.sync_errors, error: null };
