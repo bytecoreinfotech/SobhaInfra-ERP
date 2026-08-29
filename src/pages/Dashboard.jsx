@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Users, CheckSquare, IndianRupee, TrendingUp, MessageCircle,
   ArrowUpRight, ArrowDownRight, Bot, CreditCard, BarChart3,
   Clock, AlertCircle, CheckCircle2, RefreshCw, Zap, Send,
-  Phone, Star, Building2, AlertTriangle, Navigation, Camera, MapPin
+  Phone, Star, Building2, AlertTriangle, Navigation, Camera, MapPin,
+  Download, Printer, FileSpreadsheet, FileText, ExternalLink, X
 } from 'lucide-react';
 import { getDashboardStats, getActivityFeed, getTasks, getLeads, getCampaigns, getInvoices, getTeamMembers, getEmployeeLivePings, getSiteVisits } from '../lib/db';
 import { isSupabaseConfigured } from '../lib/supabase';
@@ -12,6 +14,7 @@ import { useCompany } from '../context/CompanyContext';
 import './Pages.css';
 
 const Dashboard = () => {
+  const navigate = useNavigate();
   const { user, hasPermission } = useAuth();
   const { activeCompany, isConsolidated } = useCompany();
   const [stats, setStats] = useState(null);
@@ -24,6 +27,7 @@ const Dashboard = () => {
   const [livePings, setLivePings] = useState([]);
   const [recentVisits, setRecentVisits] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [showReportModal, setShowReportModal] = useState(false);
 
   useEffect(() => { loadData(); }, []);
 
@@ -137,6 +141,56 @@ const Dashboard = () => {
 
   const displayActivities = activities;
 
+  // ── Executive Report Generation Handlers ─────────────────────────────────
+  const handleExportCsv = () => {
+    const compName = activeCompany ? activeCompany.company_name : 'Consolidated All Companies';
+    const timestamp = new Date().toLocaleString('en-IN');
+    
+    const summaryLines = [
+      `"EXECUTIVE BUSINESS REPORT - SOBHAINFRA ERP"`,
+      `"Generated At","${timestamp}"`,
+      `"Active Entity","${compName}"`,
+      `"Admin User","${user?.name || 'Admin'} (${user?.role || 'Super Admin'})"`,
+      ``,
+      `"EXECUTIVE KPI SUMMARY"`,
+      `"Metric","Value"`,
+      `"Total Billed Turn-over","₹${totalInvoiced.toLocaleString('en-IN')}"`,
+      `"Total Collected (Paid)","₹${totalPaid.toLocaleString('en-IN')}"`,
+      `"Pending Receivables","₹${pendingAmount.toLocaleString('en-IN')}"`,
+      `"Overdue Invoices Count","${overdueInvoices}"`,
+      `"Overdue Amount","₹${overdueAmount.toLocaleString('en-IN')}"`,
+      `"Collection Rate","${collectionRate}%"`,
+      `"Active CRM Leads","${totalLeads}"`,
+      `"Hot Leads","${hotLeads}"`,
+      `"Converted Leads","${convertedLeads}"`,
+      `"WhatsApp Delivered","${totalWaDelivered}"`,
+      `"WhatsApp Broadcasts","${campaigns.length}"`,
+      `"Open Tasks","${tasksDueCt}"`,
+      ``,
+      `"MONTHLY REVENUE BREAKDOWN"`,
+      `"Month","Total Invoiced (₹)","Collected Paid (₹)","Pending Balance (₹)","Invoices Count"`,
+      ...monthlyStats.map(m => `"${m.month}","${m.invoiced}","${m.paid}","${m.pending}","${m.count}"`),
+      ``,
+      `"INVOICE LEDGER BREAKDOWN (${invoices.length} Vouchers)"`,
+      `"Invoice / Voucher No","Party / Client Name","Phone","Amount (₹)","Status","Invoice Date","Due Date"`,
+      ...invoices.map(inv => `"${inv.invoice_number || inv.tally_voucher_number || ''}","${(inv.client_name || '').replace(/"/g, '""')}","${inv.client_phone || ''}","${inv.amount || 0}","${inv.status || 'Pending'}","${inv.invoice_date || ''}","${inv.due_date || ''}"`)
+    ];
+
+    const blob = new Blob([summaryLines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Executive_Report_${(compName || 'ERP').replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handlePrintReport = () => {
+    window.print();
+  };
+
   return (
     <div className="page-container">
       {/* Page Header */}
@@ -149,7 +203,7 @@ const Dashboard = () => {
         </div>
         <div className="page-actions">
           <button className="btn btn-secondary" onClick={loadData}><RefreshCw size={15} className={loading ? 'animate-spin' : ''} /> Refresh</button>
-          <button className="btn btn-primary"><BarChart3 size={15} /> Generate Report</button>
+          <button className="btn btn-primary" onClick={() => setShowReportModal(true)}><BarChart3 size={15} /> Generate Report</button>
         </div>
       </div>
 
@@ -486,6 +540,164 @@ const Dashboard = () => {
           </div>
         </div>
       </div>
+
+      {/* ── Executive Report Generator Modal ──────────────────────────────── */}
+      {showReportModal && (
+        <div className="modal-overlay" onClick={() => setShowReportModal(false)}>
+          <div className="modal-content animate-scale-up" onClick={e => e.stopPropagation()} style={{ maxWidth: 640, padding: 0, overflow: 'hidden' }}>
+            
+            {/* Modal Header */}
+            <div style={{ padding: '1.25rem 1.5rem', background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h3 style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
+                  <BarChart3 size={18} color="var(--accent-primary)" /> Executive Business Report Generator
+                </h3>
+                <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0.25rem 0 0 0' }}>
+                  Live intelligence report for <strong>{activeCompany ? activeCompany.company_name : 'Consolidated All Companies'}</strong>
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowReportModal(false)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '1.25rem', padding: '0.25rem' }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+              
+              {/* Quick Summary Strip */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.75rem' }}>
+                <div style={{ padding: '0.75rem', background: 'var(--bg-tertiary)', borderRadius: 8, border: '1px solid var(--border-color)', textAlign: 'center' }}>
+                  <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', fontWeight: 600 }}>TOTAL BILLED</div>
+                  <div style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--text-primary)', marginTop: '0.2rem' }}>{fmtAmount(totalInvoiced)}</div>
+                </div>
+                <div style={{ padding: '0.75rem', background: 'rgba(16,185,129,0.08)', borderRadius: 8, border: '1px solid rgba(16,185,129,0.25)', textAlign: 'center' }}>
+                  <div style={{ fontSize: '0.68rem', color: 'var(--success)', fontWeight: 600 }}>COLLECTED (PAID)</div>
+                  <div style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--success)', marginTop: '0.2rem' }}>{fmtAmount(totalPaid)}</div>
+                </div>
+                <div style={{ padding: '0.75rem', background: 'rgba(239,68,68,0.08)', borderRadius: 8, border: '1px solid rgba(239,68,68,0.25)', textAlign: 'center' }}>
+                  <div style={{ fontSize: '0.68rem', color: 'var(--danger)', fontWeight: 600 }}>PENDING DUE</div>
+                  <div style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--danger)', marginTop: '0.2rem' }}>{fmtAmount(pendingAmount)}</div>
+                </div>
+                <div style={{ padding: '0.75rem', background: 'rgba(99,102,241,0.08)', borderRadius: 8, border: '1px solid rgba(99,102,241,0.25)', textAlign: 'center' }}>
+                  <div style={{ fontSize: '0.68rem', color: 'var(--accent-primary)', fontWeight: 600 }}>COLLECTION RATE</div>
+                  <div style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--accent-primary)', marginTop: '0.2rem' }}>{collectionRate}%</div>
+                </div>
+              </div>
+
+              {/* Secondary Details */}
+              <div style={{ padding: '0.85rem 1rem', background: 'var(--bg-secondary)', borderRadius: 8, border: '1px solid var(--border-color)', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem', fontSize: '0.75rem' }}>
+                <div>
+                  <span style={{ color: 'var(--text-muted)' }}>Voucher Ledger:</span>
+                  <span style={{ fontWeight: 700, marginLeft: '0.35rem' }}>{invoices.length} Vouchers</span>
+                </div>
+                <div>
+                  <span style={{ color: 'var(--text-muted)' }}>Active CRM Leads:</span>
+                  <span style={{ fontWeight: 700, marginLeft: '0.35rem' }}>{totalLeads} ({hotLeads} Hot)</span>
+                </div>
+                <div>
+                  <span style={{ color: 'var(--text-muted)' }}>WhatsApp Reach:</span>
+                  <span style={{ fontWeight: 700, marginLeft: '0.35rem' }}>{totalWaDelivered} Delivered</span>
+                </div>
+              </div>
+
+              {/* Export Action Cards */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                <div style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--text-secondary)' }}>Choose Export Format:</div>
+                
+                {/* 1. PDF / Print Report */}
+                <div
+                  onClick={() => { setShowReportModal(false); handlePrintReport(); }}
+                  style={{
+                    padding: '0.85rem 1rem', borderRadius: 8, background: 'var(--bg-tertiary)',
+                    border: '1px solid var(--border-color)', cursor: 'pointer', display: 'flex',
+                    alignItems: 'center', justifyContent: 'space-between', transition: 'all 0.15s ease'
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--accent-primary)'}
+                  onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border-color)'}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                    <div style={{ width: 36, height: 36, borderRadius: 8, background: 'rgba(99,102,241,0.12)', color: 'var(--accent-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <Printer size={18} />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '0.84rem', fontWeight: 700, color: 'var(--text-primary)' }}>Print / Save Executive PDF Report</div>
+                      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Formatted high-resolution executive summary layout for print & PDF download</div>
+                    </div>
+                  </div>
+                  <button type="button" className="btn btn-sm btn-primary" style={{ pointerEvents: 'none' }}>
+                    <Printer size={13} /> Print PDF
+                  </button>
+                </div>
+
+                {/* 2. CSV Data Sheet */}
+                <div
+                  onClick={() => { handleExportCsv(); setShowReportModal(false); }}
+                  style={{
+                    padding: '0.85rem 1rem', borderRadius: 8, background: 'var(--bg-tertiary)',
+                    border: '1px solid var(--border-color)', cursor: 'pointer', display: 'flex',
+                    alignItems: 'center', justifyContent: 'space-between', transition: 'all 0.15s ease'
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--success)'}
+                  onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border-color)'}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                    <div style={{ width: 36, height: 36, borderRadius: 8, background: 'rgba(16,185,129,0.12)', color: 'var(--success)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <FileSpreadsheet size={18} />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '0.84rem', fontWeight: 700, color: 'var(--text-primary)' }}>Export Executive CSV Spreadsheet</div>
+                      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Includes KPI summaries, monthly revenue, and individual invoice ledger data</div>
+                    </div>
+                  </div>
+                  <button type="button" className="btn btn-sm btn-success" style={{ pointerEvents: 'none' }}>
+                    <Download size={13} /> Download CSV
+                  </button>
+                </div>
+
+                {/* 3. Open BI Analytics Center */}
+                <div
+                  onClick={() => { setShowReportModal(false); navigate('/reports'); }}
+                  style={{
+                    padding: '0.85rem 1rem', borderRadius: 8, background: 'var(--bg-tertiary)',
+                    border: '1px solid var(--border-color)', cursor: 'pointer', display: 'flex',
+                    alignItems: 'center', justifyContent: 'space-between', transition: 'all 0.15s ease'
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--warning)'}
+                  onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border-color)'}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                    <div style={{ width: 36, height: 36, borderRadius: 8, background: 'rgba(245,158,11,0.12)', color: 'var(--warning)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <BarChart3 size={18} />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '0.84rem', fontWeight: 700, color: 'var(--text-primary)' }}>Open Reports & Analytics Hub</div>
+                      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Explore multi-period cohort charts, campaign attribution, and Google Sheets sync</div>
+                    </div>
+                  </div>
+                  <button type="button" className="btn btn-sm btn-secondary" style={{ pointerEvents: 'none' }}>
+                    <ExternalLink size={13} /> Open Studio
+                  </button>
+                </div>
+
+              </div>
+
+            </div>
+
+            {/* Modal Footer */}
+            <div style={{ padding: '0.85rem 1.5rem', background: 'var(--bg-secondary)', borderTop: '1px solid var(--border-color)', display: 'flex', justifyContent: 'flex-end' }}>
+              <button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowReportModal(false)}>
+                Close
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };
