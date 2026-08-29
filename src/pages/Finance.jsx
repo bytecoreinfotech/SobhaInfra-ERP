@@ -36,7 +36,8 @@ const Finance = () => {
   const [search, setSearch] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
-  const [activeDatePreset, setActiveDatePreset] = useState(''); // 'today' | 'week' | 'month' | '3m' | '6m' | 'fy' | 'last_fy' | 'custom' | ''
+  const [activeDatePreset, setActiveDatePreset] = useState(''); // 'today' | 'week' | 'month' | 'last_month' | '3m' | '6m' | 'fy' | 'last_fy' | 'all_db' | 'custom' | ''
+  const [dateFilterField, setDateFilterField] = useState('invoice_date'); // 'invoice_date' | 'due_date'
   const [sortBy, setSortBy] = useState('date_desc'); // date_desc | date_asc | amount_desc | amount_asc
   const [previewPdfUrl, setPreviewPdfUrl] = useState(null);
   const [remindingId, setRemindingId] = useState(null);
@@ -199,25 +200,49 @@ const Finance = () => {
     }
   };
 
-  // Metrics
-  const totalInvoiced = invoices.reduce((s, i) => s + Number(i.amount || 0), 0);
-  const totalPaid = invoices.filter(i => i.status === 'Paid').reduce((s, i) => s + Number(i.amount || 0), 0);
-  const totalOverdue = invoices.filter(i => i.status === 'Overdue').reduce((s, i) => s + Number(i.amount || 0), 0);
-  const totalPending = invoices.filter(i => i.status === 'Pending').reduce((s, i) => s + Number(i.amount || 0), 0);
+  // Helper to extract YYYY-MM-DD cleanly from any ISO string, date object, or SQL date
+  const toDateOnlyStr = (d) => {
+    if (!d) return '';
+    if (typeof d === 'string') {
+      const match = d.match(/^(\d{4}-\d{2}-\d{2})/);
+      if (match) return match[1];
+    }
+    try {
+      const dt = new Date(d);
+      if (isNaN(dt.getTime())) return '';
+      return dt.toISOString().slice(0, 10);
+    } catch {
+      return '';
+    }
+  };
 
-  // Filter by status, search, and date range
-  const filtered = invoices.filter(inv => {
+  // 1. Date Range Filter slice
+  const dateFilteredInvoices = invoices.filter(inv => {
+    const invInvoiceDate = toDateOnlyStr(inv.invoice_date || inv.created_at);
+    const invDueDate = toDateOnlyStr(inv.due_date);
+    const targetDate = dateFilterField === 'due_date'
+      ? (invDueDate || invInvoiceDate)
+      : (invInvoiceDate || invDueDate);
+
+    if (dateFrom && targetDate && targetDate < dateFrom) return false;
+    if (dateTo && targetDate && targetDate > dateTo) return false;
+    return true;
+  });
+
+  // 2. Metrics dynamically reflect the selected date range
+  const totalInvoiced = dateFilteredInvoices.reduce((s, i) => s + Number(i.amount || 0), 0);
+  const totalPaid = dateFilteredInvoices.filter(i => i.status === 'Paid').reduce((s, i) => s + Number(i.amount || 0), 0);
+  const totalOverdue = dateFilteredInvoices.filter(i => i.status === 'Overdue').reduce((s, i) => s + Number(i.amount || 0), 0);
+  const totalPending = dateFilteredInvoices.filter(i => i.status === 'Pending').reduce((s, i) => s + Number(i.amount || 0), 0);
+
+  // 3. Search & Status Filter
+  const filtered = dateFilteredInvoices.filter(inv => {
     const matchSearch = !search ||
       inv.invoice_number?.toLowerCase().includes(search.toLowerCase()) ||
       inv.client_name?.toLowerCase().includes(search.toLowerCase()) ||
       inv.client_phone?.includes(search) ||
       inv.company_name?.toLowerCase().includes(search.toLowerCase());
     if (!matchSearch) return false;
-
-    // Date range filter (uses due_date or invoice_date or created_at)
-    const invDate = inv.due_date || inv.invoice_date || inv.created_at;
-    if (dateFrom && invDate && new Date(invDate) < new Date(dateFrom)) return false;
-    if (dateTo && invDate && new Date(invDate) > new Date(dateTo + 'T23:59:59')) return false;
 
     if (filter === 'All') return true;
     if (filter === 'Overdue') return inv.status === 'Overdue';
@@ -226,8 +251,8 @@ const Finance = () => {
     if (filter === 'Paused') return inv.reminder_paused === true || inv.reminder_paused === 'true';
     return true;
   }).sort((a, b) => {
-    const da = new Date(a.due_date || a.invoice_date || a.created_at || 0);
-    const db = new Date(b.due_date || b.invoice_date || b.created_at || 0);
+    const da = new Date(a.invoice_date || a.due_date || a.created_at || 0);
+    const db = new Date(b.invoice_date || b.due_date || b.created_at || 0);
     if (sortBy === 'date_desc') return db - da;
     if (sortBy === 'date_asc') return da - db;
     if (sortBy === 'amount_desc') return Number(b.amount || 0) - Number(a.amount || 0);
@@ -235,7 +260,7 @@ const Finance = () => {
     return db - da;
   });
 
-  const pausedCount = invoices.filter(i => i.reminder_paused === true || i.reminder_paused === 'true').length;
+  const pausedCount = dateFilteredInvoices.filter(i => i.reminder_paused === true || i.reminder_paused === 'true').length;
 
   const fmtCurrency = (n) => '₹' + Number(n || 0).toLocaleString('en-IN');
 
@@ -482,136 +507,180 @@ const Finance = () => {
             <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{filtered.length} result{filtered.length !== 1 ? 's' : ''}</span>
           </div>
 
-          {/* ── Date Range Presets ────────────────────────────────────── */}
-          <div style={{
-            display: 'flex', gap: '0.45rem', flexWrap: 'wrap', alignItems: 'center',
-            padding: '0.6rem 0.9rem',
-            background: 'var(--bg-secondary)',
-            border: '1px solid var(--border-color)',
-            borderRadius: 'var(--radius-md)',
-          }}>
-            <CalendarClock size={14} color="var(--accent-primary)" style={{ flexShrink: 0 }} />
-            <span style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-muted)', whiteSpace: 'nowrap', marginRight: '0.2rem' }}>Date Range:</span>
+          {/* ── Date Range Presets & Controls ────────────────────────── */}
+          {(() => {
+            const dbDates = allInvoices
+              .map(i => i.invoice_date || i.due_date || i.created_at)
+              .filter(Boolean).map(d => new Date(d)).filter(d => !isNaN(d));
+            const earliestDbDate = dbDates.length ? new Date(Math.min(...dbDates)) : null;
+            const latestDbDate   = dbDates.length ? new Date(Math.max(...dbDates)) : null;
 
-            {/* Quick preset chips */}
-            {[
-              { label: 'Today', key: 'today' },
-              { label: 'This Week', key: 'week' },
-              { label: 'This Month', key: 'month' },
-              { label: 'Last 3 Months', key: '3m' },
-              { label: 'Last 6 Months', key: '6m' },
-              { label: 'This FY', key: 'fy' },
-              { label: 'Last FY', key: 'last_fy' },
-            ].map(preset => {
-              const isActive = activeDatePreset === preset.key;
-              return (
-                <button
-                  key={preset.key}
-                  onClick={() => {
-                    const today = new Date();
-                    const fmt = d => d.toISOString().slice(0, 10);
-                    if (isActive) {
-                      // clicking active preset clears it
-                      setActiveDatePreset(''); setDateFrom(''); setDateTo('');
-                      return;
-                    }
-                    setActiveDatePreset(preset.key);
-                    if (preset.key === 'today') {
-                      setDateFrom(fmt(today)); setDateTo(fmt(today));
-                    } else if (preset.key === 'week') {
-                      const start = new Date(today); start.setDate(today.getDate() - today.getDay());
-                      setDateFrom(fmt(start)); setDateTo(fmt(today));
-                    } else if (preset.key === 'month') {
-                      setDateFrom(fmt(new Date(today.getFullYear(), today.getMonth(), 1)));
-                      setDateTo(fmt(today));
-                    } else if (preset.key === '3m') {
-                      const d = new Date(today); d.setMonth(d.getMonth() - 3);
-                      setDateFrom(fmt(d)); setDateTo(fmt(today));
-                    } else if (preset.key === '6m') {
-                      const d = new Date(today); d.setMonth(d.getMonth() - 6);
-                      setDateFrom(fmt(d)); setDateTo(fmt(today));
-                    } else if (preset.key === 'fy') {
-                      const fyStart = today.getMonth() >= 3
-                        ? new Date(today.getFullYear(), 3, 1)
-                        : new Date(today.getFullYear() - 1, 3, 1);
-                      const fyEnd = new Date(fyStart.getFullYear() + 1, 2, 31);
-                      setDateFrom(fmt(fyStart)); setDateTo(fmt(fyEnd > today ? today : fyEnd));
-                    } else if (preset.key === 'last_fy') {
-                      const fyStart = today.getMonth() >= 3
-                        ? new Date(today.getFullYear() - 1, 3, 1)
-                        : new Date(today.getFullYear() - 2, 3, 1);
-                      const fyEnd = new Date(fyStart.getFullYear() + 1, 2, 31);
-                      setDateFrom(fmt(fyStart)); setDateTo(fmt(fyEnd));
-                    }
-                  }}
-                  style={{
-                    padding: '0.28rem 0.65rem', borderRadius: 20,
-                    border: isActive ? '2px solid var(--accent-primary)' : '1px solid var(--border-color)',
-                    fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer',
-                    background: isActive ? 'var(--accent-primary)' : 'var(--bg-tertiary)',
-                    color: isActive ? 'white' : 'var(--text-secondary)',
-                    transition: 'all 0.15s',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {preset.label}
-                </button>
-              );
-            })}
-
-            {/* Divider */}
-            <div style={{ width: 1, height: 18, background: 'var(--border-color)', flexShrink: 0, margin: '0 0.1rem' }} />
-
-            {/* From / To — ALWAYS VISIBLE */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-              <label style={{ fontSize: '0.72rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>From</label>
-              <input
-                type="date"
-                className="input-field"
-                style={{ padding: '0.28rem 0.45rem', fontSize: '0.74rem', width: 128 }}
-                value={dateFrom}
-                onChange={e => { setDateFrom(e.target.value); setActiveDatePreset('custom'); }}
-              />
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-              <label style={{ fontSize: '0.72rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>To</label>
-              <input
-                type="date"
-                className="input-field"
-                style={{ padding: '0.28rem 0.45rem', fontSize: '0.74rem', width: 128 }}
-                value={dateTo}
-                onChange={e => { setDateTo(e.target.value); setActiveDatePreset('custom'); }}
-              />
-            </div>
-
-            {/* Clear dates button — shown whenever date is set */}
-            {(dateFrom || dateTo) && (
-              <button
-                onClick={() => { setDateFrom(''); setDateTo(''); setActiveDatePreset(''); }}
-                style={{
-                  marginLeft: '0.3rem', fontSize: '0.7rem', padding: '0.25rem 0.6rem',
-                  color: 'white', background: 'var(--danger)', border: 'none',
-                  borderRadius: 12, cursor: 'pointer', whiteSpace: 'nowrap', fontWeight: 600,
-                }}
-              >
-                ✕ Clear
-              </button>
-            )}
-
-            {/* Active range display */}
-            {(dateFrom || dateTo) && (
-              <span style={{
-                marginLeft: 'auto', fontSize: '0.72rem', color: 'var(--accent-primary)',
-                fontWeight: 700, whiteSpace: 'nowrap', background: 'var(--accent-glow)',
-                padding: '0.2rem 0.6rem', borderRadius: 10,
+            return (
+              <div style={{
+                display: 'flex', gap: '0.45rem', flexWrap: 'wrap', alignItems: 'center',
+                padding: '0.55rem 0.85rem',
+                background: 'var(--bg-secondary)',
+                border: '1px solid var(--border-color)',
+                borderRadius: 'var(--radius-md)',
               }}>
-                {dateFrom ? new Date(dateFrom).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Start'}
-                {' → '}
-                {dateTo ? new Date(dateTo).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Today'}
-                {' '}({filtered.length} records)
-              </span>
-            )}
-          </div>
+                {/* Date Target Mode Selector */}
+                <div style={{ display: 'inline-flex', background: 'var(--bg-tertiary)', padding: 2, borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', marginRight: '0.2rem' }}>
+                  <button
+                    type="button"
+                    onClick={() => setDateFilterField('invoice_date')}
+                    title="Filter by Invoice Billed Date"
+                    style={{
+                      padding: '0.22rem 0.55rem', borderRadius: 4, border: 'none',
+                      fontSize: '0.7rem', fontWeight: dateFilterField === 'invoice_date' ? 700 : 500,
+                      background: dateFilterField === 'invoice_date' ? 'var(--accent-primary)' : 'transparent',
+                      color: dateFilterField === 'invoice_date' ? 'white' : 'var(--text-secondary)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    📅 Bill Date
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDateFilterField('due_date')}
+                    title="Filter by Payment Due Date"
+                    style={{
+                      padding: '0.22rem 0.55rem', borderRadius: 4, border: 'none',
+                      fontSize: '0.7rem', fontWeight: dateFilterField === 'due_date' ? 700 : 500,
+                      background: dateFilterField === 'due_date' ? 'var(--accent-primary)' : 'transparent',
+                      color: dateFilterField === 'due_date' ? 'white' : 'var(--text-secondary)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    ⏰ Due Date
+                  </button>
+                </div>
+
+                <div style={{ width: 1, height: 16, background: 'var(--border-color)', flexShrink: 0 }} />
+
+                {/* Quick preset chips */}
+                {[
+                  { label: '📦 All DB Data', key: 'all_db' },
+                  { label: 'Today', key: 'today' },
+                  { label: 'This Week', key: 'week' },
+                  { label: 'This Month', key: 'month' },
+                  { label: 'Last 3 Months', key: '3m' },
+                  { label: 'Last 6 Months', key: '6m' },
+                  { label: 'This FY', key: 'fy' },
+                  { label: 'Last FY', key: 'last_fy' },
+                ].map(preset => {
+                  const isActive = activeDatePreset === preset.key;
+                  return (
+                    <button
+                      key={preset.key}
+                      onClick={() => {
+                        const today = new Date();
+                        const fmt = d => d.toISOString().slice(0, 10);
+                        if (isActive) {
+                          setActiveDatePreset(''); setDateFrom(''); setDateTo('');
+                          return;
+                        }
+                        setActiveDatePreset(preset.key);
+                        if (preset.key === 'all_db' && earliestDbDate && latestDbDate) {
+                          setDateFrom(fmt(earliestDbDate)); setDateTo(fmt(latestDbDate));
+                        } else if (preset.key === 'today') {
+                          setDateFrom(fmt(today)); setDateTo(fmt(today));
+                        } else if (preset.key === 'week') {
+                          const start = new Date(today); start.setDate(today.getDate() - today.getDay());
+                          setDateFrom(fmt(start)); setDateTo(fmt(today));
+                        } else if (preset.key === 'month') {
+                          setDateFrom(fmt(new Date(today.getFullYear(), today.getMonth(), 1)));
+                          setDateTo(fmt(today));
+                        } else if (preset.key === '3m') {
+                          const d = new Date(today); d.setMonth(d.getMonth() - 3);
+                          setDateFrom(fmt(d)); setDateTo(fmt(today));
+                        } else if (preset.key === '6m') {
+                          const d = new Date(today); d.setMonth(d.getMonth() - 6);
+                          setDateFrom(fmt(d)); setDateTo(fmt(today));
+                        } else if (preset.key === 'fy') {
+                          const fyStart = today.getMonth() >= 3
+                            ? new Date(today.getFullYear(), 3, 1)
+                            : new Date(today.getFullYear() - 1, 3, 1);
+                          const fyEnd = new Date(fyStart.getFullYear() + 1, 2, 31);
+                          setDateFrom(fmt(fyStart)); setDateTo(fmt(fyEnd > today ? today : fyEnd));
+                        } else if (preset.key === 'last_fy') {
+                          const fyStart = today.getMonth() >= 3
+                            ? new Date(today.getFullYear() - 1, 3, 1)
+                            : new Date(today.getFullYear() - 2, 3, 1);
+                          const fyEnd = new Date(fyStart.getFullYear() + 1, 2, 31);
+                          setDateFrom(fmt(fyStart)); setDateTo(fmt(fyEnd));
+                        }
+                      }}
+                      style={{
+                        padding: '0.24rem 0.6rem', borderRadius: 20,
+                        border: isActive ? '2px solid var(--accent-primary)' : '1px solid var(--border-color)',
+                        fontSize: '0.71rem', fontWeight: 600, cursor: 'pointer',
+                        background: isActive ? 'var(--accent-primary)' : 'var(--bg-tertiary)',
+                        color: isActive ? 'white' : 'var(--text-secondary)',
+                        transition: 'all 0.15s',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {preset.label}
+                    </button>
+                  );
+                })}
+
+                {/* Divider */}
+                <div style={{ width: 1, height: 16, background: 'var(--border-color)', flexShrink: 0, margin: '0 0.1rem' }} />
+
+                {/* From / To inputs */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                  <label style={{ fontSize: '0.7rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>From</label>
+                  <input
+                    type="date"
+                    className="input-field"
+                    style={{ padding: '0.22rem 0.4rem', fontSize: '0.72rem', width: 125 }}
+                    value={dateFrom}
+                    onChange={e => { setDateFrom(e.target.value); setActiveDatePreset('custom'); }}
+                  />
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                  <label style={{ fontSize: '0.7rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>To</label>
+                  <input
+                    type="date"
+                    className="input-field"
+                    style={{ padding: '0.22rem 0.4rem', fontSize: '0.72rem', width: 125 }}
+                    value={dateTo}
+                    onChange={e => { setDateTo(e.target.value); setActiveDatePreset('custom'); }}
+                  />
+                </div>
+
+                {/* Clear button */}
+                {(dateFrom || dateTo) && (
+                  <button
+                    onClick={() => { setDateFrom(''); setDateTo(''); setActiveDatePreset(''); }}
+                    style={{
+                      fontSize: '0.68rem', padding: '0.22rem 0.55rem',
+                      color: 'white', background: 'var(--danger)', border: 'none',
+                      borderRadius: 12, cursor: 'pointer', whiteSpace: 'nowrap', fontWeight: 600,
+                    }}
+                  >
+                    ✕ Clear
+                  </button>
+                )}
+
+                {/* Active range summary badge */}
+                {(dateFrom || dateTo) && (
+                  <span style={{
+                    marginLeft: 'auto', fontSize: '0.7rem', color: 'var(--accent-primary)',
+                    fontWeight: 700, whiteSpace: 'nowrap', background: 'var(--accent-glow)',
+                    padding: '0.15rem 0.55rem', borderRadius: 10,
+                  }}>
+                    {dateFrom ? new Date(dateFrom).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Start'}
+                    {' → '}
+                    {dateTo ? new Date(dateTo).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Today'}
+                    {' '}({filtered.length} vouchers)
+                  </span>
+                )}
+              </div>
+            );
+          })()}
+
 
           {/* Invoices Data Table */}
 
@@ -622,7 +691,7 @@ const Finance = () => {
                   <th>Invoice No.</th>
                   <th>Client / Tally Ledger</th>
                   <th>Contact Phone</th>
-                  <th>Due Date</th>
+                  <th>Date / Due</th>
                   <th>Amount</th>
                   <th>Status</th>
                   <th>Reminder Automation</th>
@@ -631,9 +700,9 @@ const Finance = () => {
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan={7} style={{ textAlign: 'center', padding: '3rem' }}><RefreshCw size={24} className="animate-spin" style={{ color: 'var(--text-muted)' }} /></td></tr>
+                  <tr><td colSpan={8} style={{ textAlign: 'center', padding: '3rem' }}><RefreshCw size={24} className="animate-spin" style={{ color: 'var(--text-muted)' }} /></td></tr>
                 ) : filtered.length === 0 ? (
-                  <tr><td colSpan={7} style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>No invoices found matching criteria.</td></tr>
+                  <tr><td colSpan={8} style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>No invoices found matching criteria.</td></tr>
                 ) : (
                   filtered.map(inv => (
                     <tr
@@ -666,8 +735,15 @@ const Finance = () => {
                       <td style={{ fontFamily: 'monospace', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
                         {normalizePhone(inv.client_phone)}
                       </td>
-                      <td style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                        {inv.due_date ? new Date(inv.due_date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
+                      <td style={{ fontSize: '0.78rem' }}>
+                        <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                          {inv.invoice_date ? new Date(inv.invoice_date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
+                        </div>
+                        {inv.due_date && (
+                          <div style={{ fontSize: '0.67rem', color: 'var(--text-muted)' }}>
+                            Due: {new Date(inv.due_date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' })}
+                          </div>
+                        )}
                       </td>
                       <td style={{ fontWeight: 700, fontSize: '0.88rem' }}>{fmtCurrency(inv.amount)}</td>
                       <td>
@@ -675,6 +751,7 @@ const Finance = () => {
                           {statusConfig[inv.status]?.icon} {inv.status}
                         </span>
                       </td>
+
 
                       {/* Reminder Automation Status */}
                       <td>

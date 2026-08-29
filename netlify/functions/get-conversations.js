@@ -34,6 +34,50 @@ exports.handler = async (event) => {
       return { statusCode: 200, headers: cors, body: JSON.stringify({ conversations: [], messages: [] }) };
     }
 
+    // ── POST actions (update contact name, mode, etc. with service role key) ──
+    if (event.httpMethod === 'POST') {
+      const body = JSON.parse(event.body || '{}');
+      const { action, conversationId, contactName, conversationMode } = body;
+
+      if (action === 'update_contact_name' && conversationId) {
+        const { data, error } = await supabase
+          .from('whatsapp_conversations')
+          .update({
+            contact_name: contactName,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', conversationId)
+          .select()
+          .single();
+
+        if (error) {
+          console.warn('[get-conversations] update_contact_name error:', error.message);
+          return { statusCode: 500, headers: cors, body: JSON.stringify({ error: error.message }) };
+        }
+        return { statusCode: 200, headers: cors, body: JSON.stringify({ success: true, data }) };
+      }
+
+      if (action === 'update_conversation_mode' && conversationId) {
+        const { data, error } = await supabase
+          .from('whatsapp_conversations')
+          .update({
+            conversation_mode: conversationMode,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', conversationId)
+          .select()
+          .single();
+
+        if (error) {
+          console.warn('[get-conversations] update_conversation_mode error:', error.message);
+          return { statusCode: 500, headers: cors, body: JSON.stringify({ error: error.message }) };
+        }
+        return { statusCode: 200, headers: cors, body: JSON.stringify({ success: true, data }) };
+      }
+
+      return { statusCode: 400, headers: cors, body: JSON.stringify({ error: 'Invalid action or missing parameters' }) };
+    }
+
     const convId = event.queryStringParameters?.conv_id;
     const loadKb = event.queryStringParameters?.kb === '1';
 
