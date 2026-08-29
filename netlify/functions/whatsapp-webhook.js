@@ -54,8 +54,75 @@ function getSupabaseAdmin() {
   });
 }
 
+// ─── Status Update Processor (Delivery, Read, Failed receipts from Meta) ─────
+async function handleStatusUpdate(supabase, statuses) {
+  if (!statuses || statuses.length === 0) return;
+  for (const st of statuses) {
+    const wamid = st.id;
+    const status = st.status; // 'delivered', 'read', 'sent', 'failed'
+    const recipientId = st.recipient_id;
+    const timestamp = st.timestamp ? new Date(parseInt(st.timestamp, 10) * 1000).toISOString() : new Date().toISOString();
+
+    console.log(JSON.stringify({ step: 'status_update_item', wamid, status, recipientId }));
+
+    if (supabase) {
+      try {
+        // 1. Update message status in whatsapp_messages table
+        if (wamid) {
+          await supabase
+            .from('whatsapp_messages')
+            .update({ status: status })
+            .eq('provider_message_id', wamid);
+        }
+
+        // 2. If 'read', increment total_read on latest wa_campaigns
+        if (status === 'read') {
+          const { data: latestCamp } = await supabase
+            .from('wa_campaigns')
+            .select('id, total_read, total_sent')
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (latestCamp) {
+            const currentRead = latestCamp.total_read || 0;
+            const currentSent = latestCamp.total_sent || 1;
+            const newRead = Math.min(currentRead + 1, currentSent);
+            await supabase
+              .from('wa_campaigns')
+              .update({ total_read: newRead, updated_at: new Date().toISOString() })
+              .eq('id', latestCamp.id);
+          }
+        }
+
+        // 3. If 'delivered', increment delivered on latest wa_campaigns
+        if (status === 'delivered') {
+          const { data: latestCamp } = await supabase
+            .from('wa_campaigns')
+            .select('id, delivered, total_sent')
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (latestCamp) {
+            const currentDelivered = latestCamp.delivered || 0;
+            const currentSent = latestCamp.total_sent || 1;
+            const newDelivered = Math.min(currentDelivered + 1, currentSent);
+            await supabase
+              .from('wa_campaigns')
+              .update({ delivered: newDelivered, updated_at: new Date().toISOString() })
+              .eq('id', latestCamp.id);
+          }
+        }
+      } catch (err) {
+        console.warn('[handleStatusUpdate] warning:', err.message);
+      }
+    }
+  }
+}
 
 // ─── 2. HMAC SHA-256 Signature Verification (Spec §11, §37) ──────────────────
+
 function verifyWebhookSignature(rawBody, signatureHeader) {
   if (!WA_APP_SECRET) {
     // If app secret not configured, skip verification (dev mode) but log warning
@@ -923,11 +990,34 @@ exports.handler = async (event) => {
         const isHandoff = handoffTriggers.some(t => messageText.toLowerCase().includes(t));
         await logLeadQualification(supabase, { leadId, messageText, isHandoff });
 
+        // Increment campaign reply count
+        try {
+          const { data: latestCamp } = await supabase
+            .from('wa_campaigns')
+            .select('id, total_replied, total_sent')
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (latestCamp) {
+            const currentReplied = latestCamp.total_replied || 0;
+            const currentSent = latestCamp.total_sent || 1;
+            const newReplied = Math.min(currentReplied + 1, currentSent);
+            await supabase
+              .from('wa_campaigns')
+              .update({ total_replied: newReplied, updated_at: new Date().toISOString() })
+              .eq('id', latestCamp.id);
+          }
+        } catch (campErr) {
+          console.warn('[webhook] wa_campaigns reply increment warning:', campErr.message);
+        }
+
         console.log(JSON.stringify({ step: 'db_write', status: 'success', convId: conversationId, leadId }));
       } catch (dbErr) {
         console.warn(JSON.stringify({ step: 'db_write', status: 'error', error: dbErr.message }));
       }
     }
+
 
     // ── Human Handover & Interactive Action Buttons Router ─────────────────
     const buttonId = msg.interactive?.button_reply?.id || msg.interactive?.list_reply?.id || '';

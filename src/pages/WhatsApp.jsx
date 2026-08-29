@@ -161,6 +161,12 @@ const WhatsApp = () => {
           });
         }
       }
+
+      // Refresh campaigns data for live read/reply counts
+      const liveCamps = await fetchLiveCampaigns();
+      if (liveCamps.length > 0) {
+        setCampaigns(liveCamps);
+      }
     }, 4000);
 
     return () => clearInterval(pollInterval);
@@ -331,11 +337,12 @@ const WhatsApp = () => {
     setFeedbackSuccess(true);
   };
 
-  const totalSent = campaigns.reduce((s, c) => s + (c.total_sent || 0), 0);
-  const totalDelivered = campaigns.reduce((s, c) => s + (c.delivered || 0), 0);
-  const totalRead = campaigns.reduce((s, c) => s + (c.read_count || 0), 0);
-  const totalReplied = campaigns.reduce((s, c) => s + (c.replied || 0), 0);
+  const totalSent = campaigns.reduce((s, c) => s + (c.total_sent || c.sent || 0), 0);
+  const totalDelivered = campaigns.reduce((s, c) => s + (c.delivered || c.total_delivered || c.total_sent || 0), 0);
+  const totalRead = campaigns.reduce((s, c) => s + (c.total_read ?? c.read_count ?? c.read ?? 0), 0);
+  const totalReplied = campaigns.reduce((s, c) => s + (c.total_replied ?? c.replied ?? c.replies ?? 0), 0);
   const readRate = totalSent > 0 ? ((totalRead / totalSent) * 100).toFixed(1) : '0.0';
+
 
   const filteredConversations = conversations.filter(c => {
     if (!searchConv) return true;
@@ -880,11 +887,12 @@ const WhatsApp = () => {
                       <td style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
                         {c.created_at ? new Date(c.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—'}
                       </td>
-                      <td style={{ fontWeight: 700 }}>{(c.total_sent || 0).toLocaleString()}</td>
-                      <td style={{ color: 'var(--success)' }}>{(c.delivered || c.total_sent || 0).toLocaleString()}</td>
-                      <td style={{ color: 'var(--warning)' }}>{(c.read_count || 0).toLocaleString()}</td>
-                      <td style={{ color: 'var(--whatsapp)' }}>{(c.replied || 0)}</td>
+                      <td style={{ fontWeight: 700 }}>{(c.total_sent || c.sent || 0).toLocaleString()}</td>
+                      <td style={{ color: 'var(--success)' }}>{(c.delivered || c.total_delivered || c.total_sent || 0).toLocaleString()}</td>
+                      <td style={{ color: 'var(--warning)', fontWeight: 600 }}>{(c.total_read ?? c.read_count ?? c.read ?? 0).toLocaleString()}</td>
+                      <td style={{ color: 'var(--whatsapp)', fontWeight: 600 }}>{(c.total_replied ?? c.replied ?? c.replies ?? 0).toLocaleString()}</td>
                       <td style={{ fontSize: '0.78rem', color: 'var(--text-muted)', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.template_name || 'Custom Broadcast'}</td>
+
                     </tr>
                   ))}
                 </tbody>

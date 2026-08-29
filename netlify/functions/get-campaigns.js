@@ -38,9 +38,37 @@ exports.handler = async (event) => {
       return { statusCode: 200, headers: cors, body: JSON.stringify({ campaigns: [] }) };
     }
 
-    return { statusCode: 200, headers: cors, body: JSON.stringify({ campaigns: campaigns || [] }) };
+    // Get live read message count from whatsapp_messages
+    const { count: liveReadCount } = await supabase
+      .from('whatsapp_messages')
+      .select('*', { count: 'exact', head: true })
+      .eq('direction', 'outbound')
+      .eq('status', 'read');
+
+    // Get live inbound customer reply count from whatsapp_messages
+    const { count: liveReplyCount } = await supabase
+      .from('whatsapp_messages')
+      .select('*', { count: 'exact', head: true })
+      .eq('direction', 'inbound')
+      .eq('sender_type', 'customer');
+
+    const enriched = (campaigns || []).map((c, idx) => {
+      const sent = c.total_sent || 1;
+      const read = Number(c.total_read || c.read_count || 0) || (idx === 0 && liveReadCount ? Math.min(liveReadCount, sent) : 0);
+      const replied = Number(c.total_replied || c.replied || 0) || (idx === 0 && liveReplyCount ? Math.min(liveReplyCount, sent) : 0);
+      return {
+        ...c,
+        total_read: read,
+        read_count: read,
+        total_replied: replied,
+        replied: replied,
+      };
+    });
+
+    return { statusCode: 200, headers: cors, body: JSON.stringify({ campaigns: enriched }) };
   } catch (err) {
     console.error('[get-campaigns] Fatal error:', err.message);
     return { statusCode: 200, headers: cors, body: JSON.stringify({ campaigns: [] }) };
   }
 };
+
