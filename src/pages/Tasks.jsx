@@ -67,6 +67,7 @@ const Tasks = () => {
   const [search, setSearch] = useState('');
   const [assigneeFilter, setAssigneeFilter] = useState('All');
   const [mobileActiveCol, setMobileActiveCol] = useState('All');
+  const [taskTypeFilter, setTaskTypeFilter] = useState('all'); // 'all' | 'recurring' | 'manual'
 
   // Task Details & Comment Drawer
   const [selectedTask, setSelectedTask] = useState(null);
@@ -570,7 +571,26 @@ const Tasks = () => {
     return (uName && assigned.includes(uName)) || (uRole && assigned.includes(uRole)) || assigned.includes('all');
   };
 
-  const tasksByCol = (col) => tasks.filter(t => t.status === col && matchesAssignee(t) && (!search || t.title.toLowerCase().includes(search.toLowerCase())));
+  const matchesTypeFilter = (t) => {
+    if (taskTypeFilter === 'recurring') return t.is_recurring === true;
+    if (taskTypeFilter === 'manual') return !t.is_recurring;
+    return true;
+  };
+
+  const tasksByCol = (col) => tasks.filter(t =>
+    t.status === col &&
+    matchesAssignee(t) &&
+    matchesTypeFilter(t) &&
+    (!search || t.title.toLowerCase().includes(search.toLowerCase()))
+  );
+
+  const allVisibleTasks = tasks.filter(t => matchesAssignee(t) && matchesTypeFilter(t) && (!search || t.title.toLowerCase().includes(search.toLowerCase())));
+  const todayStr = new Date().toISOString().split('T')[0];
+  const recurringTasks = tasks.filter(t => matchesAssignee(t) && t.is_recurring);
+  const todayRecurring = recurringTasks.filter(t => t.due_date === todayStr || t.due_date?.startsWith(todayStr));
+  const recurringDone = todayRecurring.filter(t => t.status === 'Done').length;
+  const recurringPending = todayRecurring.filter(t => t.status === 'To Do' || t.status === 'In Progress').length;
+  const recurringReview = todayRecurring.filter(t => t.status === 'Under Review').length;
 
   const statusBadge = { 'To Do': 'badge-neutral', 'In Progress': 'badge-warning', 'Under Review': 'badge-accent', 'Done': 'badge-success' };
 
@@ -696,24 +716,84 @@ const Tasks = () => {
             <div style={{ display: 'flex', justifyContent: 'center', padding: '3rem' }}><RefreshCw size={24} className="animate-spin" style={{ color: 'var(--text-muted)' }} /></div>
           ) : (
             <>
-              {/* Mobile Status Column Pill Switcher */}
+              {/* Admin Recurring Task Summary Bar */}
+              {canViewAll && todayRecurring.length > 0 && (
+                <div style={{
+                  display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center',
+                  padding: '0.65rem 1rem',
+                  background: 'linear-gradient(90deg, rgba(99,102,241,0.08) 0%, rgba(16,185,129,0.06) 100%)',
+                  border: '1px solid rgba(99,102,241,0.2)',
+                  borderRadius: 'var(--radius-md)',
+                  marginBottom: '0.75rem',
+                  fontSize: '0.8rem'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: 700, color: 'var(--accent-primary)' }}>
+                    <Repeat size={14} />
+                    <span>Today's Recurring Routines ({todayRecurring.length} tasks)</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', padding: '0.2rem 0.55rem', borderRadius: 20, background: 'rgba(16,185,129,0.15)', color: 'var(--success)', fontSize: '0.75rem', fontWeight: 700 }}>
+                      <CheckCircle2 size={12} /> {recurringDone} Done
+                    </span>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', padding: '0.2rem 0.55rem', borderRadius: 20, background: 'rgba(245,158,11,0.15)', color: 'var(--warning)', fontSize: '0.75rem', fontWeight: 700 }}>
+                      <Clock size={12} /> {recurringPending} Pending
+                    </span>
+                    {recurringReview > 0 && (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', padding: '0.2rem 0.55rem', borderRadius: 20, background: 'rgba(99,102,241,0.15)', color: 'var(--accent-primary)', fontSize: '0.75rem', fontWeight: 700 }}>
+                        <ShieldCheck size={12} /> {recurringReview} In Review
+                      </span>
+                    )}
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', padding: '0.2rem 0.55rem', borderRadius: 20, background: 'rgba(16,185,129,0.1)', color: 'var(--success)', fontSize: '0.72rem', fontWeight: 600 }}>
+                      ✅ {todayRecurring.length > 0 ? Math.round((recurringDone / todayRecurring.length) * 100) : 0}% Complete
+                    </span>
+                  </div>
+                  <button
+                    className="btn btn-secondary"
+                    style={{ marginLeft: 'auto', fontSize: '0.72rem', padding: '0.25rem 0.65rem' }}
+                    onClick={() => setTaskTypeFilter(taskTypeFilter === 'recurring' ? 'all' : 'recurring')}
+                  >
+                    {taskTypeFilter === 'recurring' ? '← Show All' : '🔁 View Daily Routines'}
+                  </button>
+                </div>
+              )}
+
+              {/* Status Column Filter Pills + Type Filter */}
               <div className="tasks-mobile-col-switcher">
-                {['All', ...COLUMNS].map(col => {
+                {[{ id: 'All', label: 'All', color: 'var(--text-muted)' },
+                  { id: 'To Do', label: 'To Do', color: 'var(--text-muted)' },
+                  { id: 'In Progress', label: 'In Progress', color: 'var(--warning)' },
+                  { id: 'Under Review', label: 'Under Review', color: 'var(--accent-primary)' },
+                  { id: 'Done', label: 'Done', color: 'var(--success)' }
+                ].map(({ id: col, label, color }) => {
                   const count = col === 'All'
-                    ? tasks.filter(t => matchesAssignee(t)).length
+                    ? allVisibleTasks.length
                     : tasksByCol(col).length;
+                  const isActive = mobileActiveCol === col;
                   return (
                     <button
                       key={col}
                       type="button"
-                      className={`tasks-mobile-pill ${mobileActiveCol === col ? 'active' : ''}`}
+                      className={`tasks-mobile-pill ${isActive ? 'active' : ''}`}
+                      style={!isActive ? { borderColor: color, color } : {}}
                       onClick={() => setMobileActiveCol(col)}
                     >
-                      <span>{col}</span>
+                      <span>{label}</span>
                       <span className="tasks-mobile-pill-count">{count}</span>
                     </button>
                   );
                 })}
+                <div style={{ width: 1, height: 24, background: 'var(--border-color)', margin: '0 0.25rem', flexShrink: 0 }} />
+                {[{ id: 'all', label: '📋 All Tasks' }, { id: 'recurring', label: '🔁 Routines' }, { id: 'manual', label: '✏️ Manual' }].map(({ id, label }) => (
+                  <button
+                    key={id}
+                    type="button"
+                    className={`tasks-mobile-pill ${taskTypeFilter === id ? 'active' : ''}`}
+                    style={taskTypeFilter === id ? {} : { borderStyle: 'dashed' }}
+                    onClick={() => setTaskTypeFilter(id)}
+                  >
+                    {label}
+                  </button>
+                ))}
               </div>
 
               {/* Kanban Board */}
@@ -740,12 +820,22 @@ const Tasks = () => {
                                 onClick={() => setSelectedTask(task)}
                                 style={{
                                   cursor: 'pointer', position: 'relative',
-                                  borderLeft: isUnderReview ? '3px solid var(--accent-primary)' : undefined,
+                                  borderLeft: isUnderReview
+                                    ? '3px solid var(--accent-primary)'
+                                    : task.is_recurring
+                                      ? '3px solid rgba(99,102,241,0.5)'
+                                      : undefined,
                                 }}
                               >
                                 {isUnderReview && (
                                   <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', padding: '0.15rem 0.45rem', borderRadius: 4, background: 'rgba(99,102,241,0.15)', color: 'var(--accent-primary)', fontSize: '0.62rem', fontWeight: 800, marginBottom: '0.35rem' }}>
                                     <ShieldCheck size={11} /> ⏳ REVIEW REQUIRED
+                                  </div>
+                                )}
+
+                                {task.is_recurring && !isUnderReview && (
+                                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', padding: '0.1rem 0.4rem', borderRadius: 4, background: 'rgba(99,102,241,0.1)', color: 'var(--accent-primary)', fontSize: '0.6rem', fontWeight: 700, marginBottom: '0.3rem', border: '1px solid rgba(99,102,241,0.2)' }}>
+                                    <Repeat size={9} /> 🔁 DAILY ROUTINE
                                   </div>
                                 )}
 
@@ -765,8 +855,8 @@ const Tasks = () => {
 
                                 {task.tags?.length > 0 && (
                                   <div style={{ display: 'flex', gap: '0.3rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
-                                    {task.tags.map(tag => <span key={tag} className="badge badge-neutral" style={{ fontSize: '0.62rem' }}>{tag}</span>)}
-                                    {task.is_recurring && <span className="badge badge-accent" style={{ fontSize: '0.62rem' }}>🔁 Daily Routine</span>}
+                                    {task.tags.slice(0, 2).map(tag => <span key={tag} className="badge badge-neutral" style={{ fontSize: '0.62rem' }}>{tag}</span>)}
+                                    {task.tags.length > 2 && <span className="badge badge-neutral" style={{ fontSize: '0.62rem' }}>+{task.tags.length - 2}</span>}
                                   </div>
                                 )}
 
@@ -813,7 +903,7 @@ const Tasks = () => {
                       </tr>
                     </thead>
                     <tbody>
-                      {tasks.filter(t => matchesAssignee(t) && (!search || t.title.toLowerCase().includes(search.toLowerCase()))).map(task => {
+                      {tasks.filter(t => matchesAssignee(t) && matchesTypeFilter(t) && (!search || t.title.toLowerCase().includes(search.toLowerCase()))).map(task => {
                         const hasProof = (task.comments || []).some(c => c.is_proof);
                         return (
                           <tr key={task.id} onClick={() => setSelectedTask(task)} style={{ cursor: 'pointer' }}>
