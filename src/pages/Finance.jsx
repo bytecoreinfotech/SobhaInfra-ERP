@@ -334,6 +334,56 @@ const Finance = () => {
         </div>
       </div>
 
+      {/* ── Finance Data Context Info Bar ────────────────────────────────── */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap',
+        padding: '0.6rem 1.1rem',
+        background: 'var(--bg-secondary)',
+        border: '1px solid var(--border-color)',
+        borderRadius: 'var(--radius-md)',
+        fontSize: '0.78rem',
+      }}>
+        {/* Date Range */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+          <CalendarClock size={14} color="var(--accent-primary)" />
+          <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>Data Range:</span>
+          {dateFrom || dateTo ? (
+            <span style={{ color: 'var(--text-primary)', fontWeight: 700 }}>
+              {dateFrom ? new Date(dateFrom).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Beginning'}
+              &nbsp;→&nbsp;
+              {dateTo ? new Date(dateTo).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Today'}
+            </span>
+          ) : (
+            <span style={{ color: 'var(--text-secondary)' }}>All dates (no filter applied)</span>
+          )}
+        </div>
+
+        <div style={{ width: 1, height: 16, background: 'var(--border-color)', flexShrink: 0 }} />
+
+        {/* Record Count */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+          <FileText size={13} color="var(--text-muted)" />
+          <span style={{ color: 'var(--text-muted)' }}>Showing</span>
+          <span style={{ color: 'var(--accent-primary)', fontWeight: 700 }}>{filtered.length}</span>
+          <span style={{ color: 'var(--text-muted)' }}>of {invoices.length} invoices</span>
+          {filter !== 'All' && <span style={{ color: 'var(--warning)', fontWeight: 600 }}>· Status: {filter}</span>}
+        </div>
+
+        <div style={{ width: 1, height: 16, background: 'var(--border-color)', flexShrink: 0 }} />
+
+        {/* Last Tally Sync */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginLeft: 'auto' }}>
+          <Server size={13} color={tallyStatus?.sync_status === 'Connected' ? 'var(--success)' : 'var(--text-muted)'} />
+          <span style={{ color: 'var(--text-muted)' }}>Last Tally Sync:</span>
+          <span style={{ color: tallyStatus?.last_sync_at ? 'var(--success)' : 'var(--text-muted)', fontWeight: 700 }}>
+            {tallyStatus?.last_sync_at
+              ? new Date(tallyStatus.last_sync_at).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true })
+              : 'Not synced yet'}
+          </span>
+          {isSyncing && <RefreshCw size={12} className="animate-spin" color="var(--accent-primary)" />}
+        </div>
+      </div>
+
       {/* =========================================================================
           TAB 1: INVOICES & AGING OUTSTANDINGS
          ========================================================================= */}
@@ -342,16 +392,17 @@ const Finance = () => {
           {/* KPI Summary Cards */}
           <div className="stats-grid">
             {[
-              { label: 'Total Invoiced', value: fmtCurrency(totalInvoiced), icon: <DollarSign size={20} />, color: 'var(--accent-primary)', bg: 'var(--accent-glow)' },
-              { label: 'Total Collected', value: fmtCurrency(totalPaid), icon: <TrendingUp size={20} />, color: 'var(--success)', bg: 'var(--success-bg)' },
-              { label: 'Overdue Recovery', value: fmtCurrency(totalOverdue), icon: <AlertTriangle size={20} />, color: 'var(--danger)', bg: 'var(--danger-bg)' },
-              { label: 'Pending Due', value: fmtCurrency(totalPending), icon: <Clock size={20} />, color: 'var(--warning)', bg: 'var(--warning-bg)' },
+              { label: 'Total Invoiced', value: fmtCurrency(totalInvoiced), sub: `${invoices.length} invoices`, icon: <DollarSign size={20} />, color: 'var(--accent-primary)', bg: 'var(--accent-glow)' },
+              { label: 'Total Collected', value: fmtCurrency(totalPaid), sub: `${invoices.filter(i => i.status === 'Paid').length} paid`, icon: <TrendingUp size={20} />, color: 'var(--success)', bg: 'var(--success-bg)' },
+              { label: 'Overdue Recovery', value: fmtCurrency(totalOverdue), sub: `${invoices.filter(i => i.status === 'Overdue').length} overdue`, icon: <AlertTriangle size={20} />, color: 'var(--danger)', bg: 'var(--danger-bg)' },
+              { label: 'Pending Due', value: fmtCurrency(totalPending), sub: `${invoices.filter(i => i.status === 'Pending').length} pending`, icon: <Clock size={20} />, color: 'var(--warning)', bg: 'var(--warning-bg)' },
             ].map(s => (
               <div key={s.label} className="stat-card" style={{ '--card-accent': s.color }}>
                 <div className="stat-header">
                   <div>
                     <div className="stat-label">{s.label}</div>
                     <div className="stat-value" style={{ fontSize: '1.55rem' }}>{s.value}</div>
+                    {s.sub && <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>{s.sub}</div>}
                   </div>
                   <div className="stat-icon" style={{ background: s.bg, color: s.color }}>{s.icon}</div>
                 </div>

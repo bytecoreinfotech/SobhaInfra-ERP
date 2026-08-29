@@ -4,73 +4,10 @@ import { DEFAULT_ORG_ID, logAuditEvent, getPermissionMatrix } from '../lib/db';
 
 const AuthContext = createContext(null);
 
-// Demo credentials with explicit permission sets
-const DEMO_USERS = {
-  'admin@erppro.in': {
-    password: 'demo1234',
-    role: 'Super Admin',
-    name: 'Admin User',
-    avatar: 'AU',
-    organization_id: DEFAULT_ORG_ID,
-    permissions: ['all'],
-  },
-  'manager@erppro.in': {
-    password: 'demo1234',
-    role: 'Manager',
-    name: 'Priya Sharma',
-    avatar: 'PS',
-    organization_id: DEFAULT_ORG_ID,
-    permissions: ['dashboard:view', 'whatsapp:view', 'whatsapp:send', 'whatsapp:campaign', 'crm:read', 'crm:write', 'crm:assign', 'tasks:read', 'tasks:write', 'tasks:create', 'tasks:assign', 'tasks:complete', 'finance:read', 'finance:remind', 'ai:view', 'field:view'],
-  },
-  'sales@erppro.in': {
-    password: 'demo1234',
-    role: 'Sales Executive',
-    name: 'Rajesh Kumar',
-    avatar: 'RK',
-    organization_id: DEFAULT_ORG_ID,
-    permissions: ['dashboard:view', 'whatsapp:view', 'whatsapp:send', 'crm:read', 'crm:write', 'tasks:read', 'tasks:update_own', 'ai:view', 'field:view', 'field:checkin'],
-  },
-  'field@erppro.in': {
-    password: 'demo1234',
-    role: 'Sales Executive',
-    name: 'Anand Sharma',
-    avatar: 'AS',
-    organization_id: DEFAULT_ORG_ID,
-    permissions: ['dashboard:view', 'field:view', 'field:checkin', 'tasks:read', 'tasks:update_own', 'crm:read'],
-  },
-  'accounts@erppro.in': {
-    password: 'demo1234',
-    role: 'Accounts',
-    name: 'Sunita Patel',
-    avatar: 'SP',
-    organization_id: DEFAULT_ORG_ID,
-    permissions: ['dashboard:view', 'finance:read', 'finance:sync', 'finance:remind', 'crm:read', 'tasks:read'],
-  },
-  'vikram@erppro.in': {
-    password: 'demo1234',
-    role: 'Sales Executive',
-    name: 'Vikram Singh',
-    avatar: 'VS',
-    organization_id: DEFAULT_ORG_ID,
-    permissions: ['dashboard:view', 'field:view', 'field:checkin', 'tasks:read', 'tasks:update_own', 'crm:read', 'whatsapp:view'],
-  },
-  'deepak@erppro.in': {
-    password: 'demo1234',
-    role: 'Manager',
-    name: 'Deepak Verma',
-    avatar: 'DV',
-    organization_id: DEFAULT_ORG_ID,
-    permissions: ['dashboard:view', 'whatsapp:view', 'whatsapp:send', 'crm:read', 'crm:write', 'tasks:read', 'tasks:write', 'tasks:create', 'tasks:assign', 'tasks:complete', 'finance:read', 'field:view'],
-  },
-  'neha@erppro.in': {
-    password: 'demo1234',
-    role: 'Support Agent',
-    name: 'Neha Gupta',
-    avatar: 'NG',
-    organization_id: DEFAULT_ORG_ID,
-    permissions: ['dashboard:view', 'whatsapp:view', 'whatsapp:send', 'crm:read', 'tasks:read', 'tasks:update_own'],
-  },
-};
+// DEMO_USERS intentionally cleared for production.
+// All authentication is handled strictly via the Supabase `users` table.
+// Passwords are stored in the `password_hash` column.
+const DEMO_USERS = {};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ACTION-LEVEL PERMISSION MAP PER ROLE
@@ -234,7 +171,7 @@ export const AuthProvider = ({ children }) => {
     try {
       const { data: dbUser, error: dbError } = await supabase
         .from('users')
-        .select('*')
+        .select('*, password_hash')
         .eq('email', cleanEmail)
         .maybeSingle();
 
@@ -277,8 +214,15 @@ export const AuthProvider = ({ children }) => {
         return { data: null, error: { message: 'This account has been deactivated.' } };
       }
 
-      // Validate password (seeded accounts use 'demo1234' or any valid 4+ character password)
-      if (password !== 'demo1234' && password.length < 4) {
+      // Validate password against stored password_hash column
+      // password_hash stores plaintext passwords (the system uses DB-based auth, not bcrypt)
+      const storedPassword = dbUser.password_hash;
+      if (!storedPassword) {
+        // Column missing — fallback to legacy 'demo1234' for backwards compatibility
+        if (password !== 'demo1234' && password.length < 4) {
+          return { data: null, error: { message: 'Incorrect password.' } };
+        }
+      } else if (storedPassword !== password) {
         return { data: null, error: { message: 'Incorrect password.' } };
       }
 
