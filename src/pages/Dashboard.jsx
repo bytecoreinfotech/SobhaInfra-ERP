@@ -76,15 +76,21 @@ const Dashboard = () => {
   };
 
   // ── Computed metrics from live data ──────────────────────────────────────
-  const totalLeads = stats?.totalLeads || leads.length;
-  const hotLeads = stats?.hotLeads || leads.filter(l => l.status === 'Hot').length;
-  const convertedLeads = stats?.converted || leads.filter(l => l.status === 'Converted').length;
-  const overdueInvoices = stats?.overdueInvoices || invoices.filter(i => i.status === 'Overdue').length;
-  const pendingAmount = stats?.pendingAmount || invoices.filter(i => i.status !== 'Paid').reduce((s, i) => s + Number(i.amount || 0), 0);
-  const tasksDueCt = stats?.tasksDue || taskList.filter(t => t.status !== 'Done').length;
-  const totalWaSent = campaigns.reduce((s, c) => s + (c.total_sent || 0), 0);
-  const totalWaDelivered = campaigns.reduce((s, c) => s + (c.delivered || 0), 0);
+  const totalLeads = leads.length;
+  const hotLeads = leads.filter(l => l.status === 'Hot').length;
+  const convertedLeads = leads.filter(l => l.status === 'Converted').length;
+
+  const totalInvoiced = invoices.reduce((s, i) => s + Number(i.amount || 0), 0);
   const totalPaid = invoices.filter(i => i.status === 'Paid').reduce((s, i) => s + Number(i.amount || 0), 0);
+  const pendingAmount = invoices.filter(i => i.status !== 'Paid').reduce((s, i) => s + Number(i.amount || 0), 0);
+  const overdueInvoices = invoices.filter(i => i.status === 'Overdue').length;
+  const overdueAmount = invoices.filter(i => i.status === 'Overdue').reduce((s, i) => s + Number(i.amount || 0), 0);
+  const paidInvoicesCount = invoices.filter(i => i.status === 'Paid').length;
+  const collectionRate = totalInvoiced > 0 ? ((totalPaid / totalInvoiced) * 100).toFixed(1) : '0.0';
+
+  const tasksDueCt = taskList.filter(t => t.status !== 'Done').length;
+  const totalWaSent = campaigns.reduce((s, c) => s + (c.total_sent || c.sent || 0), 0);
+  const totalWaDelivered = campaigns.reduce((s, c) => s + (c.delivered || c.total_delivered || c.total_sent || 0), 0);
 
   // Pipeline funnel
   const STAGES = ['New', 'Hot', 'Warm', 'Cold', 'Converted', 'Lost'];
@@ -97,18 +103,27 @@ const Dashboard = () => {
   const sourceData = sources.map(s => ({ source: s, count: leads.filter(l => l.source === s).length })).filter(s => s.count > 0);
   const sourceColors = { WhatsApp: '#25d366', Facebook: '#1877f2', Instagram: '#e1306c', Website: '#6366f1', Referral: '#f59e0b', 'Walk-in': '#10b981' };
 
-  // Revenue from invoices (month buckets)
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug'];
-  const currentMonth = new Date().getMonth();
-  const revenueData = months.map((_, i) => {
-    if (i <= currentMonth) {
-      const paid = invoices.filter(inv => inv.status === 'Paid').reduce((s, inv) => s + Number(inv.amount || 0), 0);
-      // Distribute with some variance for visual interest
-      return Math.round((paid / Math.max(1, currentMonth + 1)) * (0.6 + Math.random() * 0.8));
-    }
-    return 0;
+  // Real Monthly Revenue from Invoices (Deterministic Date Aggregation)
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const monthlyStats = MONTHS.map((name, idx) => {
+    const monthInvoices = invoices.filter(inv => {
+      const dStr = inv.invoice_date || inv.due_date || inv.created_at;
+      if (!dStr) return false;
+      const d = new Date(dStr);
+      return !isNaN(d.getTime()) && d.getMonth() === idx;
+    });
+    const totalBilled = monthInvoices.reduce((s, inv) => s + Number(inv.amount || 0), 0);
+    const paidAmt = monthInvoices.filter(inv => inv.status === 'Paid').reduce((s, inv) => s + Number(inv.amount || 0), 0);
+    const pendingAmt = monthInvoices.filter(inv => inv.status !== 'Paid').reduce((s, inv) => s + Number(inv.amount || 0), 0);
+    return {
+      month: name,
+      invoiced: totalBilled,
+      paid: paidAmt,
+      pending: pendingAmt,
+      count: monthInvoices.length,
+    };
   });
-  const maxRevBar = Math.max(1, ...revenueData);
+  const maxRevBar = Math.max(1, ...monthlyStats.map(m => m.invoiced || m.paid));
 
   // Activity icon mapper
   const actIconMap = {
@@ -138,7 +153,7 @@ const Dashboard = () => {
         </div>
       </div>
 
-      {/* ── Live KPI Stat Cards (from getDashboardStats) ─────────────── */}
+      {/* ── Live KPI Stat Cards ─────────────── */}
       <div className="stats-grid">
         <div className="stat-card animate-slide-up" style={{ '--card-accent': 'var(--accent-primary)' }}>
           <div className="stat-header">
@@ -176,7 +191,7 @@ const Dashboard = () => {
           <div className="stat-card animate-slide-up" style={{ '--card-accent': 'var(--danger)' }}>
             <div className="stat-header">
               <div>
-                <div className="stat-label">Overdue Payments</div>
+                <div className="stat-label">Pending Receivables</div>
                 <div className="stat-value">{fmtAmount(pendingAmount)}</div>
               </div>
               <div className="stat-icon" style={{ background: 'var(--danger-bg)' }}>
@@ -184,7 +199,11 @@ const Dashboard = () => {
               </div>
             </div>
             <div className="stat-footer">
-              <span className="stat-trend down"><ArrowDownRight size={13} /> {overdueInvoices} Overdue</span>
+              {overdueInvoices > 0 ? (
+                <span className="stat-trend down"><ArrowDownRight size={13} /> {overdueInvoices} Overdue ({fmtAmount(overdueAmount)})</span>
+              ) : (
+                <span className="stat-trend up" style={{ color: 'var(--success)' }}><CheckCircle2 size={13} /> 0 Overdue</span>
+              )}
               <span className="stat-period">{invoices.length} Total Invoices</span>
             </div>
           </div>
@@ -194,7 +213,7 @@ const Dashboard = () => {
           <div className="stat-card animate-slide-up" style={{ '--card-accent': 'var(--success)' }}>
             <div className="stat-header">
               <div>
-                <div className="stat-label">Collected (Paid)</div>
+                <div className="stat-label">Collected Revenue</div>
                 <div className="stat-value">{fmtAmount(totalPaid)}</div>
               </div>
               <div className="stat-icon" style={{ background: 'var(--success-bg)' }}>
@@ -202,8 +221,8 @@ const Dashboard = () => {
               </div>
             </div>
             <div className="stat-footer">
-              <span className="stat-trend up"><ArrowUpRight size={13} /> {tasksDueCt} Tasks Due</span>
-              <span className="stat-period">This Period</span>
+              <span className="stat-trend up"><ArrowUpRight size={13} /> {paidInvoicesCount} Paid Invoices</span>
+              <span className="stat-period">{collectionRate}% of {fmtAmount(totalInvoiced)}</span>
             </div>
           </div>
         ) : (
@@ -231,22 +250,30 @@ const Dashboard = () => {
         {/* Revenue Bar Chart */}
         <div className="glass-card p-6" style={{ gridColumn: '1 / -1' }}>
           <div className="section-header">
-            <span className="section-title">Monthly Revenue (from Invoices)</span>
-            <span className="badge badge-success">Collected: {fmtAmount(totalPaid)}</span>
+            <div>
+              <span className="section-title">Monthly Revenue (from Invoices)</span>
+              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
+                Actual invoice billing and collection history by month for {activeCompany ? activeCompany.company_name : 'All Companies'}
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              <span className="badge badge-neutral">Total Billed: {fmtAmount(totalInvoiced)}</span>
+              <span className="badge badge-success">Collected: {fmtAmount(totalPaid)}</span>
+            </div>
           </div>
           <div className="bar-chart">
-            {revenueData.map((val, i) => (
+            {monthlyStats.map((st, i) => (
               <div
                 key={i}
                 className="bar-chart-bar"
-                style={{ height: val > 0 ? `${Math.max(8, (val / maxRevBar) * 100)}%` : '4px' }}
-                title={`${months[i]}: ${fmtAmount(val)}`}
+                style={{ height: st.invoiced > 0 ? `${Math.max(8, (st.invoiced / maxRevBar) * 100)}%` : '4px' }}
+                title={`${st.month}: Billed ${fmtAmount(st.invoiced)} | Paid: ${fmtAmount(st.paid)} | Pending: ${fmtAmount(st.pending)} (${st.count} invoices)`}
               />
             ))}
           </div>
           <div className="bar-chart-labels">
-            {months.map(m => (
-              <div key={m} className="bar-chart-label">{m}</div>
+            {monthlyStats.map(st => (
+              <div key={st.month} className="bar-chart-label">{st.month}</div>
             ))}
           </div>
         </div>
@@ -444,7 +471,7 @@ const Dashboard = () => {
               { label: 'WhatsApp Delivery', val: totalWaSent > 0 ? Math.round((totalWaDelivered / totalWaSent) * 100) : 0, color: 'var(--whatsapp)' },
               { label: 'Lead Conversion', val: totalLeads > 0 ? Math.round((convertedLeads / totalLeads) * 100) : 0, color: 'var(--accent-primary)' },
               { label: 'Task Completion', val: taskList.length > 0 ? Math.round((taskList.filter(t => t.status === 'Done').length / taskList.length) * 100) : 0, color: 'var(--success)' },
-              { label: 'Payment Collection', val: invoices.length > 0 ? Math.round((invoices.filter(i => i.status === 'Paid').length / invoices.length) * 100) : 0, color: 'var(--warning)' },
+              { label: 'Payment Collection', val: totalInvoiced > 0 ? Math.round((totalPaid / totalInvoiced) * 100) : 0, color: 'var(--warning)' },
             ].map(m => (
               <div key={m.label}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>

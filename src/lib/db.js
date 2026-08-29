@@ -2421,8 +2421,42 @@ export async function runAiSalesAgent({ messageText, leadId = 'lead-1', conversa
 
 export async function getActivityFeed(limit = 10) {
   if (!isSupabaseConfigured) return { data: MOCK_STORE.activities.slice(0, limit), error: null };
-  const { data, error } = await supabase.from('activities').select('*').order('created_at', { ascending: false }).limit(limit);
-  return { data, error };
+  try {
+    const { data, error } = await supabase.from('activities').select('*').order('created_at', { ascending: false }).limit(limit);
+    if (!error && data && data.length > 0) return { data, error: null };
+
+    // Seamless fallback to audit_logs if activities table has no rows
+    const { data: auditData } = await supabase.from('audit_logs').select('*').order('created_at', { ascending: false }).limit(limit);
+    if (auditData && auditData.length > 0) {
+      const formatted = auditData.map(a => {
+        let type = 'tally';
+        const actionStr = String(a.action || '').toLowerCase();
+        const resStr = String(a.resource || '').toLowerCase();
+        if (actionStr.includes('lead') || resStr.includes('lead')) type = 'lead';
+        else if (actionStr.includes('task') || resStr.includes('task')) type = 'task';
+        else if (actionStr.includes('wa') || actionStr.includes('whatsapp') || resStr.includes('campaign')) type = 'whatsapp';
+        else if (actionStr.includes('payment') || actionStr.includes('invoice') || resStr.includes('invoice')) type = 'payment';
+
+        const titleText = (a.action || 'System Event')
+          .replace(/[._]/g, ' ')
+          .replace(/\b\w/g, c => c.toUpperCase());
+
+        const subtitleText = a.payload?.message || a.payload?.name || (a.resource_id ? `${a.resource || 'Item'} #${String(a.resource_id).slice(0, 8)}` : `Activity logged`);
+
+        return {
+          id: a.id,
+          type,
+          title: titleText,
+          subtitle: subtitleText,
+          created_at: a.created_at || new Date().toISOString(),
+        };
+      });
+      return { data: formatted, error: null };
+    }
+  } catch (err) {
+    console.warn('[db] getActivityFeed error:', err.message);
+  }
+  return { data: MOCK_STORE.activities.slice(0, limit), error: null };
 }
 
 export async function getDashboardStats() {
@@ -2433,34 +2467,38 @@ export async function getDashboardStats() {
         hotLeads: MOCK_STORE.leads.filter(l => l.status === 'Hot').length,
         converted: MOCK_STORE.leads.filter(l => l.status === 'Converted').length,
         overdueInvoices: MOCK_STORE.invoices.filter(i => i.status === 'Overdue').length,
-        pendingAmount: MOCK_STORE.invoices.filter(i => i.status !== 'Paid').reduce((s, i) => s + Number(i.amount), 0),
+        pendingAmount: MOCK_STORE.invoices.filter(i => i.status !== 'Paid').reduce((s, i) => s + Number(i.amount || 0), 0),
         tasksDue: MOCK_STORE.tasks.filter(t => t.status !== 'Done').length,
       },
       error: null,
     };
   }
 
-  const [leadsRes, invoicesRes, tasksRes] = await Promise.all([
-    supabase.from('leads').select('status'),
-    supabase.from('invoices').select('status, amount'),
-    supabase.from('tasks').select('status'),
-  ]);
+  try {
+    const [leadsRes, invoicesRes, tasksRes] = await Promise.all([
+      supabase.from('leads').select('status'),
+      supabase.from('invoices').select('status, amount'),
+      supabase.from('tasks').select('status'),
+    ]);
 
-  const leads = leadsRes.data || [];
-  const invoices = invoicesRes.data || [];
-  const tasks = tasksRes.data || [];
+    const leads = leadsRes.data || [];
+    const invoices = invoicesRes.data || [];
+    const tasks = tasksRes.data || [];
 
-  return {
-    data: {
-      totalLeads: leads.length,
-      hotLeads: leads.filter(l => l.status === 'Hot').length,
-      converted: leads.filter(l => l.status === 'Converted').length,
-      overdueInvoices: invoices.filter(i => i.status === 'Overdue').length,
-      pendingAmount: invoices.filter(i => i.status !== 'Paid').reduce((s, i) => s + Number(i.amount), 0),
-      tasksDue: tasks.filter(t => t.status !== 'Done').length,
-    },
-    error: null,
-  };
+    return {
+      data: {
+        totalLeads: leads.length,
+        hotLeads: leads.filter(l => l.status === 'Hot').length,
+        converted: leads.filter(l => l.status === 'Converted').length,
+        overdueInvoices: invoices.filter(i => i.status === 'Overdue').length,
+        pendingAmount: invoices.filter(i => i.status !== 'Paid').reduce((s, i) => s + Number(i.amount || 0), 0),
+        tasksDue: tasks.filter(t => t.status !== 'Done').length,
+      },
+      error: null,
+    };
+  } catch (err) {
+    return { data: null, error: err };
+  }
 }
 
 export async function getRoles() {
