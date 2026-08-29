@@ -10,8 +10,9 @@ import {
   getCampaigns, getLeads,
   getWhatsAppConversations, getWhatsAppMessages, sendWhatsAppMessage,
   updateConversationMode, toggleLeadOptOut, reassignSalesperson, submitAiFeedback,
-  getTeamMembers
+  getTeamMembers, updateConversationContactName
 } from '../lib/db';
+import { Pencil, Check, X as XIcon } from 'lucide-react';
 import Customer360Modal from '../components/Customer360Modal';
 import CampaignBuilderModal from '../components/CampaignBuilderModal';
 import HumanHandoffModal from '../components/HumanHandoffModal';
@@ -93,6 +94,32 @@ const WhatsApp = () => {
   const [attachedPreview, setAttachedPreview] = useState(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const fileInputRef = useRef(null);
+
+  // Inline contact name editing
+  const [editingName, setEditingName] = useState(false);
+  const [editNameValue, setEditNameValue] = useState('');
+  const [savingName, setSavingName] = useState(false);
+  const editNameRef = useRef(null);
+
+  const startEditName = () => {
+    setEditNameValue(selectedConv?.contact_name || '');
+    setEditingName(true);
+    setTimeout(() => editNameRef.current?.focus(), 50);
+  };
+
+  const saveEditName = async () => {
+    const trimmed = editNameValue.trim();
+    if (!trimmed || !selectedConv) { setEditingName(false); return; }
+    setSavingName(true);
+    const { data } = await updateConversationContactName(selectedConv.id, trimmed);
+    if (data) {
+      const updated = { ...selectedConv, contact_name: trimmed };
+      setSelectedConv(updated);
+      setConversations(prev => prev.map(c => c.id === selectedConv.id ? updated : c));
+    }
+    setSavingName(false);
+    setEditingName(false);
+  };
 
   const messagesEndRef = useRef(null);
 
@@ -432,13 +459,14 @@ const WhatsApp = () => {
                         transition: 'all 0.15s ease',
                       }}
                     >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.25rem' }}>
-                        <div style={{ fontWeight: 700, fontSize: '0.85rem', color: 'var(--text-primary)' }}>{c.contact_name}</div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.15rem' }}>
+                        <div style={{ fontWeight: 700, fontSize: '0.84rem', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '60%' }}>{c.contact_name || c.contact_phone}</div>
                         <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>
                           {new Date(c.last_message_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         </span>
                       </div>
-                      <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: '0.4rem' }}>
+                      <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginBottom: '0.15rem' }}>{c.contact_phone}</div>
+                      <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: '0.35rem' }}>
                         {c.last_message_text}
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -473,7 +501,37 @@ const WhatsApp = () => {
                 <div style={{ padding: '0.75rem 1.25rem', borderBottom: '1px solid var(--border-color)', background: 'var(--bg-secondary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
                     <div style={{ fontWeight: 700, fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      {selectedConv.contact_name}
+                      {editingName ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                          <input
+                            ref={editNameRef}
+                            value={editNameValue}
+                            onChange={e => setEditNameValue(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter') saveEditName(); if (e.key === 'Escape') setEditingName(false); }}
+                            style={{
+                              fontSize: '0.9rem', fontWeight: 700, border: 'none',
+                              borderBottom: '2px solid var(--accent-primary)',
+                              background: 'transparent', color: 'var(--text-primary)',
+                              outline: 'none', width: 180, padding: '0.1rem 0.2rem',
+                            }}
+                          />
+                          <button onClick={saveEditName} disabled={savingName} title="Save" style={{ background: 'var(--success)', border: 'none', borderRadius: 6, cursor: 'pointer', padding: '0.2rem 0.4rem', color: 'white', display: 'flex', alignItems: 'center' }}>
+                            {savingName ? <RefreshCw size={12} className="animate-spin" /> : <Check size={12} />}
+                          </button>
+                          <button onClick={() => setEditingName(false)} title="Cancel" style={{ background: 'var(--danger)', border: 'none', borderRadius: 6, cursor: 'pointer', padding: '0.2rem 0.4rem', color: 'white', display: 'flex', alignItems: 'center' }}>
+                            <XIcon size={12} />
+                          </button>
+                        </div>
+                      ) : (
+                        <span
+                          style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.3rem' }}
+                          title="Click to edit contact name"
+                          onClick={startEditName}
+                        >
+                          {selectedConv.contact_name || selectedConv.contact_phone}
+                          <Pencil size={12} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+                        </span>
+                      )}
                       <span className="badge badge-whatsapp" style={{ fontSize: '0.65rem' }}>WhatsApp</span>
                     </div>
                     <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>

@@ -2236,6 +2236,23 @@ export async function updateConversationMode(conversationId, newMode) {
   return { data, error };
 }
 
+/** Update a conversation's contact_name (custom label set by ERP user) */
+export async function updateConversationContactName(conversationId, newName) {
+  if (!isSupabaseConfigured) {
+    const conv = MOCK_STORE.whatsapp_conversations.find(c => c.id === conversationId);
+    if (conv) { conv.contact_name = newName; return { data: conv, error: null }; }
+    return { data: null, error: { message: 'Conversation not found' } };
+  }
+  const { data, error } = await supabase
+    .from('whatsapp_conversations')
+    .update({ contact_name: newName, updated_at: new Date().toISOString() })
+    .eq('id', conversationId)
+    .select()
+    .single();
+  return { data, error };
+}
+
+
 export async function toggleLeadOptOut(leadId, optOut, reason = 'Admin manual toggle') {
   if (!isSupabaseConfigured) {
     const lead = MOCK_STORE.leads.find(l => l.id === leadId);
