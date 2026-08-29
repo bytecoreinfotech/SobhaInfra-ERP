@@ -420,8 +420,16 @@ export async function updateLedgerMapping(mappingId, leadId, tallyLedgerName) {
 
 export async function getSyncErrors() {
   if (!isSupabaseConfigured) return { data: MOCK_STORE.sync_errors, error: null };
-  const { data, error } = await supabase.from('sync_errors').select('*').order('created_at', { ascending: false });
-  return { data, error };
+  try {
+    const { data, error } = await supabase.from('sync_errors').select('*').order('created_at', { ascending: false });
+    if (!error && data) return { data, error: null };
+    // Fallback check tally_sync_errors table
+    const { data: tallyData, error: tallyError } = await supabase.from('tally_sync_errors').select('*').order('created_at', { ascending: false });
+    if (!tallyError && tallyData) return { data: tallyData, error: null };
+  } catch (err) {
+    console.warn('[db] getSyncErrors error:', err.message);
+  }
+  return { data: MOCK_STORE.sync_errors, error: null };
 }
 
 export async function sendPaymentReminderWhatsApp(invoiceId) {

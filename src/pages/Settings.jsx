@@ -160,7 +160,38 @@ const Settings = () => {
   const [purgingKey, setPurgingKey] = useState(null);
   const [showRetentionWarningModal, setShowRetentionWarningModal] = useState(false);
   const [pendingRetentionDays, setPendingRetentionDays] = useState(7);
-  const [purgeConfirmModal, setPurgeConfirmModal] = useState(null); // null | { key, name, count, unit }
+  const [purgeConfirmModal, setPurgeConfirmModal] = useState(null);
+
+  // WhatsApp Config State
+  const [whatsappConfig, setWhatsappConfig] = useState({
+    phone_number_id: localStorage.getItem('erppro_wa_phone_id') || '1217775984755724',
+    waba_id: localStorage.getItem('erppro_wa_waba_id') || '1073768118438244',
+    access_token: localStorage.getItem('erppro_wa_access_token') || 'EAAO5bP4en30BSechJ6djYxtfPtupXj...',
+    verify_token: localStorage.getItem('erppro_wa_verify_token') || 'erppro_wa_sec_9f8b2c4e1a7d6e5c8302',
+  });
+  const [waConfigSaved, setWaConfigSaved] = useState(false);
+  const [waConfigSaving, setWaConfigSaving] = useState(false);
+
+  // Tally Config State
+  const [tallyConfig, setTallyConfig] = useState({
+    host: localStorage.getItem('erppro_tally_host') || '127.0.0.1',
+    port: localStorage.getItem('erppro_tally_port') || '9000',
+    company_name: localStorage.getItem('erppro_tally_company') || 'Techma Real Estate Pvt Ltd',
+    secret_token: localStorage.getItem('erppro_tally_token') || 'erppro_tally_sec_token_2026',
+    auto_sync: localStorage.getItem('erppro_tally_autosync') || 'Every 15 minutes (Real-time)',
+  });
+  const [tallyConfigSaved, setTallyConfigSaved] = useState(false);
+  const [tallyConfigSaving, setTallyConfigSaving] = useState(false);
+
+  // Notification Preferences State
+  const [notifPreferences, setNotifPreferences] = useState({
+    new_lead: true,
+    payment_overdue: true,
+    campaign_complete: true,
+    ai_handoff: true,
+    tally_disconnect: true,
+  });
+  const [notifSaved, setNotifSaved] = useState(false);
 
   useEffect(() => {
     loadSafety();
@@ -174,7 +205,95 @@ const Settings = () => {
     if (activeTab === 'roles_positions') loadRolesAndMatrix();
     if (activeTab === 'payment_automation') loadPaymentSettings();
     if (activeTab === 'storage') loadStorageData();
+    if (activeTab === 'whatsapp') loadWhatsAppConfig();
+    if (activeTab === 'tally') loadTallyConfig();
+    if (activeTab === 'notifications') loadNotifPreferences();
   }, [activeTab]);
+
+  const loadWhatsAppConfig = async () => {
+    const { data } = await getOrgSettings();
+    if (data) {
+      setWhatsappConfig(prev => ({
+        ...prev,
+        phone_number_id: data.wa_phone_number_id || prev.phone_number_id,
+        waba_id: data.wa_waba_id || prev.waba_id,
+        verify_token: data.wa_verify_token || prev.verify_token,
+      }));
+    }
+  };
+
+  const loadTallyConfig = async () => {
+    const { data } = await getOrgSettings();
+    if (data) {
+      setTallyConfig(prev => ({
+        ...prev,
+        host: data.tally_host || prev.host,
+        port: data.tally_port || prev.port,
+        company_name: data.tally_company_name || prev.company_name,
+        secret_token: data.tally_secret_token || prev.secret_token,
+        auto_sync: data.tally_auto_sync || prev.auto_sync,
+      }));
+    }
+  };
+
+  const loadNotifPreferences = async () => {
+    const { data } = await getOrgSettings();
+    if (data) {
+      setNotifPreferences({
+        new_lead: data.notif_new_lead !== 'false',
+        payment_overdue: data.notif_payment_overdue !== 'false',
+        campaign_complete: data.notif_campaign_complete !== 'false',
+        ai_handoff: data.notif_ai_handoff !== 'false',
+        tally_disconnect: data.notif_tally_disconnect !== 'false',
+      });
+    }
+  };
+
+  const handleSaveWhatsAppConfig = async () => {
+    setWaConfigSaving(true);
+    await Promise.all([
+      updateOrgSetting('wa_phone_number_id', whatsappConfig.phone_number_id),
+      updateOrgSetting('wa_waba_id', whatsappConfig.waba_id),
+      updateOrgSetting('wa_verify_token', whatsappConfig.verify_token),
+    ]);
+    localStorage.setItem('erppro_wa_phone_id', whatsappConfig.phone_number_id);
+    localStorage.setItem('erppro_wa_waba_id', whatsappConfig.waba_id);
+    localStorage.setItem('erppro_wa_access_token', whatsappConfig.access_token);
+    localStorage.setItem('erppro_wa_verify_token', whatsappConfig.verify_token);
+    setWaConfigSaving(false);
+    setWaConfigSaved(true);
+    setTimeout(() => setWaConfigSaved(false), 3000);
+  };
+
+  const handleSaveTallyConfig = async () => {
+    setTallyConfigSaving(true);
+    await Promise.all([
+      updateOrgSetting('tally_host', tallyConfig.host),
+      updateOrgSetting('tally_port', tallyConfig.port),
+      updateOrgSetting('tally_company_name', tallyConfig.company_name),
+      updateOrgSetting('tally_secret_token', tallyConfig.secret_token),
+      updateOrgSetting('tally_auto_sync', tallyConfig.auto_sync),
+    ]);
+    localStorage.setItem('erppro_tally_host', tallyConfig.host);
+    localStorage.setItem('erppro_tally_port', tallyConfig.port);
+    localStorage.setItem('erppro_tally_company', tallyConfig.company_name);
+    localStorage.setItem('erppro_tally_token', tallyConfig.secret_token);
+    localStorage.setItem('erppro_tally_autosync', tallyConfig.auto_sync);
+    setTallyConfigSaving(false);
+    setTallyConfigSaved(true);
+    setTimeout(() => setTallyConfigSaved(false), 3000);
+  };
+
+  const handleToggleNotif = async (key) => {
+    const updated = { ...notifPreferences, [key]: !notifPreferences[key] };
+    setNotifPreferences(updated);
+    await updateOrgSetting(`notif_${key}`, String(updated[key]));
+    try {
+      localStorage.setItem(`erppro_notif_${key}`, String(updated[key]));
+    } catch {}
+    setNotifSaved(true);
+    setTimeout(() => setNotifSaved(false), 2000);
+  };
 
   const loadGeneralSettings = async () => {
     setGeneralLoading(true);
@@ -2476,23 +2595,73 @@ const Settings = () => {
              ══════════════════════════════════════════════════════════════ */}
           {activeTab === 'whatsapp' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-              <h3 style={{ fontSize: '1rem', fontWeight: 700 }}>WhatsApp Business API Configuration</h3>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <h3 style={{ fontSize: '1.05rem', fontWeight: 700, margin: 0 }}>WhatsApp Business API Configuration</h3>
+                  <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: '0.25rem 0 0 0' }}>
+                    Configure Meta WhatsApp Cloud API credentials for automated templates, chatbots, and broadcast campaigns.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  onClick={handleSaveWhatsAppConfig}
+                  disabled={waConfigSaving}
+                >
+                  {waConfigSaved ? <><Check size={14} /> Saved!</> : waConfigSaving ? <><RefreshCw size={14} className="animate-spin" /> Saving...</> : <><Save size={14} /> Save WhatsApp Config</>}
+                </button>
+              </div>
+
               <div style={{ padding: '1rem', background: 'var(--warning-bg)', borderRadius: 'var(--radius-md)', border: '1px solid var(--warning)', fontSize: '0.82rem', color: 'var(--warning)' }}>
                 ℹ️ <strong>Zero Cost Setup:</strong> Configured via Meta WhatsApp Cloud API free tier (1,000 free service conversations/month).
               </div>
-              {[
-                { label: 'Phone Number ID', placeholder: 'Meta Phone Number ID (e.g. 1217775984755724)', type: 'text', val: '1217775984755724' },
-                { label: 'WhatsApp Business Account ID', placeholder: 'WABA ID from Meta Business Suite', type: 'text', val: '1073768118438244' },
-                { label: 'Access Token (Permanent / System User)', placeholder: '••••••••••••••••••••••••••', type: 'password', val: 'EAAO5bP4en30BSechJ6djYxtfPtupXj...' },
-                { label: 'Webhook Verify Token', placeholder: 'Custom verify token for webhook', type: 'text', val: 'erppro_wa_sec_9f8b2c4e1a7d6e5c8302' },
-              ].map(f => (
-                <div key={f.label}>
-                  <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>{f.label}</label>
-                  <input type={f.type} className="input-field" defaultValue={f.val} placeholder={f.placeholder} />
-                </div>
-              ))}
+
+              <div>
+                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Phone Number ID</label>
+                <input
+                  type="text"
+                  className="input-field"
+                  value={whatsappConfig.phone_number_id}
+                  onChange={e => setWhatsappConfig(p => ({ ...p, phone_number_id: e.target.value }))}
+                  placeholder="Meta Phone Number ID (e.g. 1217775984755724)"
+                />
+              </div>
+
+              <div>
+                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>WhatsApp Business Account ID (WABA)</label>
+                <input
+                  type="text"
+                  className="input-field"
+                  value={whatsappConfig.waba_id}
+                  onChange={e => setWhatsappConfig(p => ({ ...p, waba_id: e.target.value }))}
+                  placeholder="WABA ID from Meta Business Suite"
+                />
+              </div>
+
+              <div>
+                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Access Token (Permanent System User Token)</label>
+                <input
+                  type="password"
+                  className="input-field"
+                  value={whatsappConfig.access_token}
+                  onChange={e => setWhatsappConfig(p => ({ ...p, access_token: e.target.value }))}
+                  placeholder="••••••••••••••••••••••••••"
+                />
+              </div>
+
+              <div>
+                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Webhook Verify Token</label>
+                <input
+                  type="text"
+                  className="input-field"
+                  value={whatsappConfig.verify_token}
+                  onChange={e => setWhatsappConfig(p => ({ ...p, verify_token: e.target.value }))}
+                  placeholder="Custom verify token for webhook"
+                />
+              </div>
+
               <div style={{ padding: '0.75rem', background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
-                📖 Webhook URL for Meta Dashboard: <code>https://your-domain.netlify.app/.netlify/functions/whatsapp-webhook</code>
+                📖 Webhook URL for Meta Dashboard: <code>{window.location.origin}/.netlify/functions/whatsapp-webhook</code>
               </div>
             </div>
           )}
@@ -2502,28 +2671,85 @@ const Settings = () => {
              ══════════════════════════════════════════════════════════════ */}
           {activeTab === 'tally' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-              <h3 style={{ fontSize: '1rem', fontWeight: 700 }}>TallyPrime On-Premise Integration Settings</h3>
-              <div style={{ padding: '1rem', background: 'var(--info-bg)', borderRadius: 'var(--radius-md)', border: '1px solid var(--info)', fontSize: '0.82rem', color: 'var(--info)' }}>
-                ℹ️ <strong>Connector Status:</strong> Run <code>node scripts/tally-connector.js</code> on the Windows machine running TallyPrime (Port 9000).
-              </div>
-              {[
-                { label: 'Tally Server Host', placeholder: '127.0.0.1 or LAN IP', val: '127.0.0.1' },
-                { label: 'Tally XML Port', placeholder: '9000', val: '9000' },
-                { label: 'Company Name (in Tally)', placeholder: 'Exact company name in Tally', val: 'Techma Real Estate Pvt Ltd' },
-                { label: 'Connector Secret Token', placeholder: 'Secret auth token', val: 'erppro_tally_sec_token_2026' },
-              ].map(f => (
-                <div key={f.label}>
-                  <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>{f.label}</label>
-                  <input type="text" className="input-field" defaultValue={f.val} placeholder={f.placeholder} />
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <h3 style={{ fontSize: '1.05rem', fontWeight: 700, margin: 0 }}>TallyPrime On-Premise Integration Settings</h3>
+                  <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: '0.25rem 0 0 0' }}>
+                    Configure local connector host, XML port, and authentication secret for Tally voucher synchronization.
+                  </p>
                 </div>
-              ))}
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  onClick={handleSaveTallyConfig}
+                  disabled={tallyConfigSaving}
+                >
+                  {tallyConfigSaved ? <><Check size={14} /> Saved!</> : tallyConfigSaving ? <><RefreshCw size={14} className="animate-spin" /> Saving...</> : <><Save size={14} /> Save Tally Config</>}
+                </button>
+              </div>
+
+              <div style={{ padding: '1rem', background: 'var(--info-bg)', borderRadius: 'var(--radius-md)', border: '1px solid var(--info)', fontSize: '0.82rem', color: 'var(--info)' }}>
+                ℹ️ <strong>Connector Status:</strong> Run <code>python tally-sync.py</code> or <code>start_sync.bat</code> on the Windows machine running TallyPrime (Port 9000).
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                <div>
+                  <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Tally Server Host</label>
+                  <input
+                    type="text"
+                    className="input-field"
+                    value={tallyConfig.host}
+                    onChange={e => setTallyConfig(p => ({ ...p, host: e.target.value }))}
+                    placeholder="127.0.0.1 or LAN IP"
+                  />
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Tally XML Port</label>
+                  <input
+                    type="text"
+                    className="input-field"
+                    value={tallyConfig.port}
+                    onChange={e => setTallyConfig(p => ({ ...p, port: e.target.value }))}
+                    placeholder="9000"
+                  />
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Default Company Name (in Tally)</label>
+                  <input
+                    type="text"
+                    className="input-field"
+                    value={tallyConfig.company_name}
+                    onChange={e => setTallyConfig(p => ({ ...p, company_name: e.target.value }))}
+                    placeholder="Exact company name in Tally"
+                  />
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Connector Secret Token</label>
+                  <input
+                    type="text"
+                    className="input-field"
+                    value={tallyConfig.secret_token}
+                    onChange={e => setTallyConfig(p => ({ ...p, secret_token: e.target.value }))}
+                    placeholder="Secret auth token"
+                  />
+                </div>
+              </div>
+
               <div>
                 <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Auto-Sync Frequency</label>
-                <select className="input-field">
-                  <option>Every 15 minutes (Real-time)</option>
-                  <option>Every 1 hour</option>
-                  <option>Every 6 hours</option>
-                  <option>Manual only</option>
+                <select
+                  className="input-field"
+                  value={tallyConfig.auto_sync}
+                  onChange={e => setTallyConfig(p => ({ ...p, auto_sync: e.target.value }))}
+                >
+                  <option value="Every 5 minutes (Real-time)">Every 5 minutes (Real-time)</option>
+                  <option value="Every 15 minutes">Every 15 minutes</option>
+                  <option value="Every 1 hour">Every 1 hour</option>
+                  <option value="Every 6 hours">Every 6 hours</option>
+                  <option value="Manual only">Manual only</option>
                 </select>
               </div>
             </div>
@@ -2534,36 +2760,47 @@ const Settings = () => {
              ══════════════════════════════════════════════════════════════ */}
           {activeTab === 'notifications' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-              <h3 style={{ fontSize: '1rem', fontWeight: 700 }}>Notification Preferences</h3>
-              {[
-                { label: 'New Lead Added', desc: 'Notify when a new lead is created in CRM', enabled: true },
-                { label: 'Payment Overdue Alert', desc: 'Daily summary of overdue invoices from Tally', enabled: true },
-                { label: 'WhatsApp Campaign Complete', desc: 'Notify when a broadcast finishes delivering', enabled: true },
-                { label: 'AI Human Handoff Alert', desc: 'Instant alert when customer requests salesperson', enabled: true },
-                { label: 'Tally Sync Disconnection Alert', desc: 'Alert if local connector fails health check', enabled: true },
-              ].map(n => (
-                <div key={n.label} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem' }}>
-                  <div>
-                    <div style={{ fontSize: '0.875rem', fontWeight: 600 }}>{n.label}</div>
-                    <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{n.desc}</div>
-                  </div>
-                  <div
-                    style={{
-                      width: 44, height: 24, borderRadius: 12, flexShrink: 0,
-                      background: n.enabled ? 'var(--accent-primary)' : 'var(--bg-tertiary)',
-                      border: '1px solid var(--border-color)', cursor: 'pointer',
-                      display: 'flex', alignItems: 'center',
-                      padding: '0 3px', transition: 'var(--transition)'
-                    }}
-                  >
-                    <div style={{
-                      width: 18, height: 18, borderRadius: '50%', background: 'white',
-                      transform: n.enabled ? 'translateX(20px)' : 'translateX(0)',
-                      transition: 'transform 0.2s ease', boxShadow: '0 1px 3px rgba(0,0,0,0.2)'
-                    }} />
-                  </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <h3 style={{ fontSize: '1.05rem', fontWeight: 700, margin: 0 }}>Notification Preferences</h3>
+                  <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: '0.25rem 0 0 0' }}>
+                    Control automated alert notifications across operational events.
+                  </p>
                 </div>
-              ))}
+                {notifSaved && (
+                  <span className="badge badge-success animate-fade-in" style={{ fontSize: '0.75rem' }}>
+                    <Check size={12} /> Saved Automatically
+                  </span>
+                )}
+              </div>
+
+              {[
+                { key: 'new_lead', label: 'New Lead Added', desc: 'Notify when a new lead is captured from WhatsApp, Web or Meta Ads' },
+                { key: 'payment_overdue', label: 'Payment Overdue Alert', desc: 'Daily summary alert for overdue invoices synced from Tally' },
+                { key: 'campaign_complete', label: 'WhatsApp Campaign Complete', desc: 'Notify when a broadcast batch finishes delivering to contacts' },
+                { key: 'ai_handoff', label: 'AI Human Handoff Alert', desc: 'Instant alert when a client requests a human salesperson or discount' },
+                { key: 'tally_disconnect', label: 'Tally Sync Disconnection Alert', desc: 'Alert if local connector fails its scheduled heartbeat check' },
+              ].map(n => {
+                const isEnabled = notifPreferences[n.key] !== false;
+                return (
+                  <div key={n.key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', padding: '0.85rem 1rem', background: 'var(--bg-tertiary)', borderRadius: 8, border: '1px solid var(--border-color)' }}>
+                    <div>
+                      <div style={{ fontSize: '0.875rem', fontWeight: 600 }}>{n.label}</div>
+                      <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{n.desc}</div>
+                    </div>
+                    <div
+                      onClick={() => handleToggleNotif(n.key)}
+                      style={{ cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                    >
+                      {isEnabled ? (
+                        <ToggleRight size={36} color="var(--success)" />
+                      ) : (
+                        <ToggleLeft size={36} color="var(--text-muted)" />
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
 
