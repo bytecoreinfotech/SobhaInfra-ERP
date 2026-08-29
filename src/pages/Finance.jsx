@@ -484,14 +484,14 @@ const Finance = () => {
 
           {/* ── Date Range Presets ────────────────────────────────────── */}
           <div style={{
-            display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center',
-            padding: '0.7rem 0.9rem',
+            display: 'flex', gap: '0.45rem', flexWrap: 'wrap', alignItems: 'center',
+            padding: '0.6rem 0.9rem',
             background: 'var(--bg-secondary)',
             border: '1px solid var(--border-color)',
             borderRadius: 'var(--radius-md)',
           }}>
             <CalendarClock size={14} color="var(--accent-primary)" style={{ flexShrink: 0 }} />
-            <span style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Date Range:</span>
+            <span style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-muted)', whiteSpace: 'nowrap', marginRight: '0.2rem' }}>Date Range:</span>
 
             {/* Quick preset chips */}
             {[
@@ -502,7 +502,6 @@ const Finance = () => {
               { label: 'Last 6 Months', key: '6m' },
               { label: 'This FY', key: 'fy' },
               { label: 'Last FY', key: 'last_fy' },
-              { label: '📅 Custom', key: 'custom' },
             ].map(preset => {
               const isActive = activeDatePreset === preset.key;
               return (
@@ -511,8 +510,12 @@ const Finance = () => {
                   onClick={() => {
                     const today = new Date();
                     const fmt = d => d.toISOString().slice(0, 10);
+                    if (isActive) {
+                      // clicking active preset clears it
+                      setActiveDatePreset(''); setDateFrom(''); setDateTo('');
+                      return;
+                    }
                     setActiveDatePreset(preset.key);
-
                     if (preset.key === 'today') {
                       setDateFrom(fmt(today)); setDateTo(fmt(today));
                     } else if (preset.key === 'week') {
@@ -528,7 +531,6 @@ const Finance = () => {
                       const d = new Date(today); d.setMonth(d.getMonth() - 6);
                       setDateFrom(fmt(d)); setDateTo(fmt(today));
                     } else if (preset.key === 'fy') {
-                      // Indian FY: Apr 1 – Mar 31
                       const fyStart = today.getMonth() >= 3
                         ? new Date(today.getFullYear(), 3, 1)
                         : new Date(today.getFullYear() - 1, 3, 1);
@@ -540,16 +542,15 @@ const Finance = () => {
                         : new Date(today.getFullYear() - 2, 3, 1);
                       const fyEnd = new Date(fyStart.getFullYear() + 1, 2, 31);
                       setDateFrom(fmt(fyStart)); setDateTo(fmt(fyEnd));
-                    } else if (preset.key === 'custom') {
-                      // Just reveal the pickers; don't auto-set dates
                     }
                   }}
                   style={{
-                    padding: '0.3rem 0.7rem', borderRadius: 20, border: 'none',
-                    fontSize: '0.73rem', fontWeight: 600, cursor: 'pointer',
+                    padding: '0.28rem 0.65rem', borderRadius: 20,
+                    border: isActive ? '2px solid var(--accent-primary)' : '1px solid var(--border-color)',
+                    fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer',
                     background: isActive ? 'var(--accent-primary)' : 'var(--bg-tertiary)',
                     color: isActive ? 'white' : 'var(--text-secondary)',
-                    transition: 'all 0.2s',
+                    transition: 'all 0.15s',
                     whiteSpace: 'nowrap',
                   }}
                 >
@@ -558,57 +559,62 @@ const Finance = () => {
               );
             })}
 
-            {/* Custom date pickers — shown always when custom selected OR when dateFrom/dateTo set */}
-            {(activeDatePreset === 'custom' || activeDatePreset === '' ) && (
-              <>
-                <div style={{ width: 1, height: 18, background: 'var(--border-color)', flexShrink: 0 }} />
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-                  <label style={{ fontSize: '0.72rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>From</label>
-                  <input
-                    type="date"
-                    className="input-field"
-                    style={{ padding: '0.3rem 0.5rem', fontSize: '0.75rem', width: 130 }}
-                    value={dateFrom}
-                    onChange={e => { setDateFrom(e.target.value); setActiveDatePreset('custom'); }}
-                  />
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-                  <label style={{ fontSize: '0.72rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>To</label>
-                  <input
-                    type="date"
-                    className="input-field"
-                    style={{ padding: '0.3rem 0.5rem', fontSize: '0.75rem', width: 130 }}
-                    value={dateTo}
-                    onChange={e => { setDateTo(e.target.value); setActiveDatePreset('custom'); }}
-                  />
-                </div>
-              </>
-            )}
+            {/* Divider */}
+            <div style={{ width: 1, height: 18, background: 'var(--border-color)', flexShrink: 0, margin: '0 0.1rem' }} />
 
-            {/* Active range summary */}
-            {(dateFrom || dateTo) && activeDatePreset !== 'custom' && activeDatePreset !== '' && (
-              <>
-                <div style={{ width: 1, height: 18, background: 'var(--border-color)', flexShrink: 0 }} />
-                <span style={{ fontSize: '0.73rem', color: 'var(--text-primary)', fontWeight: 700 }}>
-                  {dateFrom ? new Date(dateFrom).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
-                  &nbsp;→&nbsp;
-                  {dateTo ? new Date(dateTo).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Today'}
-                </span>
-              </>
-            )}
+            {/* From / To — ALWAYS VISIBLE */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+              <label style={{ fontSize: '0.72rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>From</label>
+              <input
+                type="date"
+                className="input-field"
+                style={{ padding: '0.28rem 0.45rem', fontSize: '0.74rem', width: 128 }}
+                value={dateFrom}
+                onChange={e => { setDateFrom(e.target.value); setActiveDatePreset('custom'); }}
+              />
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+              <label style={{ fontSize: '0.72rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>To</label>
+              <input
+                type="date"
+                className="input-field"
+                style={{ padding: '0.28rem 0.45rem', fontSize: '0.74rem', width: 128 }}
+                value={dateTo}
+                onChange={e => { setDateTo(e.target.value); setActiveDatePreset('custom'); }}
+              />
+            </div>
 
-            {/* Clear date range */}
+            {/* Clear dates button — shown whenever date is set */}
             {(dateFrom || dateTo) && (
               <button
                 onClick={() => { setDateFrom(''); setDateTo(''); setActiveDatePreset(''); }}
-                style={{ marginLeft: 'auto', fontSize: '0.7rem', color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', whiteSpace: 'nowrap', textDecoration: 'underline' }}
+                style={{
+                  marginLeft: '0.3rem', fontSize: '0.7rem', padding: '0.25rem 0.6rem',
+                  color: 'white', background: 'var(--danger)', border: 'none',
+                  borderRadius: 12, cursor: 'pointer', whiteSpace: 'nowrap', fontWeight: 600,
+                }}
               >
-                Clear dates
+                ✕ Clear
               </button>
+            )}
+
+            {/* Active range display */}
+            {(dateFrom || dateTo) && (
+              <span style={{
+                marginLeft: 'auto', fontSize: '0.72rem', color: 'var(--accent-primary)',
+                fontWeight: 700, whiteSpace: 'nowrap', background: 'var(--accent-glow)',
+                padding: '0.2rem 0.6rem', borderRadius: 10,
+              }}>
+                {dateFrom ? new Date(dateFrom).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Start'}
+                {' → '}
+                {dateTo ? new Date(dateTo).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Today'}
+                {' '}({filtered.length} records)
+              </span>
             )}
           </div>
 
           {/* Invoices Data Table */}
+
           <div className="glass-card table-container">
             <table className="data-table">
               <thead>
