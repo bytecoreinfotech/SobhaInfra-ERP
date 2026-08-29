@@ -60,6 +60,7 @@ const Tasks = () => {
   const [teamMembers, setTeamMembers] = useState([]);
   const [leads, setLeads] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [leadSearch, setLeadSearch] = useState('');
   const [view, setView] = useState('kanban');
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState(EMPTY_TASK);
@@ -799,7 +800,7 @@ const Tasks = () => {
                   );
                 })}
                 <div style={{ width: 1, height: 24, background: 'var(--border-color)', margin: '0 0.25rem', flexShrink: 0 }} />
-                {[{ id: 'all', label: '📋 All Tasks' }, { id: 'recurring', label: '🔁 Routines' }, { id: 'manual', label: '✏️ Manual' }].map(({ id, label }) => (
+                {[{ id: 'all', label: '📋 All Tasks' }, { id: 'recurring', label: '🔁 Routines' }, { id: 'manual', label: '✏️ One-Time Task' }].map(({ id, label }) => (
                   <button
                     key={id}
                     type="button"
@@ -1854,12 +1855,31 @@ const Tasks = () => {
                 <input type="text" className="input-field" placeholder="Describe the task clearly..." value={form.title} onChange={e => setForm(p => ({ ...p, title: e.target.value }))} />
               </div>
 
-              {/* Client Linking */}
+              {/* Client Linking — with live search */}
               <div>
                 <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Related Client / Lead (Optional)</label>
+                {/* Search box */}
+                <div style={{ position: 'relative', marginBottom: '0.4rem' }}>
+                  <Search size={13} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }} />
+                  <input
+                    type="text"
+                    className="input-field"
+                    placeholder="Search client name, company, or phone..."
+                    value={leadSearch}
+                    onChange={e => setLeadSearch(e.target.value)}
+                    style={{ paddingLeft: '2rem', fontSize: '0.78rem' }}
+                  />
+                </div>
                 <select
                   className="input-field"
                   value={form.client_name}
+                  size={Math.min(6, (leads.filter(l =>
+                    !leadSearch ||
+                    (l.name || '').toLowerCase().includes(leadSearch.toLowerCase()) ||
+                    (l.company_name || '').toLowerCase().includes(leadSearch.toLowerCase()) ||
+                    (l.phone || '').includes(leadSearch)
+                  ).length) + 1)}
+                  style={{ height: 'auto', maxHeight: 180, overflow: 'auto' }}
                   onChange={e => {
                     const selectedLead = leads.find(l => l.name === e.target.value);
                     setForm(p => ({
@@ -1869,11 +1889,31 @@ const Tasks = () => {
                     }));
                   }}
                 >
-                  <option value="">-- Select Client / Customer --</option>
-                  {leads.map(l => (
-                    <option key={l.id} value={l.name}>{l.name} ({l.company_name || l.phone})</option>
-                  ))}
+                  <option value="">-- No Client Selected (Optional) --</option>
+                  {leads
+                    .filter(l =>
+                      !leadSearch ||
+                      (l.name || '').toLowerCase().includes(leadSearch.toLowerCase()) ||
+                      (l.company_name || '').toLowerCase().includes(leadSearch.toLowerCase()) ||
+                      (l.phone || '').includes(leadSearch)
+                    )
+                    .map(l => (
+                      <option key={l.id} value={l.name}>
+                        {l.name}{l.company_name ? ` — ${l.company_name}` : ''}{l.phone ? ` (${l.phone})` : ''}
+                      </option>
+                    ))
+                  }
+                  {leads.length === 0 && (
+                    <option disabled>No leads found — add leads in CRM first</option>
+                  )}
                 </select>
+                {form.client_name && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.35rem', padding: '0.3rem 0.6rem', background: 'rgba(16,185,129,0.08)', borderRadius: 6, fontSize: '0.72rem', color: 'var(--success)' }}>
+                    <User size={12} />
+                    <span>Selected: <strong>{form.client_name}</strong>{form.client_phone ? ` · ${form.client_phone}` : ''}</span>
+                    <button type="button" onClick={() => { setForm(p => ({ ...p, client_name: '', client_phone: '' })); setLeadSearch(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', marginLeft: 'auto', lineHeight: 1 }}>✕</button>
+                  </div>
+                )}
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>

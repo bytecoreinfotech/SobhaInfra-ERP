@@ -525,25 +525,39 @@ def fetch_tally_ledger_phone_master(company_name: str = "") -> dict:
 
     log.info(f"  [Master Phone Map] Final registry before purge: {len(phone_map)} party phone number(s)")
 
-    # ── Bleeding Phone Purge ─────────────────────────────────────────────────────
-    # A phone number that appears for many different party names is almost certainly
-    # the company's own phone (added to bank/cash/system ledgers in Tally) and must
-    # NOT be used for individual customer lookups.
-    #
-    # Strategy: count unique *party name* keys that share the same phone value.
-    #   • ≥ 3 different unique parties with the same phone → blacklist that number.
-    #   • This cleanly handles both "Shobha Ready Plast's own number" and any other
-    #     number that was copy-pasted into many ledger records by mistake.
+    # ---- DIAGNOSTIC REPORT: shows phone data from Tally per party ---------------
+    # This clearly shows if the SAME number is in Tally for multiple parties
+    # (that would be a Tally data entry problem, not our script's fault).
     MAX_SHARED_PHONE_THRESHOLD = 3
 
-    # Build reverse map: phone → set of party names (deduplicated to original names only)
     phone_to_parties = {}
     for k, ph in phone_map.items():
         if ph not in phone_to_parties:
             phone_to_parties[ph] = set()
         phone_to_parties[ph].add(k)
 
-    # Find phones shared by too many parties
+    print("\n" + "=" * 68)
+    print("  TALLY MASTER LEDGER PHONE DIAGNOSTIC REPORT")
+    print("  Shows what phone each party has in Tally master ledger.")
+    print("  SAME phone for MULTIPLE parties = Tally data entry issue.")
+    print("=" * 68)
+    has_shared = False
+    for ph, parties in sorted(phone_to_parties.items(), key=lambda x: -len(x[1])):
+        count = len(parties)
+        if count >= MAX_SHARED_PHONE_THRESHOLD:
+            has_shared = True
+            print(f"  [SHARED x{count}] Phone: {ph}  -- WILL BE PURGED")
+            for p in sorted(parties):
+                print(f"    Ledger: {p}")
+            print("  FIX: Open TallyPrime, go to each ledger above, correct phone number.")
+        elif count == 2:
+            print(f"  [DUPLICATE x2] Phone: {ph}  -> Ledgers: {sorted(parties)}")
+    if not has_shared:
+        print("  CLEAN: All phones are unique per party. No shared numbers found.")
+    print("=" * 68 + "\n")
+    # ---------------------------------------------------------------------------
+
+    # Find phones shared by too many parties (company own number / data entry error)
     bleeding_phones = {
         ph for ph, parties in phone_to_parties.items()
         if len(parties) >= MAX_SHARED_PHONE_THRESHOLD
@@ -551,8 +565,8 @@ def fetch_tally_ledger_phone_master(company_name: str = "") -> dict:
 
     if bleeding_phones:
         log.warning(
-            f"  [Master Phone Map] ⚠️  Purging {len(bleeding_phones)} over-shared phone(s) "
-            f"(company/system numbers appearing in {MAX_SHARED_PHONE_THRESHOLD}+ ledgers): "
+            f"  [Master Phone Map] Purging {len(bleeding_phones)} shared phone(s) "
+            f"(appear in {MAX_SHARED_PHONE_THRESHOLD}+ Tally ledgers): "
             + ", ".join(sorted(bleeding_phones))
         )
         phone_map = {k: v for k, v in phone_map.items() if v not in bleeding_phones}
