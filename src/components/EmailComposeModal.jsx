@@ -1,15 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   X, Mail, Send, Sparkles, FileText, CheckCircle2, AlertCircle,
-  Eye, Edit3, Paperclip, RefreshCw, Building2, User, Phone, Check
+  Eye, Edit3, Paperclip, RefreshCw, Building2, User, Phone, Check,
+  Bold, Italic, List, Tag
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useCompany } from '../context/CompanyContext';
-import { DEFAULT_EMAIL_TEMPLATES, sendDirectEmail, recordLocalEmailLog } from '../lib/db';
+import { DEFAULT_EMAIL_TEMPLATES, sendDirectEmail, recordLocalEmailLog, formatTextToEmailHtml } from '../lib/db';
 
 const EmailComposeModal = ({ lead, defaultTo = '', onClose, onEmailSent }) => {
   const { user } = useAuth();
   const { activeCompany } = useCompany();
+  const textareaRef = useRef(null);
 
   const [to, setTo] = useState(lead?.email || defaultTo || '');
   const [recipientName, setRecipientName] = useState(lead?.name || '');
@@ -59,9 +61,28 @@ const EmailComposeModal = ({ lead, defaultTo = '', onClose, onEmailSent }) => {
       if (defaultTpl) applyTemplate(defaultTpl);
     } else {
       setSubject(`Inquiry Follow-up — ${companyName}`);
-      setBody(`<p>Dear <strong>Valued Client</strong>,</p><p>Thank you for connecting with ${companyName}. Please let us know how we can assist you with your requirements.</p><p>Warm regards,<br/><strong>${senderName}</strong><br/>${companyName}</p>`);
+      setBody(`Dear Valued Client,\n\nThank you for connecting with ${companyName}. Please let us know how we can assist you with your requirements.\n\nWarm regards,\n${senderName}\n${companyName}\nPhone: ${senderPhone}`);
     }
   }, [lead]);
+
+  // Insert helper text at cursor
+  const insertTextAtCursor = (prefix, suffix = '') => {
+    const textarea = textareaRef.current;
+    if (!textarea) {
+      setBody(prev => prev + prefix + suffix);
+      return;
+    }
+    const start = textarea.selectionStart || 0;
+    const end = textarea.selectionEnd || 0;
+    const selected = body.substring(start, end);
+    const replacement = prefix + (selected || 'text') + suffix;
+    const newBody = body.substring(0, start) + replacement + body.substring(end);
+    setBody(newBody);
+    setTimeout(() => {
+      textarea.focus();
+      textarea.setSelectionRange(start + prefix.length, start + prefix.length + (selected ? selected.length : 4));
+    }, 50);
+  };
 
   const handleSend = async (e) => {
     e.preventDefault();
@@ -81,11 +102,15 @@ const EmailComposeModal = ({ lead, defaultTo = '', onClose, onEmailSent }) => {
     setSending(true);
     setStatusMsg(null);
 
+    // Convert plain text into professional HTML email
+    const compiledHtml = formatTextToEmailHtml(body, companyName);
+
     const payload = {
       to: to.trim(),
       recipientName: recipientName.trim(),
       subject: subject.trim(),
-      html: body,
+      text: body,
+      html: compiledHtml,
       leadId: lead?.id || null,
       templateUsed: DEFAULT_EMAIL_TEMPLATES.find(t => t.id === selectedTemplateId)?.name || 'Custom',
       senderName,
@@ -99,7 +124,8 @@ const EmailComposeModal = ({ lead, defaultTo = '', onClose, onEmailSent }) => {
         recipient_email: to,
         recipient_name: recipientName,
         subject,
-        body_html: body,
+        body_html: compiledHtml,
+        body_text: body,
         lead_id: lead?.id || null,
         sent_by_name: senderName,
         template_used: payload.templateUsed,
@@ -175,7 +201,7 @@ const EmailComposeModal = ({ lead, defaultTo = '', onClose, onEmailSent }) => {
                 Compose Email to Client
               </h3>
               <p style={{ margin: '2px 0 0', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                Direct Gmail dispatch via SobhaInfra Cloud Engine
+                Direct Gmail dispatch via SobhaInfra Cloud Engine (Plain Normal Text)
               </p>
             </div>
           </div>
@@ -212,7 +238,7 @@ const EmailComposeModal = ({ lead, defaultTo = '', onClose, onEmailSent }) => {
           {/* Quick Template Selector */}
           <div>
             <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
-              ⚡ Choose Instant Real-Estate Template
+              ⚡ Choose Instant Template
             </label>
             <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
               {DEFAULT_EMAIL_TEMPLATES.map(tpl => (
@@ -308,71 +334,133 @@ const EmailComposeModal = ({ lead, defaultTo = '', onClose, onEmailSent }) => {
             />
           </div>
 
-          {/* Editor Header / Preview Toggle */}
+          {/* Editor Header / Formatting Toolbar & Preview Toggle */}
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
-              <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)' }}>
-                Message Content (HTML / Rich Text)
-              </label>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.45rem', flexWrap: 'wrap', gap: '0.4rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)' }}>
+                  Message Text:
+                </span>
+                {viewMode === 'edit' && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.2rem', marginLeft: '0.5rem' }}>
+                    <button
+                      type="button"
+                      onClick={() => insertTextAtCursor('**', '**')}
+                      title="Bold text"
+                      style={{
+                        padding: '0.2rem 0.45rem', borderRadius: '4px', fontSize: '0.75rem',
+                        background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border-color)',
+                        color: 'var(--text-primary)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '2px'
+                      }}
+                    >
+                      <Bold size={11} /> Bold
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => insertTextAtCursor('*', '*')}
+                      title="Italic text"
+                      style={{
+                        padding: '0.2rem 0.45rem', borderRadius: '4px', fontSize: '0.75rem',
+                        background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border-color)',
+                        color: 'var(--text-primary)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '2px'
+                      }}
+                    >
+                      <Italic size={11} /> Italic
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => insertTextAtCursor('\n• ')}
+                      title="Add bullet item"
+                      style={{
+                        padding: '0.2rem 0.45rem', borderRadius: '4px', fontSize: '0.75rem',
+                        background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border-color)',
+                        color: 'var(--text-primary)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '2px'
+                      }}
+                    >
+                      <List size={11} /> Bullet
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => insertTextAtCursor('{{client_name}}')}
+                      title="Insert Client Name placeholder"
+                      style={{
+                        padding: '0.2rem 0.45rem', borderRadius: '4px', fontSize: '0.7rem',
+                        background: 'rgba(99,102,241,0.1)', border: '1px solid rgba(99,102,241,0.3)',
+                        color: '#818cf8', cursor: 'pointer'
+                      }}
+                    >
+                      + Client Name
+                    </button>
+                  </div>
+                )}
+              </div>
+
               <div style={{ display: 'flex', gap: '0.25rem' }}>
                 <button
                   type="button"
                   onClick={() => setViewMode('edit')}
                   style={{
-                    padding: '0.25rem 0.6rem', borderRadius: '4px', fontSize: '0.7rem',
+                    padding: '0.25rem 0.6rem', borderRadius: '4px', fontSize: '0.75rem',
                     background: viewMode === 'edit' ? 'rgba(99,102,241,0.2)' : 'transparent',
                     color: viewMode === 'edit' ? 'var(--primary, #6366f1)' : 'var(--text-muted)',
-                    border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px'
+                    border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px',
+                    fontWeight: 600
                   }}
                 >
-                  <Edit3 size={12} /> Edit HTML
+                  <Edit3 size={12} /> Plain Text Editor
                 </button>
                 <button
                   type="button"
                   onClick={() => setViewMode('preview')}
                   style={{
-                    padding: '0.25rem 0.6rem', borderRadius: '4px', fontSize: '0.7rem',
+                    padding: '0.25rem 0.6rem', borderRadius: '4px', fontSize: '0.75rem',
                     background: viewMode === 'preview' ? 'rgba(99,102,241,0.2)' : 'transparent',
                     color: viewMode === 'preview' ? 'var(--primary, #6366f1)' : 'var(--text-muted)',
-                    border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px'
+                    border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px',
+                    fontWeight: 600
                   }}
                 >
-                  <Eye size={12} /> Live Preview
+                  <Eye size={12} /> Live Branded Preview
                 </button>
               </div>
             </div>
 
             {viewMode === 'edit' ? (
               <textarea
+                ref={textareaRef}
                 className="input-field"
                 rows={10}
                 style={{
                   width: '100%',
-                  fontSize: '0.85rem',
-                  fontFamily: 'monospace',
-                  lineHeight: '1.5',
-                  resize: 'vertical'
+                  fontSize: '0.88rem',
+                  lineHeight: '1.6',
+                  resize: 'vertical',
+                  fontFamily: 'inherit',
+                  padding: '0.85rem'
                 }}
                 value={body}
                 onChange={e => setBody(e.target.value)}
-                placeholder="Write your email message (HTML formatting supported)..."
+                placeholder="Type your message in normal plain text here (paragraphs and bullet points will automatically be styled into a clean email)..."
               />
             ) : (
               <div style={{
-                minHeight: 220, maxHeight: 320, overflowY: 'auto',
+                minHeight: 220, maxHeight: 340, overflowY: 'auto',
                 padding: '1.25rem', background: '#ffffff', color: '#1e293b',
                 borderRadius: '8px', border: '1px solid var(--border-color)',
                 fontSize: '0.9rem'
               }}>
                 <div style={{
-                  padding: '10px 14px', background: 'linear-gradient(135deg, #4f46e5 0%, #3730a3 100%)',
+                  padding: '12px 16px', background: 'linear-gradient(135deg, #4f46e5 0%, #3730a3 100%)',
                   borderRadius: '6px', color: '#ffffff', marginBottom: '16px'
                 }}>
-                  <strong style={{ fontSize: '0.95rem' }}>{companyName}</strong>
-                  <div style={{ fontSize: '0.75rem', opacity: 0.85 }}>Official Client Communication</div>
+                  <strong style={{ fontSize: '1rem' }}>{companyName}</strong>
+                  <div style={{ fontSize: '0.75rem', opacity: 0.85, marginTop: '2px' }}>Official Client Communication • {subject || 'Subject'}</div>
                 </div>
-                <div dangerouslySetInnerHTML={{ __html: body }} />
-                <div style={{ marginTop: '20px', paddingTop: '10px', borderTop: '1px solid #e2e8f0', fontSize: '0.75rem', color: '#64748b', textAlign: 'center' }}>
+                <div
+                  style={{ color: '#334155', lineHeight: '1.65' }}
+                  dangerouslySetInnerHTML={{ __html: formatTextToEmailHtml(body, companyName) || '<p style="color: #94a3b8; font-style: italic;">(Email body is empty)</p>' }}
+                />
+                <div style={{ marginTop: '24px', paddingTop: '12px', borderTop: '1px solid #e2e8f0', fontSize: '0.75rem', color: '#64748b', textAlign: 'center' }}>
                   Sent via SobhaInfra ERP • {companyName}
                 </div>
               </div>
@@ -390,7 +478,7 @@ const EmailComposeModal = ({ lead, defaultTo = '', onClose, onEmailSent }) => {
           background: 'rgba(0,0,0,0.1)'
         }}>
           <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-            <Building2 size={14} /> Sending from: <strong>{senderName}</strong> ({companyName})
+            <Building2 size={14} /> Sending as: <strong>{senderName}</strong> ({companyName})
           </div>
 
           <div style={{ display: 'flex', gap: '0.75rem' }}>

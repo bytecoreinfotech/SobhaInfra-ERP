@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useCompany } from '../context/CompanyContext';
-import { DEFAULT_EMAIL_TEMPLATES, getEmailLogs, sendDirectEmail, recordLocalEmailLog } from '../lib/db';
+import { DEFAULT_EMAIL_TEMPLATES, getEmailLogs, sendDirectEmail, recordLocalEmailLog, formatTextToEmailHtml } from '../lib/db';
 import EmailComposeModal from '../components/EmailComposeModal';
 import './Pages.css';
 
@@ -56,11 +56,14 @@ const EmailHub = () => {
     setQuickSending(true);
     setQuickResult(null);
 
+    const compiledHtml = formatTextToEmailHtml(quickBody, activeCompany?.company_name || 'Sobha Infratech Pvt. Ltd.');
+
     const payload = {
       to: quickTo.trim(),
       recipientName: quickName.trim(),
       subject: quickSubject.trim(),
-      html: quickBody,
+      text: quickBody,
+      html: compiledHtml,
       senderName: user?.full_name || 'Sobha Sales Team',
       templateUsed: 'Quick Compose',
     };
@@ -68,7 +71,13 @@ const EmailHub = () => {
     const res = await sendDirectEmail(payload);
 
     if (res.success) {
-      recordLocalEmailLog(payload);
+      recordLocalEmailLog({
+        ...payload,
+        body_html: compiledHtml,
+        body_text: quickBody,
+        recipient_email: quickTo.trim(),
+        recipient_name: quickName.trim(),
+      });
       setQuickResult({ type: 'success', text: 'Email dispatched successfully via Gmail engine!' });
       setQuickTo('');
       setQuickName('');
@@ -287,131 +296,338 @@ const EmailHub = () => {
         </button>
       </div>
 
-      {/* Tab 0: Official Gmail Webmail Iframe View */}
+      {/* Tab 0: Official Gmail Webmail Command Center */}
       {activeTab === 'webmail' && (
-        <div style={{
-          background: 'var(--bg-secondary, #13172b)',
-          border: '1px solid var(--border-color, rgba(255,255,255,0.08))',
-          borderRadius: '14px', overflow: 'hidden', display: 'flex', flexDirection: 'column',
-          position: isFullscreen ? 'fixed' : 'relative',
-          top: isFullscreen ? 0 : 'auto', left: isFullscreen ? 0 : 'auto',
-          right: isFullscreen ? 0 : 'auto', bottom: isFullscreen ? 0 : 'auto',
-          zIndex: isFullscreen ? 99999 : 'auto',
-          height: isFullscreen ? '100vh' : 'calc(100vh - 270px)',
-          minHeight: isFullscreen ? '100vh' : '650px',
-        }}>
-          {/* Top Control & Navigation Bar */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+          
+          {/* Main Hero Card: Gmail Webmail Quick Access */}
           <div style={{
-            padding: '0.75rem 1rem',
-            background: 'var(--bg-tertiary, #1a2035)',
-            borderBottom: '1px solid var(--border-color, rgba(255,255,255,0.08))',
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem'
+            background: 'linear-gradient(135deg, rgba(79, 70, 229, 0.12) 0%, rgba(99, 102, 241, 0.05) 100%)',
+            border: '1px solid rgba(99, 102, 241, 0.25)',
+            borderRadius: '16px', padding: '1.75rem',
+            display: 'flex', flexDirection: 'column', gap: '1.25rem'
           }}>
-            {/* Quick folder links */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
-              <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', marginRight: '0.25rem' }}>
-                DIRECT FOLDERS:
-              </span>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                <div style={{
+                  width: 52, height: 52, borderRadius: '12px',
+                  background: 'linear-gradient(135deg, #ef4444 0%, #ea4335 50%, #fbbc05 100%)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  color: '#ffffff', boxShadow: '0 8px 20px rgba(234,67,53,0.3)'
+                }}>
+                  <Mail size={28} />
+                </div>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800, color: 'var(--text-primary)' }}>
+                      Official Gmail Webmail Hub
+                    </h2>
+                    <span className="badge badge-success" style={{ fontSize: '0.7rem' }}>
+                      ● SMTP Connected
+                    </span>
+                  </div>
+                  <p style={{ margin: '4px 0 0', fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+                    Access your full company Gmail inbox, drafts, and customer threads with 1-click dedicated window integration.
+                  </p>
+                </div>
+              </div>
 
-              <button
-                type="button"
-                className="btn btn-outline btn-sm"
-                onClick={() => {
-                  setGmailUrl('https://mail.google.com/mail/u/0/#inbox');
-                  setIframeKey(k => k + 1);
-                }}
-                style={{ fontSize: '0.75rem', padding: '0.25rem 0.6rem', display: 'flex', alignItems: 'center', gap: '4px' }}
-              >
-                <Inbox size={13} /> Inbox
-              </button>
+              <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const width = 1240;
+                    const height = 820;
+                    const left = (window.screen.width - width) / 2;
+                    const top = (window.screen.height - height) / 2;
+                    window.open('https://mail.google.com/mail/u/0/', 'GmailWebmail', `width=${width},height=${height},top=${top},left=${left},status=no,menubar=no,toolbar=no`);
+                  }}
+                  className="btn btn-primary"
+                  style={{
+                    background: 'linear-gradient(135deg, #ea4335 0%, #d93025 100%)',
+                    color: '#fff', fontSize: '0.85rem', fontWeight: 700, padding: '0.55rem 1.25rem',
+                    boxShadow: '0 4px 15px rgba(234,67,53,0.35)', display: 'flex', alignItems: 'center', gap: '6px'
+                  }}
+                >
+                  <ExternalLink size={16} /> Open Gmail in App Window
+                </button>
 
-              <button
-                type="button"
-                className="btn btn-outline btn-sm"
-                onClick={() => {
-                  setGmailUrl('https://mail.google.com/mail/u/0/#sent');
-                  setIframeKey(k => k + 1);
-                }}
-                style={{ fontSize: '0.75rem', padding: '0.25rem 0.6rem', display: 'flex', alignItems: 'center', gap: '4px' }}
-              >
-                <SendHorizontal size={13} /> Sent
-              </button>
-
-              <button
-                type="button"
-                className="btn btn-outline btn-sm"
-                onClick={() => {
-                  setGmailUrl('https://mail.google.com/mail/u/0/#drafts');
-                  setIframeKey(k => k + 1);
-                }}
-                style={{ fontSize: '0.75rem', padding: '0.25rem 0.6rem', display: 'flex', alignItems: 'center', gap: '4px' }}
-              >
-                <Archive size={13} /> Drafts
-              </button>
-
-              <button
-                type="button"
-                className="btn btn-outline btn-sm"
-                onClick={() => {
-                  setGmailUrl('https://mail.google.com/mail/u/0/#inbox?compose=new');
-                  setIframeKey(k => k + 1);
-                }}
-                style={{ fontSize: '0.75rem', padding: '0.25rem 0.6rem', display: 'flex', alignItems: 'center', gap: '4px' }}
-              >
-                <FileEdit size={13} /> Compose
-              </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedLeadForEmail(null);
+                    setComposeOpen(true);
+                  }}
+                  className="btn btn-primary"
+                  style={{
+                    background: 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)',
+                    fontSize: '0.85rem', fontWeight: 600, padding: '0.55rem 1.25rem',
+                    display: 'flex', alignItems: 'center', gap: '6px'
+                  }}
+                >
+                  <Plus size={16} /> Fast In-App Compose
+                </button>
+              </div>
             </div>
 
-            {/* Launch & View actions */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <button
-                type="button"
-                className="btn btn-outline btn-sm"
-                onClick={() => setIframeKey(k => k + 1)}
-                title="Reload Gmail Webmail"
-                style={{ fontSize: '0.75rem', padding: '0.25rem 0.6rem' }}
-              >
-                <RefreshCw size={13} /> Reload
-              </button>
-
-              <button
-                type="button"
-                className="btn btn-outline btn-sm"
-                onClick={() => setIsFullscreen(!isFullscreen)}
-                title={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}
-                style={{ fontSize: '0.75rem', padding: '0.25rem 0.6rem' }}
-              >
-                {isFullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />} {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
-              </button>
-
+            {/* Direct Gmail Folder Jump Grid */}
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+              gap: '0.75rem',
+              paddingTop: '0.5rem',
+              borderTop: '1px solid rgba(255,255,255,0.08)'
+            }}>
               <a
-                href="https://mail.google.com/mail/u/0/"
+                href="https://mail.google.com/mail/u/0/#inbox"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="btn btn-primary btn-sm"
-                style={{ fontSize: '0.75rem', padding: '0.3rem 0.75rem', display: 'inline-flex', alignItems: 'center', gap: '4px', textDecoration: 'none' }}
+                style={{
+                  textDecoration: 'none',
+                  background: 'var(--bg-secondary, #13172b)',
+                  border: '1px solid var(--border-color, rgba(255,255,255,0.08))',
+                  borderRadius: '10px', padding: '0.85rem 1rem',
+                  display: 'flex', alignItems: 'center', gap: '0.75rem',
+                  color: 'var(--text-primary)', transition: 'all 0.2s ease', cursor: 'pointer'
+                }}
               >
-                <ExternalLink size={13} /> Open in Dedicated Window
+                <div style={{ width: 34, height: 34, borderRadius: '8px', background: 'rgba(59, 130, 246, 0.15)', color: '#3b82f6', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Inbox size={18} />
+                </div>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: '0.85rem' }}>Inbox</div>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Incoming client emails ↗</div>
+                </div>
+              </a>
+
+              <a
+                href="https://mail.google.com/mail/u/0/#sent"
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  textDecoration: 'none',
+                  background: 'var(--bg-secondary, #13172b)',
+                  border: '1px solid var(--border-color, rgba(255,255,255,0.08))',
+                  borderRadius: '10px', padding: '0.85rem 1rem',
+                  display: 'flex', alignItems: 'center', gap: '0.75rem',
+                  color: 'var(--text-primary)', transition: 'all 0.2s ease', cursor: 'pointer'
+                }}
+              >
+                <div style={{ width: 34, height: 34, borderRadius: '8px', background: 'rgba(16, 185, 129, 0.15)', color: '#10b981', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <SendHorizontal size={18} />
+                </div>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: '0.85rem' }}>Sent Messages</div>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Dispatched proposals ↗</div>
+                </div>
+              </a>
+
+              <a
+                href="https://mail.google.com/mail/u/0/#drafts"
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  textDecoration: 'none',
+                  background: 'var(--bg-secondary, #13172b)',
+                  border: '1px solid var(--border-color, rgba(255,255,255,0.08))',
+                  borderRadius: '10px', padding: '0.85rem 1rem',
+                  display: 'flex', alignItems: 'center', gap: '0.75rem',
+                  color: 'var(--text-primary)', transition: 'all 0.2s ease', cursor: 'pointer'
+                }}
+              >
+                <div style={{ width: 34, height: 34, borderRadius: '8px', background: 'rgba(245, 158, 11, 0.15)', color: '#f59e0b', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Archive size={18} />
+                </div>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: '0.85rem' }}>Drafts</div>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Saved communications ↗</div>
+                </div>
+              </a>
+
+              <a
+                href="https://mail.google.com/mail/u/0/#inbox?compose=new"
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  textDecoration: 'none',
+                  background: 'var(--bg-secondary, #13172b)',
+                  border: '1px solid var(--border-color, rgba(255,255,255,0.08))',
+                  borderRadius: '10px', padding: '0.85rem 1rem',
+                  display: 'flex', alignItems: 'center', gap: '0.75rem',
+                  color: 'var(--text-primary)', transition: 'all 0.2s ease', cursor: 'pointer'
+                }}
+              >
+                <div style={{ width: 34, height: 34, borderRadius: '8px', background: 'rgba(99, 102, 241, 0.15)', color: '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <FileEdit size={18} />
+                </div>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: '0.85rem' }}>Gmail Compose</div>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Official Gmail editor ↗</div>
+                </div>
               </a>
             </div>
           </div>
 
-          {/* Embedded Official Gmail Iframe */}
-          <div style={{ flex: 1, width: '100%', height: '100%', position: 'relative', background: '#fff' }}>
-            <iframe
-              key={iframeKey}
-              ref={iframeRef}
-              src={gmailUrl}
-              title="Official Gmail Webmail"
-              style={{
-                width: '100%',
-                height: '100%',
-                border: 'none',
-                display: 'block'
-              }}
-              allow="camera; microphone; fullscreen; clipboard-read; clipboard-write;"
-              sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-modals allow-downloads allow-presentation"
-            />
+          {/* Quick Dual Workspace: In-App Composer & Recent Outbox Activity */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(320px, 1fr) minmax(320px, 1.2fr)', gap: '1.25rem' }}>
+            
+            {/* Left: Quick In-App Plain Text Mailer */}
+            <div style={{
+              background: 'var(--bg-secondary, #13172b)',
+              border: '1px solid var(--border-color, rgba(255,255,255,0.08))',
+              borderRadius: '14px', padding: '1.25rem', display: 'flex', flexDirection: 'column'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Send size={15} color="var(--primary, #6366f1)" /> Fast Client Email (Plain Text)
+                </h3>
+                <button
+                  type="button"
+                  className="btn btn-outline btn-sm"
+                  onClick={() => {
+                    const defaultTpl = DEFAULT_EMAIL_TEMPLATES[0];
+                    if (defaultTpl) {
+                      setQuickSubject(defaultTpl.subject.replace(/{{company_name}}/g, activeCompany?.company_name || 'Sobha Infratech Pvt. Ltd.'));
+                      setQuickBody(defaultTpl.body.replace(/{{company_name}}/g, activeCompany?.company_name || 'Sobha Infratech Pvt. Ltd.').replace(/{{sender_name}}/g, user?.full_name || 'Sales Team'));
+                    }
+                  }}
+                  style={{ fontSize: '0.72rem', padding: '0.2rem 0.5rem' }}
+                >
+                  ⚡ Load Quote Template
+                </button>
+              </div>
+
+              {quickResult && (
+                <div style={{
+                  padding: '0.6rem 0.85rem', borderRadius: '8px', marginBottom: '1rem', fontSize: '0.8rem',
+                  display: 'flex', alignItems: 'center', gap: '0.5rem',
+                  background: quickResult.type === 'success' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                  color: quickResult.type === 'success' ? '#10b981' : '#ef4444',
+                  border: `1px solid ${quickResult.type === 'success' ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`
+                }}>
+                  {quickResult.type === 'success' ? <CheckCircle2 size={15} /> : <AlertCircle size={15} />}
+                  <span>{quickResult.text}</span>
+                </div>
+              )}
+
+              <form onSubmit={handleQuickSend} style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', flex: 1 }}>
+                <div>
+                  <input
+                    type="email"
+                    className="input-field"
+                    style={{ width: '100%', fontSize: '0.82rem', padding: '0.45rem 0.65rem' }}
+                    placeholder="Recipient Email (e.g. client@company.com) *"
+                    value={quickTo}
+                    onChange={e => setQuickTo(e.target.value)}
+                    required
+                  />
+                </div>
+
+                <div>
+                  <input
+                    type="text"
+                    className="input-field"
+                    style={{ width: '100%', fontSize: '0.82rem', padding: '0.45rem 0.65rem', fontWeight: 600 }}
+                    placeholder="Email Subject Line *"
+                    value={quickSubject}
+                    onChange={e => setQuickSubject(e.target.value)}
+                    required
+                  />
+                </div>
+
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+                  <textarea
+                    className="input-field"
+                    rows={6}
+                    style={{ width: '100%', fontSize: '0.82rem', lineHeight: '1.5', fontFamily: 'inherit', padding: '0.65rem', flex: 1 }}
+                    placeholder="Type email body in normal plain text (e.g. Dear Sir, thank you for your order...)"
+                    value={quickBody}
+                    onChange={e => setQuickBody(e.target.value)}
+                    required
+                  />
+                  <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '3px' }}>
+                    💡 Plain text with linebreaks & bullets is automatically compiled into branded HTML.
+                  </span>
+                </div>
+
+                <button
+                  type="submit"
+                  className="btn btn-primary btn-sm"
+                  disabled={quickSending || !quickTo || !quickSubject}
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem',
+                    padding: '0.5rem 1rem', fontSize: '0.82rem', fontWeight: 600,
+                    background: 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)'
+                  }}
+                >
+                  {quickSending ? <RefreshCw size={14} className="spin" /> : <Send size={14} />}
+                  {quickSending ? 'Dispatching...' : 'Send Branded Email'}
+                </button>
+              </form>
+            </div>
+
+            {/* Right: Recent Dispatched Email Log */}
+            <div style={{
+              background: 'var(--bg-secondary, #13172b)',
+              border: '1px solid var(--border-color, rgba(255,255,255,0.08))',
+              borderRadius: '14px', padding: '1.25rem', display: 'flex', flexDirection: 'column'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Clock size={15} color="var(--primary, #6366f1)" /> Recent Dispatches ({logs.slice(0, 5).length})
+                </h3>
+                <button
+                  type="button"
+                  className="btn btn-outline btn-sm"
+                  onClick={() => setActiveTab('logs')}
+                  style={{ fontSize: '0.72rem', padding: '0.2rem 0.5rem' }}
+                >
+                  View All Logs →
+                </button>
+              </div>
+
+              {logs.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '3rem 1rem', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                  <Mail size={32} style={{ margin: '0 auto 0.5rem', opacity: 0.3 }} />
+                  <div>No emails logged yet.</div>
+                  <div style={{ fontSize: '0.75rem', marginTop: '4px' }}>Sent emails will appear here with delivery timestamps.</div>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', overflowY: 'auto', maxHeight: 340 }}>
+                  {logs.slice(0, 5).map(l => (
+                    <div
+                      key={l.id}
+                      onClick={() => setPreviewLog(l)}
+                      style={{
+                        padding: '0.65rem 0.85rem',
+                        background: 'rgba(255,255,255,0.03)',
+                        border: '1px solid var(--border-color, rgba(255,255,255,0.06))',
+                        borderRadius: '8px', cursor: 'pointer',
+                        display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem',
+                        transition: 'background 0.15s ease'
+                      }}
+                    >
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{ fontWeight: 600, fontSize: '0.82rem', color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {l.subject}
+                        </div>
+                        <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                          To: <strong>{l.recipient_email}</strong> · {l.sent_by_name || 'Admin'}
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                        <span className={`badge ${l.status === 'SENT' ? 'badge-success' : 'badge-accent'}`} style={{ fontSize: '0.65rem' }}>
+                          {l.status}
+                        </span>
+                        <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: '3px' }}>
+                          {new Date(l.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
