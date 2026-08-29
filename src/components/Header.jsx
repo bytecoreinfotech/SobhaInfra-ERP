@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { useLiveCounts } from '../context/LiveCountsContext';
 import { useCompany } from '../context/CompanyContext';
 import { useLocation, useNavigate } from 'react-router-dom';
+import ProfileModal from './ProfileModal';
 import './Header.css';
 
 const notifications = [
@@ -50,6 +51,7 @@ const Header = ({ onMobileMenuOpen }) => {
   const { companyProfiles, activeCompanyId, activeCompany, isConsolidated, setActiveCompanyId } = useCompany();
   const [showNotif, setShowNotif] = useState(false);
   const [showCompanyMenu, setShowCompanyMenu] = useState(false);
+  const [showProfileModal, setShowProfileModal] = useState(false);
   const [readIds, setReadIds] = useState(new Set());
   const notifRef = useRef(null);
   const companyMenuRef = useRef(null);
@@ -84,7 +86,8 @@ const Header = ({ onMobileMenuOpen }) => {
     : (activeCompany?.company_name || 'Active Company');
 
   return (
-    <header className="header">
+    <>
+      <header className="header">
       <div className="header-left">
         {/* Mobile hamburger */}
         <button className="hamburger-btn" onClick={onMobileMenuOpen} aria-label="Open menu">
@@ -338,12 +341,23 @@ const Header = ({ onMobileMenuOpen }) => {
           )}
         </div>
 
-        {/* User Profile + Sign Out */}
-        <div className="user-profile">
-          <div className="user-avatar">{user?.avatar || user?.email?.slice(0,2).toUpperCase() || 'AU'}</div>
+        {/* User Profile (clickable to open Profile Modal) */}
+        <div
+          className="user-profile"
+          onClick={() => setShowProfileModal(true)}
+          title="My Profile & Change Password"
+          style={{ cursor: 'pointer', transition: 'opacity 0.2s' }}
+          onMouseEnter={e => e.currentTarget.style.opacity = '0.8'}
+          onMouseLeave={e => e.currentTarget.style.opacity = '1'}
+        >
+          <div className="user-avatar" style={{ boxShadow: '0 0 0 2px rgba(99,102,241,0.4)' }}>
+            {user?.avatar || user?.email?.slice(0,2).toUpperCase() || 'AU'}
+          </div>
           <div className="user-info hide-mobile">
             <div className="user-name">{user?.name || user?.email || 'Admin User'}</div>
-            <div className="user-role">{user?.role || 'User'}</div>
+            <div className="user-role" style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>
+              {user?.role || 'User'} · <span style={{ color: 'var(--accent-primary)' }}>Edit Profile</span>
+            </div>
           </div>
         </div>
         <button
@@ -362,7 +376,11 @@ const Header = ({ onMobileMenuOpen }) => {
         </button>
       </div>
     </header>
-  );
-};
 
+    {/* Profile & Change Password Modal */}
+    {showProfileModal && (
+      <ProfileModal onClose={() => setShowProfileModal(false)} />
+    )}
+  </>);
+};
 export default Header;
