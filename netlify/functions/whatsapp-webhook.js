@@ -911,11 +911,13 @@ exports.handler = async (event) => {
           leadId = existingLead.id;
         } else {
           const newLeadPayload = {
+            organization_id: DEFAULT_ORG_ID,
             name: contactName,
             phone: fromPhone.startsWith('+') ? fromPhone : '+' + fromPhone,
             source: 'WhatsApp',
             status: 'New',
-            notes: 'Auto-created by webhook',
+            lead_score: 10,
+            notes: 'Auto-created by WhatsApp webhook',
           };
           const { data: newLead } = await supabase.from('leads').insert([newLeadPayload]).select('id').maybeSingle();
           leadId = newLead?.id;

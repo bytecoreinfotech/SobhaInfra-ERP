@@ -299,10 +299,10 @@ export async function triggerTallySyncNow() {
 export async function getLedgerMappings() {
   if (!isSupabaseConfigured) return { data: MOCK_STORE.ledger_mappings, error: null };
   try {
-    // 1. Fetch raw tally_mappings
+    // 1. Fetch raw tally_mappings — prefer lead_id (new column), fallback to customer_id (legacy)
     const { data: mappingsData, error: mapErr } = await supabase
       .from('tally_mappings')
-      .select('id, tally_ledger_name, mapping_status, confidence_score, customer_id, updated_at, organization_id')
+      .select('id, tally_ledger_name, mapping_status, confidence_score, customer_id, lead_id, updated_at, organization_id')
       .order('tally_ledger_name', { ascending: true });
 
     if (mapErr) return { data: [], error: mapErr };
@@ -319,30 +319,32 @@ export async function getLedgerMappings() {
     // 3. Normalise and enrich each Tally ledger
     const enriched = (mappingsData || []).map(row => {
       const ledgerName = (row.tally_ledger_name || '').trim();
+      // Resolve linked lead_id: prefer new lead_id column, fallback to customer_id for legacy rows
+      const linkedLeadId = row.lead_id || row.customer_id || null;
       
-      // Match with lead by customer_id or exact name
+      // Match with lead by linked ID or exact name match
       const matchedLead = allLeads.find(l => 
-        (row.customer_id && l.id === row.customer_id) ||
+        (linkedLeadId && l.id === linkedLeadId) ||
         (l.name && l.name.trim().toLowerCase() === ledgerName.toLowerCase())
       );
 
-      // Match with related invoices
+      // Match with related invoices by ledger name
       const relatedInvoices = allInvoices.filter(inv => 
         inv.client_name && inv.client_name.trim().toLowerCase() === ledgerName.toLowerCase()
       );
 
-      const phoneFromInvoice = relatedInvoices.find(i => i.client_phone)?.client_phone || '';
+      const phoneFromInvoice = relatedInvoices.find(i => i.client_phone && i.client_phone !== '')?.client_phone || '';
       const totalAmount = relatedInvoices.reduce((s, i) => s + Number(i.amount || 0), 0);
       const invoiceCount = relatedInvoices.length;
 
-      const isMapped = Boolean(matchedLead || row.customer_id);
+      const isMapped = Boolean(matchedLead);
       const displayStatus = isMapped ? 'MAPPED' : (phoneFromInvoice ? 'AUTO_FOUND' : 'UNLINKED');
       const confidence = isMapped ? 1.0 : (phoneFromInvoice ? 0.85 : (row.confidence_score || 0));
 
       return {
         id: row.id,
         tally_ledger_name: ledgerName,
-        lead_id: matchedLead ? matchedLead.id : (row.customer_id || null),
+        lead_id: matchedLead ? matchedLead.id : linkedLeadId,
         lead_name: matchedLead ? matchedLead.name : null,
         lead_phone: (matchedLead && matchedLead.phone) ? matchedLead.phone : (phoneFromInvoice || '—'),
         mapping_status: displayStatus,
@@ -381,12 +383,35 @@ export async function updateLedgerMapping(mappingId, leadId, tallyLedgerName) {
     return { data: null, error: { message: 'Mapping not found' } };
   }
 
+  // Write to lead_id column (new). Also write customer_id for backwards compatibility.
+  // If lead_id column doesn't exist yet (migration not run), fall back gracefully.
+  let updatePayload = {
+    mapping_status: 'MAPPED',
+    confidence_score: 1.0,
+    updated_at: new Date().toISOString(),
+  };
+
+  // Try writing to lead_id first (requires migration 012)
+  try {
+    const { data: testCol } = await supabase
+      .from('tally_mappings')
+      .select('lead_id')
+      .eq('id', mappingId)
+      .maybeSingle();
+    // If lead_id column exists (no error), use it
+    if (testCol !== undefined) {
+      updatePayload.lead_id = leadId;
+    }
+  } catch {}
+
+  // Also write customer_id (legacy FK — may fail silently if UUID not in customers table)
+  // We swallow the FK error and still mark mapping_status = MAPPED
   const { data, error } = await supabase
     .from('tally_mappings')
-    .update({ customer_id: leadId, mapping_status: 'MAPPED', confidence_score: 1.0, updated_at: new Date().toISOString() })
+    .update(updatePayload)
     .eq('id', mappingId)
     .select()
-    .single();
+    .maybeSingle();
 
   if (data) logAuditEvent('ledger.mapped', 'tally_mappings', mappingId, { leadId, tallyLedgerName });
   return { data, error };

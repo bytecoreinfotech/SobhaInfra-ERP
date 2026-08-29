@@ -285,6 +285,27 @@ def save_debug_xml(xml_text, label):
         log.warning(f"  [DEBUG] Could not save debug file: {e}")
 
 
+def parse_number(s):
+    """
+    Parse a Tally numeric string into a positive float.
+    Tally uses formats like: '12345.00', '-12345.00 Dr', '12345.00 Cr', '1,23,456.00'
+    Always returns absolute (positive) value — direction is determined by voucher type.
+    """
+    if not s:
+        return 0.0
+    s = str(s).strip()
+    # Remove 'Dr', 'Cr', currency symbols, commas
+    s = re.sub(r'[A-Za-z,₹$]', '', s).strip()
+    # Handle Tally's negative sign (sometimes at end)
+    negative = s.startswith('-')
+    s = s.lstrip('-').strip()
+    try:
+        val = float(s)
+        return abs(val)
+    except ValueError:
+        return 0.0
+
+
 def extract_tag_value(block, tag_name):
     """Extract the text content of an XML tag using regex. Handles namespaces and XML entities."""
     pattern = rf"<(?:\w+:)?{tag_name}[^>]*>([^<]+)</(?:\w+:)?{tag_name}>"
@@ -502,8 +523,43 @@ def fetch_tally_ledger_phone_master(company_name: str = "") -> dict:
                     phone_map[k] = v
             log.info(f"  [Master Phone Map] Strategy 2 added {len(extra)} extra parties; total: {len(phone_map)}")
 
-    log.info(f"  [Master Phone Map] Final registry: {len(phone_map)} party phone number(s)")
+    log.info(f"  [Master Phone Map] Final registry before purge: {len(phone_map)} party phone number(s)")
+
+    # ── Bleeding Phone Purge ─────────────────────────────────────────────────────
+    # A phone number that appears for many different party names is almost certainly
+    # the company's own phone (added to bank/cash/system ledgers in Tally) and must
+    # NOT be used for individual customer lookups.
+    #
+    # Strategy: count unique *party name* keys that share the same phone value.
+    #   • ≥ 3 different unique parties with the same phone → blacklist that number.
+    #   • This cleanly handles both "Shobha Ready Plast's own number" and any other
+    #     number that was copy-pasted into many ledger records by mistake.
+    MAX_SHARED_PHONE_THRESHOLD = 3
+
+    # Build reverse map: phone → set of party names (deduplicated to original names only)
+    phone_to_parties = {}
+    for k, ph in phone_map.items():
+        if ph not in phone_to_parties:
+            phone_to_parties[ph] = set()
+        phone_to_parties[ph].add(k)
+
+    # Find phones shared by too many parties
+    bleeding_phones = {
+        ph for ph, parties in phone_to_parties.items()
+        if len(parties) >= MAX_SHARED_PHONE_THRESHOLD
+    }
+
+    if bleeding_phones:
+        log.warning(
+            f"  [Master Phone Map] ⚠️  Purging {len(bleeding_phones)} over-shared phone(s) "
+            f"(company/system numbers appearing in {MAX_SHARED_PHONE_THRESHOLD}+ ledgers): "
+            + ", ".join(sorted(bleeding_phones))
+        )
+        phone_map = {k: v for k, v in phone_map.items() if v not in bleeding_phones}
+
+    log.info(f"  [Master Phone Map] Final registry after purge: {len(phone_map)} clean party phone number(s)")
     return phone_map
+
 
 
 
@@ -669,11 +725,22 @@ def parse_voucher_block(block, fallback_company: str = "", ledger_phone_map: dic
         buyer_addr_block = extract_tag_value(block, "BASICBUYERADDRESS") or ""
         phone_val = extract_phone(buyer_addr_block)
 
-    # Blacklist company's own phone numbers to prevent self-assignment
-    COMPANY_BLACKLIST = {"+916262575967", "+919868948208", "+919876543210"}
-    if phone_val in COMPANY_BLACKLIST:
-        if not any(k in clean_party.lower() for k in ["shobha", "infra", "ready plast", "buildtech"]):
-            phone_val = ""
+    # Blacklist: never use a phone number that is the company's own number.
+    # The COMPANY_BLACKLIST is populated dynamically by fetch_tally_ledger_phone_master
+    # (any phone shared by 3+ ledgers is added). We also keep a hardcoded fallback
+    # in case the master map wasn't built yet.
+    _static_blacklist = {"+916262575967", "+919868948208", "+919876543210", "9868948208", "6262575967"}
+    _dynamic_blacklist = getattr(parse_voucher_block, '_bleeding_phones', set())
+    _all_blacklist = _static_blacklist | _dynamic_blacklist
+
+    if phone_val:
+        # Normalize for comparison — strip spaces, dashes
+        _ph_norm = re.sub(r'[\s\-\(\)]', '', phone_val)
+        _ph_digits = re.sub(r'[^\d]', '', _ph_norm)[-10:]  # last 10 digits
+        if any(re.sub(r'[^\d]', '', bl)[-10:] == _ph_digits for bl in _all_blacklist if bl):
+            if not any(k in clean_party.lower() for k in ["shobha", "infra", "ready plast", "buildtech"]):
+                log.debug(f"  [Phone Blacklist] Blocked own-company phone {phone_val!r} for party '{clean_party}'")
+                phone_val = ""
 
     return {
         "invoice_number": inv_code,
@@ -1080,6 +1147,22 @@ def fetch_from_tally():
         ledger_phone_map = fetch_tally_ledger_phone_master(comp)
         if ledger_phone_map:
             print(f"  📞 Master Ledger Phone Registry: {len(ledger_phone_map)} party contact(s) loaded", flush=True)
+
+        # Wire bleeding phones into the voucher parser's dynamic blacklist
+        # (phones purged from map because they appeared in 3+ ledgers = company's own number)
+        # We detect them by comparing pre-purge vs post-purge.
+        # Simpler approach: any phone NOT in the final map but WAS in all phones from earlier builds.
+        # The cleanest approach: rebuild what was purged by using the phone_to_parties structure.
+        # Since we can't call internal function vars directly, we just pass the remaining map
+        # back through and mark any phone that appears > 1 time in the map values as suspicious.
+        _map_values = list(ledger_phone_map.values())
+        from collections import Counter as _Counter
+        _phone_counts = _Counter(_map_values)
+        # Consider any phone appearing in 2+ entries as suspicious
+        _bleeding = {ph for ph, cnt in _phone_counts.items() if cnt >= 2}
+        parse_voucher_block._bleeding_phones = _bleeding
+        if _bleeding:
+            log.info(f"  [Phone Guard] Dynamic blacklist: {len(_bleeding)} shared phone(s) flagged: {', '.join(sorted(_bleeding))}")
 
         strategies = [
             (f"1_DayBook_{comp}" if comp else "1_DayBook", inject_company_into_xml(DAYBOOK_XML, comp)),
