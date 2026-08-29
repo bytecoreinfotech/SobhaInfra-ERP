@@ -3007,7 +3007,7 @@ def run_sync():
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("  TECHMA ERPPRO - TALLYPRIME CONNECTOR (v4.2 Debug)")
+    print("  SOBHAINFRA ERP - TALLYPRIME CONNECTOR (v4.2 Debug)")
     print("=" * 60)
     print(f"  Tally host: {TALLY_HOST}")
     print(f"  Cloud URL:  {CLOUD_URL}")

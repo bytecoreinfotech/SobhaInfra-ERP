@@ -1,6 +1,6 @@
 /**
- * Techma ERPPro Centralized Data Service
- * Implements Multi-Tenant Data Layer conforming to Master Spec v4.0.
+ * SobhaInfra ERP Centralized Data Service
+ * Implements Multi-Tenant Data Layer with dynamic company profiles.
  * Supports offline demo fallback and live Supabase PostgreSQL connection with RLS.
  */
 import { supabase, isSupabaseConfigured } from './supabase';
@@ -489,15 +489,15 @@ export async function logPaymentReminder(invoiceId, message) {
 // ORG SETTINGS (Customizable admin-controlled config values)
 // ─────────────────────────────────────────────────────────────────────────────
 const DEFAULT_ORG_SETTINGS = {
-  org_name: 'Techma ERP Solutions Pvt. Ltd.',
+  org_name: 'SobhaInfra Tech',
   company_logo_url: '',
   company_udyam_reg: 'UDYAM-GJ-01-0012345',
-  admin_email: 'admin@erppro.in',
+  admin_email: 'contact@sobhainfratech.com',
   contact_phone: '+91 98765 43210',
   timezone: 'Asia/Kolkata (IST +05:30)',
   default_currency: 'INR',
-  company_address: '101, Business Hub, Phase 1, Hinjawadi, Pune - 411057',
-  gstin_number: '27AABCT2345Q1Z8',
+  company_address: 'NH48, Near Kolei Khadi Sarodhi, Valsad, Gujarat - 396001',
+  gstin_number: '24AGCPJ2785R1ZV',
   invoice_footer_notes: 'Unpaid Invoice Will Be Charged 24% P.A. Interest After Given Credit Days. Goods Once Sold Will Not Be Taken Back.',
   bank_name: 'HDFC Bank Ltd.',
   bank_account_no: '50200088991122',
@@ -2853,7 +2853,7 @@ export async function exportAllData() {
       const snapshot = {
         exported_at: new Date().toISOString(),
         version: '4.0.0',
-        platform: 'Techma ERPPro Multi-Tenant Suite',
+        platform: 'SobhaInfra ERP Suite',
         source: 'Supabase PostgreSQL (Live)',
         organization_id: DEFAULT_ORG_ID,
         summary: {
@@ -2892,7 +2892,7 @@ export async function exportAllData() {
   const snapshot = {
     exported_at: new Date().toISOString(),
     version: '4.0.0',
-    platform: 'Techma ERPPro Suite',
+    platform: 'SobhaInfra ERP Suite',
     source: 'In-Memory Store',
     organization_id: DEFAULT_ORG_ID,
     summary: {

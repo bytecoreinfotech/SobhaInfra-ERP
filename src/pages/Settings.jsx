@@ -120,16 +120,16 @@ const Settings = () => {
 
   // General Business Settings State
   const [generalSettings, setGeneralSettings] = useState({
-    org_name: 'Techma ERP Solutions Pvt. Ltd.',
+    org_name: localStorage.getItem('erppro_org_name') || 'SobhaInfra Tech',
     company_logo_url: '',
     company_qr_code_url: '',
     company_udyam_reg: 'UDYAM-GJ-01-0012345',
-    admin_email: 'admin@erppro.in',
+    admin_email: 'contact@sobhainfratech.com',
     contact_phone: '+91 98765 43210',
     timezone: 'Asia/Kolkata (IST +05:30)',
     default_currency: 'INR',
-    company_address: '101, Business Hub, Phase 1, Hinjawadi, Pune - 411057',
-    gstin_number: '27AABCT2345Q1Z8',
+    company_address: 'NH48, Near Kolei Khadi Sarodhi, Valsad, Gujarat - 396001',
+    gstin_number: '24AGCPJ2785R1ZV',
     invoice_footer_notes: 'Unpaid Invoice Will Be Charged 24% P.A. Interest After Given Credit Days. Goods Once Sold Will Not Be Taken Back.',
     bank_name: 'HDFC Bank Ltd.',
     bank_account_no: '50200088991122',
@@ -176,12 +176,22 @@ const Settings = () => {
   const [tallyConfig, setTallyConfig] = useState({
     host: localStorage.getItem('erppro_tally_host') || '127.0.0.1',
     port: localStorage.getItem('erppro_tally_port') || '9000',
-    company_name: localStorage.getItem('erppro_tally_company') || 'Techma Real Estate Pvt Ltd',
+    company_name: localStorage.getItem('erppro_tally_company') || 'SHOBHA READY PLAST',
     secret_token: localStorage.getItem('erppro_tally_token') || 'erppro_tally_sec_token_2026',
     auto_sync: localStorage.getItem('erppro_tally_autosync') || 'Every 15 minutes (Real-time)',
   });
   const [tallyConfigSaved, setTallyConfigSaved] = useState(false);
   const [tallyConfigSaving, setTallyConfigSaving] = useState(false);
+
+  // Meta Leads Config State
+  const [metaConfig, setMetaConfig] = useState({
+    fb_page_id: localStorage.getItem('erppro_fb_page_id') || 'SobhaInfra Tech (Page ID: 1048293482)',
+    ig_handle: localStorage.getItem('erppro_ig_handle') || '@sobhainfra_official',
+    meta_token: localStorage.getItem('erppro_meta_token') || 'EAAGNO5bP4en30BSechJ6djYxtfPtupXj...',
+    default_assignee: localStorage.getItem('erppro_meta_assignee') || 'Round Robin Distribution',
+  });
+  const [metaConfigSaved, setMetaConfigSaved] = useState(false);
+  const [metaConfigSaving, setMetaConfigSaving] = useState(false);
 
   // Notification Preferences State
   const [notifPreferences, setNotifPreferences] = useState({
@@ -207,8 +217,39 @@ const Settings = () => {
     if (activeTab === 'storage') loadStorageData();
     if (activeTab === 'whatsapp') loadWhatsAppConfig();
     if (activeTab === 'tally') loadTallyConfig();
+    if (activeTab === 'meta_leads') loadMetaConfig();
     if (activeTab === 'notifications') loadNotifPreferences();
   }, [activeTab]);
+
+  const loadMetaConfig = async () => {
+    const { data } = await getOrgSettings();
+    if (data) {
+      setMetaConfig(prev => ({
+        ...prev,
+        fb_page_id: data.meta_fb_page_id || prev.fb_page_id,
+        ig_handle: data.meta_ig_handle || prev.ig_handle,
+        meta_token: data.meta_api_token || prev.meta_token,
+        default_assignee: data.meta_default_assignee || prev.default_assignee,
+      }));
+    }
+  };
+
+  const handleSaveMetaConfig = async () => {
+    setMetaConfigSaving(true);
+    await Promise.all([
+      updateOrgSetting('meta_fb_page_id', metaConfig.fb_page_id),
+      updateOrgSetting('meta_ig_handle', metaConfig.ig_handle),
+      updateOrgSetting('meta_api_token', metaConfig.meta_token),
+      updateOrgSetting('meta_default_assignee', metaConfig.default_assignee),
+    ]);
+    localStorage.setItem('erppro_fb_page_id', metaConfig.fb_page_id);
+    localStorage.setItem('erppro_ig_handle', metaConfig.ig_handle);
+    localStorage.setItem('erppro_meta_token', metaConfig.meta_token);
+    localStorage.setItem('erppro_meta_assignee', metaConfig.default_assignee);
+    setMetaConfigSaving(false);
+    setMetaConfigSaved(true);
+    setTimeout(() => setMetaConfigSaved(false), 3000);
+  };
 
   const loadWhatsAppConfig = async () => {
     const { data } = await getOrgSettings();
@@ -2435,27 +2476,65 @@ const Settings = () => {
               </div>
 
               {/* Meta Account Credentials Grid */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                <div>
-                  <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Facebook Page ID / Name</label>
-                  <input type="text" className="input-field" defaultValue="Techma Solutions (Page ID: 1048293482)" placeholder="e.g. 1048293482" />
+              <div style={{ padding: '1rem', background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ fontWeight: 700, fontSize: '0.85rem', color: 'var(--text-primary)' }}>
+                    Meta Ads Account Credentials
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    onClick={handleSaveMetaConfig}
+                    disabled={metaConfigSaving}
+                  >
+                    {metaConfigSaved ? <><Check size={14} /> Saved!</> : metaConfigSaving ? <><RefreshCw size={14} className="animate-spin" /> Saving...</> : <><Save size={14} /> Save Meta Credentials</>}
+                  </button>
                 </div>
-                <div>
-                  <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Instagram Business Handle / ID</label>
-                  <input type="text" className="input-field" defaultValue="@techma_solutions_official" placeholder="e.g. @techma_solutions" />
-                </div>
-                <div>
-                  <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Meta System User Graph API Token</label>
-                  <input type="password" className="input-field" defaultValue="EAAGNO5bP4en30BSechJ6djYxtfPtupXj..." placeholder="••••••••••••••••••••••••••" />
-                </div>
-                <div>
-                  <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Default Lead Assignee for Social Ads</label>
-                  <select className="input-field">
-                    <option>Rajesh Kumar (Sales Executive)</option>
-                    <option>Priya Sharma (Manager)</option>
-                    <option>Anand Sharma (Sales Executive)</option>
-                    <option>Round Robin Distribution</option>
-                  </select>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                  <div>
+                    <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Facebook Page ID / Name</label>
+                    <input
+                      type="text"
+                      className="input-field"
+                      value={metaConfig.fb_page_id}
+                      onChange={e => setMetaConfig(p => ({ ...p, fb_page_id: e.target.value }))}
+                      placeholder="e.g. SobhaInfra Tech (Page ID: 1048293482)"
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Instagram Business Handle / ID</label>
+                    <input
+                      type="text"
+                      className="input-field"
+                      value={metaConfig.ig_handle}
+                      onChange={e => setMetaConfig(p => ({ ...p, ig_handle: e.target.value }))}
+                      placeholder="e.g. @sobhainfra_official"
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Meta System User Graph API Token</label>
+                    <input
+                      type="password"
+                      className="input-field"
+                      value={metaConfig.meta_token}
+                      onChange={e => setMetaConfig(p => ({ ...p, meta_token: e.target.value }))}
+                      placeholder="••••••••••••••••••••••••••"
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Default Lead Assignee for Social Ads</label>
+                    <select
+                      className="input-field"
+                      value={metaConfig.default_assignee}
+                      onChange={e => setMetaConfig(p => ({ ...p, default_assignee: e.target.value }))}
+                    >
+                      <option value="Round Robin Distribution">Round Robin Distribution</option>
+                      <option value="Rajesh Kumar (Sales Executive)">Rajesh Kumar (Sales Executive)</option>
+                      <option value="Priya Sharma (Manager)">Priya Sharma (Manager)</option>
+                      <option value="Anand Sharma (Sales Executive)">Anand Sharma (Sales Executive)</option>
+                    </select>
+                  </div>
                 </div>
               </div>
 

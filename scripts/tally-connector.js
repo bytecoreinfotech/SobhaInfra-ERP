@@ -303,7 +303,7 @@ async function runSyncCycle() {
 
 // ── 8. Daemon Loop ────────────────────────────────────────────────────────────
 console.log('════════════════════════════════════════════════════════════');
-console.log('  TECHMA ERPPRO — TALLYPRIME LOCAL CONNECTOR BRIDGE');
+console.log('  SOBHAINFRA ERP — TALLYPRIME LOCAL CONNECTOR BRIDGE');
 console.log('  Version: 4.0 (Production-Ready)');
 console.log('════════════════════════════════════════════════════════════');
 console.log(`  Target Tally: http://${TALLY_HOST}:${TALLY_PORT}`);
