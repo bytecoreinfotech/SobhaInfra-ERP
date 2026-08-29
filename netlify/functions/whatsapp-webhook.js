@@ -25,9 +25,10 @@ const VERIFY_TOKEN   = process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN || 'erppro_webh
 const WA_TOKEN       = process.env.WHATSAPP_TOKEN || 'EAAZAoFJNWmo4BSXS3ZBJrD7sk039yowup2fxSWYZAQFTiTvEfOm5XsRNmyRZC4RnkYyjvFaXaxN3fhqNVvvyBqe0CXwoWClgcBx6X8UhqaNWTUjNFt0XMkufGVKkF9FSOP2V2SXSwxreUpX3UALTRW8TC8feqyWyYdyyamSrkF8qWvqkuSEEkatiTGvaGZC1AYwZDZD';
 const PHONE_ID       = process.env.WHATSAPP_PHONE_ID || '1213997841806162';
 const WA_APP_SECRET  = process.env.WHATSAPP_APP_SECRET || '845391164b6f66cecd3e96f03a353be4';
-// Supabase: try env var first, then hardcoded fallback (anon key is safe to embed — protected by RLS)
 const SUPABASE_URL   = process.env.SUPABASE_URL   || 'https://mcgmppnvnwnilioapbli.supabase.co';
 const SUPABASE_KEY   = process.env.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1jZ21wcG52bnduaWxpb2FwYmxpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc1NzE5ODIsImV4cCI6MjEwMzE0Nzk4Mn0.27BrkeNVxcEfG0R1W2gzlV2ueuK6NBS7MuD98Y5iDME';
+// Service-role key bypasses RLS — REQUIRED for webhook writes (new contacts / conversations)
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || SUPABASE_KEY;
 const GEMINI_KEY     = process.env.GEMINI_API_KEY;
 const OPENAI_KEY     = process.env.OPENAI_API_KEY;
 const HF_KEY         = process.env.HUGGING_FACE_API_KEY || '';
@@ -39,9 +40,16 @@ let _kbCacheAt = 0;
 const KB_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 // ─── 1. Supabase Client Factory ───────────────────────────────────────────────
+// Anon key — for reads that respect RLS (health checks, KB queries)
 function getSupabase() {
-  // Always return a client — SUPABASE_URL and SUPABASE_KEY have hardcoded fallbacks above
   return createClient(SUPABASE_URL, SUPABASE_KEY);
+}
+// Service role key — bypasses RLS for all webhook DB writes
+// This ensures first-time messengers' conversations are ALWAYS stored
+function getSupabaseAdmin() {
+  return createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false }
+  });
 }
 
 
@@ -753,7 +761,7 @@ exports.handler = async (event) => {
       return { statusCode: 200, headers, body: JSON.stringify({ status: 'no_value' }) };
     }
 
-    const supabase = getSupabase();
+    const supabase = getSupabaseAdmin(); // service-role key: bypasses RLS for all writes
     await ensureTables(supabase);
 
     // ── B.2 Handle Delivery / Read / Failed status updates ──────────────────

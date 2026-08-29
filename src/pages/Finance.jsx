@@ -335,53 +335,98 @@ const Finance = () => {
         </div>
       </div>
 
-      {/* ── Finance Data Context Info Bar ────────────────────────────────── */}
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap',
-        padding: '0.6rem 1.1rem',
-        background: 'var(--bg-secondary)',
-        border: '1px solid var(--border-color)',
-        borderRadius: 'var(--radius-md)',
-        fontSize: '0.78rem',
-      }}>
-        {/* Date Range */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-          <CalendarClock size={14} color="var(--accent-primary)" />
-          <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>Data Range:</span>
-          {dateFrom || dateTo ? (
-            <span style={{ color: 'var(--text-primary)', fontWeight: 700 }}>
-              {dateFrom ? new Date(dateFrom).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Beginning'}
-              &nbsp;→&nbsp;
-              {dateTo ? new Date(dateTo).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Today'}
+      {/* ── Finance Info: Two Separate Panels ───────────────────────────── */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+
+        {/* Panel 1: Selected Filter Range (what the user is viewing) */}
+        <div style={{
+          display: 'flex', flexDirection: 'column', gap: '0.4rem',
+          padding: '0.75rem 1rem',
+          background: 'var(--bg-secondary)',
+          border: '1px solid var(--border-color)',
+          borderRadius: 'var(--radius-md)',
+          fontSize: '0.78rem',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.1rem' }}>
+            <Filter size={13} color="var(--accent-primary)" />
+            <span style={{ fontWeight: 700, color: 'var(--text-muted)', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+              Selected Filter Range
             </span>
-          ) : (
-            <span style={{ color: 'var(--text-secondary)' }}>All dates (no filter applied)</span>
-          )}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <span style={{ color: dateFrom || dateTo ? 'var(--text-primary)' : 'var(--text-muted)', fontWeight: dateFrom || dateTo ? 700 : 400, fontSize: '0.85rem' }}>
+              {dateFrom || dateTo ? (
+                <>
+                  {dateFrom ? new Date(dateFrom).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Beginning'}
+                  {' → '}
+                  {dateTo ? new Date(dateTo).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Today'}
+                </>
+              ) : 'All dates (no filter applied)'}
+            </span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.1rem' }}>
+            <FileText size={12} color="var(--text-muted)" />
+            <span style={{ color: 'var(--text-muted)', fontSize: '0.72rem' }}>
+              Showing <strong style={{ color: 'var(--accent-primary)' }}>{filtered.length}</strong> of {invoices.length} invoices
+              {filter !== 'All' && <span style={{ color: 'var(--warning)', fontWeight: 600 }}> · {filter}</span>}
+            </span>
+          </div>
         </div>
 
-        <div style={{ width: 1, height: 16, background: 'var(--border-color)', flexShrink: 0 }} />
-
-        {/* Record Count */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-          <FileText size={13} color="var(--text-muted)" />
-          <span style={{ color: 'var(--text-muted)' }}>Showing</span>
-          <span style={{ color: 'var(--accent-primary)', fontWeight: 700 }}>{filtered.length}</span>
-          <span style={{ color: 'var(--text-muted)' }}>of {invoices.length} invoices</span>
-          {filter !== 'All' && <span style={{ color: 'var(--warning)', fontWeight: 600 }}>· Status: {filter}</span>}
-        </div>
-
-        <div style={{ width: 1, height: 16, background: 'var(--border-color)', flexShrink: 0 }} />
-
-        {/* Last Tally Sync */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginLeft: 'auto' }}>
-          <Server size={13} color={tallyStatus?.sync_status === 'Connected' ? 'var(--success)' : 'var(--text-muted)'} />
-          <span style={{ color: 'var(--text-muted)' }}>Last Tally Sync:</span>
-          <span style={{ color: tallyStatus?.last_sync_at ? 'var(--success)' : 'var(--text-muted)', fontWeight: 700 }}>
-            {tallyStatus?.last_sync_at
-              ? new Date(tallyStatus.last_sync_at).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true })
-              : 'Not synced yet'}
-          </span>
-          {isSyncing && <RefreshCw size={12} className="animate-spin" color="var(--accent-primary)" />}
+        {/* Panel 2: Overall Data Availability Period (what exists in DB) */}
+        <div style={{
+          display: 'flex', flexDirection: 'column', gap: '0.4rem',
+          padding: '0.75rem 1rem',
+          background: 'var(--bg-secondary)',
+          border: '1px solid var(--border-color)',
+          borderRadius: 'var(--radius-md)',
+          fontSize: '0.78rem',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.1rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              <CalendarClock size={13} color="var(--success)" />
+              <span style={{ fontWeight: 700, color: 'var(--text-muted)', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                Data Available In System
+              </span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.7rem' }}>
+              <Server size={12} color={tallyStatus?.sync_status === 'Connected' ? 'var(--success)' : 'var(--text-muted)'} />
+              <span style={{ color: 'var(--text-muted)' }}>Last sync:</span>
+              <span style={{ color: tallyStatus?.last_sync_at ? 'var(--success)' : 'var(--text-muted)', fontWeight: 700 }}>
+                {tallyStatus?.last_sync_at
+                  ? new Date(tallyStatus.last_sync_at).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true })
+                  : 'Not synced yet'}
+              </span>
+              {isSyncing && <RefreshCw size={11} className="animate-spin" color="var(--accent-primary)" />}
+            </div>
+          </div>
+          {(() => {
+            const dates = allInvoices
+              .map(i => i.invoice_date || i.due_date || i.created_at)
+              .filter(Boolean)
+              .map(d => new Date(d))
+              .filter(d => !isNaN(d));
+            if (dates.length === 0) {
+              return <span style={{ color: 'var(--text-muted)', fontSize: '0.82rem' }}>No invoice data in system yet</span>;
+            }
+            const earliest = new Date(Math.min(...dates));
+            const latest = new Date(Math.max(...dates));
+            return (
+              <>
+                <span style={{ color: 'var(--text-primary)', fontWeight: 700, fontSize: '0.85rem' }}>
+                  {earliest.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                  {' → '}
+                  {latest.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                </span>
+                <span style={{ color: 'var(--text-muted)', fontSize: '0.72rem' }}>
+                  {allInvoices.length} total records spanning{' '}
+                  <strong style={{ color: 'var(--text-secondary)' }}>
+                    {Math.round((latest - earliest) / (1000 * 60 * 60 * 24 * 30))} months
+                  </strong>
+                </span>
+              </>
+            );
+          })()}
         </div>
       </div>
 
