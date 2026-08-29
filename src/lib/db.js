@@ -2026,9 +2026,13 @@ export async function queueCampaign(campaignData, targetOptions = {}) {
   }
 
   const newCampaign = {
+    organization_id: DEFAULT_ORG_ID,
     name: campaignData.name,
     status: 'Completed',
     template_name: campaignData.template_name || 'Custom Broadcast',
+    custom_message: campaignData.custom_message || null,
+    media_url: campaignData.media_url || null,
+    media_type: campaignData.media_type || 'text',
     audience_filter: JSON.stringify({
       custom_message: campaignData.custom_message || null,
       media_url: campaignData.media_url || null,
@@ -2039,11 +2043,11 @@ export async function queueCampaign(campaignData, targetOptions = {}) {
     }),
     total_sent: eligible.length,
     delivered: eligible.length,
-    read_count: 0,
-    replied: 0,
-    scheduled_at: campaignData.scheduled_at || new Date().toISOString(),
-    created_at: new Date().toISOString(),
+    total_read: 0,
+    total_replied: 0,
+    launched_by: campaignData.launched_by || 'Admin',
   };
+
 
   if (!isSupabaseConfigured) {
     const mockCamp = { id: 'camp-' + Date.now(), ...newCampaign };
