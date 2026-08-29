@@ -188,11 +188,12 @@ export const AuthProvider = ({ children }) => {
 
       if (!dbUser) {
         // Check if any users exist in table
-        const { count, error: countErr } = await supabase
+        const { data: existingUsers, error: countErr } = await supabase
           .from('users')
-          .select('id', { count: 'exact', head: true });
+          .select('id')
+          .limit(1);
 
-        if (!countErr && (count === 0 || count === null)) {
+        if (!countErr && (!existingUsers || existingUsers.length === 0)) {
           return {
             data: null,
             error: {
@@ -215,15 +216,10 @@ export const AuthProvider = ({ children }) => {
       }
 
       // Validate password against stored password_hash column
-      // password_hash stores plaintext passwords (the system uses DB-based auth, not bcrypt)
-      const storedPassword = dbUser.password_hash;
-      if (!storedPassword) {
-        // Column missing — fallback to legacy 'demo1234' for backwards compatibility
-        if (password !== 'demo1234' && password.length < 4) {
-          return { data: null, error: { message: 'Incorrect password.' } };
-        }
-      } else if (storedPassword !== password) {
-        return { data: null, error: { message: 'Incorrect password.' } };
+      // Default password for newly invited or uninitialized users is 'demo1234'
+      const storedPassword = dbUser.password_hash || 'demo1234';
+      if (storedPassword !== password) {
+        return { data: null, error: { message: 'Incorrect password. (Default initial password is demo1234)' } };
       }
 
       const rolePerms = ROLE_ACTION_MAP[dbUser.role] || ROLE_ACTION_MAP['Sales Executive'] || {};

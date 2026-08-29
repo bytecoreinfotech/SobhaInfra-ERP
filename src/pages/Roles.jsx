@@ -41,7 +41,7 @@ const Roles = () => {
   const [confirmDisableRole, setConfirmDisableRole] = useState(null);
   
   // Forms
-  const [userForm, setUserForm] = useState({ full_name: '', email: '', role: 'Sales Executive', phone: '' });
+  const [userForm, setUserForm] = useState({ full_name: '', email: '', role: 'Sales Executive', phone: '', password: '' });
   const [roleForm, setRoleForm] = useState({ name: '', description: '', color: '#6366f1' });
   const [submitting, setSubmitting] = useState(false);
   const [feedbackMsg, setFeedbackMsg] = useState(null);
@@ -55,7 +55,7 @@ const Roles = () => {
     const [rolesRes, usersRes, matrixRes] = await Promise.all([
       getRoles(),
       getTeamMembers(),
-      getPermissionMatrix(),
+      getPermissionMatrix()
     ]);
     if (rolesRes.data && rolesRes.data.length > 0) {
       setRoles(rolesRes.data);
@@ -76,13 +76,21 @@ const Roles = () => {
     if (!userForm.full_name || !userForm.email) return;
     setSubmitting(true);
     const effectiveRole = userForm.role || roles[0]?.name || 'Sales Executive';
-    const { data, error } = await inviteTeamMember({ ...userForm, role: effectiveRole });
+    const initialPassword = userForm.password.trim() || 'demo1234';
+    const { data, error } = await inviteTeamMember({
+      ...userForm,
+      role: effectiveRole,
+      password: initialPassword
+    });
     if (data) {
       setTeamMembers(prev => [data, ...prev]);
       setShowAddUser(false);
-      setUserForm({ full_name: '', email: '', role: 'Sales Executive', phone: '' });
-      setFeedbackMsg({ type: 'success', text: `Invitation sent to ${data.email} as ${effectiveRole}!` });
-      setTimeout(() => setFeedbackMsg(null), 4000);
+      setUserForm({ full_name: '', email: '', role: 'Sales Executive', phone: '', password: '' });
+      setFeedbackMsg({
+        type: 'success',
+        text: `Invitation sent to ${data.email} as ${effectiveRole}! Initial password: "${initialPassword}".`
+      });
+      setTimeout(() => setFeedbackMsg(null), 6000);
     } else {
       setFeedbackMsg({ type: 'error', text: error?.message || 'Failed to invite user.' });
     }
@@ -485,6 +493,31 @@ const Roles = () => {
                     </option>
                   ))}
                 </select>
+              </div>
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
+                  <label style={{ fontSize: '0.8rem', fontWeight: 600 }}>Initial Login Password</label>
+                  <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Default: <code>demo1234</code></span>
+                </div>
+                <input
+                  type="text"
+                  className="input-field"
+                  placeholder="demo1234 (or enter custom password)"
+                  value={userForm.password}
+                  onChange={e => setUserForm(p => ({ ...p, password: e.target.value }))}
+                />
+                <div style={{
+                  marginTop: '0.45rem',
+                  padding: '0.5rem 0.75rem',
+                  borderRadius: 6,
+                  background: 'rgba(99, 102, 241, 0.08)',
+                  border: '1px solid rgba(99, 102, 241, 0.2)',
+                  fontSize: '0.72rem',
+                  color: 'var(--text-secondary)',
+                  lineHeight: 1.4
+                }}>
+                  💡 <strong>Default Password:</strong> If left empty, <code>demo1234</code> will be set automatically. The invited member can change their password anytime via <strong>Profile Settings</strong>.
+                </div>
               </div>
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '0.75rem' }}>
                 <button type="button" className="btn btn-secondary" onClick={() => setShowAddUser(false)}>Cancel</button>

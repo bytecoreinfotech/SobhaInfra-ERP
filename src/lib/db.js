@@ -2503,18 +2503,40 @@ export async function getTeamMembers() {
 }
 
 export async function inviteTeamMember(userData) {
+  const initialPassword = userData.password || userData.password_hash || 'demo1234';
+  const cleanEmail = (userData.email || '').trim().toLowerCase();
   const newUser = {
     id: 'usr-' + Date.now(),
-    ...userData,
+    full_name: userData.full_name,
+    email: cleanEmail,
+    phone: userData.phone || '',
+    role: userData.role || 'Sales Executive',
+    password_hash: initialPassword,
     is_active: true,
-    last_login_at: 'Invited Just Now',
+    last_login_at: 'Never',
     avatar: (userData.full_name || 'U').slice(0, 2).toUpperCase()
   };
   if (isSupabaseConfigured) {
     try {
-      const { data, error } = await supabase.from('users').insert([{ ...userData, organization_id: DEFAULT_ORG_ID, is_active: true, avatar: newUser.avatar }]).select().single();
+      const { data, error } = await supabase.from('users').insert([{
+        full_name: userData.full_name,
+        email: cleanEmail,
+        phone: userData.phone || '',
+        role: userData.role || 'Sales Executive',
+        password_hash: initialPassword,
+        organization_id: DEFAULT_ORG_ID,
+        is_active: true,
+        avatar: newUser.avatar,
+        last_login_at: 'Never'
+      }]).select().single();
       if (!error && data) return { data, error: null };
-    } catch {}
+      if (error) {
+        console.warn('[db] inviteTeamMember error from Supabase:', error);
+        return { data: null, error };
+      }
+    } catch (err) {
+      console.warn('[db] inviteTeamMember exception:', err.message);
+    }
   }
   MOCK_STORE.users.unshift(newUser);
   return { data: newUser, error: null };

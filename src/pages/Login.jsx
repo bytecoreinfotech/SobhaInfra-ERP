@@ -24,13 +24,19 @@ const Login = () => {
     try {
       const { data, error: err } = await supabase
         .from('users')
-        .select('id', { count: 'exact', head: true });
-      if (err || data === null) {
+        .select('id')
+        .limit(1);
+      if (err) {
+        console.warn('[Login] Supabase users table query error:', err);
+        setDbStatus('not_seeded');
+      } else if (!data || data.length === 0) {
+        // Table exists but 0 accounts found
         setDbStatus('not_seeded');
       } else {
         setDbStatus('seeded');
       }
-    } catch {
+    } catch (e) {
+      console.warn('[Login] Database check exception:', e);
       setDbStatus('not_seeded');
     } finally {
       setCheckingDb(false);
@@ -44,10 +50,6 @@ const Login = () => {
   const handleLogin = async (e) => {
     e.preventDefault();
     setError('');
-    if (dbStatus === 'not_seeded') {
-      setError('Database is not seeded in Supabase yet. Please run the setup SQL in your Supabase SQL Editor.');
-      return;
-    }
     setLoading(true);
     const { error: err } = await signIn(email, password);
     if (err) setError(err.message);
