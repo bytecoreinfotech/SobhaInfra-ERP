@@ -25,6 +25,33 @@ const statusConfig = {
   'Draft':   { badge: 'badge-neutral', icon: <Clock size={13} /> },
 };
 
+/**
+ * FIX 2 — Derive payment direction from metadata + invoice number prefix.
+ * Returns a config object with label, icon direction, and colors.
+ */
+const getDirection = (inv) => {
+  const dir = inv?.metadata?.direction || '';
+  const vtype = (inv?.metadata?.voucher_type || '').toLowerCase();
+  const num   = (inv?.invoice_number || '').toLowerCase();
+
+  // Receipt = customer paid us (money IN to us)
+  if (dir === 'received' || /^(rcpt|rct|rec)/.test(num) ||
+      ['receipt','bank receipt','cash receipt'].some(t => vtype.includes(t))) {
+    return { label: 'Received',   arrow: '\u2B0B', color: '#10b981', bg: 'rgba(16,185,129,0.12)', title: 'Customer paid us — Incoming payment' };
+  }
+  // Payment / Purchase = we paid vendor (money OUT from us)
+  if (dir === 'paid_out' || /^(pay|pmt|pur)/.test(num) ||
+      ['payment','bank payment','cash payment','purchase'].some(t => vtype.includes(t))) {
+    return { label: 'Paid Out',   arrow: '\u2B09', color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', title: 'We paid vendor — Outgoing payment' };
+  }
+  // Payable = we owe vendor (Purchase pending)
+  if (dir === 'payable') {
+    return { label: 'Payable',    arrow: '\u2B09', color: '#ef4444', bg: 'rgba(239,68,68,0.12)',  title: 'We owe vendor — Outstanding payable' };
+  }
+  // Default: Receivable = customer owes us (Sales, Debit Note)
+  return   { label: 'Receivable', arrow: '\u2B0A', color: '#6366f1', bg: 'rgba(99,102,241,0.12)', title: 'Customer owes us — Outstanding receivable' };
+};
+
 const Finance = () => {
   const { activeCompany, isConsolidated, activeCompanyId } = useCompany();
   const [activeTab, setActiveTab] = useState('invoices'); // 'invoices' | 'tally' | 'mappings' | 'errors'
@@ -47,6 +74,9 @@ const Finance = () => {
   const [tallyStatus, setTallyStatus] = useState(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState('');
+  // Live progress bar state (polls Supabase while tally-sync.py is running)
+  const [syncProgress, setSyncProgress] = useState(null); // { pct, done, total, phase }
+  const syncPollRef = React.useRef(null);
 
   // Ledger Mappings State
   const [mappings, setMappings] = useState([]);
@@ -72,7 +102,41 @@ const Finance = () => {
 
   useEffect(() => {
     loadAllFinanceData();
+    return () => {
+      // Clear any lingering progress poll when unmounting
+      if (syncPollRef.current) clearInterval(syncPollRef.current);
+    };
   }, [activeCompanyId]); // reload when company changes
+
+  // Poll Supabase tally_connections for live sync progress while tally-sync.py runs
+  const startProgressPolling = () => {
+    if (syncPollRef.current) clearInterval(syncPollRef.current);
+    syncPollRef.current = setInterval(async () => {
+      try {
+        const { data } = await supabase
+          .from('tally_connections')
+          .select('sync_progress,sync_progress_done,sync_progress_total,sync_progress_phase,sync_progress_updated_at')
+          .eq('organization_id', '00000000-0000-0000-0000-000000000001')
+          .maybeSingle();
+        if (data) {
+          setSyncProgress({
+            pct:   data.sync_progress ?? 0,
+            done:  data.sync_progress_done ?? 0,
+            total: data.sync_progress_total ?? 0,
+            phase: data.sync_progress_phase ?? 'fetching',
+            updatedAt: data.sync_progress_updated_at,
+          });
+          // Stop polling once 100% or done/error
+          if (data.sync_progress >= 100 || data.sync_progress_phase === 'done' || data.sync_progress_phase === 'idle' || data.sync_progress_phase === 'error') {
+            clearInterval(syncPollRef.current);
+            syncPollRef.current = null;
+            setTimeout(() => setSyncProgress(null), 3000); // Hide bar after 3s
+            loadAllFinanceData(false); // Refresh invoices
+          }
+        }
+      } catch {}
+    }, 2000); // poll every 2 seconds
+  };
 
   // Re-filter when company switcher changes
   const invoices = isConsolidated
@@ -111,11 +175,13 @@ const Finance = () => {
   const handleSyncNow = async () => {
     setIsSyncing(true);
     setSyncMessage('Communicating with local TallyPrime XML port 9000...');
+    setSyncProgress({ pct: 0, done: 0, total: 0, phase: 'fetching' });
+    startProgressPolling(); // Start polling for live progress from tally-sync.py
     const { data } = await triggerTallySyncNow();
     setTimeout(() => {
       setIsSyncing(false);
-      setSyncMessage(data?.message || 'Sync completed successfully!');
-      loadAllFinanceData();
+      setSyncMessage(data?.message || 'Sync triggered! tally-sync.py is now running.');
+      // Keep polling — progress bar will auto-hide when tally-sync.py marks done
     }, 1200);
   };
 
@@ -745,7 +811,27 @@ const Finance = () => {
                           </div>
                         )}
                       </td>
-                      <td style={{ fontWeight: 700, fontSize: '0.88rem' }}>{fmtCurrency(inv.amount)}</td>
+                      <td style={{ fontWeight: 700, fontSize: '0.88rem' }}>
+                        {/* FIX 2: Direction badge + amount */}
+                        {(() => {
+                          const dir = getDirection(inv);
+                          return (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                              <span style={{ fontWeight: 700, fontSize: '0.88rem', color: inv.status === 'Overdue' ? 'var(--danger)' : 'var(--text-primary)' }}>
+                                {fmtCurrency(inv.amount)}
+                              </span>
+                              <span title={dir.title} style={{
+                                display: 'inline-flex', alignItems: 'center', gap: '0.2rem',
+                                fontSize: '0.62rem', fontWeight: 700, padding: '0.1rem 0.4rem',
+                                borderRadius: '10px', background: dir.bg, color: dir.color,
+                                border: `1px solid ${dir.color}33`, whiteSpace: 'nowrap', cursor: 'help',
+                              }}>
+                                {dir.arrow} {dir.label}
+                              </span>
+                            </div>
+                          );
+                        })()}
+                      </td>
                       <td>
                         <span className={`badge ${statusConfig[inv.status]?.badge || 'badge-neutral'}`} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
                           {statusConfig[inv.status]?.icon} {inv.status}
@@ -948,6 +1034,42 @@ const Finance = () => {
                 <div style={{ fontWeight: 700, fontSize: '0.82rem' }}>Every 15 Minutes (Daemon)</div>
               </div>
             </div>
+
+            {/* Live Sync Progress Bar — visible while tally-sync.py is running */}
+            {syncProgress && (
+              <div style={{
+                padding: '1rem', background: 'var(--bg-tertiary)',
+                border: '1px solid var(--accent-primary)', borderRadius: 'var(--radius-md)',
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                  <span style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--accent-primary)', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                    <RefreshCw size={13} className="animate-spin" />
+                    TallyPrime Sync {
+                      syncProgress.phase === 'fetching'   ? '— Fetching vouchers from Tally...' :
+                      syncProgress.phase === 'pdf_upload' ? `— Generating PDFs (${syncProgress.done}/${syncProgress.total})` :
+                      syncProgress.phase === 'pushing'    ? '— Uploading to cloud...' :
+                      syncProgress.phase === 'done'       ? '— Complete ✅' :
+                      syncProgress.phase === 'error'      ? '— Error ⚠️' : ''
+                    }
+                  </span>
+                  <span style={{ fontSize: '0.75rem', fontWeight: 700, color: syncProgress.pct >= 100 ? 'var(--success)' : 'var(--accent-primary)' }}>
+                    {syncProgress.pct}%
+                  </span>
+                </div>
+                <div style={{ height: 8, background: 'var(--bg-secondary)', borderRadius: 4, overflow: 'hidden' }}>
+                  <div style={{
+                    height: '100%', width: `${syncProgress.pct}%`,
+                    background: syncProgress.phase === 'done' ? 'var(--success)' : syncProgress.phase === 'error' ? 'var(--danger)' : 'var(--accent-primary)',
+                    borderRadius: 4, transition: 'width 0.4s ease',
+                  }} />
+                </div>
+                {syncProgress.total > 0 && (
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '0.35rem', textAlign: 'right' }}>
+                    {syncProgress.done} / {syncProgress.total} vouchers processed
+                  </div>
+                )}
+              </div>
+            )}
 
             {syncMessage && (
               <div style={{ padding: '0.75rem', background: 'rgba(16,185,129,0.1)', border: '1px solid var(--success)', borderRadius: 8, fontSize: '0.78rem', color: 'var(--success)' }}>

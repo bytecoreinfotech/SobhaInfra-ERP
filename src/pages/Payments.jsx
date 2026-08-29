@@ -7,6 +7,22 @@ import { getInvoices, logPaymentReminder } from '../lib/db';
 import { useCompany } from '../context/CompanyContext';
 import './Pages.css';
 
+/** FIX 2 — Direction badge: identical logic to Finance page */
+const getDirection = (inv) => {
+  const dir   = inv?.metadata?.direction || '';
+  const vtype = (inv?.metadata?.voucher_type || '').toLowerCase();
+  const num   = (inv?.invoice_number || '').toLowerCase();
+  if (dir === 'received' || /^(rcpt|rct|rec)/.test(num) ||
+      ['receipt','bank receipt','cash receipt'].some(t => vtype.includes(t)))
+    return { label: 'Received',   arrow: '\u2B0B', color: '#10b981', bg: 'rgba(16,185,129,0.12)', title: 'Customer paid us' };
+  if (dir === 'paid_out' || /^(pay|pmt|pur)/.test(num) ||
+      ['payment','bank payment','cash payment','purchase'].some(t => vtype.includes(t)))
+    return { label: 'Paid Out',   arrow: '\u2B09', color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', title: 'We paid vendor' };
+  if (dir === 'payable')
+    return { label: 'Payable',    arrow: '\u2B09', color: '#ef4444', bg: 'rgba(239,68,68,0.12)',  title: 'We owe vendor' };
+  return     { label: 'Receivable', arrow: '\u2B0A', color: '#6366f1', bg: 'rgba(99,102,241,0.12)', title: 'Customer owes us' };
+};
+
 const Payments = () => {
   const { activeCompany, isConsolidated } = useCompany();
   const [allInvoices, setAllInvoices] = useState([]);
@@ -155,7 +171,23 @@ const Payments = () => {
                       {inv.client_phone && <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{inv.client_phone}</div>}
                     </td>
                     <td style={{ fontWeight: 700, color: inv.status === 'Paid' ? 'var(--success)' : inv.status === 'Overdue' ? 'var(--danger)' : 'var(--text-primary)', fontSize: '0.9rem' }}>
-                      {fmtAmount(inv.amount)}
+                      {/* FIX 2: Direction badge + amount */}
+                      {(() => {
+                        const dir = getDirection(inv);
+                        return (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                            <span>{fmtAmount(inv.amount)}</span>
+                            <span title={dir.title} style={{
+                              display: 'inline-flex', alignItems: 'center', gap: '0.2rem',
+                              fontSize: '0.62rem', fontWeight: 700, padding: '0.1rem 0.4rem',
+                              borderRadius: '10px', background: dir.bg, color: dir.color,
+                              border: `1px solid ${dir.color}33`, cursor: 'help',
+                            }}>
+                              {dir.arrow} {dir.label}
+                            </span>
+                          </div>
+                        );
+                      })()}
                     </td>
                     <td>
                       <span className={`badge ${inv.status === 'Paid' ? 'badge-success' : inv.status === 'Overdue' ? 'badge-danger' : 'badge-warning'}`}>

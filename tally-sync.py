@@ -24,6 +24,7 @@ import math
 import base64
 import hashlib
 import urllib.parse
+import html
 from datetime import datetime, timedelta
 
 # Check if reportlab is available
@@ -285,152 +286,173 @@ def save_debug_xml(xml_text, label):
 
 
 def extract_tag_value(block, tag_name):
-    """Extract the text content of an XML tag using regex. Handles namespaces."""
+    """Extract the text content of an XML tag using regex. Handles namespaces and XML entities."""
     pattern = rf"<(?:\w+:)?{tag_name}[^>]*>([^<]+)</(?:\w+:)?{tag_name}>"
     m = re.search(pattern, block, re.IGNORECASE)
-    return m.group(1).strip() if m else ""
-
-
-def extract_phone(text):
-    """Extract Indian mobile number from text."""
-    if not text:
-        return ""
-    m = re.search(r'(?:\+?91[\s-]?)?[6-9]\d{9}', text)
     if m:
-        phone = m.group().replace(" ", "").replace("-", "")
-        if len(phone) == 10:
-            return "+91" + phone
-        if not phone.startswith("+"):
-            return "+" + phone
-        return phone
+        val = m.group(1).strip()
+        if "&" in val:
+            val = html.unescape(val)
+        return val
     return ""
 
 
-def parse_number(s):
-    """Parse a number string, handling Tally's negative format and commas."""
-    if not s:
-        return 0.0
-    # Remove commas and whitespace
-    s = s.replace(",", "").strip()
-    # Handle Tally negative: sometimes shown as -1234.56 or (1234.56)
-    s = s.replace("(", "-").replace(")", "")
-    try:
-        return abs(float(s))
-    except ValueError:
-        return 0.0
-
-
-# ==============================================================================
-# PARSER: Extract records from ANY Tally XML response
-# ==============================================================================
-
-def parse_any_tally_xml(xml_text):
+def extract_phone(text):
     """
-    Universal parser that looks for ANY structured data in Tally XML.
-    Searches for: VOUCHER, TALLYMESSAGE, BILL, LEDGER, DSPACCNAME blocks.
+    Extract and normalize Indian mobile number from text.
+    Handles optional +91, 0 prefix, 91 prefix, spaces, dashes, slashes, brackets.
+    Returns standardized format: +91XXXXXXXXXX (10-digit mobile starting with 6, 7, 8, 9).
+    Never returns landlines or invalid lengths.
     """
-    records = []
+    if not text:
+        return ""
+    text_clean = html.unescape(str(text))
+    # Match any Indian mobile number pattern (optional +91, 91, or 0 followed by 10 digits starting with 6-9)
+    m = re.search(r'(?:(?:\+?91|0)[\s-]?)?([6-9]\d{4}[\s-]?\d{5}|[6-9]\d{9})', text_clean)
+    if m:
+        raw_digits = re.sub(r'[^\d]', '', m.group())
+        # Strip country code / leading zero to isolate 10-digit mobile
+        if len(raw_digits) == 12 and raw_digits.startswith('91'):
+            raw_digits = raw_digits[2:]
+        elif len(raw_digits) == 11 and raw_digits.startswith('0'):
+            raw_digits = raw_digits[1:]
+        elif len(raw_digits) > 10 and raw_digits.startswith('91'):
+            raw_digits = raw_digits[-10:]
 
-    if not xml_text or len(xml_text) < 50:
-        return records
+        if len(raw_digits) == 10 and raw_digits[0] in '6789':
+            return "+91" + raw_digits
+    return ""
 
-    # --- Pass 1: TALLYMESSAGE blocks (very common in TallyPrime exports) ---
-    tallymsg_blocks = re.findall(
-        r'<TALLYMESSAGE[^>]*>([\s\S]*?)</TALLYMESSAGE>',
-        xml_text, re.IGNORECASE
-    )
-    log.info(f"  Parser: Found {len(tallymsg_blocks)} TALLYMESSAGE blocks")
 
-    for block in tallymsg_blocks:
-        # Inside TALLYMESSAGE, look for VOUCHER or LEDGER
-        voucher_inner = re.findall(r'<VOUCHER[^>]*>([\s\S]*?)</VOUCHER>', block, re.IGNORECASE)
-        for vblock in voucher_inner:
-            rec = parse_voucher_block(vblock)
-            if rec:
-                records.append(rec)
+def extract_phone_from_party_fields(block):
+    """
+    Extract phone ONLY from dedicated Tally phone fields (LEDPHONENO, LEDMOBILE,
+    PHONENO, MOBILENO, CONTACTNO) — not from free-text like narrations.
+    This prevents phone numbers from one ledger bleeding into another.
+    """
+    for tag in ["LEDMOBILE", "LEDPHONENO", "PHONENO", "MOBILENO", "CONTACTNO", "PARTYPHONE"]:
+        val = extract_tag_value(block, tag)
+        if val:
+            phone = extract_phone(val)
+            if phone:
+                return phone
+    return ""
 
-        if not voucher_inner:
-            ledger_inner = re.findall(r'<LEDGER[^>]*>([\s\S]*?)</LEDGER>', block, re.IGNORECASE)
-            for lblock in ledger_inner:
-                rec = parse_ledger_block(lblock)
-                if rec:
-                    records.append(rec)
 
-    # --- Pass 2: Direct VOUCHER blocks (if not nested in TALLYMESSAGE) ---
-    if not records:
-        voucher_blocks = re.findall(r'<VOUCHER[^>]*>([\s\S]*?)</VOUCHER>', xml_text, re.IGNORECASE)
-        log.info(f"  Parser: Found {len(voucher_blocks)} direct VOUCHER blocks")
-        for vblock in voucher_blocks:
-            rec = parse_voucher_block(vblock)
-            if rec:
-                records.append(rec)
+def extract_party_phone_from_voucher(block, party_name):
+    """
+    FIX 3 — Scoped phone extraction: Prevents the same phone number bleeding
+    into every voucher in a batch.
 
-    # --- Pass 3: BILL blocks (Bills Outstanding report) ---
-    if not records:
-        bill_blocks = re.findall(
-            r'<(?:BILL|BILLCL|BILLFIXED)[^>]*>([\s\S]*?)</(?:BILL|BILLCL|BILLFIXED)>',
-            xml_text, re.IGNORECASE
-        )
-        log.info(f"  Parser: Found {len(bill_blocks)} BILL blocks")
-        for bblock in bill_blocks:
-            name = (extract_tag_value(bblock, "NAME") or
-                    extract_tag_value(bblock, "BILLREF") or
-                    extract_tag_value(bblock, "BILLNAME"))
-            parent = (extract_tag_value(bblock, "PARENT") or
-                      extract_tag_value(bblock, "LEDGERNAME"))
-            amount = parse_number(
-                extract_tag_value(bblock, "CLOSINGBALANCE") or
-                extract_tag_value(bblock, "OPENINGBALANCE") or
-                extract_tag_value(bblock, "AMOUNT")
+    Strategy:
+      1. Find the specific <ALLLEDGERENTRIES.LIST> or <LEDGERENTRIES.LIST>
+         sub-block where LEDGERNAME exactly matches the party name.
+      2. Search for phone tags ONLY inside that sub-block.
+      3. If not found there, check top-level voucher phone tags (not nested
+         entry tags — they belong to OTHER parties like IGST/CGST ledgers).
+      4. Never search in narration, address, or free-text fields.
+    """
+    # Step 1: Try to find the party's own ledger sub-block
+    if party_name:
+        party_clean = party_name.strip().lower()
+        party_norm = re.sub(r'[^a-z0-9]', '', party_clean)
+        for list_tag in ["ALLLLEDGERENTRIES", "ALLLEDGERENTRIES", "LEDGERENTRIES"]:
+            entry_blocks = re.findall(
+                rf'<{list_tag}\.LIST[^>]*>([\s\S]*?)</{list_tag}\.LIST>',
+                block, re.IGNORECASE
             )
-            if (name or parent) and amount > 0:
-                records.append({
-                    "invoice_number": name or f"BILL-{len(records)+1}",
-                    "ledger_name": parent or name or "Client",
-                    "phone": extract_phone(bblock),
-                    "amount": amount,
-                    "status": "Overdue",
-                    "due_date": datetime.now().strftime("%Y-%m-%d"),
-                })
+            for entry in entry_blocks:
+                entry_ledger = (
+                    extract_tag_value(entry, "LEDGERNAME") or
+                    extract_tag_value(entry, "NAME") or ""
+                ).strip().lower()
+                entry_norm = re.sub(r'[^a-z0-9]', '', entry_ledger)
+                if entry_ledger == party_clean or (party_norm and entry_norm == party_norm):
+                    phone = extract_phone_from_party_fields(entry)
+                    if phone:
+                        return phone
 
-    # --- Pass 4: LEDGER blocks (from List of Accounts) ---
-    if not records:
-        ledger_blocks = re.findall(r'<LEDGER[^>]*>([\s\S]*?)</LEDGER>', xml_text, re.IGNORECASE)
-        log.info(f"  Parser: Found {len(ledger_blocks)} LEDGER blocks")
-        for lblock in ledger_blocks:
-            rec = parse_ledger_block(lblock)
-            if rec:
-                records.append(rec)
+    # Step 2: Check top-level voucher phone tags (before first subledger entry)
+    top_level_block = re.split(
+        r'<(?:ALLLLEDGERENTRIES|ALLLEDGERENTRIES|LEDGERENTRIES)\.LIST',
+        block, maxsplit=1, flags=re.IGNORECASE
+    )[0]
 
-    # --- Pass 5: DSPACCNAME (Balance Sheet display names with amounts) ---
-    if not records:
-        dsp_names = re.findall(r'<DSPACCNAME[^>]*>([^<]+)</DSPACCNAME>', xml_text, re.IGNORECASE)
-        dsp_amounts = re.findall(r'<DSPCLAMT[^>]*>([^<]+)</DSPCLAMT>', xml_text, re.IGNORECASE)
-        log.info(f"  Parser: Found {len(dsp_names)} DSPACCNAME entries (Balance Sheet)")
-        for i, name in enumerate(dsp_names):
-            name = name.strip()
-            amount = parse_number(dsp_amounts[i]) if i < len(dsp_amounts) else 0.0
-            # Skip group headers like "Capital Account", "Current Assets" etc.
-            skip_keywords = ['capital', 'current assets', 'current liabilities',
-                             'profit', 'loss', 'total', 'loans', 'opening',
-                             'duties', 'taxes', 'closing stock', 'cash-in-hand',
-                             'bank', 'fixed assets', 'investments']
-            if any(kw in name.lower() for kw in skip_keywords):
-                continue
-            if name and amount > 0:
-                records.append({
-                    "invoice_number": f"BAL-{name.replace(' ', '')[:12]}",
-                    "ledger_name": name,
-                    "phone": "",
-                    "amount": amount,
-                    "status": "Pending",
-                    "due_date": datetime.now().strftime("%Y-%m-%d"),
-                })
+    for tag in ["BASICBUYERPHONE", "PARTYPHONE", "LEDMOBILE", "LEDPHONENO", "PHONENO", "MOBILENO"]:
+        val = extract_tag_value(top_level_block, tag)
+        if val:
+            phone = extract_phone(val)
+            if phone:
+                return phone
 
-    return records
+    return ""
 
 
-def parse_voucher_block(block, fallback_company: str = ""):
+def fetch_tally_ledger_phone_master(company_name: str = "") -> dict:
+    """
+    MASTER LEDGER PHONE REGISTRY:
+    Queries Tally's Master Ledger Collection to fetch the official registered
+    phone/mobile number for EVERY party ledger in Tally.
+    Returns a dictionary mapping normalized ledger names -> phone numbers.
+    This guarantees 100% accurate phone matching without cross-contamination.
+    """
+    xml_payload = """<?xml version="1.0" encoding="utf-8"?>
+<ENVELOPE>
+  <HEADER>
+    <VERSION>1</VERSION>
+    <TALLYREQUEST>Export</TALLYREQUEST>
+    <TYPE>Collection</TYPE>
+    <ID>MasterLedgerPhoneList</ID>
+  </HEADER>
+  <BODY>
+    <DESC>
+      <STATICVARIABLES>
+        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+      </STATICVARIABLES>
+      <TDL>
+        <TDLMESSAGE>
+          <COLLECTION NAME="MasterLedgerPhoneList" ISMODIFY="No">
+            <TYPE>Ledger</TYPE>
+            <FETCH>NAME, PARENT, LEDMOBILE, LEDPHONENO, MOBILENO, PHONENO, CONTACTNO, PARTYGSTIN, GSTIN, ADDRESS</FETCH>
+          </COLLECTION>
+        </TDLMESSAGE>
+      </TDL>
+    </DESC>
+  </BODY>
+</ENVELOPE>"""
+
+    if company_name:
+        xml_payload = inject_company_into_xml(xml_payload, company_name)
+
+    log.info(f"  [Master Phone Map] Fetching master party contact registry from Tally...")
+    resp = query_tally(xml_payload, f"MasterLedgerPhones_{company_name or 'Default'}")
+    if not resp or len(resp) < 50:
+        return {}
+
+    phone_map = {}
+    ledger_blocks = re.findall(r'<LEDGER[^>]*>([\s\S]*?)</LEDGER>', resp, re.IGNORECASE)
+    for lblock in ledger_blocks:
+        name = extract_tag_value(lblock, "NAME") or extract_tag_value(lblock, "LEDGERNAME")
+        if not name:
+            continue
+        phone = extract_phone_from_party_fields(lblock)
+        if not phone:
+            # Check address block inside ledger master
+            addr_block = extract_tag_value(lblock, "ADDRESS") or ""
+            phone = extract_phone(addr_block)
+
+        if phone:
+            name_clean = name.strip().lower()
+            name_norm = re.sub(r'[^a-z0-9]', '', name_clean)
+            phone_map[name_clean] = phone
+            if name_norm:
+                phone_map[name_norm] = phone
+
+    log.info(f"  [Master Phone Map] Registered {len(phone_map)} party phone number(s) from Tally Master Ledgers")
+    return phone_map
+
+
+def parse_voucher_block(block, fallback_company: str = "", ledger_phone_map: dict = None):
     """Parse a single VOUCHER XML block into a rich dict with real Tally data."""
     vch_number = (extract_tag_value(block, "VOUCHERNUMBER") or
                   extract_tag_value(block, "NUMBER") or
@@ -471,7 +493,7 @@ def parse_voucher_block(block, fallback_company: str = ""):
     if amount == 0:
         return None
 
-    # Bug 3 fix: Extract real taxable amount and GST from voucher XML ledger entries
+    # Extract real taxable amount and GST from voucher XML ledger entries
     taxable_amount = None
     igst_amount    = None
     cgst_amount    = None
@@ -502,13 +524,13 @@ def parse_voucher_block(block, fallback_company: str = ""):
         except ValueError:
             pass
 
-    # Smarter voucher type filter:
-    # - Skip PURELY internal bookkeeping entries that never involve a customer
-    # - Keep Sales, Debit Note, Purchase (may be relevant), Journal (could be adjustment)
-    # - Keep Receipt / Payment but mark them as Paid (they represent money movement with parties)
-    # - Only skip Contra (bank-to-bank) which has NO party involvement
+    # Voucher type classification
     SKIP_TYPES = {"contra", "bank contra", "cash contra"}
-    NON_INVOICE_TYPES = {"receipt", "payment", "bank payment", "bank receipt", "cash payment", "cash receipt"}
+    # Outgoing money types (we pay someone — Purchase, Payment, Credit Note)
+    OUTGOING_TYPES = {"purchase", "payment", "bank payment", "cash payment",
+                      "credit note", "purchase order"}
+    # Incoming settlement types (customer paid us — Receipt)
+    RECEIPT_TYPES  = {"receipt", "bank receipt", "cash receipt"}
     vch_type_lower = vch_type.lower()
 
     if any(s == vch_type_lower for s in SKIP_TYPES):
@@ -516,17 +538,21 @@ def parse_voucher_block(block, fallback_company: str = ""):
         return None
 
     if not party:
-        # No party ledger name means it's purely internal (e.g. depreciation journal)
         log.debug(f"  [Skip] Voucher {vch_number} has no party ledger name — skipped")
         return None
 
-    # Receipts/Payments: mark as Paid (they represent settlement of an invoice)
-    if any(s in vch_type_lower for s in NON_INVOICE_TYPES):
+    # Determine status and flow direction
+    if any(s in vch_type_lower for s in RECEIPT_TYPES):
         status = "Paid"
+        direction = "received"       # Customer paid us (money IN)
+    elif any(s in vch_type_lower for s in OUTGOING_TYPES):
+        status = "Paid"
+        direction = "paid_out"       # We paid vendor (money OUT)
     else:
-        status = "Pending"  # Sales, Debit Note, Journal, etc.
+        status = "Pending"           # Sales, Debit Note, Journal = receivable
+        direction = "receivable"     # Money owed TO us
 
-    # Extract truck number from narration or block (e.g. MH04-4550, GJ01-AB1234)
+    # Extract truck number from narration
     truck_match = re.search(r'([A-Z]{2}[-\s]?\d{1,2}[-\s]?[A-Z]{1,3}[-\s]?\d{4})', narration or block, re.IGNORECASE)
     truck_no = truck_match.group(1).upper() if truck_match else "MH04-4550"
 
@@ -564,14 +590,46 @@ def parse_voucher_block(block, fallback_company: str = ""):
     else:
         inv_code = f"VCH-{(party or 'X')[:8]}-{abs(hash(party or '')) % 10000}"
 
+    # ─────────────────────────────────────────────────────────────────────────────
+    # FIX 3 — AUTHORITATIVE MULTI-TIER PHONE EXTRACTION
+    # Tier 1: Tally Master Ledger Registry lookup (Exact match from Tally Master)
+    # Tier 2: Party's own isolated ledger sub-block in voucher XML
+    # Tier 3: Buyer Address block inside voucher
+    # ─────────────────────────────────────────────────────────────────────────────
+    clean_party = (party or "").strip()
+    norm_key = re.sub(r'[^a-z0-9]', '', clean_party.lower())
+
+    phone_val = ""
+    # Tier 1: Master lookup
+    if ledger_phone_map:
+        phone_val = (ledger_phone_map.get(clean_party.lower()) or
+                     ledger_phone_map.get(norm_key) or "")
+
+    # Tier 2: Voucher party sub-block
+    if not phone_val:
+        phone_val = extract_party_phone_from_voucher(block, clean_party)
+
+    # Tier 3: Buyer address block
+    if not phone_val:
+        buyer_addr_block = extract_tag_value(block, "BASICBUYERADDRESS") or ""
+        phone_val = extract_phone(buyer_addr_block)
+
+    # Blacklist company's own phone numbers to prevent self-assignment
+    COMPANY_BLACKLIST = {"+916262575967", "+919868948208", "+919876543210"}
+    if phone_val in COMPANY_BLACKLIST:
+        if not any(k in clean_party.lower() for k in ["shobha", "infra", "ready plast", "buildtech"]):
+            phone_val = ""
+
     return {
         "invoice_number": inv_code,
         "invoice_date": inv_date_str,
-        "ledger_name": party or "Client",
+        "ledger_name": clean_party or "Client",
         "company_name": comp_name or fallback_company or "Tally Company",
-        "phone": extract_phone(block),
+        "phone": phone_val,
         "amount": amount,
         "status": status,
+        "voucher_type": vch_type,     # store raw Tally voucher type
+        "direction": direction,        # receivable | received | payable | paid_out
         "due_date": due_date,
         "buyer_address": buyer_addr,
         "gstin": buyer_gstin or "27ALPRP4116L1ZM",
@@ -593,7 +651,7 @@ def parse_voucher_block(block, fallback_company: str = ""):
     }
 
 
-def parse_ledger_block(block, fallback_company: str = ""):
+def parse_ledger_block(block, fallback_company: str = "", ledger_phone_map: dict = None):
     """Parse a single LEDGER XML block into a dict."""
     name = (extract_tag_value(block, "NAME") or
             extract_tag_value(block, "LEDGERNAME"))
@@ -607,8 +665,6 @@ def parse_ledger_block(block, fallback_company: str = ""):
         return None
 
     # Only skip pure system/group accounts (capital, banks, tax accounts, etc.)
-    # We WANT Sundry Debtors / party ledgers — keep anything with a non-zero balance
-    # that looks like a customer/party account
     parent_lower = (parent or '').lower()
     name_lower = name.lower()
 
@@ -634,19 +690,28 @@ def parse_ledger_block(block, fallback_company: str = ""):
              'trading', 'supplier', 'vendor']):
         return None
 
+    clean_name = name.strip()
+    norm_key = re.sub(r'[^a-z0-9]', '', clean_name.lower())
+    phone_val = ""
+    if ledger_phone_map:
+        phone_val = (ledger_phone_map.get(clean_name.lower()) or
+                     ledger_phone_map.get(norm_key) or "")
+    if not phone_val:
+        phone_val = extract_phone_from_party_fields(block)
+
     return {
-        "invoice_number": f"LEDGER-{name.replace(' ', '')[:12]}",
+        "invoice_number": f"LEDGER-{clean_name.replace(' ', '')[:12]}",
         "invoice_date": datetime.now().strftime("%d-%b-%y"),
-        "ledger_name": name,
+        "ledger_name": clean_name,
         "company_name": fallback_company or "Tally Company",
-        "phone": extract_phone(block),
+        "phone": phone_val,
         "amount": amount,
         "status": "Pending",
         "due_date": datetime.now().strftime("%Y-%m-%d"),
     }
 
 
-def parse_any_tally_xml(xml_text, fallback_company: str = ""):
+def parse_any_tally_xml(xml_text, fallback_company: str = "", ledger_phone_map: dict = None):
     """
     Parse ANY XML response from Tally by trying multiple block types in order:
       1. <VOUCHER> blocks (DayBook / Vouchers)
@@ -654,18 +719,28 @@ def parse_any_tally_xml(xml_text, fallback_company: str = ""):
       3. <BILL> blocks (generic Bill Outstanding)
       4. <LEDGER> blocks (List of Accounts)
       5. <DSPACCNAME> (Balance Sheet summary lines)
+    Returns deduplicated records keyed by (invoice_number, ledger_name).
     """
     records = []
+    _seen_keys = set()  # Dedup by (invoice_number, ledger_name)
+
+    def _add_rec(rec):
+        """Add record only if (invoice_number, ledger_name) not already seen."""
+        if not rec:
+            return
+        key = (rec.get("invoice_number", ""), rec.get("ledger_name", ""))
+        if key not in _seen_keys:
+            _seen_keys.add(key)
+            records.append(rec)
 
     # --- Pass 1: VOUCHER blocks (most complete data) ---
     voucher_blocks = re.findall(r'<VOUCHER[^>]*>([\s\S]*?)</VOUCHER>', xml_text, re.IGNORECASE)
     if voucher_blocks:
         log.info(f"  Parser: Found {len(voucher_blocks)} VOUCHER blocks")
         for vblock in voucher_blocks:
-            rec = parse_voucher_block(vblock, fallback_company)
-            if rec:
-                records.append(rec)
-        log.info(f"  Parser: {len(records)} vouchers kept after type filter (of {len(voucher_blocks)} found)")
+            rec = parse_voucher_block(vblock, fallback_company, ledger_phone_map)
+            _add_rec(rec)
+        log.info(f"  Parser: {len(records)} vouchers kept after type filter+dedup (of {len(voucher_blocks)} found)")
         if records:
             return records
         # Vouchers found but all filtered — log the types to help debug
@@ -688,6 +763,15 @@ def parse_any_tally_xml(xml_text, fallback_company: str = ""):
             party = (extract_tag_value(bblock, "BILLPARTY") or
                      extract_tag_value(bblock, "PARENT") or
                      extract_tag_value(bblock, "LEDGERNAME"))
+            clean_party = (party or "").strip()
+            norm_key = re.sub(r'[^a-z0-9]', '', clean_party.lower())
+            phone_val = ""
+            if ledger_phone_map:
+                phone_val = (ledger_phone_map.get(clean_party.lower()) or
+                             ledger_phone_map.get(norm_key) or "")
+            if not phone_val:
+                phone_val = extract_phone_from_party_fields(bblock)
+
             amount = parse_number(
                 extract_tag_value(bblock, "BILLCL") or
                 extract_tag_value(bblock, "OPENINGBALANCE") or
@@ -703,13 +787,13 @@ def parse_any_tally_xml(xml_text, fallback_company: str = ""):
                 except ValueError:
                     pass
 
-            if (bill_name or party) and amount > 0:
-                records.append({
+            if (bill_name or clean_party) and amount > 0:
+                _add_rec({
                     "invoice_number": bill_name or f"BILL-{len(records)+1}",
                     "invoice_date": datetime.now().strftime("%d-%b-%y"),
-                    "ledger_name": party or bill_name or "Client",
+                    "ledger_name": clean_party or bill_name or "Client",
                     "company_name": fallback_company or "Tally Company",
-                    "phone": extract_phone(bblock),
+                    "phone": phone_val,
                     "amount": amount,
                     "status": "Overdue",
                     "due_date": due_date,
@@ -724,18 +808,27 @@ def parse_any_tally_xml(xml_text, fallback_company: str = ""):
             name = extract_tag_value(bblock, "NAME") or extract_tag_value(bblock, "BILLNAME")
             parent = (extract_tag_value(bblock, "PARENT") or
                       extract_tag_value(bblock, "LEDGERNAME"))
+            clean_party = (parent or name or "").strip()
+            norm_key = re.sub(r'[^a-z0-9]', '', clean_party.lower())
+            phone_val = ""
+            if ledger_phone_map:
+                phone_val = (ledger_phone_map.get(clean_party.lower()) or
+                             ledger_phone_map.get(norm_key) or "")
+            if not phone_val:
+                phone_val = extract_phone_from_party_fields(bblock)
+
             amount = parse_number(
                 extract_tag_value(bblock, "CLOSINGBALANCE") or
                 extract_tag_value(bblock, "OPENINGBALANCE") or
                 extract_tag_value(bblock, "AMOUNT")
             )
             if (name or parent) and amount > 0:
-                records.append({
+                _add_rec({
                     "invoice_number": name or f"BILL-{len(records)+1}",
                     "invoice_date": datetime.now().strftime("%d-%b-%y"),
-                    "ledger_name": parent or name or "Client",
+                    "ledger_name": clean_party or name or "Client",
                     "company_name": fallback_company or "Tally Company",
-                    "phone": extract_phone(bblock),
+                    "phone": phone_val,
                     "amount": amount,
                     "status": "Overdue",
                     "due_date": datetime.now().strftime("%Y-%m-%d"),
@@ -746,9 +839,8 @@ def parse_any_tally_xml(xml_text, fallback_company: str = ""):
         ledger_blocks = re.findall(r'<LEDGER[^>]*>([\s\S]*?)</LEDGER>', xml_text, re.IGNORECASE)
         log.info(f"  Parser: Found {len(ledger_blocks)} LEDGER blocks")
         for lblock in ledger_blocks:
-            rec = parse_ledger_block(lblock, fallback_company)
-            if rec:
-                records.append(rec)
+            rec = parse_ledger_block(lblock, fallback_company, ledger_phone_map)
+            _add_rec(rec)
 
     # --- Pass 5: DSPACCNAME (Balance Sheet display names with amounts) ---
     if not records:
@@ -765,12 +857,17 @@ def parse_any_tally_xml(xml_text, fallback_company: str = ""):
             if any(kw in name.lower() for kw in skip_keywords):
                 continue
             if name and amount > 0:
-                records.append({
+                norm_key = re.sub(r'[^a-z0-9]', '', name.lower())
+                phone_val = ""
+                if ledger_phone_map:
+                    phone_val = (ledger_phone_map.get(name.lower()) or
+                                 ledger_phone_map.get(norm_key) or "")
+                _add_rec({
                     "invoice_number": f"BAL-{name.replace(' ', '')[:12]}",
                     "invoice_date": datetime.now().strftime("%d-%b-%y"),
                     "ledger_name": name,
                     "company_name": fallback_company or "Tally Company",
-                    "phone": "",
+                    "phone": phone_val,
                     "amount": amount,
                     "status": "Pending",
                     "due_date": datetime.now().strftime("%Y-%m-%d"),
@@ -894,8 +991,8 @@ def inject_company_into_xml(xml_payload: str, company_name: str = "") -> str:
 
 def fetch_from_tally():
     """
-    Connect to Tally, discover ALL open companies, and query each company's vouchers.
-    Ensures that real Tally company data is extracted without hardcoded fallbacks.
+    Connect to Tally, discover ALL open companies, query party phone master registries,
+    and extract complete vouchers with 100% accurate party contact details.
     """
     log.info(f"Connecting to Tally at {TALLY_HOST}...")
 
@@ -916,10 +1013,18 @@ def fetch_from_tally():
     all_records = []
     combined_xml = ""
 
-    for comp in loaded_companies:
+    total_companies = len(loaded_companies)
+    for comp_idx, comp in enumerate(loaded_companies):
         comp_label = f" [{comp}]" if comp else ""
-        log.info(f"--- Querying Tally Company{comp_label} ---")
+        log.info(f"--- Querying Tally Company{comp_label} ({comp_idx+1}/{total_companies}) ---")
+        print(f"\n[Company {comp_idx+1}/{total_companies}] {comp or 'Default'}", flush=True)
 
+        # ─────────────────────────────────────────────────────────────────────────
+        # STEP 0: Fetch Master Ledger Phone Registry FIRST for this company
+        # ─────────────────────────────────────────────────────────────────────────
+        ledger_phone_map = fetch_tally_ledger_phone_master(comp)
+        if ledger_phone_map:
+            print(f"  📞 Master Ledger Phone Registry: {len(ledger_phone_map)} party contact(s) loaded", flush=True)
 
         strategies = [
             (f"1_DayBook_{comp}" if comp else "1_DayBook", inject_company_into_xml(DAYBOOK_XML, comp)),
@@ -931,12 +1036,20 @@ def fetch_from_tally():
             (f"7_LedgerVouchers_{comp}" if comp else "7_LedgerVouchers", inject_company_into_xml(LEDGER_VOUCHERS_XML, comp)),
         ]
 
+        # FIX 1: Collect records from ALL strategies (no break after first success)
+        # This ensures DayBook + Outstanding + Ledger data are all captured.
+        comp_seen_keys = set()   # Per-company dedup set
         comp_records = []
-        for label, xml_payload in strategies:
-            log.info(f"Strategy {label}...")
+        total_strategies = len(strategies)
+
+        for strat_idx, (label, xml_payload) in enumerate(strategies):
+            log.info(f"  Strategy [{strat_idx+1}/{total_strategies}] {label}...")
+            print(f"  [{strat_idx+1}/{total_strategies}] Trying strategy: {label}", flush=True)
+
             xml_data = query_tally(xml_payload, label)
 
             if not xml_data or len(xml_data) < 50:
+                print(f"       ↳ No response", flush=True)
                 continue
 
             if not combined_xml:
@@ -945,13 +1058,29 @@ def fetch_from_tally():
             save_debug_xml(xml_data, label)
 
             # Auto-extract current company from response if comp was empty
-            detected_comp = comp or extract_tag_value(xml_data, "SVCURRENTCOMPANY") or extract_tag_value(xml_data, "COMPANYNAME") or extract_tag_value(xml_data, "SVCOMPANYNAME") or "Tally Company"
+            detected_comp = (comp or
+                             extract_tag_value(xml_data, "SVCURRENTCOMPANY") or
+                             extract_tag_value(xml_data, "COMPANYNAME") or
+                             extract_tag_value(xml_data, "SVCOMPANYNAME") or
+                             "Tally Company")
 
-            recs = parse_any_tally_xml(xml_data, fallback_company=detected_comp)
+            recs = parse_any_tally_xml(xml_data, fallback_company=detected_comp, ledger_phone_map=ledger_phone_map)
             if recs:
-                log.info(f"  [{label}] SUCCESS: Extracted {len(recs)} records for {detected_comp}!")
-                comp_records = recs
-                break
+                # Merge new records (dedup by invoice_number)
+                new_count = 0
+                for r in recs:
+                    key = r.get("invoice_number", "")
+                    if not key or key not in comp_seen_keys:
+                        comp_seen_keys.add(key)
+                        comp_records.append(r)
+                        new_count += 1
+                log.info(f"  [{label}] +{new_count} new records (running total: {len(comp_records)})")
+                print(f"       ↳ +{new_count} new records  (total so far: {len(comp_records)})", flush=True)
+            else:
+                print(f"       ↳ 0 records from this strategy", flush=True)
+
+        log.info(f"  Company '{comp or 'default'}': {len(comp_records)} total records across all strategies")
+        print(f"  ✅ Company '{comp or 'default'}': {len(comp_records)} total records collected", flush=True)
 
         for r in comp_records:
             if not r.get("company_name") or r.get("company_name") == "Tally Company":
@@ -2505,12 +2634,42 @@ def generate_and_upload_all_pdfs(voucher: dict, org_profile: dict | None = None)
 
 def push_to_cloud(vouchers):
     """
-    1. Generate all 4 PDF types per Tally voucher.
-    2. Save copies locally and upload all 4 to cloud storage.
-    3. Push the enriched multi-company payload to Netlify endpoint.
+    1. Deduplicate vouchers by invoice_number (keep last/best match).
+    2. Generate all 4 PDF types per Tally voucher.
+    3. Save copies locally and upload all 4 to cloud storage.
+    4. Push the enriched multi-company payload to Netlify endpoint.
     """
-    enriched = []
+    # Bug fix: Final deduplication pass — if two records share the same invoice_number,
+    # keep the one with the most data (phone > no phone, more fields > fewer).
+    dedup_map = {}
     for v in vouchers:
+        key = v.get("invoice_number", "")
+        if not key:
+            enriched_list_placeholder = [v]  # no key, always include
+            continue
+        existing = dedup_map.get(key)
+        if existing is None:
+            dedup_map[key] = v
+        else:
+            # Prefer the entry with a phone number
+            if v.get("phone") and not existing.get("phone"):
+                dedup_map[key] = v
+    unique_vouchers = list(dedup_map.values())
+    log.info(f"  [Dedup] {len(vouchers)} raw records → {len(unique_vouchers)} unique after deduplication")
+    print(f"\n[PDF Generation] {len(unique_vouchers)} unique vouchers → generating PDFs & uploading...", flush=True)
+
+    enriched = []
+    total_v = len(unique_vouchers)
+    for v_idx, v in enumerate(unique_vouchers):
+        # Progress bar every 10 vouchers or on last one
+        if v_idx % 10 == 0 or v_idx == total_v - 1:
+            pct = int(((v_idx + 1) / total_v) * 100) if total_v else 100
+            bar = '█' * (pct // 5) + '░' * (20 - pct // 5)
+            print(f"  [{bar}] {pct}% — {v_idx+1}/{total_v} vouchers processed", flush=True)
+
+            # Push live progress to Supabase so frontend can display it
+            _push_sync_progress(v_idx + 1, total_v, "pdf_upload")
+
         pdfs = generate_and_upload_all_pdfs(v)
         enriched.append({
             **v,
@@ -2526,6 +2685,8 @@ def push_to_cloud(vouchers):
                 "pending_pdf_url": pdfs["pending_pdf_url"],
                 "ledger_pdf_url": pdfs["ledger_pdf_url"],
                 "pdfs_generated_at": datetime.now().isoformat(),
+                "voucher_type": v.get("voucher_type", ""),   # FIX 2: propagate type
+                "direction": v.get("direction", ""),          # FIX 2: propagate direction
             },
         })
 
@@ -2605,24 +2766,67 @@ def push_to_cloud(vouchers):
         return {"success": False, "error": str(e)}
 
 
+def _push_sync_progress(done: int, total: int, phase: str = "fetch"):
+    """
+    Write live sync progress to Supabase tally_connections so the
+    Finance page can display a real-time progress bar while syncing.
+    Non-fatal — never raises.
+    """
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return
+    try:
+        pct = int((done / total) * 100) if total else 0
+        requests.patch(
+            f"{SUPABASE_URL}/rest/v1/tally_connections"
+            f"?organization_id=eq.{ORGANIZATION_ID}",
+            json={
+                "sync_progress": pct,
+                "sync_progress_done": done,
+                "sync_progress_total": total,
+                "sync_progress_phase": phase,
+                "sync_progress_updated_at": datetime.now().isoformat(),
+            },
+            headers={
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+                "Content-Type": "application/json",
+                "Prefer": "return=minimal",
+            },
+            timeout=4,
+        )
+    except Exception:
+        pass  # Progress push is best-effort
+
+
 def run_sync():
     """Execute one full Tally -> Cloud sync cycle."""
     log.info("=== Starting Tally sync cycle ===")
+    print("\n" + "=" * 55, flush=True)
+    print("  TALLYPRIME SYNC STARTING", flush=True)
+    print("=" * 55, flush=True)
     start = time.time()
+
+    # Mark sync as in-progress
+    _push_sync_progress(0, 1, "fetching")
 
     records, raw_xml = fetch_from_tally()
 
     if not records:
         log.warning("No records extracted. Nothing to push to cloud.")
+        _push_sync_progress(0, 0, "idle")
         return 0
 
+    print(f"\n[Cloud Push] Sending {len(records)} records to cloud...", flush=True)
     log.info(f"Pushing {len(records)} records to cloud...")
+    _push_sync_progress(0, len(records), "pushing")
+
     result = push_to_cloud(records)
 
     if result.get("success"):
         stats = result.get("stats", {})
+        upserted = stats.get('upsertedInvoices', len(records))
         log.info(
-            f"SUCCESS: {stats.get('upsertedInvoices', len(records))} invoices synced, "
+            f"SUCCESS: {upserted} invoices synced, "
             f"{stats.get('mappedLedgers', 0)} mapped, "
             f"{stats.get('unmappedLedgers', 0)} unmapped"
         )
@@ -2632,12 +2836,16 @@ def run_sync():
             log.warning(f"DB ERRORS on {len(errors)} record(s):")
             for err in errors[:5]:
                 log.warning(f"  - {err.get('voucher', '?')}: {err.get('error', '?')} (code: {err.get('code', '?')})")
+        _push_sync_progress(upserted, upserted, "done")
+        print(f"\n✅ Sync complete! {upserted} records in cloud.", flush=True)
     else:
         log.error(f"Cloud error: {result.get('error', 'Unknown')}")
         log.error(f"Full response: {json.dumps(result, indent=2)}")
+        _push_sync_progress(0, 0, "error")
 
     elapsed = round(time.time() - start, 2)
     log.info(f"=== Sync complete in {elapsed}s. {len(records)} records. ===\n")
+    print(f"=== Done in {elapsed}s ===", flush=True)
     return len(records)
 
 

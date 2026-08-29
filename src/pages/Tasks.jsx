@@ -539,36 +539,52 @@ const Tasks = () => {
   };
 
   const matchesAssignee = (t) => {
-    if (!canViewAll) {
-      const uName = (user?.name || '').toLowerCase();
-      const uRole = (user?.role || '').toLowerCase();
-      const uEmail = (user?.email || '').toLowerCase();
-      const assigned = (t.assigned_to || '').toLowerCase();
+    const assigned = (t.assigned_to || '').toLowerCase().trim();
+    const uName = (user?.name || '').toLowerCase().trim();
+    const uRole = (user?.role || '').toLowerCase().trim();
+    const uEmail = (user?.email || '').toLowerCase().trim();
+    const uId = (user?.id || '').toLowerCase().trim();
 
-      // Explicit match
-      if (uName && assigned.includes(uName)) return true;
-      if (uEmail && assigned.includes(uEmail)) return true;
+    if (!canViewAll) {
+      // Global task (unassigned or assigned to All)
+      if (!assigned || assigned === 'all' || assigned.includes('all team') || assigned.includes('all active') || assigned.includes('all employees')) return true;
+      // Explicit match in both directions
+      if (uName && (assigned.includes(uName) || uName.includes(assigned))) return true;
+      if (uEmail && (assigned.includes(uEmail) || uEmail.includes(assigned))) return true;
+      if (uId && assigned.includes(uId)) return true;
+      // First name match (e.g. "pooja" matches "pooja kumari")
+      const firstName = uName.split(' ')[0];
+      if (firstName && firstName.length > 2 && assigned.includes(firstName)) return true;
       // Role match (e.g. Sales Executive, Field Agent)
       if (uRole && (assigned.includes(uRole) || assigned.includes(uRole.replace(' executive', '')))) return true;
-      // Global task
-      if (assigned.includes('all') || assigned === '' || !t.assigned_to) return true;
       return false;
     }
+
     if (assigneeFilter === 'All') return true;
     if (assigneeFilter === 'My Tasks') {
-      const uName = (user?.name || '').toLowerCase();
-      const uRole = (user?.role || '').toLowerCase();
-      const assigned = (t.assigned_to || '').toLowerCase();
-      return (uName && assigned.includes(uName)) || (uRole && assigned.includes(uRole)) || assigned.includes('all');
+      if (!assigned || assigned === 'all' || assigned.includes('all team')) return true;
+      if (uName && (assigned.includes(uName) || uName.includes(assigned))) return true;
+      if (uEmail && (assigned.includes(uEmail) || uEmail.includes(assigned))) return true;
+      if (uId && assigned.includes(uId)) return true;
+      if (uRole && assigned.includes(uRole)) return true;
+      return false;
     }
     return t.assigned_to === assigneeFilter;
   };
 
   const isUserTaskOwner = (task) => {
-    const uName = (user?.name || '').toLowerCase();
-    const uRole = (user?.role || '').toLowerCase();
-    const assigned = (task.assigned_to || '').toLowerCase();
-    return (uName && assigned.includes(uName)) || (uRole && assigned.includes(uRole)) || assigned.includes('all');
+    const assigned = (task.assigned_to || '').toLowerCase().trim();
+    const uName = (user?.name || '').toLowerCase().trim();
+    const uRole = (user?.role || '').toLowerCase().trim();
+    const uEmail = (user?.email || '').toLowerCase().trim();
+    const uId = (user?.id || '').toLowerCase().trim();
+
+    if (!assigned || assigned === 'all' || assigned.includes('all team')) return true;
+    if (uName && (assigned.includes(uName) || uName.includes(assigned))) return true;
+    if (uEmail && (assigned.includes(uEmail) || uEmail.includes(assigned))) return true;
+    if (uId && assigned.includes(uId)) return true;
+    if (uRole && (assigned.includes(uRole) || assigned.includes(uRole.replace(' executive', '')))) return true;
+    return false;
   };
 
   const matchesTypeFilter = (t) => {

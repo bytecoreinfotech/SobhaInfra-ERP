@@ -69,6 +69,12 @@ exports.handler = async (event) => {
           tally_host: 'http://localhost:9000',
           last_sync_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
+          // Progress fields — reset to done when full payload arrives
+          sync_progress: 100,
+          sync_progress_done: vouchers.length,
+          sync_progress_total: vouchers.length,
+          sync_progress_phase: 'pushing',
+          sync_progress_updated_at: new Date().toISOString(),
         }, { onConflict: 'organization_id' });
       } catch (connErr) {
         console.warn('[Tally Ingestion] Connection status update:', connErr.message);
@@ -149,6 +155,13 @@ exports.handler = async (event) => {
               tally_ledger: v.ledger_name,
               tally_company: v.company_name || companyName || '',
               sync_source: 'TallyPrime XML Bridge',
+              // FIX 2: Store voucher type & direction for Finance page direction badges
+              voucher_type: v.voucher_type || v.metadata?.voucher_type || '',
+              direction:    v.direction    || v.metadata?.direction    || 'receivable',
+              // All 4 PDF URLs from tally-sync.py
+              eway_pdf_url:    v.metadata?.eway_pdf_url    || null,
+              pending_pdf_url: v.metadata?.pending_pdf_url || null,
+              ledger_pdf_url:  v.metadata?.ledger_pdf_url  || null,
             },
             company_name: v.company_name || companyName || '',
           };
