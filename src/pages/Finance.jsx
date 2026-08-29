@@ -335,100 +335,64 @@ const Finance = () => {
         </div>
       </div>
 
-      {/* ── Finance Info: Two Separate Panels ───────────────────────────── */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+      {/* ── Finance Info Strip (compact single row) ───────────────────────── */}
+      {(() => {
+        const dates = allInvoices
+          .map(i => i.invoice_date || i.due_date || i.created_at)
+          .filter(Boolean).map(d => new Date(d)).filter(d => !isNaN(d));
+        const earliest = dates.length ? new Date(Math.min(...dates)) : null;
+        const latest   = dates.length ? new Date(Math.max(...dates)) : null;
+        const fmtD = d => d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+        const months = earliest && latest ? Math.round((latest - earliest) / (1000*60*60*24*30)) : 0;
+        return (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap',
+            padding: '0.35rem 0.85rem',
+            background: 'var(--bg-secondary)',
+            border: '1px solid var(--border-color)',
+            borderRadius: 'var(--radius-md)',
+            fontSize: '0.72rem', lineHeight: 1,
+          }}>
+            {/* Filter Range */}
+            <Filter size={11} color="var(--accent-primary)" style={{ flexShrink: 0 }} />
+            <span style={{ color: 'var(--text-muted)', fontWeight: 600, whiteSpace: 'nowrap' }}>Filter:</span>
+            <span style={{ color: dateFrom || dateTo ? 'var(--text-primary)' : 'var(--text-muted)', fontWeight: dateFrom || dateTo ? 700 : 400, whiteSpace: 'nowrap' }}>
+              {dateFrom || dateTo
+                ? `${dateFrom ? fmtD(new Date(dateFrom)) : 'Beginning'} → ${dateTo ? fmtD(new Date(dateTo)) : 'Today'}`
+                : 'All dates'}
+            </span>
+            <span style={{ color: 'var(--text-muted)' }}>·</span>
+            <span style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+              <strong style={{ color: 'var(--accent-primary)' }}>{filtered.length}</strong>/{invoices.length} invoices
+              {filter !== 'All' && <span style={{ color: 'var(--warning)', fontWeight: 700 }}> · {filter}</span>}
+            </span>
 
-        {/* Panel 1: Selected Filter Range (what the user is viewing) */}
-        <div style={{
-          display: 'flex', flexDirection: 'column', gap: '0.4rem',
-          padding: '0.75rem 1rem',
-          background: 'var(--bg-secondary)',
-          border: '1px solid var(--border-color)',
-          borderRadius: 'var(--radius-md)',
-          fontSize: '0.78rem',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.1rem' }}>
-            <Filter size={13} color="var(--accent-primary)" />
-            <span style={{ fontWeight: 700, color: 'var(--text-muted)', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-              Selected Filter Range
-            </span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-            <span style={{ color: dateFrom || dateTo ? 'var(--text-primary)' : 'var(--text-muted)', fontWeight: dateFrom || dateTo ? 700 : 400, fontSize: '0.85rem' }}>
-              {dateFrom || dateTo ? (
-                <>
-                  {dateFrom ? new Date(dateFrom).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Beginning'}
-                  {' → '}
-                  {dateTo ? new Date(dateTo).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Today'}
-                </>
-              ) : 'All dates (no filter applied)'}
-            </span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.1rem' }}>
-            <FileText size={12} color="var(--text-muted)" />
-            <span style={{ color: 'var(--text-muted)', fontSize: '0.72rem' }}>
-              Showing <strong style={{ color: 'var(--accent-primary)' }}>{filtered.length}</strong> of {invoices.length} invoices
-              {filter !== 'All' && <span style={{ color: 'var(--warning)', fontWeight: 600 }}> · {filter}</span>}
-            </span>
-          </div>
-        </div>
+            {/* Divider */}
+            <div style={{ width: 1, height: 12, background: 'var(--border-color)', flexShrink: 0 }} />
 
-        {/* Panel 2: Overall Data Availability Period (what exists in DB) */}
-        <div style={{
-          display: 'flex', flexDirection: 'column', gap: '0.4rem',
-          padding: '0.75rem 1rem',
-          background: 'var(--bg-secondary)',
-          border: '1px solid var(--border-color)',
-          borderRadius: 'var(--radius-md)',
-          fontSize: '0.78rem',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.1rem' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-              <CalendarClock size={13} color="var(--success)" />
-              <span style={{ fontWeight: 700, color: 'var(--text-muted)', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                Data Available In System
-              </span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.7rem' }}>
-              <Server size={12} color={tallyStatus?.sync_status === 'Connected' ? 'var(--success)' : 'var(--text-muted)'} />
-              <span style={{ color: 'var(--text-muted)' }}>Last sync:</span>
-              <span style={{ color: tallyStatus?.last_sync_at ? 'var(--success)' : 'var(--text-muted)', fontWeight: 700 }}>
-                {tallyStatus?.last_sync_at
-                  ? new Date(tallyStatus.last_sync_at).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true })
-                  : 'Not synced yet'}
-              </span>
-              {isSyncing && <RefreshCw size={11} className="animate-spin" color="var(--accent-primary)" />}
-            </div>
+            {/* Data Availability */}
+            <CalendarClock size={11} color="var(--success)" style={{ flexShrink: 0 }} />
+            <span style={{ color: 'var(--text-muted)', fontWeight: 600, whiteSpace: 'nowrap' }}>DB Period:</span>
+            <span style={{ color: 'var(--text-primary)', fontWeight: 700, whiteSpace: 'nowrap' }}>
+              {earliest && latest ? `${fmtD(earliest)} → ${fmtD(latest)}` : 'No data yet'}
+            </span>
+            {months > 0 && <span style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>({months} mo · {allInvoices.length} records)</span>}
+
+            {/* Divider */}
+            <div style={{ width: 1, height: 12, background: 'var(--border-color)', flexShrink: 0 }} />
+
+            {/* Last Sync */}
+            <Server size={11} color={tallyStatus?.sync_status === 'Connected' ? 'var(--success)' : 'var(--text-muted)'} style={{ flexShrink: 0 }} />
+            <span style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Last sync:</span>
+            <span style={{ color: tallyStatus?.last_sync_at ? 'var(--success)' : 'var(--text-muted)', fontWeight: 700, whiteSpace: 'nowrap' }}>
+              {tallyStatus?.last_sync_at
+                ? new Date(tallyStatus.last_sync_at).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true })
+                : 'Not synced yet'}
+            </span>
+            {isSyncing && <RefreshCw size={10} className="animate-spin" color="var(--accent-primary)" />}
           </div>
-          {(() => {
-            const dates = allInvoices
-              .map(i => i.invoice_date || i.due_date || i.created_at)
-              .filter(Boolean)
-              .map(d => new Date(d))
-              .filter(d => !isNaN(d));
-            if (dates.length === 0) {
-              return <span style={{ color: 'var(--text-muted)', fontSize: '0.82rem' }}>No invoice data in system yet</span>;
-            }
-            const earliest = new Date(Math.min(...dates));
-            const latest = new Date(Math.max(...dates));
-            return (
-              <>
-                <span style={{ color: 'var(--text-primary)', fontWeight: 700, fontSize: '0.85rem' }}>
-                  {earliest.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
-                  {' → '}
-                  {latest.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
-                </span>
-                <span style={{ color: 'var(--text-muted)', fontSize: '0.72rem' }}>
-                  {allInvoices.length} total records spanning{' '}
-                  <strong style={{ color: 'var(--text-secondary)' }}>
-                    {Math.round((latest - earliest) / (1000 * 60 * 60 * 24 * 30))} months
-                  </strong>
-                </span>
-              </>
-            );
-          })()}
-        </div>
-      </div>
+        );
+      })()}
 
       {/* =========================================================================
           TAB 1: INVOICES & AGING OUTSTANDINGS

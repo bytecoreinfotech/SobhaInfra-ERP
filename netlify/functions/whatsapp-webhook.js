@@ -28,7 +28,9 @@ const WA_APP_SECRET  = process.env.WHATSAPP_APP_SECRET || '845391164b6f66cecd3e9
 const SUPABASE_URL   = process.env.SUPABASE_URL   || 'https://mcgmppnvnwnilioapbli.supabase.co';
 const SUPABASE_KEY   = process.env.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1jZ21wcG52bnduaWxpb2FwYmxpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc1NzE5ODIsImV4cCI6MjEwMzE0Nzk4Mn0.27BrkeNVxcEfG0R1W2gzlV2ueuK6NBS7MuD98Y5iDME';
 // Service-role key bypasses RLS — REQUIRED for webhook writes (new contacts / conversations)
-const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || SUPABASE_KEY;
+// Hardcoded fallback matches get-conversations.js pattern — safe in server-side function
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
+  || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1jZ21wcG52bnduaWxpb2FwYmxpIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4NzU3MTk4MiwiZXhwIjoyMTAzMTQ3OTgyfQ.iMVtS3kZ5jkXd7wOsgviN_3Umz0Auw7vBa0NDlD9rKg';
 const GEMINI_KEY     = process.env.GEMINI_API_KEY;
 const OPENAI_KEY     = process.env.OPENAI_API_KEY;
 const HF_KEY         = process.env.HUGGING_FACE_API_KEY || '';
