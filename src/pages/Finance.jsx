@@ -27,29 +27,30 @@ const statusConfig = {
 
 /**
  * FIX 2 — Derive payment direction from metadata + invoice number prefix.
- * Returns a config object with label, icon direction, and colors.
+ * Returns a config object with label, icon arrow JSX, and colors.
+ * Arrow icons: ArrowDownLeft = incoming money (green), ArrowUpRight = outgoing money (amber/red)
  */
 const getDirection = (inv) => {
   const dir = inv?.metadata?.direction || '';
   const vtype = (inv?.metadata?.voucher_type || '').toLowerCase();
   const num   = (inv?.invoice_number || '').toLowerCase();
 
-  // Receipt = customer paid us (money IN to us)
+  // Receipt = customer paid us (money IN to us) — bold green arrow pointing down-left (deposit)
   if (dir === 'received' || /^(rcpt|rct|rec)/.test(num) ||
       ['receipt','bank receipt','cash receipt'].some(t => vtype.includes(t))) {
-    return { label: 'Received',   arrow: '\u2B0B', color: '#10b981', bg: 'rgba(16,185,129,0.12)', title: 'Customer paid us — Incoming payment' };
+    return { label: 'Received',   ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', title: 'Customer paid us — Payment received', canRemind: false };
   }
   // Payment / Purchase = we paid vendor (money OUT from us)
   if (dir === 'paid_out' || /^(pay|pmt|pur)/.test(num) ||
       ['payment','bank payment','cash payment','purchase'].some(t => vtype.includes(t))) {
-    return { label: 'Paid Out',   arrow: '\u2B09', color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', title: 'We paid vendor — Outgoing payment' };
+    return { label: 'Paid Out',   ArrowIcon: ArrowUpRight, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', title: 'We paid vendor — Outgoing payment', canRemind: false };
   }
   // Payable = we owe vendor (Purchase pending)
   if (dir === 'payable') {
-    return { label: 'Payable',    arrow: '\u2B09', color: '#ef4444', bg: 'rgba(239,68,68,0.12)',  title: 'We owe vendor — Outstanding payable' };
+    return { label: 'Payable',    ArrowIcon: ArrowUpRight, color: '#ef4444', bg: 'rgba(239,68,68,0.12)', title: 'We owe vendor — Outstanding payable', canRemind: false };
   }
-  // Default: Receivable = customer owes us (Sales, Debit Note)
-  return   { label: 'Receivable', arrow: '\u2B0A', color: '#6366f1', bg: 'rgba(99,102,241,0.12)', title: 'Customer owes us — Outstanding receivable' };
+  // Default: Receivable = customer owes us (Sales, Debit Note) — arrow pointing up-right (collect)
+  return   { label: 'Receivable', ArrowIcon: ArrowDownRight, color: '#6366f1', bg: 'rgba(99,102,241,0.12)', title: 'Customer owes us — Outstanding receivable', canRemind: true };
 };
 
 const Finance = () => {
@@ -821,12 +822,12 @@ const Finance = () => {
                                 {fmtCurrency(inv.amount)}
                               </span>
                               <span title={dir.title} style={{
-                                display: 'inline-flex', alignItems: 'center', gap: '0.2rem',
-                                fontSize: '0.62rem', fontWeight: 700, padding: '0.1rem 0.4rem',
+                                display: 'inline-flex', alignItems: 'center', gap: '0.25rem',
+                                fontSize: '0.62rem', fontWeight: 700, padding: '0.12rem 0.45rem',
                                 borderRadius: '10px', background: dir.bg, color: dir.color,
-                                border: `1px solid ${dir.color}33`, whiteSpace: 'nowrap', cursor: 'help',
+                                border: `1px solid ${dir.color}44`, whiteSpace: 'nowrap', cursor: 'help',
                               }}>
-                                {dir.arrow} {dir.label}
+                                <dir.ArrowIcon size={10} strokeWidth={2.5} /> {dir.label}
                               </span>
                             </div>
                           );
@@ -928,23 +929,36 @@ const Finance = () => {
                           })()}
 
 
-                          {/* Remind / Settled — Admin can ALWAYS send manually, even during pause */}
-                          {inv.status !== 'Paid' ? (
-                            <button
-                              className="btn btn-whatsapp btn-sm"
-                              style={{ padding: '0.25rem 0.6rem', fontSize: '0.72rem', opacity: (inv.reminder_paused === true || inv.reminder_paused === 'true') ? 0.75 : 1 }}
-                              onClick={() => handleSendReminder(inv)}
-                              disabled={remindingId === inv.id}
-                              title={(inv.reminder_paused === true || inv.reminder_paused === 'true') ? '⚠️ Auto-reminders are paused, but you can still send manually' : 'Send WhatsApp payment reminder'}
-                            >
-                              <Send size={12} /> {remindingId === inv.id ? 'Sending...' : (inv.reminder_paused === true || inv.reminder_paused === 'true') ? 'Send Anyway' : 'Remind on WA'}
-                            </button>
-                          ) : (
-                            <span style={{ fontSize: '0.72rem', color: 'var(--success)', fontWeight: 600 }}>Settled</span>
-                          )}
+                          {/* Remind / Settled — Only for receivable items (money customers OWE us)
+                               NEVER show remind for paid_out/payable — that's money we owe vendors */}
+                          {(() => {
+                            const dir = getDirection(inv);
+                            if (!dir.canRemind) {
+                              // Outgoing / vendor payment — no reminder option
+                              return (
+                                <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                                  {dir.label === 'Paid Out' ? '✓ Vendor paid' : 'Vendor payable'}
+                                </span>
+                              );
+                            }
+                            if (inv.status === 'Paid') {
+                              return <span style={{ fontSize: '0.72rem', color: 'var(--success)', fontWeight: 600 }}>Settled</span>;
+                            }
+                            return (
+                              <button
+                                className="btn btn-whatsapp btn-sm"
+                                style={{ padding: '0.25rem 0.6rem', fontSize: '0.72rem', opacity: (inv.reminder_paused === true || inv.reminder_paused === 'true') ? 0.75 : 1 }}
+                                onClick={() => handleSendReminder(inv)}
+                                disabled={remindingId === inv.id}
+                                title={(inv.reminder_paused === true || inv.reminder_paused === 'true') ? '⚠️ Auto-reminders paused — click to send manually' : 'Send WhatsApp payment reminder'}
+                              >
+                                <Send size={12} /> {remindingId === inv.id ? 'Sending...' : (inv.reminder_paused === true || inv.reminder_paused === 'true') ? 'Send Anyway' : 'Remind on WA'}
+                              </button>
+                            );
+                          })()}
 
-                          {/* Pause / Resume Toggle */}
-                          {inv.status !== 'Paid' && (
+                          {/* Pause / Resume Toggle — only for receivable items */}
+                          {inv.status !== 'Paid' && getDirection(inv).canRemind && (
                             (inv.reminder_paused === true || inv.reminder_paused === 'true') ? (
                               <button
                                 className="btn btn-secondary btn-sm"

@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Mail, Send, Sparkles, CheckCircle2, AlertCircle, Clock,
   Filter, Search, RefreshCw, FileText, Eye, Building2, User,
   Plus, ExternalLink, ShieldCheck, Settings as SettingsIcon,
-  ChevronRight, Inbox, HelpCircle, Layers
+  ChevronRight, Inbox, HelpCircle, Layers, Maximize2, Minimize2,
+  FileEdit, SendHorizontal, Archive, LogIn
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useCompany } from '../context/CompanyContext';
@@ -15,11 +16,15 @@ const EmailHub = () => {
   const { user } = useAuth();
   const { activeCompany } = useCompany();
 
-  const [activeTab, setActiveTab] = useState('logs'); // 'logs' | 'templates' | 'quick-send'
+  const [activeTab, setActiveTab] = useState('webmail'); // 'webmail' | 'logs' | 'templates' | 'quick-send'
   const [logs, setLogs] = useState([]);
   const [loadingLogs, setLoadingLogs] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
+  const [iframeKey, setIframeKey] = useState(0);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [gmailUrl, setGmailUrl] = useState('https://mail.google.com/mail/u/0/');
+  const iframeRef = useRef(null);
   
   // Compose modal state
   const [composeOpen, setComposeOpen] = useState(false);
@@ -222,8 +227,23 @@ const EmailHub = () => {
       {/* Tabs Navigation */}
       <div style={{
         display: 'flex', gap: '0.5rem', borderBottom: '1px solid var(--border-color)',
-        marginBottom: '1.5rem', paddingBottom: '0.5rem'
+        marginBottom: '1.5rem', paddingBottom: '0.5rem', flexWrap: 'wrap'
       }}>
+        <button
+          type="button"
+          onClick={() => setActiveTab('webmail')}
+          className="btn"
+          style={{
+            background: activeTab === 'webmail' ? 'var(--primary, #6366f1)' : 'transparent',
+            color: activeTab === 'webmail' ? '#fff' : 'var(--text-secondary)',
+            fontWeight: 600, fontSize: '0.85rem', padding: '0.5rem 1rem', borderRadius: '8px',
+            border: activeTab === 'webmail' ? 'none' : '1px solid transparent',
+            display: 'flex', alignItems: 'center', gap: '0.4rem'
+          }}
+        >
+          <Mail size={15} /> Live Gmail Webmail (Official)
+        </button>
+
         <button
           type="button"
           onClick={() => setActiveTab('logs')}
@@ -266,6 +286,135 @@ const EmailHub = () => {
           ✉️ Quick Mail Composer
         </button>
       </div>
+
+      {/* Tab 0: Official Gmail Webmail Iframe View */}
+      {activeTab === 'webmail' && (
+        <div style={{
+          background: 'var(--bg-secondary, #13172b)',
+          border: '1px solid var(--border-color, rgba(255,255,255,0.08))',
+          borderRadius: '14px', overflow: 'hidden', display: 'flex', flexDirection: 'column',
+          position: isFullscreen ? 'fixed' : 'relative',
+          top: isFullscreen ? 0 : 'auto', left: isFullscreen ? 0 : 'auto',
+          right: isFullscreen ? 0 : 'auto', bottom: isFullscreen ? 0 : 'auto',
+          zIndex: isFullscreen ? 99999 : 'auto',
+          height: isFullscreen ? '100vh' : 'calc(100vh - 270px)',
+          minHeight: isFullscreen ? '100vh' : '650px',
+        }}>
+          {/* Top Control & Navigation Bar */}
+          <div style={{
+            padding: '0.75rem 1rem',
+            background: 'var(--bg-tertiary, #1a2035)',
+            borderBottom: '1px solid var(--border-color, rgba(255,255,255,0.08))',
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem'
+          }}>
+            {/* Quick folder links */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', marginRight: '0.25rem' }}>
+                DIRECT FOLDERS:
+              </span>
+
+              <button
+                type="button"
+                className="btn btn-outline btn-sm"
+                onClick={() => {
+                  setGmailUrl('https://mail.google.com/mail/u/0/#inbox');
+                  setIframeKey(k => k + 1);
+                }}
+                style={{ fontSize: '0.75rem', padding: '0.25rem 0.6rem', display: 'flex', alignItems: 'center', gap: '4px' }}
+              >
+                <Inbox size={13} /> Inbox
+              </button>
+
+              <button
+                type="button"
+                className="btn btn-outline btn-sm"
+                onClick={() => {
+                  setGmailUrl('https://mail.google.com/mail/u/0/#sent');
+                  setIframeKey(k => k + 1);
+                }}
+                style={{ fontSize: '0.75rem', padding: '0.25rem 0.6rem', display: 'flex', alignItems: 'center', gap: '4px' }}
+              >
+                <SendHorizontal size={13} /> Sent
+              </button>
+
+              <button
+                type="button"
+                className="btn btn-outline btn-sm"
+                onClick={() => {
+                  setGmailUrl('https://mail.google.com/mail/u/0/#drafts');
+                  setIframeKey(k => k + 1);
+                }}
+                style={{ fontSize: '0.75rem', padding: '0.25rem 0.6rem', display: 'flex', alignItems: 'center', gap: '4px' }}
+              >
+                <Archive size={13} /> Drafts
+              </button>
+
+              <button
+                type="button"
+                className="btn btn-outline btn-sm"
+                onClick={() => {
+                  setGmailUrl('https://mail.google.com/mail/u/0/#inbox?compose=new');
+                  setIframeKey(k => k + 1);
+                }}
+                style={{ fontSize: '0.75rem', padding: '0.25rem 0.6rem', display: 'flex', alignItems: 'center', gap: '4px' }}
+              >
+                <FileEdit size={13} /> Compose
+              </button>
+            </div>
+
+            {/* Launch & View actions */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <button
+                type="button"
+                className="btn btn-outline btn-sm"
+                onClick={() => setIframeKey(k => k + 1)}
+                title="Reload Gmail Webmail"
+                style={{ fontSize: '0.75rem', padding: '0.25rem 0.6rem' }}
+              >
+                <RefreshCw size={13} /> Reload
+              </button>
+
+              <button
+                type="button"
+                className="btn btn-outline btn-sm"
+                onClick={() => setIsFullscreen(!isFullscreen)}
+                title={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}
+                style={{ fontSize: '0.75rem', padding: '0.25rem 0.6rem' }}
+              >
+                {isFullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />} {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+              </button>
+
+              <a
+                href="https://mail.google.com/mail/u/0/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn btn-primary btn-sm"
+                style={{ fontSize: '0.75rem', padding: '0.3rem 0.75rem', display: 'inline-flex', alignItems: 'center', gap: '4px', textDecoration: 'none' }}
+              >
+                <ExternalLink size={13} /> Open in Dedicated Window
+              </a>
+            </div>
+          </div>
+
+          {/* Embedded Official Gmail Iframe */}
+          <div style={{ flex: 1, width: '100%', height: '100%', position: 'relative', background: '#fff' }}>
+            <iframe
+              key={iframeKey}
+              ref={iframeRef}
+              src={gmailUrl}
+              title="Official Gmail Webmail"
+              style={{
+                width: '100%',
+                height: '100%',
+                border: 'none',
+                display: 'block'
+              }}
+              allow="camera; microphone; fullscreen; clipboard-read; clipboard-write;"
+              sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-modals allow-downloads allow-presentation"
+            />
+          </div>
+        </div>
+      )}
 
       {/* Tab 1: Sent Email Logs */}
       {activeTab === 'logs' && (

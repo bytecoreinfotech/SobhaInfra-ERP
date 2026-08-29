@@ -1,26 +1,27 @@
 import React, { useState, useEffect } from 'react';
 import {
   CreditCard, Send, CheckCircle2, AlertTriangle, Clock,
-  MessageCircle, Phone, RefreshCw, IndianRupee, Plus
+  MessageCircle, Phone, RefreshCw, IndianRupee, Plus,
+  ArrowUpRight, ArrowDownRight
 } from 'lucide-react';
 import { getInvoices, logPaymentReminder } from '../lib/db';
 import { useCompany } from '../context/CompanyContext';
 import './Pages.css';
 
-/** FIX 2 — Direction badge: identical logic to Finance page */
+/** FIX 2 — Direction badge: identical logic to Finance page, using lucide arrow icons */
 const getDirection = (inv) => {
   const dir   = inv?.metadata?.direction || '';
   const vtype = (inv?.metadata?.voucher_type || '').toLowerCase();
   const num   = (inv?.invoice_number || '').toLowerCase();
   if (dir === 'received' || /^(rcpt|rct|rec)/.test(num) ||
       ['receipt','bank receipt','cash receipt'].some(t => vtype.includes(t)))
-    return { label: 'Received',   arrow: '\u2B0B', color: '#10b981', bg: 'rgba(16,185,129,0.12)', title: 'Customer paid us' };
+    return { label: 'Received',   ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', title: 'Customer paid us', canRemind: false };
   if (dir === 'paid_out' || /^(pay|pmt|pur)/.test(num) ||
       ['payment','bank payment','cash payment','purchase'].some(t => vtype.includes(t)))
-    return { label: 'Paid Out',   arrow: '\u2B09', color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', title: 'We paid vendor' };
+    return { label: 'Paid Out',   ArrowIcon: ArrowUpRight, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', title: 'We paid vendor', canRemind: false };
   if (dir === 'payable')
-    return { label: 'Payable',    arrow: '\u2B09', color: '#ef4444', bg: 'rgba(239,68,68,0.12)',  title: 'We owe vendor' };
-  return     { label: 'Receivable', arrow: '\u2B0A', color: '#6366f1', bg: 'rgba(99,102,241,0.12)', title: 'Customer owes us' };
+    return { label: 'Payable',    ArrowIcon: ArrowUpRight, color: '#ef4444', bg: 'rgba(239,68,68,0.12)',  title: 'We owe vendor', canRemind: false };
+  return     { label: 'Receivable', ArrowIcon: ArrowDownRight, color: '#6366f1', bg: 'rgba(99,102,241,0.12)', title: 'Customer owes us', canRemind: true };
 };
 
 const Payments = () => {
@@ -178,12 +179,12 @@ const Payments = () => {
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
                             <span>{fmtAmount(inv.amount)}</span>
                             <span title={dir.title} style={{
-                              display: 'inline-flex', alignItems: 'center', gap: '0.2rem',
-                              fontSize: '0.62rem', fontWeight: 700, padding: '0.1rem 0.4rem',
+                              display: 'inline-flex', alignItems: 'center', gap: '0.25rem',
+                              fontSize: '0.62rem', fontWeight: 700, padding: '0.12rem 0.45rem',
                               borderRadius: '10px', background: dir.bg, color: dir.color,
-                              border: `1px solid ${dir.color}33`, cursor: 'help',
+                              border: `1px solid ${dir.color}44`, cursor: 'help',
                             }}>
-                              {dir.arrow} {dir.label}
+                              <dir.ArrowIcon size={10} strokeWidth={2.5} /> {dir.label}
                             </span>
                           </div>
                         );
@@ -197,20 +198,28 @@ const Payments = () => {
                     <td style={{ fontSize: '0.82rem' }}>{getDaysLabel(inv)}</td>
                     <td><span className="badge badge-neutral">{(isSent ? (inv.reminder_count || 0) + 1 : (inv.reminder_count || 0))} sent</span></td>
                     <td>
-                      {inv.status !== 'Paid' ? (
-                        <div style={{ display: 'flex', gap: '0.4rem' }}>
-                          <button
-                            className={`btn btn-sm ${isSent ? 'btn-success' : isReminding ? 'btn-secondary' : 'btn-whatsapp'}`}
-                            onClick={() => !isSent && !isReminding && handleRemind(inv)}
-                            disabled={isReminding || isSent}
-                          >
-                            {isSent ? <><CheckCircle2 size={13} /> Sent</> : isReminding ? 'Sending...' : <><Send size={13} /> Remind</>}
-                          </button>
-                          <button className="btn btn-secondary btn-sm" title="Call"><Phone size={13} /></button>
-                        </div>
-                      ) : (
-                        <span style={{ fontSize: '0.78rem', color: 'var(--success)', fontWeight: 600 }}>✓ Cleared</span>
-                      )}
+                      {(() => {
+                        const dir = getDirection(inv);
+                        if (!dir.canRemind) {
+                          // Vendor payment — no reminder needed
+                          return <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>{dir.label === 'Paid Out' ? '✓ Vendor paid' : 'Vendor payable'}</span>;
+                        }
+                        if (inv.status === 'Paid') {
+                          return <span style={{ fontSize: '0.78rem', color: 'var(--success)', fontWeight: 600 }}>✓ Cleared</span>;
+                        }
+                        return (
+                          <div style={{ display: 'flex', gap: '0.4rem' }}>
+                            <button
+                              className={`btn btn-sm ${isSent ? 'btn-success' : isReminding ? 'btn-secondary' : 'btn-whatsapp'}`}
+                              onClick={() => !isSent && !isReminding && handleRemind(inv)}
+                              disabled={isReminding || isSent}
+                            >
+                              {isSent ? <><CheckCircle2 size={13} /> Sent</> : isReminding ? 'Sending...' : <><Send size={13} /> Remind</>}
+                            </button>
+                            <button className="btn btn-secondary btn-sm" title="Call"><Phone size={13} /></button>
+                          </div>
+                        );
+                      })()}
                     </td>
                   </tr>
                 );

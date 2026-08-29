@@ -418,7 +418,7 @@ const WhatsApp = () => {
         <div className="glass-card whatsapp-inbox-grid">
           
           {/* PANE 1: CONVERSATIONS LIST */}
-          <div className="whatsapp-conv-list" style={{ borderRight: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', background: 'var(--bg-secondary)' }}>
+          <div className="whatsapp-conv-pane" style={{ borderRight: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', background: 'var(--bg-secondary)', overflow: 'hidden' }}>
             <div style={{ padding: '0.85rem', borderBottom: '1px solid var(--border-color)' }}>
               <div className="input-group">
                 <Search size={14} className="input-icon" />
@@ -433,7 +433,7 @@ const WhatsApp = () => {
               </div>
             </div>
 
-            <div style={{ flex: 1, overflowY: 'auto' }}>
+            <div className="whatsapp-conv-list" style={{ flex: 1 }}>
               {convLoading ? (
                 // Skeleton shimmer cards while loading
                 <div style={{ padding: '0.5rem' }}>
@@ -556,7 +556,7 @@ const WhatsApp = () => {
                 </div>
 
                 {/* Messages List */}
-                <div style={{ flex: 1, overflowY: 'auto', padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                <div className="whatsapp-chat-messages" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                   {messages.map(m => {
                     const isOutbound = m.direction === 'outbound';
                     const { text: cleanText, mediaUrl, mediaType } = parseMessageMedia(m);

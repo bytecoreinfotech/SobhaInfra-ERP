@@ -990,6 +990,62 @@ exports.handler = async (event) => {
         const isHandoff = handoffTriggers.some(t => messageText.toLowerCase().includes(t));
         await logLeadQualification(supabase, { leadId, messageText, isHandoff });
 
+        // ── HOT/WARM LEAD AUTO-UPGRADE ────────────────────────────────────────
+        // When a customer actively replies with interest, upgrade their status.
+        // Hot triggers: asked for catalog, price, quote, sample, spec, buy, order, interested
+        // Warm trigger: any reply at all (if still "New")
+        if (leadId) {
+          try {
+            const lowerMsgForScore = (messageText || '').toLowerCase();
+            const hotTriggers = [
+              'catalog', 'catalogue', 'brochure', 'price', 'rate', 'quote', 'quotation',
+              'sample', 'demo', 'interested', 'interested in', 'want to buy', 'buy',
+              'order', 'specification', 'spec', 'detail', 'kitna', 'kya rate',
+              'how much', 'cost', 'visit', 'meeting', 'appointment', 'yes', 'haan',
+              'chahiye', 'send', 'bhejo', 'get catalog', 'get quote',
+            ];
+            const isHotSignal = hotTriggers.some(t => lowerMsgForScore.includes(t));
+            const { data: currentLead } = await supabase
+              .from('leads')
+              .select('status, lead_score')
+              .eq('id', leadId)
+              .maybeSingle();
+
+            if (currentLead) {
+              const currentStatus = currentLead.status || 'New';
+              const currentScore  = Number(currentLead.lead_score || 0);
+              let newStatus = currentStatus;
+              let newScore  = currentScore;
+
+              if (isHotSignal) {
+                // Any positive interest → Hot (unless already Hot)
+                if (currentStatus !== 'Hot') newStatus = 'Hot';
+                // Boost score toward 80+ for hot leads
+                newScore = Math.min(Math.max(currentScore, 75) + 5, 99);
+              } else if (currentStatus === 'New') {
+                // Just replied — move from New → Warm
+                newStatus = 'Warm';
+                newScore  = Math.min(currentScore + 10, 60);
+              } else if (currentStatus === 'Cold') {
+                // Replied from cold — move to Warm
+                newStatus = 'Warm';
+                newScore  = Math.min(currentScore + 15, 65);
+              }
+
+              if (newStatus !== currentStatus || newScore !== currentScore) {
+                await supabase
+                  .from('leads')
+                  .update({ status: newStatus, lead_score: newScore, updated_at: new Date().toISOString() })
+                  .eq('id', leadId);
+                console.log(JSON.stringify({ step: 'lead_upgrade', leadId, from: currentStatus, to: newStatus, score: newScore, isHotSignal }));
+              }
+            }
+          } catch (scoreErr) {
+            console.warn('[webhook] lead status upgrade error:', scoreErr.message);
+          }
+        }
+        // ── END HOT/WARM LEAD AUTO-UPGRADE ────────────────────────────────────
+
         // Increment campaign reply count
         try {
           const { data: latestCamp } = await supabase

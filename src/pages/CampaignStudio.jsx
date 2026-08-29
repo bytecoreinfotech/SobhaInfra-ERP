@@ -125,7 +125,7 @@ const CampaignStudio = () => {
 
   // Audience State
   const [targetMode, setTargetMode] = useState('filter'); // 'filter' | 'contacts' | 'paste'
-  const [filters, setFilters] = useState({ statusFilter: 'All', productFilter: 'All', minScore: 0 });
+  const [filters, setFilters] = useState({ statusFilter: 'All', propertyFilter: 'All', minScore: 0 });
   const [estimation, setEstimation] = useState({ totalRaw: 0, targeted: 0, optedOut: 0, invalidPhone: 0, finalAudienceCount: 0, eligibleLeads: [] });
   const [allCrmLeads, setAllCrmLeads] = useState([]);
   const [selectedLeadIds, setSelectedLeadIds] = useState(new Set());

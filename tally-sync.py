@@ -395,8 +395,51 @@ def fetch_tally_ledger_phone_master(company_name: str = "") -> dict:
     phone/mobile number for EVERY party ledger in Tally.
     Returns a dictionary mapping normalized ledger names -> phone numbers.
     This guarantees 100% accurate phone matching without cross-contamination.
+
+    Strategy:
+      1. TDL Collection (works in TallyPrime 2.x+, fetches all fields)
+      2. Fallback: "List of Accounts" standard report (works on all versions)
     """
-    xml_payload = """<?xml version="1.0" encoding="utf-8"?>
+    phone_map = {}
+
+    def _build_map_from_xml(resp_xml):
+        """Parse LEDGER blocks from any XML response and build a phone map."""
+        result = {}
+        ledger_blocks = re.findall(r'<LEDGER[^>]*>([\s\S]*?)</LEDGER>', resp_xml, re.IGNORECASE)
+        for lblock in ledger_blocks:
+            name = extract_tag_value(lblock, "NAME") or extract_tag_value(lblock, "LEDGERNAME")
+            if not name:
+                continue
+
+            # Priority 1: Dedicated phone fields
+            phone = extract_phone_from_party_fields(lblock)
+
+            if not phone:
+                # Priority 2: All ADDRESS lines (Tally uses multiple <ADDRESS> tags in a list)
+                # Concatenate all address lines then search for phone pattern
+                all_addr_lines = re.findall(r'<ADDRESS[^>]*>([^<]+)</ADDRESS>', lblock, re.IGNORECASE)
+                combined_addr = " ".join(all_addr_lines)
+                phone = extract_phone(combined_addr)
+
+            if not phone:
+                # Priority 3: MAILINGNAME, BASICBUYERADDRESS, BILLMAILINGADDRESS
+                for extra_tag in ["MAILINGADDRESS", "BILLINGADDRESS", "PINCODE"]:
+                    val = extract_tag_value(lblock, extra_tag)
+                    if val:
+                        phone = extract_phone(val)
+                        if phone:
+                            break
+
+            if phone:
+                name_clean = name.strip().lower()
+                name_norm = re.sub(r'[^a-z0-9]', '', name_clean)
+                result[name_clean] = phone
+                if name_norm:
+                    result[name_norm] = phone
+        return result
+
+    # ── Strategy 1: TDL Collection (richest data, TallyPrime 2.x+) ─────────────
+    tdl_xml = """<?xml version="1.0" encoding="utf-8"?>
 <ENVELOPE>
   <HEADER>
     <VERSION>1</VERSION>
@@ -413,7 +456,7 @@ def fetch_tally_ledger_phone_master(company_name: str = "") -> dict:
         <TDLMESSAGE>
           <COLLECTION NAME="MasterLedgerPhoneList" ISMODIFY="No">
             <TYPE>Ledger</TYPE>
-            <FETCH>NAME, PARENT, LEDMOBILE, LEDPHONENO, MOBILENO, PHONENO, CONTACTNO, PARTYGSTIN, GSTIN, ADDRESS</FETCH>
+            <FETCH>NAME, PARENT, LEDMOBILE, LEDPHONENO, MOBILENO, PHONENO, CONTACTNO, ADDRESS, GSTIN</FETCH>
           </COLLECTION>
         </TDLMESSAGE>
       </TDL>
@@ -422,34 +465,46 @@ def fetch_tally_ledger_phone_master(company_name: str = "") -> dict:
 </ENVELOPE>"""
 
     if company_name:
-        xml_payload = inject_company_into_xml(xml_payload, company_name)
+        tdl_xml = inject_company_into_xml(tdl_xml, company_name)
 
-    log.info(f"  [Master Phone Map] Fetching master party contact registry from Tally...")
-    resp = query_tally(xml_payload, f"MasterLedgerPhones_{company_name or 'Default'}")
-    if not resp or len(resp) < 50:
-        return {}
+    log.info(f"  [Master Phone Map] Strategy 1: Fetching master party contact registry from Tally TDL...")
+    resp1 = query_tally(tdl_xml, f"MasterLedgerPhones_{company_name or 'Default'}")
+    if resp1 and len(resp1) > 100:
+        phone_map.update(_build_map_from_xml(resp1))
+        log.info(f"  [Master Phone Map] Strategy 1 result: {len(phone_map)} parties with phones")
 
-    phone_map = {}
-    ledger_blocks = re.findall(r'<LEDGER[^>]*>([\s\S]*?)</LEDGER>', resp, re.IGNORECASE)
-    for lblock in ledger_blocks:
-        name = extract_tag_value(lblock, "NAME") or extract_tag_value(lblock, "LEDGERNAME")
-        if not name:
-            continue
-        phone = extract_phone_from_party_fields(lblock)
-        if not phone:
-            # Check address block inside ledger master
-            addr_block = extract_tag_value(lblock, "ADDRESS") or ""
-            phone = extract_phone(addr_block)
+    # ── Strategy 2: Standard "List of Accounts" report (fallback for older Tally) ─
+    if len(phone_map) < 3:
+        log.info(f"  [Master Phone Map] Strategy 2: Trying standard List of Accounts report...")
+        accts_xml = """<?xml version="1.0" encoding="utf-8"?>
+<ENVELOPE>
+  <HEADER>
+    <TALLYREQUEST>Export Data</TALLYREQUEST>
+  </HEADER>
+  <BODY>
+    <EXPORTDATA>
+      <REQUESTDESC>
+        <REPORTNAME>List of Accounts</REPORTNAME>
+        <STATICVARIABLES>
+          <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+        </STATICVARIABLES>
+      </REQUESTDESC>
+    </EXPORTDATA>
+  </BODY>
+</ENVELOPE>"""
+        if company_name:
+            accts_xml = inject_company_into_xml(accts_xml, company_name)
+        resp2 = query_tally(accts_xml, f"ListOfAccounts_{company_name or 'Default'}")
+        if resp2 and len(resp2) > 100:
+            extra = _build_map_from_xml(resp2)
+            for k, v in extra.items():
+                if k not in phone_map:
+                    phone_map[k] = v
+            log.info(f"  [Master Phone Map] Strategy 2 added {len(extra)} extra parties; total: {len(phone_map)}")
 
-        if phone:
-            name_clean = name.strip().lower()
-            name_norm = re.sub(r'[^a-z0-9]', '', name_clean)
-            phone_map[name_clean] = phone
-            if name_norm:
-                phone_map[name_norm] = phone
-
-    log.info(f"  [Master Phone Map] Registered {len(phone_map)} party phone number(s) from Tally Master Ledgers")
+    log.info(f"  [Master Phone Map] Final registry: {len(phone_map)} party phone number(s)")
     return phone_map
+
 
 
 def parse_voucher_block(block, fallback_company: str = "", ledger_phone_map: dict = None):
