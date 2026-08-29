@@ -36,6 +36,7 @@ const Finance = () => {
   const [search, setSearch] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const [activeDatePreset, setActiveDatePreset] = useState(''); // 'today' | 'week' | 'month' | '3m' | '6m' | 'fy' | 'last_fy' | 'custom' | ''
   const [sortBy, setSortBy] = useState('date_desc'); // date_desc | date_asc | amount_desc | amount_asc
   const [previewPdfUrl, setPreviewPdfUrl] = useState(null);
   const [remindingId, setRemindingId] = useState(null);
@@ -410,7 +411,7 @@ const Finance = () => {
             ))}
           </div>
 
-          {/* Search, Date Filter & Sort Bar */}
+          {/* ── Search & Filter Bar ─────────────────────────────────── */}
           <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap', alignItems: 'center' }}>
             {/* Search */}
             <div className="input-group" style={{ flex: 1, minWidth: 200 }}>
@@ -421,30 +422,6 @@ const Finance = () => {
                 placeholder="Search invoice, client, phone, company..."
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-              />
-            </div>
-
-            {/* Date From */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-              <label style={{ fontSize: '0.72rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>From</label>
-              <input
-                type="date"
-                className="input-field"
-                style={{ padding: '0.35rem 0.55rem', fontSize: '0.78rem', width: 135 }}
-                value={dateFrom}
-                onChange={e => setDateFrom(e.target.value)}
-              />
-            </div>
-
-            {/* Date To */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-              <label style={{ fontSize: '0.72rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>To</label>
-              <input
-                type="date"
-                className="input-field"
-                style={{ padding: '0.35rem 0.55rem', fontSize: '0.78rem', width: 135 }}
-                value={dateTo}
-                onChange={e => setDateTo(e.target.value)}
               />
             </div>
 
@@ -466,9 +443,9 @@ const Finance = () => {
               <button
                 className="btn btn-secondary"
                 style={{ fontSize: '0.75rem', padding: '0.35rem 0.65rem', whiteSpace: 'nowrap' }}
-                onClick={() => { setSearch(''); setDateFrom(''); setDateTo(''); setSortBy('date_desc'); setFilter('All'); }}
+                onClick={() => { setSearch(''); setDateFrom(''); setDateTo(''); setSortBy('date_desc'); setFilter('All'); setActiveDatePreset(''); }}
               >
-                ✕ Clear
+                ✕ Clear All
               </button>
             )}
 
@@ -494,6 +471,132 @@ const Finance = () => {
 
             {/* Result count */}
             <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{filtered.length} result{filtered.length !== 1 ? 's' : ''}</span>
+          </div>
+
+          {/* ── Date Range Presets ────────────────────────────────────── */}
+          <div style={{
+            display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center',
+            padding: '0.7rem 0.9rem',
+            background: 'var(--bg-secondary)',
+            border: '1px solid var(--border-color)',
+            borderRadius: 'var(--radius-md)',
+          }}>
+            <CalendarClock size={14} color="var(--accent-primary)" style={{ flexShrink: 0 }} />
+            <span style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Date Range:</span>
+
+            {/* Quick preset chips */}
+            {[
+              { label: 'Today', key: 'today' },
+              { label: 'This Week', key: 'week' },
+              { label: 'This Month', key: 'month' },
+              { label: 'Last 3 Months', key: '3m' },
+              { label: 'Last 6 Months', key: '6m' },
+              { label: 'This FY', key: 'fy' },
+              { label: 'Last FY', key: 'last_fy' },
+              { label: '📅 Custom', key: 'custom' },
+            ].map(preset => {
+              const isActive = activeDatePreset === preset.key;
+              return (
+                <button
+                  key={preset.key}
+                  onClick={() => {
+                    const today = new Date();
+                    const fmt = d => d.toISOString().slice(0, 10);
+                    setActiveDatePreset(preset.key);
+
+                    if (preset.key === 'today') {
+                      setDateFrom(fmt(today)); setDateTo(fmt(today));
+                    } else if (preset.key === 'week') {
+                      const start = new Date(today); start.setDate(today.getDate() - today.getDay());
+                      setDateFrom(fmt(start)); setDateTo(fmt(today));
+                    } else if (preset.key === 'month') {
+                      setDateFrom(fmt(new Date(today.getFullYear(), today.getMonth(), 1)));
+                      setDateTo(fmt(today));
+                    } else if (preset.key === '3m') {
+                      const d = new Date(today); d.setMonth(d.getMonth() - 3);
+                      setDateFrom(fmt(d)); setDateTo(fmt(today));
+                    } else if (preset.key === '6m') {
+                      const d = new Date(today); d.setMonth(d.getMonth() - 6);
+                      setDateFrom(fmt(d)); setDateTo(fmt(today));
+                    } else if (preset.key === 'fy') {
+                      // Indian FY: Apr 1 – Mar 31
+                      const fyStart = today.getMonth() >= 3
+                        ? new Date(today.getFullYear(), 3, 1)
+                        : new Date(today.getFullYear() - 1, 3, 1);
+                      const fyEnd = new Date(fyStart.getFullYear() + 1, 2, 31);
+                      setDateFrom(fmt(fyStart)); setDateTo(fmt(fyEnd > today ? today : fyEnd));
+                    } else if (preset.key === 'last_fy') {
+                      const fyStart = today.getMonth() >= 3
+                        ? new Date(today.getFullYear() - 1, 3, 1)
+                        : new Date(today.getFullYear() - 2, 3, 1);
+                      const fyEnd = new Date(fyStart.getFullYear() + 1, 2, 31);
+                      setDateFrom(fmt(fyStart)); setDateTo(fmt(fyEnd));
+                    } else if (preset.key === 'custom') {
+                      // Just reveal the pickers; don't auto-set dates
+                    }
+                  }}
+                  style={{
+                    padding: '0.3rem 0.7rem', borderRadius: 20, border: 'none',
+                    fontSize: '0.73rem', fontWeight: 600, cursor: 'pointer',
+                    background: isActive ? 'var(--accent-primary)' : 'var(--bg-tertiary)',
+                    color: isActive ? 'white' : 'var(--text-secondary)',
+                    transition: 'all 0.2s',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {preset.label}
+                </button>
+              );
+            })}
+
+            {/* Custom date pickers — shown always when custom selected OR when dateFrom/dateTo set */}
+            {(activeDatePreset === 'custom' || activeDatePreset === '' ) && (
+              <>
+                <div style={{ width: 1, height: 18, background: 'var(--border-color)', flexShrink: 0 }} />
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                  <label style={{ fontSize: '0.72rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>From</label>
+                  <input
+                    type="date"
+                    className="input-field"
+                    style={{ padding: '0.3rem 0.5rem', fontSize: '0.75rem', width: 130 }}
+                    value={dateFrom}
+                    onChange={e => { setDateFrom(e.target.value); setActiveDatePreset('custom'); }}
+                  />
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                  <label style={{ fontSize: '0.72rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>To</label>
+                  <input
+                    type="date"
+                    className="input-field"
+                    style={{ padding: '0.3rem 0.5rem', fontSize: '0.75rem', width: 130 }}
+                    value={dateTo}
+                    onChange={e => { setDateTo(e.target.value); setActiveDatePreset('custom'); }}
+                  />
+                </div>
+              </>
+            )}
+
+            {/* Active range summary */}
+            {(dateFrom || dateTo) && activeDatePreset !== 'custom' && activeDatePreset !== '' && (
+              <>
+                <div style={{ width: 1, height: 18, background: 'var(--border-color)', flexShrink: 0 }} />
+                <span style={{ fontSize: '0.73rem', color: 'var(--text-primary)', fontWeight: 700 }}>
+                  {dateFrom ? new Date(dateFrom).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
+                  &nbsp;→&nbsp;
+                  {dateTo ? new Date(dateTo).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Today'}
+                </span>
+              </>
+            )}
+
+            {/* Clear date range */}
+            {(dateFrom || dateTo) && (
+              <button
+                onClick={() => { setDateFrom(''); setDateTo(''); setActiveDatePreset(''); }}
+                style={{ marginLeft: 'auto', fontSize: '0.7rem', color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', whiteSpace: 'nowrap', textDecoration: 'underline' }}
+              >
+                Clear dates
+              </button>
+            )}
           </div>
 
           {/* Invoices Data Table */}

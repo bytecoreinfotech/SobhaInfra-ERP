@@ -11,9 +11,8 @@ const Login = () => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   
-  // Database status state
+  // Database connectivity status
   const [dbStatus, setDbStatus] = useState('checking'); // 'checking' | 'seeded' | 'not_seeded' | 'disconnected'
-  const [dbUsers, setDbUsers] = useState([]);
   const [checkingDb, setCheckingDb] = useState(false);
 
   const checkDatabaseStatus = async () => {
@@ -21,24 +20,18 @@ const Login = () => {
       setDbStatus('disconnected');
       return;
     }
-
     setCheckingDb(true);
     try {
       const { data, error: err } = await supabase
         .from('users')
-        .select('id, full_name, email, role, avatar, is_active')
-        .order('created_at', { ascending: true });
-
-      if (err || !data || data.length === 0) {
+        .select('id', { count: 'exact', head: true });
+      if (err || data === null) {
         setDbStatus('not_seeded');
-        setDbUsers([]);
       } else {
         setDbStatus('seeded');
-        setDbUsers(data);
       }
     } catch {
       setDbStatus('not_seeded');
-      setDbUsers([]);
     } finally {
       setCheckingDb(false);
     }
@@ -51,28 +44,12 @@ const Login = () => {
   const handleLogin = async (e) => {
     e.preventDefault();
     setError('');
-    
     if (dbStatus === 'not_seeded') {
-      setError('Database is not seeded in Supabase yet. Please run supabase/combined_complete_setup.sql in your Supabase SQL Editor.');
+      setError('Database is not seeded in Supabase yet. Please run the setup SQL in your Supabase SQL Editor.');
       return;
     }
-
     setLoading(true);
     const { error: err } = await signIn(email, password);
-    if (err) setError(err.message);
-    setLoading(false);
-  };
-
-  const quickLogin = async (userRecord) => {
-    setError('');
-    
-    if (dbStatus === 'not_seeded') {
-      setError('Database is not seeded in Supabase yet. Please run supabase/combined_complete_setup.sql in your Supabase SQL Editor.');
-      return;
-    }
-
-    setLoading(true);
-    const { error: err } = await signIn(userRecord.email, 'demo1234');
     if (err) setError(err.message);
     setLoading(false);
   };
@@ -162,37 +139,37 @@ const Login = () => {
           </div>
         )}
 
-        {dbStatus === 'seeded' && (
-          <div style={{
-            marginBottom: '1.25rem',
-            padding: '0.6rem 0.9rem',
-            borderRadius: 12,
-            background: 'rgba(16, 185, 129, 0.1)',
-            border: '1px solid rgba(16, 185, 129, 0.3)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            color: '#6ee7b7',
-            fontSize: '0.78rem',
-            fontWeight: 600
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
-              <CheckCircle2 size={15} color="#10b981" />
-              <span>Supabase Database Connected & Seeded ({dbUsers.length} Users)</span>
+          {dbStatus === 'seeded' && (
+            <div style={{
+              marginBottom: '1.25rem',
+              padding: '0.6rem 0.9rem',
+              borderRadius: 12,
+              background: 'rgba(16, 185, 129, 0.1)',
+              border: '1px solid rgba(16, 185, 129, 0.3)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              color: '#6ee7b7',
+              fontSize: '0.78rem',
+              fontWeight: 600
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                <CheckCircle2 size={15} color="#10b981" />
+                <span>System Online · Enter your credentials to sign in</span>
+              </div>
+              <button
+                onClick={checkDatabaseStatus}
+                disabled={checkingDb}
+                style={{
+                  background: 'none', border: 'none', color: '#a7f3d0', cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.72rem'
+                }}
+                title="Refresh"
+              >
+                <RefreshCw size={11} className={checkingDb ? 'spin-anim' : ''} />
+              </button>
             </div>
-            <button
-              onClick={checkDatabaseStatus}
-              disabled={checkingDb}
-              style={{
-                background: 'none', border: 'none', color: '#a7f3d0', cursor: 'pointer',
-                display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.72rem'
-              }}
-              title="Refresh"
-            >
-              <RefreshCw size={11} className={checkingDb ? 'spin-anim' : ''} />
-            </button>
-          </div>
-        )}
+          )}
 
         {/* Login Card */}
         <div style={{
@@ -215,7 +192,7 @@ const Login = () => {
                 type="email"
                 value={email}
                 onChange={e => setEmail(e.target.value)}
-                placeholder="admin@erppro.in"
+                placeholder="your@email.com"
                 required
                 style={{
                   width: '100%', padding: '0.75rem 1rem', borderRadius: 10,
@@ -291,72 +268,10 @@ const Login = () => {
               )}
             </button>
           </form>
-
-          {/* Seeded Accounts from Database */}
-          <div style={{ marginTop: '1.5rem', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '1.25rem' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-              <p style={{ color: '#64748b', fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', margin: 0 }}>
-                {dbStatus === 'seeded' ? '⚡ Seeded Supabase Accounts' : '⚡ Quick Login Accounts'}
-              </p>
-              {dbStatus === 'seeded' && (
-                <span style={{ fontSize: '0.7rem', color: '#10b981', fontWeight: 600 }}>Database Active</span>
-              )}
-            </div>
-
-            {dbStatus === 'not_seeded' ? (
-              <div style={{
-                padding: '0.85rem',
-                borderRadius: 10,
-                background: 'rgba(255,255,255,0.02)',
-                border: '1px dashed rgba(255,255,255,0.1)',
-                textAlign: 'center',
-                color: '#64748b',
-                fontSize: '0.78rem'
-              }}>
-                Accounts will appear here once <strong>supabase/combined_complete_setup.sql</strong> is executed in your Supabase SQL Editor.
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem', maxHeight: 220, overflowY: 'auto' }}>
-                {dbUsers.map(userItem => (
-                  <button
-                    key={userItem.email}
-                    onClick={() => quickLogin(userItem)}
-                    disabled={loading}
-                    style={{
-                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                      padding: '0.6rem 0.8rem', borderRadius: 8,
-                      background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)',
-                      cursor: 'pointer', transition: 'all 0.2s', textAlign: 'left'
-                    }}
-                    onMouseEnter={e => e.currentTarget.style.background = 'rgba(99,102,241,0.1)'}
-                    onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,0.03)'}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
-                      <div style={{
-                        width: 28, height: 28, borderRadius: '50%',
-                        background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        fontSize: '0.72rem', fontWeight: 700, color: 'white'
-                      }}>
-                        {userItem.avatar || (userItem.full_name ? userItem.full_name.slice(0, 2).toUpperCase() : 'U')}
-                      </div>
-                      <div>
-                        <div style={{ color: 'white', fontSize: '0.82rem', fontWeight: 600 }}>
-                          {userItem.full_name} <span style={{ color: '#818cf8', fontWeight: 500, fontSize: '0.72rem' }}>({userItem.role})</span>
-                        </div>
-                        <div style={{ color: '#64748b', fontSize: '0.7rem' }}>{userItem.email}</div>
-                      </div>
-                    </div>
-                    <ArrowRight size={13} color="#6366f1" />
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
         </div>
 
         <p style={{ textAlign: 'center', color: '#475569', fontSize: '0.75rem', marginTop: '1.25rem' }}>
-          Connected to Supabase Project · Multi-Tenant RBAC Active
+          Sobha Infratech ERP · Secured Access · Multi-Tenant RBAC
         </p>
       </div>
     </div>
