@@ -53,6 +53,14 @@ async function fetchLiveMessages(convId) {
   } catch { return []; }
 }
 
+async function fetchLiveCampaigns() {
+  try {
+    const res = await fetch('/.netlify/functions/get-campaigns');
+    const json = await res.json();
+    return json.campaigns || [];
+  } catch { return []; }
+}
+
 const WhatsApp = () => {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('inbox'); // 'inbox' | 'campaigns'
@@ -166,12 +174,11 @@ const WhatsApp = () => {
   const loadAllData = async () => {
     setLoading(true);
     setConvLoading(true);
-    const [cRes, lRes, uRes] = await Promise.all([
-      getCampaigns(),
+
+    const [lRes, uRes] = await Promise.all([
       getLeads(),
       getTeamMembers(),
     ]);
-    setCampaigns(cRes.data || []);
     setLeads(lRes.data || []);
 
     if (uRes?.data && uRes.data.length > 0) {
@@ -179,13 +186,21 @@ const WhatsApp = () => {
       if (names.length > 0) setTeamMembers(names);
     }
 
-    // Try live Netlify proxy first (always bypasses RLS & returns real Supabase data)
+    // Load campaigns via live Netlify function (bypasses RLS)
+    const liveCampaigns = await fetchLiveCampaigns();
+    if (liveCampaigns.length > 0) {
+      setCampaigns(liveCampaigns);
+    } else {
+      const cRes = await getCampaigns();
+      setCampaigns(cRes.data || []);
+    }
+
+    // Load conversations via live Netlify proxy (bypasses RLS)
     const liveConvs = await fetchLiveConversations();
     if (liveConvs.length > 0) {
       setConversations(liveConvs);
       if (!selectedConvRef.current) setSelectedConv(liveConvs[0]);
     } else {
-      // Fallback to local db.js (mock or Supabase client)
       const convRes = await getWhatsAppConversations();
       const convData = convRes.data || [];
       setConversations(convData);
@@ -194,6 +209,21 @@ const WhatsApp = () => {
 
     setLoading(false);
     setConvLoading(false);
+  };
+
+  // After a broadcast, wait a moment then refresh both campaigns and inbox
+  const handleAfterBroadcast = async () => {
+    await loadAllData();
+    // Re-fetch again after 3s to catch any async Supabase inserts
+    setTimeout(async () => {
+      const liveCampaigns = await fetchLiveCampaigns();
+      if (liveCampaigns.length > 0) setCampaigns(liveCampaigns);
+      const liveConvs = await fetchLiveConversations();
+      if (liveConvs.length > 0) {
+        setConversations(liveConvs);
+        if (!selectedConvRef.current && liveConvs.length > 0) setSelectedConv(liveConvs[0]);
+      }
+    }, 3000);
   };
 
   const loadMessages = async (convId) => {
@@ -750,26 +780,53 @@ const WhatsApp = () => {
 
           {/* Campaign Table */}
           <div className="glass-card">
-            <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid var(--border-color)' }}>
+            <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span className="section-title">Campaign Broadcast History</span>
+              <button
+                className="btn btn-secondary"
+                style={{ fontSize: '0.75rem', padding: '0.3rem 0.75rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+                onClick={async () => {
+                  const liveCampaigns = await fetchLiveCampaigns();
+                  if (liveCampaigns.length > 0) setCampaigns(liveCampaigns);
+                  else { const r = await getCampaigns(); setCampaigns(r.data || []); }
+                }}
+              >
+                <RefreshCw size={13} /> Refresh
+              </button>
             </div>
             <div className="table-container">
               <table className="data-table">
                 <thead>
-                  <tr><th>Campaign Name</th><th>Status</th><th>Targeted</th><th>Sent</th><th>Delivered</th><th>Read</th><th>Replied</th><th>Template</th></tr>
+                  <tr><th>Campaign Name</th><th>Status</th><th>Launched</th><th>Sent</th><th>Delivered</th><th>Read</th><th>Replied</th><th>Template / Message</th></tr>
                 </thead>
                 <tbody>
-                  {campaigns.length === 0 && <tr><td colSpan={8} style={{ textAlign: 'center', padding: '2.5rem', color: 'var(--text-muted)' }}>No campaigns launched yet.</td></tr>}
+                  {campaigns.length === 0 && (
+                    <tr>
+                      <td colSpan={8} style={{ textAlign: 'center', padding: '2.5rem', color: 'var(--text-muted)' }}>
+                        <div style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>📋</div>
+                        No campaigns launched yet. Click <strong>Quick Modal</strong> above to launch your first broadcast.
+                      </td>
+                    </tr>
+                  )}
                   {campaigns.map(c => (
                     <tr key={c.id}>
-                      <td style={{ fontWeight: 600 }}>{c.name}</td>
-                      <td><span className={`badge ${statusConfig[c.status]}`}>{c.status}</span></td>
-                      <td>{(c.total_targeted || c.total_sent || 0).toLocaleString()}</td>
+                      <td>
+                        <div style={{ fontWeight: 600 }}>{c.name}</div>
+                        {c.custom_message && (
+                          <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '0.15rem', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {c.custom_message}
+                          </div>
+                        )}
+                      </td>
+                      <td><span className={`badge ${statusConfig[c.status] || 'badge-neutral'}`}>{c.status || 'Draft'}</span></td>
+                      <td style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                        {c.created_at ? new Date(c.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—'}
+                      </td>
                       <td style={{ fontWeight: 700 }}>{(c.total_sent || 0).toLocaleString()}</td>
-                      <td style={{ color: 'var(--success)' }}>{(c.delivered || 0).toLocaleString()}</td>
+                      <td style={{ color: 'var(--success)' }}>{(c.delivered || c.total_sent || 0).toLocaleString()}</td>
                       <td style={{ color: 'var(--warning)' }}>{(c.read_count || 0).toLocaleString()}</td>
                       <td style={{ color: 'var(--whatsapp)' }}>{(c.replied || 0)}</td>
-                      <td style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{c.template_name || '—'}</td>
+                      <td style={{ fontSize: '0.78rem', color: 'var(--text-muted)', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.template_name || 'Custom Broadcast'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -784,7 +841,7 @@ const WhatsApp = () => {
         <CampaignBuilderModal
           isOpen={showCampaignBuilder}
           onClose={() => setShowCampaignBuilder(false)}
-          onCampaignQueued={loadAllData}
+          onCampaignQueued={handleAfterBroadcast}
         />
       )}
 
