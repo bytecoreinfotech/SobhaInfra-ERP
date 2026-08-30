@@ -252,106 +252,74 @@ function parseTallyVouchers(xmlString, fallbackCompany = '', phoneMap = {}) {
 }
 
 // ── 6. ALL 11 TDL XML REQUEST TEMPLATES ───────────────────────────────────────
+// ROOT CAUSE FIX: Previous strategies 1-5 used 'Export Data' + 'REPORTNAME' which
+// Tally ignores and returns 'All Masters' instead. Strategies 6-9 use the correct
+// TDL Collection API (Export + TYPE:Collection) which bypasses session period entirely.
 const STRATEGIES = [
-  // 1. Day Book with Full Date Range
+  // ─── Primary TDL Collection strategies (session-period-independent) ──────
+  // 1. ALL vouchers, NO date filter — most comprehensive (entire company voucher DB)
   {
-    name: '1_DayBook',
+    name: '1_AllVouchersUnfiltered',
     xml: `<?xml version="1.0" encoding="utf-8"?>
 <ENVELOPE>
-  <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
+  <HEADER>
+    <VERSION>1</VERSION>
+    <TALLYREQUEST>Export</TALLYREQUEST>
+    <TYPE>Collection</TYPE>
+    <ID>AllVouchersFull</ID>
+  </HEADER>
   <BODY>
-    <EXPORTDATA>
-      <REQUESTDESC>
-        <REPORTNAME>Day Book</REPORTNAME>
-        <STATICVARIABLES>
-          <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-          <SVFROMDATE>${FY_FROM}</SVFROMDATE>
-          <SVTODATE>${FY_TO}</SVTODATE>
-        </STATICVARIABLES>
-      </REQUESTDESC>
-    </EXPORTDATA>
+    <DESC>
+      <STATICVARIABLES>
+        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+      </STATICVARIABLES>
+      <TDL>
+        <TDLMESSAGE>
+          <COLLECTION NAME="AllVouchersFull" ISMODIFY="No">
+            <TYPE>Voucher</TYPE>
+            <FETCH>DATE, VOUCHERNUMBER, VOUCHERTYPENAME, PARTYLEDGERNAME, BASICBUYERNAME, AMOUNT, NARRATION, PARTYGSTIN, BASICBUYERADDRESS, ALLLEDGERENTRIES, INVENTORYENTRIES.LIST</FETCH>
+          </COLLECTION>
+        </TDLMESSAGE>
+      </TDL>
+    </DESC>
   </BODY>
 </ENVELOPE>`,
   },
-  // 2. List of Vouchers with Date Range
+  // 2. All vouchers with $$IsInRange date filter (current 3 FYs)
   {
-    name: '2_Vouchers',
+    name: '2_AllVouchersTDL',
     xml: `<?xml version="1.0" encoding="utf-8"?>
 <ENVELOPE>
-  <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
+  <HEADER>
+    <VERSION>1</VERSION>
+    <TALLYREQUEST>Export</TALLYREQUEST>
+    <TYPE>Collection</TYPE>
+    <ID>AllVouchersByDate</ID>
+  </HEADER>
   <BODY>
-    <EXPORTDATA>
-      <REQUESTDESC>
-        <REPORTNAME>List of Vouchers</REPORTNAME>
-        <STATICVARIABLES>
-          <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-          <SVFROMDATE>${FY_FROM}</SVFROMDATE>
-          <SVTODATE>${FY_TO}</SVTODATE>
-        </STATICVARIABLES>
-      </REQUESTDESC>
-    </EXPORTDATA>
+    <DESC>
+      <STATICVARIABLES>
+        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+      </STATICVARIABLES>
+      <TDL>
+        <TDLMESSAGE>
+          <COLLECTION NAME="AllVouchersByDate" ISMODIFY="No">
+            <TYPE>Voucher</TYPE>
+            <FETCH>DATE, VOUCHERNUMBER, VOUCHERTYPENAME, PARTYLEDGERNAME, BASICBUYERNAME, AMOUNT, NARRATION, PARTYGSTIN, BASICBUYERADDRESS, ISOPTIONAL, ALLLEDGERENTRIES, INVENTORYENTRIES.LIST</FETCH>
+            <FILTER>FilterByDateRange</FILTER>
+          </COLLECTION>
+          <SYSTEM TYPE="Formulae" NAME="FilterByDateRange">
+            $$IsInRange:$Date:${FY_FROM}:${FY_TO}
+          </SYSTEM>
+        </TDLMESSAGE>
+      </TDL>
+    </DESC>
   </BODY>
 </ENVELOPE>`,
   },
-  // 3. Bills Outstanding
+  // 3. Sundry Debtors TDL Collection (party closing balances + contacts)
   {
-    name: '3_Outstanding',
-    xml: `<?xml version="1.0" encoding="utf-8"?>
-<ENVELOPE>
-  <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
-  <BODY>
-    <EXPORTDATA>
-      <REQUESTDESC>
-        <REPORTNAME>Bills Outstanding</REPORTNAME>
-        <STATICVARIABLES>
-          <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-          <SVFROMDATE>${FY_FROM}</SVFROMDATE>
-          <SVTODATE>${FY_TO}</SVTODATE>
-        </STATICVARIABLES>
-      </REQUESTDESC>
-    </EXPORTDATA>
-  </BODY>
-</ENVELOPE>`,
-  },
-  // 4. List of Accounts
-  {
-    name: '4_Accounts',
-    xml: `<?xml version="1.0" encoding="utf-8"?>
-<ENVELOPE>
-  <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
-  <BODY>
-    <EXPORTDATA>
-      <REQUESTDESC>
-        <REPORTNAME>List of Accounts</REPORTNAME>
-        <STATICVARIABLES>
-          <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-        </STATICVARIABLES>
-      </REQUESTDESC>
-    </EXPORTDATA>
-  </BODY>
-</ENVELOPE>`,
-  },
-  // 5. Balance Sheet
-  {
-    name: '5_BalanceSheet',
-    xml: `<?xml version="1.0" encoding="utf-8"?>
-<ENVELOPE>
-  <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
-  <BODY>
-    <EXPORTDATA>
-      <REQUESTDESC>
-        <REPORTNAME>Balance Sheet</REPORTNAME>
-        <STATICVARIABLES>
-          <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-        </STATICVARIABLES>
-      </REQUESTDESC>
-    </EXPORTDATA>
-  </BODY>
-</ENVELOPE>`,
-  },
-  // 6. Sundry Debtors TDL Collection
-  {
-    name: '6_SundryDebtors',
+    name: '3_SundryDebtors',
     xml: `<?xml version="1.0" encoding="utf-8"?>
 <ENVELOPE>
   <HEADER>
@@ -378,37 +346,16 @@ const STRATEGIES = [
   </BODY>
 </ENVELOPE>`,
   },
-  // 7. Ledger Vouchers
+  // 4. All Ledgers — Sundry Debtors + Creditors (all party masters)
   {
-    name: '7_LedgerVouchers',
-    xml: `<?xml version="1.0" encoding="utf-8"?>
-<ENVELOPE>
-  <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
-  <BODY>
-    <EXPORTDATA>
-      <REQUESTDESC>
-        <REPORTNAME>Ledger Vouchers</REPORTNAME>
-        <STATICVARIABLES>
-          <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-          <SVFROMDATE>${FY_FROM}</SVFROMDATE>
-          <SVTODATE>${FY_TO}</SVTODATE>
-          <LEDGERNAME>Sundry Debtors</LEDGERNAME>
-        </STATICVARIABLES>
-      </REQUESTDESC>
-    </EXPORTDATA>
-  </BODY>
-</ENVELOPE>`,
-  },
-  // 8. All Vouchers TDL with $$IsInRange Formula
-  {
-    name: '8_AllVouchersTDL',
+    name: '4_AllPartyLedgers',
     xml: `<?xml version="1.0" encoding="utf-8"?>
 <ENVELOPE>
   <HEADER>
     <VERSION>1</VERSION>
     <TALLYREQUEST>Export</TALLYREQUEST>
     <TYPE>Collection</TYPE>
-    <ID>AllVouchersByDate</ID>
+    <ID>AllPartyLedgers</ID>
   </HEADER>
   <BODY>
     <DESC>
@@ -417,12 +364,136 @@ const STRATEGIES = [
       </STATICVARIABLES>
       <TDL>
         <TDLMESSAGE>
-          <COLLECTION NAME="AllVouchersByDate" ISMODIFY="No">
-            <TYPE>Voucher</TYPE>
-            <FETCH>DATE, VOUCHERNUMBER, VOUCHERTYPENAME, PARTYLEDGERNAME, BASICBUYERNAME, AMOUNT, NARRATION, PARTYGSTIN, BASICBUYERADDRESS, ALLLEDGERENTRIES</FETCH>
-            <FILTER>FilterByDateRange</FILTER>
+          <COLLECTION NAME="AllPartyLedgers" ISMODIFY="No">
+            <TYPE>Ledger</TYPE>
+            <FETCH>NAME, PARENT, CLOSINGBALANCE, OPENINGBALANCE, LEDPHONENO, LEDMOBILE, ADDRESS, PINCODE, EMAIL, GSTIN</FETCH>
           </COLLECTION>
-          <SYSTEM TYPE="Formulae" NAME="FilterByDateRange">
+        </TDLMESSAGE>
+      </TDL>
+    </DESC>
+  </BODY>
+</ENVELOPE>`,
+  },
+  // 5. Sales + Receipt vouchers type-filtered TDL
+  {
+    name: '5_SalesVouchers',
+    xml: `<?xml version="1.0" encoding="utf-8"?>
+<ENVELOPE>
+  <HEADER>
+    <VERSION>1</VERSION>
+    <TALLYREQUEST>Export</TALLYREQUEST>
+    <TYPE>Collection</TYPE>
+    <ID>SalesVouchersOnly</ID>
+  </HEADER>
+  <BODY>
+    <DESC>
+      <STATICVARIABLES>
+        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+      </STATICVARIABLES>
+      <TDL>
+        <TDLMESSAGE>
+          <COLLECTION NAME="SalesVouchersOnly" ISMODIFY="No">
+            <TYPE>Voucher</TYPE>
+            <FETCH>DATE, VOUCHERNUMBER, VOUCHERTYPENAME, PARTYLEDGERNAME, BASICBUYERNAME, AMOUNT, NARRATION, PARTYGSTIN, BASICBUYERADDRESS, ALLLEDGERENTRIES, INVENTORYENTRIES.LIST</FETCH>
+            <FILTER>SalesVouchersFilter</FILTER>
+          </COLLECTION>
+          <SYSTEM TYPE="Formulae" NAME="SalesVouchersFilter">
+            $VoucherTypeName = "Sales" OR $VoucherTypeName = "Sales Order" OR
+            $VoucherTypeName = "Receipt" OR $VoucherTypeName = "Cash Receipt" OR
+            $VoucherTypeName = "Bank Receipt" OR $VoucherTypeName = "Debit Note"
+          </SYSTEM>
+        </TDLMESSAGE>
+      </TDL>
+    </DESC>
+  </BODY>
+</ENVELOPE>`,
+  },
+  // 6. Bills Outstanding TDL Collection
+  {
+    name: '6_BillsOutstanding',
+    xml: `<?xml version="1.0" encoding="utf-8"?>
+<ENVELOPE>
+  <HEADER>
+    <VERSION>1</VERSION>
+    <TALLYREQUEST>Export</TALLYREQUEST>
+    <TYPE>Collection</TYPE>
+    <ID>AllBillsOutstanding</ID>
+  </HEADER>
+  <BODY>
+    <DESC>
+      <STATICVARIABLES>
+        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+      </STATICVARIABLES>
+      <TDL>
+        <TDLMESSAGE>
+          <COLLECTION NAME="AllBillsOutstanding" ISMODIFY="No">
+            <TYPE>BillOutstanding</TYPE>
+            <FETCH>NAME, BILLNAME, CLOSINGBALANCE, OPENINGBALANCE, PARENT, LEDGERNAME, BILLDATED, BILLCL</FETCH>
+          </COLLECTION>
+        </TDLMESSAGE>
+      </TDL>
+    </DESC>
+  </BODY>
+</ENVELOPE>`,
+  },
+  // 7. Receipt + Payment vouchers TDL type-filtered
+  {
+    name: '7_ReceiptPayment',
+    xml: `<?xml version="1.0" encoding="utf-8"?>
+<ENVELOPE>
+  <HEADER>
+    <VERSION>1</VERSION>
+    <TALLYREQUEST>Export</TALLYREQUEST>
+    <TYPE>Collection</TYPE>
+    <ID>ReceiptPaymentVouchers</ID>
+  </HEADER>
+  <BODY>
+    <DESC>
+      <STATICVARIABLES>
+        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+      </STATICVARIABLES>
+      <TDL>
+        <TDLMESSAGE>
+          <COLLECTION NAME="ReceiptPaymentVouchers" ISMODIFY="No">
+            <TYPE>Voucher</TYPE>
+            <FETCH>DATE, VOUCHERNUMBER, VOUCHERTYPENAME, PARTYLEDGERNAME, BASICBUYERNAME, AMOUNT, NARRATION, ALLLEDGERENTRIES</FETCH>
+            <FILTER>ReceiptPaymentFilter</FILTER>
+          </COLLECTION>
+          <SYSTEM TYPE="Formulae" NAME="ReceiptPaymentFilter">
+            $VoucherTypeName = "Receipt" OR $VoucherTypeName = "Payment" OR
+            $VoucherTypeName = "Cash Receipt" OR $VoucherTypeName = "Bank Receipt" OR
+            $VoucherTypeName = "Cash Payment" OR $VoucherTypeName = "Bank Payment"
+          </SYSTEM>
+        </TDLMESSAGE>
+      </TDL>
+    </DESC>
+  </BODY>
+</ENVELOPE>`,
+  },
+  // 8. Ledger vouchers with date range (TDL)
+  {
+    name: '8_LedgerVouchers',
+    xml: `<?xml version="1.0" encoding="utf-8"?>
+<ENVELOPE>
+  <HEADER>
+    <VERSION>1</VERSION>
+    <TALLYREQUEST>Export</TALLYREQUEST>
+    <TYPE>Collection</TYPE>
+    <ID>LedgerVoucherEntries</ID>
+  </HEADER>
+  <BODY>
+    <DESC>
+      <STATICVARIABLES>
+        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+      </STATICVARIABLES>
+      <TDL>
+        <TDLMESSAGE>
+          <COLLECTION NAME="LedgerVoucherEntries" ISMODIFY="No">
+            <TYPE>Voucher</TYPE>
+            <FETCH>DATE, VOUCHERNUMBER, VOUCHERTYPENAME, PARTYLEDGERNAME, BASICBUYERNAME, AMOUNT, NARRATION, ALLLEDGERENTRIES</FETCH>
+            <FILTER>LedgerVoucherFilter</FILTER>
+          </COLLECTION>
+          <SYSTEM TYPE="Formulae" NAME="LedgerVoucherFilter">
             $$IsInRange:$Date:${FY_FROM}:${FY_TO}
           </SYSTEM>
         </TDLMESSAGE>
@@ -431,16 +502,16 @@ const STRATEGIES = [
   </BODY>
 </ENVELOPE>`,
   },
-  // 9. All Vouchers Unfiltered TDL Collection
+  // 9. Sundry Debtor Balance TDL
   {
-    name: '9_AllVouchersUnfiltered',
+    name: '9_DebtorBalance',
     xml: `<?xml version="1.0" encoding="utf-8"?>
 <ENVELOPE>
   <HEADER>
     <VERSION>1</VERSION>
     <TALLYREQUEST>Export</TALLYREQUEST>
     <TYPE>Collection</TYPE>
-    <ID>AllVouchersFull</ID>
+    <ID>SundryDebtorBalance</ID>
   </HEADER>
   <BODY>
     <DESC>
@@ -449,9 +520,10 @@ const STRATEGIES = [
       </STATICVARIABLES>
       <TDL>
         <TDLMESSAGE>
-          <COLLECTION NAME="AllVouchersFull" ISMODIFY="No">
-            <TYPE>Voucher</TYPE>
-            <FETCH>DATE, VOUCHERNUMBER, VOUCHERTYPENAME, PARTYLEDGERNAME, BASICBUYERNAME, AMOUNT, NARRATION, PARTYGSTIN, BASICBUYERADDRESS, ALLLEDGERENTRIES</FETCH>
+          <COLLECTION NAME="SundryDebtorBalance" ISMODIFY="No">
+            <TYPE>Ledger</TYPE>
+            <BELONGSTO>Sundry Debtors</BELONGSTO>
+            <FETCH>NAME, CLOSINGBALANCE, LEDPHONENO, LEDMOBILE, GSTIN</FETCH>
           </COLLECTION>
         </TDLMESSAGE>
       </TDL>
@@ -459,7 +531,8 @@ const STRATEGIES = [
   </BODY>
 </ENVELOPE>`,
   },
-  // 10. EXPORTALL: Yes Object Dump (Tally Integration Library Standard)
+  // ─── FALLBACK: ExportAll object dump ────────────────────────────────────────
+  // 10. EXPORTALL=Yes — entire voucher object database dump
   {
     name: '10_ExportAllVouchers',
     xml: `<?xml version="1.0" encoding="utf-8"?>
@@ -478,7 +551,7 @@ const STRATEGIES = [
   </BODY>
 </ENVELOPE>`,
   },
-  // 11. Sales Register Full with EXPORTALL
+  // 11. Sales Register with EXPORTALL + max date range
   {
     name: '11_SalesRegisterFull',
     xml: `<?xml version="1.0" encoding="utf-8"?>

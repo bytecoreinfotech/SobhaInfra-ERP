@@ -98,122 +98,37 @@ log = logging.getLogger("tally-sync")
 # TDL XML REQUEST TEMPLATES (5 different strategies)
 # ==============================================================================
 
-# Strategy 1: Day Book (captures ALL vouchers — 3 full financial years for complete history)
+# ==============================================================================
+# TALLY XML STRATEGY TEMPLATES
+# Root cause: TallyPrime's 'Export Data'+'REPORTNAME' format (Day Book, List of Vouchers,
+# Bills Outstanding) returns 'All Masters' dump instead of the requested report.
+# CONFIRMED from debug XML: strategy 1 DayBook response header says
+# TALLYREQUEST=Import Data and REPORTNAME=All Masters — Tally is ignoring EXPORTDATA.
+#
+# FIX: Use the correct TallyPrime Collection API:
+#   <TALLYREQUEST>Export</TALLYREQUEST> <TYPE>Collection</TYPE> <ID>name</ID>
+# This is the OFFICIAL TallyPrime XML API for pulling data.
+# ==============================================================================
+
+# Dynamic Financial Year Boundaries
 _today = datetime.now()
-# Go back 2 full FYs to capture complete historical data.
-# NOTE: TallyPrime's Day Book respects the session period (Alt+F2) as a HARD filter,
-# so SVFROMDATE alone is not enough. The client MUST set Tally's session period
-# to at least 1-Apr-2024 via Alt+F2 for this to fetch pre-2026 data.
-# Strategy 8 (TDL Voucher Collection) bypasses the session period entirely.
-_fy_start_year = (_today.year if _today.month >= 4 else _today.year - 1) - 2  # 2 extra FYs back (e.g. 2024)
-_fy_end_year   = (_today.year + 1 if _today.month >= 4 else _today.year)       # End of current FY (e.g. 2027)
-_fy_from = f"{_fy_start_year}0401"  # 20240401 (1-Apr-2024)
-_fy_to   = f"{_fy_end_year}0331"    # 20270331 (31-Mar-2027) covers 3 full FY periods
+_fy_start_year = (_today.year if _today.month >= 4 else _today.year - 1) - 2  # 2 extra FYs back
+_fy_end_year   = (_today.year + 1 if _today.month >= 4 else _today.year)       # End of current FY
+_fy_from = f"{_fy_start_year}0401"  # e.g. 20240401
+_fy_to   = f"{_fy_end_year}0331"    # e.g. 20270331
 
-DAYBOOK_XML = f"""<?xml version="1.0" encoding="utf-8"?>
-<ENVELOPE>
-  <HEADER>
-    <TALLYREQUEST>Export Data</TALLYREQUEST>
-  </HEADER>
-  <BODY>
-    <EXPORTDATA>
-      <REQUESTDESC>
-        <REPORTNAME>Day Book</REPORTNAME>
-        <STATICVARIABLES>
-          <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-          <SVFROMDATE>{_fy_from}</SVFROMDATE>
-          <SVTODATE>{_fy_to}</SVTODATE>
-        </STATICVARIABLES>
-      </REQUESTDESC>
-    </EXPORTDATA>
-  </BODY>
-</ENVELOPE>"""
-
-# Strategy 2: List of Vouchers (now includes date range to match session override)
-VOUCHERS_XML = f"""<?xml version="1.0" encoding="utf-8"?>
-<ENVELOPE>
-  <HEADER>
-    <TALLYREQUEST>Export Data</TALLYREQUEST>
-  </HEADER>
-  <BODY>
-    <EXPORTDATA>
-      <REQUESTDESC>
-        <REPORTNAME>List of Vouchers</REPORTNAME>
-        <STATICVARIABLES>
-          <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-          <SVFROMDATE>{_fy_from}</SVFROMDATE>
-          <SVTODATE>{_fy_to}</SVTODATE>
-        </STATICVARIABLES>
-      </REQUESTDESC>
-    </EXPORTDATA>
-  </BODY>
-</ENVELOPE>"""
-
-# Strategy 3: Bills Outstanding (with full 2-FY date range)
-OUTSTANDING_XML = f"""<?xml version="1.0" encoding="utf-8"?>
-<ENVELOPE>
-  <HEADER>
-    <TALLYREQUEST>Export Data</TALLYREQUEST>
-  </HEADER>
-  <BODY>
-    <EXPORTDATA>
-      <REQUESTDESC>
-        <REPORTNAME>Bills Outstanding</REPORTNAME>
-        <STATICVARIABLES>
-          <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-          <SVFROMDATE>{_fy_from}</SVFROMDATE>
-          <SVTODATE>{_fy_to}</SVTODATE>
-        </STATICVARIABLES>
-      </REQUESTDESC>
-    </EXPORTDATA>
-  </BODY>
-</ENVELOPE>"""
-
-# Strategy 4: List of Accounts (All Ledgers)
-ACCOUNTS_XML = """<?xml version="1.0" encoding="utf-8"?>
-<ENVELOPE>
-  <HEADER>
-    <TALLYREQUEST>Export Data</TALLYREQUEST>
-  </HEADER>
-  <BODY>
-    <EXPORTDATA>
-      <REQUESTDESC>
-        <REPORTNAME>List of Accounts</REPORTNAME>
-        <STATICVARIABLES>
-          <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-        </STATICVARIABLES>
-      </REQUESTDESC>
-    </EXPORTDATA>
-  </BODY>
-</ENVELOPE>"""
-
-# Strategy 5: TALLYMESSAGE Collection export (works on many Tally versions)
-COLLECTION_XML = """<?xml version="1.0" encoding="utf-8"?>
-<ENVELOPE>
-  <HEADER>
-    <TALLYREQUEST>Export Data</TALLYREQUEST>
-  </HEADER>
-  <BODY>
-    <EXPORTDATA>
-      <REQUESTDESC>
-        <STATICVARIABLES>
-          <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-        </STATICVARIABLES>
-        <REPORTNAME>Balance Sheet</REPORTNAME>
-      </REQUESTDESC>
-    </EXPORTDATA>
-  </BODY>
-</ENVELOPE>"""
-
-# Strategy 6: TDL Collection — Sundry Debtors closing balances
-# This is the most reliable way to get party-wise outstanding when DayBook has few entries
-SUNDRY_DEBTORS_XML = """<?xml version="1.0" encoding="utf-8"?>
+# ==============================================================================
+# STRATEGY 1 (PRIMARY): TDL Voucher Collection — ALL vouchers, NO date filter
+# This is the most reliable. Bypasses session period entirely.
+# Confirmed working: Tally returns full VOUCHER blocks with all fields.
+# ==============================================================================
+ALL_VOUCHERS_UNFILTERED_XML = """<?xml version="1.0" encoding="utf-8"?>
 <ENVELOPE>
   <HEADER>
     <VERSION>1</VERSION>
     <TALLYREQUEST>Export</TALLYREQUEST>
     <TYPE>Collection</TYPE>
-    <ID>Sundry Debtors List</ID>
+    <ID>AllVouchersFull</ID>
   </HEADER>
   <BODY>
     <DESC>
@@ -222,10 +137,11 @@ SUNDRY_DEBTORS_XML = """<?xml version="1.0" encoding="utf-8"?>
       </STATICVARIABLES>
       <TDL>
         <TDLMESSAGE>
-          <COLLECTION NAME="Sundry Debtors List" ISMODIFY="No">
-            <TYPE>Ledger</TYPE>
-            <BELONGSTO>Sundry Debtors</BELONGSTO>
-            <FETCH>NAME, PARENT, CLOSINGBALANCE, OPENINGBALANCE, LEDPHONENO, LEDMOBILE, ADDRESS, PINCODE, EMAIL, GSTIN</FETCH>
+          <COLLECTION NAME="AllVouchersFull" ISMODIFY="No">
+            <TYPE>Voucher</TYPE>
+            <FETCH>DATE, VOUCHERNUMBER, VOUCHERTYPENAME, PARTYLEDGERNAME, BASICBUYERNAME,
+                   AMOUNT, NARRATION, PARTYGSTIN, BASICBUYERADDRESS,
+                   ALLLEDGERENTRIES, INVENTORYENTRIES.LIST</FETCH>
           </COLLECTION>
         </TDLMESSAGE>
       </TDL>
@@ -233,32 +149,9 @@ SUNDRY_DEBTORS_XML = """<?xml version="1.0" encoding="utf-8"?>
   </BODY>
 </ENVELOPE>"""
 
-# Strategy 7: Ledger Vouchers — get all vouchers for Sundry Debtors (party-wise)
-LEDGER_VOUCHERS_XML = f"""<?xml version="1.0" encoding="utf-8"?>
-<ENVELOPE>
-  <HEADER>
-    <TALLYREQUEST>Export Data</TALLYREQUEST>
-  </HEADER>
-  <BODY>
-    <EXPORTDATA>
-      <REQUESTDESC>
-        <REPORTNAME>Ledger Vouchers</REPORTNAME>
-        <STATICVARIABLES>
-          <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-          <SVFROMDATE>{_fy_from}</SVFROMDATE>
-          <SVTODATE>{_fy_to}</SVTODATE>
-          <LEDGERNAME>Sundry Debtors</LEDGERNAME>
-        </STATICVARIABLES>
-      </REQUESTDESC>
-    </EXPORTDATA>
-  </BODY>
-</ENVELOPE>"""
-
-
-
-
-# Strategy 8: TDL Voucher Collection — Date-filtered, all voucher types.
-# Uses $$IsInRange which is session-period-independent.
+# ==============================================================================
+# STRATEGY 2: TDL Voucher Collection WITH date range filter ($$IsInRange)
+# ==============================================================================
 ALL_VOUCHERS_TDL_XML = f"""<?xml version="1.0" encoding="utf-8"?>
 <ENVELOPE>
   <HEADER>
@@ -290,16 +183,16 @@ ALL_VOUCHERS_TDL_XML = f"""<?xml version="1.0" encoding="utf-8"?>
   </BODY>
 </ENVELOPE>"""
 
-# Strategy 9: TDL — Completely unfiltered, ALL vouchers across ALL dates.
-# This is the most comprehensive — fetches the entire company's voucher database.
-# No date filter, no type filter, no session dependency.
-ALL_VOUCHERS_UNFILTERED_XML = """<?xml version="1.0" encoding="utf-8"?>
+# ==============================================================================
+# STRATEGY 3: Sundry Debtors TDL Collection — Outstanding balances
+# ==============================================================================
+SUNDRY_DEBTORS_XML = """<?xml version="1.0" encoding="utf-8"?>
 <ENVELOPE>
   <HEADER>
     <VERSION>1</VERSION>
     <TALLYREQUEST>Export</TALLYREQUEST>
     <TYPE>Collection</TYPE>
-    <ID>AllVouchersFull</ID>
+    <ID>Sundry Debtors List</ID>
   </HEADER>
   <BODY>
     <DESC>
@@ -308,11 +201,10 @@ ALL_VOUCHERS_UNFILTERED_XML = """<?xml version="1.0" encoding="utf-8"?>
       </STATICVARIABLES>
       <TDL>
         <TDLMESSAGE>
-          <COLLECTION NAME="AllVouchersFull" ISMODIFY="No">
-            <TYPE>Voucher</TYPE>
-            <FETCH>DATE, VOUCHERNUMBER, VOUCHERTYPENAME, PARTYLEDGERNAME, BASICBUYERNAME,
-                   AMOUNT, NARRATION, PARTYGSTIN, BASICBUYERADDRESS,
-                   ALLLEDGERENTRIES, INVENTORYENTRIES.LIST</FETCH>
+          <COLLECTION NAME="Sundry Debtors List" ISMODIFY="No">
+            <TYPE>Ledger</TYPE>
+            <BELONGSTO>Sundry Debtors</BELONGSTO>
+            <FETCH>NAME, PARENT, CLOSINGBALANCE, OPENINGBALANCE, LEDPHONENO, LEDMOBILE, ADDRESS, PINCODE, EMAIL, GSTIN</FETCH>
           </COLLECTION>
         </TDLMESSAGE>
       </TDL>
@@ -320,15 +212,203 @@ ALL_VOUCHERS_UNFILTERED_XML = """<?xml version="1.0" encoding="utf-8"?>
   </BODY>
 </ENVELOPE>"""
 
-# Strategy 10: EXPORT OBJECT — The definitive method from tally-integration library approach.
-# Uses Tally's Object export (not a Report, not a Collection) which completely bypasses
-# session period. EXPORTALL:Yes forces Tally to dump the ENTIRE voucher object database.
-# This is the correct production approach used by professional Tally integrations.
-EXPORT_OBJECT_XML = """<?xml version="1.0" encoding="utf-8"?>
+# ==============================================================================
+# STRATEGY 4: All Sundry Creditors + Debtors TDL Collection
+# ==============================================================================
+ACCOUNTS_XML = """<?xml version="1.0" encoding="utf-8"?>
 <ENVELOPE>
   <HEADER>
-    <TALLYREQUEST>Export Data</TALLYREQUEST>
+    <VERSION>1</VERSION>
+    <TALLYREQUEST>Export</TALLYREQUEST>
+    <TYPE>Collection</TYPE>
+    <ID>AllPartyLedgers</ID>
   </HEADER>
+  <BODY>
+    <DESC>
+      <STATICVARIABLES>
+        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+      </STATICVARIABLES>
+      <TDL>
+        <TDLMESSAGE>
+          <COLLECTION NAME="AllPartyLedgers" ISMODIFY="No">
+            <TYPE>Ledger</TYPE>
+            <FETCH>NAME, PARENT, CLOSINGBALANCE, OPENINGBALANCE, LEDPHONENO, LEDMOBILE, ADDRESS, PINCODE, EMAIL, GSTIN</FETCH>
+          </COLLECTION>
+        </TDLMESSAGE>
+      </TDL>
+    </DESC>
+  </BODY>
+</ENVELOPE>"""
+
+# ==============================================================================
+# STRATEGY 5: Sales Vouchers TDL — only SALES type vouchers
+# ==============================================================================
+DAYBOOK_XML = f"""<?xml version="1.0" encoding="utf-8"?>
+<ENVELOPE>
+  <HEADER>
+    <VERSION>1</VERSION>
+    <TALLYREQUEST>Export</TALLYREQUEST>
+    <TYPE>Collection</TYPE>
+    <ID>SalesVouchersOnly</ID>
+  </HEADER>
+  <BODY>
+    <DESC>
+      <STATICVARIABLES>
+        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+      </STATICVARIABLES>
+      <TDL>
+        <TDLMESSAGE>
+          <COLLECTION NAME="SalesVouchersOnly" ISMODIFY="No">
+            <TYPE>Voucher</TYPE>
+            <FETCH>DATE, VOUCHERNUMBER, VOUCHERTYPENAME, PARTYLEDGERNAME, BASICBUYERNAME,
+                   AMOUNT, NARRATION, PARTYGSTIN, BASICBUYERADDRESS,
+                   ALLLEDGERENTRIES, INVENTORYENTRIES.LIST</FETCH>
+            <FILTER>SalesVouchersFilter</FILTER>
+          </COLLECTION>
+          <SYSTEM TYPE="Formulae" NAME="SalesVouchersFilter">
+            $VoucherTypeName = "Sales" OR $VoucherTypeName = "Sales Order" OR
+            $VoucherTypeName = "Receipt" OR $VoucherTypeName = "Cash Receipt" OR
+            $VoucherTypeName = "Bank Receipt" OR $VoucherTypeName = "Debit Note"
+          </SYSTEM>
+        </TDLMESSAGE>
+      </TDL>
+    </DESC>
+  </BODY>
+</ENVELOPE>"""
+
+# ==============================================================================
+# STRATEGY 6: All Bill Outstandings — TDL Bill Collection
+# ==============================================================================
+OUTSTANDING_XML = """<?xml version="1.0" encoding="utf-8"?>
+<ENVELOPE>
+  <HEADER>
+    <VERSION>1</VERSION>
+    <TALLYREQUEST>Export</TALLYREQUEST>
+    <TYPE>Collection</TYPE>
+    <ID>AllBillsOutstanding</ID>
+  </HEADER>
+  <BODY>
+    <DESC>
+      <STATICVARIABLES>
+        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+      </STATICVARIABLES>
+      <TDL>
+        <TDLMESSAGE>
+          <COLLECTION NAME="AllBillsOutstanding" ISMODIFY="No">
+            <TYPE>BillOutstanding</TYPE>
+            <FETCH>NAME, BILLNAME, CLOSINGBALANCE, OPENINGBALANCE, PARENT, LEDGERNAME, BILLDATED, BILLCL</FETCH>
+          </COLLECTION>
+        </TDLMESSAGE>
+      </TDL>
+    </DESC>
+  </BODY>
+</ENVELOPE>"""
+
+# ==============================================================================
+# STRATEGY 7: Receipt + Payment Vouchers (TDL Collection)
+# ==============================================================================
+VOUCHERS_XML = f"""<?xml version="1.0" encoding="utf-8"?>
+<ENVELOPE>
+  <HEADER>
+    <VERSION>1</VERSION>
+    <TALLYREQUEST>Export</TALLYREQUEST>
+    <TYPE>Collection</TYPE>
+    <ID>ReceiptPaymentVouchers</ID>
+  </HEADER>
+  <BODY>
+    <DESC>
+      <STATICVARIABLES>
+        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+      </STATICVARIABLES>
+      <TDL>
+        <TDLMESSAGE>
+          <COLLECTION NAME="ReceiptPaymentVouchers" ISMODIFY="No">
+            <TYPE>Voucher</TYPE>
+            <FETCH>DATE, VOUCHERNUMBER, VOUCHERTYPENAME, PARTYLEDGERNAME, BASICBUYERNAME,
+                   AMOUNT, NARRATION, PARTYGSTIN, BASICBUYERADDRESS,
+                   ALLLEDGERENTRIES</FETCH>
+            <FILTER>ReceiptPaymentFilter</FILTER>
+          </COLLECTION>
+          <SYSTEM TYPE="Formulae" NAME="ReceiptPaymentFilter">
+            $VoucherTypeName = "Receipt" OR $VoucherTypeName = "Payment" OR
+            $VoucherTypeName = "Cash Receipt" OR $VoucherTypeName = "Bank Receipt" OR
+            $VoucherTypeName = "Cash Payment" OR $VoucherTypeName = "Bank Payment"
+          </SYSTEM>
+        </TDLMESSAGE>
+      </TDL>
+    </DESC>
+  </BODY>
+</ENVELOPE>"""
+
+# ==============================================================================
+# STRATEGY 8: Ledger Vouchers for each Sundry Debtor (per-party drill-down)
+# ==============================================================================
+LEDGER_VOUCHERS_XML = f"""<?xml version="1.0" encoding="utf-8"?>
+<ENVELOPE>
+  <HEADER>
+    <VERSION>1</VERSION>
+    <TALLYREQUEST>Export</TALLYREQUEST>
+    <TYPE>Collection</TYPE>
+    <ID>LedgerVoucherEntries</ID>
+  </HEADER>
+  <BODY>
+    <DESC>
+      <STATICVARIABLES>
+        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+      </STATICVARIABLES>
+      <TDL>
+        <TDLMESSAGE>
+          <COLLECTION NAME="LedgerVoucherEntries" ISMODIFY="No">
+            <TYPE>Voucher</TYPE>
+            <FETCH>DATE, VOUCHERNUMBER, VOUCHERTYPENAME, PARTYLEDGERNAME, BASICBUYERNAME,
+                   AMOUNT, NARRATION, ALLLEDGERENTRIES</FETCH>
+            <FILTER>LedgerVoucherFilter</FILTER>
+          </COLLECTION>
+          <SYSTEM TYPE="Formulae" NAME="LedgerVoucherFilter">
+            $$IsInRange:$Date:{_fy_from}:{_fy_to}
+          </SYSTEM>
+        </TDLMESSAGE>
+      </TDL>
+    </DESC>
+  </BODY>
+</ENVELOPE>"""
+
+# ==============================================================================
+# STRATEGY 9: TDL Balance Sheet Collection
+# ==============================================================================
+COLLECTION_XML = """<?xml version="1.0" encoding="utf-8"?>
+<ENVELOPE>
+  <HEADER>
+    <VERSION>1</VERSION>
+    <TALLYREQUEST>Export</TALLYREQUEST>
+    <TYPE>Collection</TYPE>
+    <ID>SundryDebtorBalance</ID>
+  </HEADER>
+  <BODY>
+    <DESC>
+      <STATICVARIABLES>
+        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+      </STATICVARIABLES>
+      <TDL>
+        <TDLMESSAGE>
+          <COLLECTION NAME="SundryDebtorBalance" ISMODIFY="No">
+            <TYPE>Ledger</TYPE>
+            <BELONGSTO>Sundry Debtors</BELONGSTO>
+            <FETCH>NAME, CLOSINGBALANCE, LEDPHONENO, LEDMOBILE, GSTIN</FETCH>
+          </COLLECTION>
+        </TDLMESSAGE>
+      </TDL>
+    </DESC>
+  </BODY>
+</ENVELOPE>"""
+
+# ==============================================================================
+# STRATEGY 10: EXPORTALL=Yes — Object Dump (tally-integration library approach)
+# Forces Tally to dump entire voucher database, session-period-independent.
+# ==============================================================================
+EXPORT_OBJECT_XML = """<?xml version="1.0" encoding="utf-8"?>
+<ENVELOPE>
+  <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
   <BODY>
     <EXPORTDATA>
       <REQUESTDESC>
@@ -342,13 +422,12 @@ EXPORT_OBJECT_XML = """<?xml version="1.0" encoding="utf-8"?>
   </BODY>
 </ENVELOPE>"""
 
-# Strategy 11: Sales Voucher direct Object query (tally-integration style).
-# Queries the Voucher object store for Sales type directly.
+# ==============================================================================
+# STRATEGY 11: Sales Register with EXPORTALL (tally-integration approach)
+# ==============================================================================
 SALES_VOUCHER_OBJECT_XML = """<?xml version="1.0" encoding="utf-8"?>
 <ENVELOPE>
-  <HEADER>
-    <TALLYREQUEST>Export Data</TALLYREQUEST>
-  </HEADER>
+  <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
   <BODY>
     <EXPORTDATA>
       <REQUESTDESC>
@@ -363,6 +442,10 @@ SALES_VOUCHER_OBJECT_XML = """<?xml version="1.0" encoding="utf-8"?>
     </EXPORTDATA>
   </BODY>
 </ENVELOPE>"""
+
+
+
+# (Old duplicate strategy definitions removed — all strategies now defined above)
 
 
 # ==============================================================================
@@ -1177,28 +1260,31 @@ def get_tally_loaded_companies() -> list:
 def inject_company_into_xml(xml_payload: str, company_name: str = "") -> str:
     """
     Inject SVCURRENTCOMPANY into Tally XML request static variables.
-    CRITICAL: Preserves all existing tags (SVFROMDATE, SVTODATE, LEDGERNAME, etc.)
-    inside <STATICVARIABLES>. Only adds/replaces SVCURRENTCOMPANY.
+    Handles both formats:
+      1. TDL Collection: <DESC><STATICVARIABLES>...</STATICVARIABLES></DESC>
+      2. ExportData:     <EXPORTDATA><REQUESTDESC><STATICVARIABLES>...</STATICVARIABLES></REQUESTDESC></EXPORTDATA>
+    Preserves all existing tags. Only adds/replaces SVCURRENTCOMPANY.
     """
     if not company_name:
         return xml_payload
 
     company_tag = f"<SVCURRENTCOMPANY>{company_name}</SVCURRENTCOMPANY>"
 
-    # If STATICVARIABLES block exists, inject SVCURRENTCOMPANY inside it (preserving everything else)
+    # Find the FIRST <STATICVARIABLES> block (works for both TDL Collection and ExportData)
     sv_match = re.search(r'(<STATICVARIABLES>)([\s\S]*?)(</STATICVARIABLES>)', xml_payload, re.IGNORECASE)
     if sv_match:
         existing_inner = sv_match.group(2)
-        # Remove any existing SVCURRENTCOMPANY tag first to avoid duplicates
+        # Remove any existing SVCURRENTCOMPANY to avoid duplicates
         existing_inner = re.sub(r'\s*<SVCURRENTCOMPANY>[^<]*</SVCURRENTCOMPANY>\s*', '', existing_inner, flags=re.IGNORECASE)
-        # Insert SVCURRENTCOMPANY right after SVEXPORTFORMAT (or at the end of the block)
+        # Insert right after SVEXPORTFORMAT if present, otherwise append at end
         fmt_match = re.search(r'(</SVEXPORTFORMAT>)', existing_inner, re.IGNORECASE)
         if fmt_match:
             insert_pos = fmt_match.end()
-            new_inner = existing_inner[:insert_pos] + f"\n          {company_tag}" + existing_inner[insert_pos:]
+            new_inner = existing_inner[:insert_pos] + f"\n        {company_tag}" + existing_inner[insert_pos:]
         else:
-            new_inner = existing_inner.rstrip() + f"\n          {company_tag}\n        "
-        return xml_payload[:sv_match.start()] + f"<STATICVARIABLES>{new_inner}</STATICVARIABLES>" + xml_payload[sv_match.end():]
+            new_inner = existing_inner.rstrip() + f"\n        {company_tag}\n      "
+        new_block = f"<STATICVARIABLES>{new_inner}</STATICVARIABLES>"
+        return xml_payload[:sv_match.start()] + new_block + xml_payload[sv_match.end():]
 
     return xml_payload
 
@@ -1241,23 +1327,41 @@ def fetch_from_tally():
             print(f"  📞 Master Ledger Phone Registry: {len(ledger_phone_map)} party contact(s) loaded", flush=True)
 
         strategies = [
-            (f"1_DayBook_{comp}" if comp else "1_DayBook", inject_company_into_xml(DAYBOOK_XML, comp)),
-            (f"2_Vouchers_{comp}" if comp else "2_Vouchers", inject_company_into_xml(VOUCHERS_XML, comp)),
-            (f"3_Outstanding_{comp}" if comp else "3_Outstanding", inject_company_into_xml(OUTSTANDING_XML, comp)),
-            (f"4_Accounts_{comp}" if comp else "4_Accounts", inject_company_into_xml(ACCOUNTS_XML, comp)),
-            ("5_BalanceSheet", inject_company_into_xml(COLLECTION_XML, comp)),
-            (f"6_SundryDebtors_{comp}" if comp else "6_SundryDebtors", inject_company_into_xml(SUNDRY_DEBTORS_XML, comp)),
-            (f"7_LedgerVouchers_{comp}" if comp else "7_LedgerVouchers", inject_company_into_xml(LEDGER_VOUCHERS_XML, comp)),
-            # Strategy 8: TDL Collection with $$IsInRange — session-period-independent date filter.
-            (f"8_AllVouchersTDL_{comp}" if comp else "8_AllVouchersTDL", inject_company_into_xml(ALL_VOUCHERS_TDL_XML, comp)),
-            # Strategy 9: TDL Collection — completely unfiltered, fetches every voucher in company file.
-            (f"9_AllVouchersUnfiltered_{comp}" if comp else "9_AllVouchersUnfiltered", inject_company_into_xml(ALL_VOUCHERS_UNFILTERED_XML, comp)),
-            # Strategy 10: EXPORTALL=Yes — definitive session-independent dump (tally-integration library approach).
-            # Forces Tally to export its ENTIRE voucher object database, bypassing all date/period filters.
-            (f"10_ExportAllVouchers_{comp}" if comp else "10_ExportAllVouchers", inject_company_into_xml(EXPORT_OBJECT_XML, comp)),
-            # Strategy 11: Sales Register with EXPORTALL + max date range.
-            # Specifically targets Sales vouchers across ALL financial years (1900-2050).
-            (f"11_SalesRegisterFull_{comp}" if comp else "11_SalesRegisterFull", inject_company_into_xml(SALES_VOUCHER_OBJECT_XML, comp)),
+            # --- PRIMARY (TDL Collection — session-period-independent, most reliable) ---
+            # Strategy 1: ALL vouchers, no date filter — most comprehensive
+            (f"1_AllVouchersUnfiltered_{comp}" if comp else "1_AllVouchersUnfiltered",
+             inject_company_into_xml(ALL_VOUCHERS_UNFILTERED_XML, comp)),
+            # Strategy 2: Date-range filtered vouchers (current 3 FYs)
+            (f"2_AllVouchersTDL_{comp}" if comp else "2_AllVouchersTDL",
+             inject_company_into_xml(ALL_VOUCHERS_TDL_XML, comp)),
+            # Strategy 3: Sundry Debtors ledger closing balances
+            (f"3_SundryDebtors_{comp}" if comp else "3_SundryDebtors",
+             inject_company_into_xml(SUNDRY_DEBTORS_XML, comp)),
+            # Strategy 4: All party ledgers (Sundry Debtors + Creditors)
+            (f"4_AllPartyLedgers_{comp}" if comp else "4_AllPartyLedgers",
+             inject_company_into_xml(ACCOUNTS_XML, comp)),
+            # Strategy 5: Sales + Receipt vouchers only (type-filtered TDL)
+            (f"5_SalesVouchers_{comp}" if comp else "5_SalesVouchers",
+             inject_company_into_xml(DAYBOOK_XML, comp)),
+            # Strategy 6: Bills Outstanding (TDL BillOutstanding Collection)
+            (f"6_BillsOutstanding_{comp}" if comp else "6_BillsOutstanding",
+             inject_company_into_xml(OUTSTANDING_XML, comp)),
+            # Strategy 7: Receipt+Payment vouchers (TDL type-filtered)
+            (f"7_ReceiptPayment_{comp}" if comp else "7_ReceiptPayment",
+             inject_company_into_xml(VOUCHERS_XML, comp)),
+            # Strategy 8: Ledger vouchers with date range (TDL)
+            (f"8_LedgerVouchers_{comp}" if comp else "8_LedgerVouchers",
+             inject_company_into_xml(LEDGER_VOUCHERS_XML, comp)),
+            # Strategy 9: Sundry Debtor Balance (TDL Ledger)
+            (f"9_DebtorBalance_{comp}" if comp else "9_DebtorBalance",
+             inject_company_into_xml(COLLECTION_XML, comp)),
+            # --- FALLBACK (ExportAll — object dump, no TDL needed) ---
+            # Strategy 10: EXPORTALL=Yes — entire voucher object database dump
+            (f"10_ExportAllVouchers_{comp}" if comp else "10_ExportAllVouchers",
+             inject_company_into_xml(EXPORT_OBJECT_XML, comp)),
+            # Strategy 11: Sales Register with EXPORTALL + max date range
+            (f"11_SalesRegisterFull_{comp}" if comp else "11_SalesRegisterFull",
+             inject_company_into_xml(SALES_VOUCHER_OBJECT_XML, comp)),
         ]
 
         # FIX 1: Collect records from ALL strategies (no break after first success)
