@@ -3011,9 +3011,8 @@ def push_to_cloud(vouchers):
         enriched.append({
             **v,
             "company_name": v.get("company_name", "TallyPrime Live"),
-            # Primary PDF (consignment) stays in pdf_url for backward compat
+            # Primary PDF (consignment) URL stored directly
             "pdf_url": pdfs["pdf_url"],
-            "pdf_base64": pdfs["pdf_base64"],
             # All 4 URLs stored in metadata for Finance page to show all buttons
             "metadata": {
                 **(v.get("metadata") or {}),
@@ -3076,31 +3075,41 @@ def push_to_cloud(vouchers):
     unique_comps = list(dict.fromkeys([v.get("company_name") for v in vouchers if v.get("company_name")]))
     primary_comp = unique_comps[0] if len(unique_comps) == 1 else (f"Group ({len(unique_comps)} Companies)" if len(unique_comps) > 1 else "TallyPrime Live")
 
-    payload = {
-        "organizationId": ORGANIZATION_ID,
-        "timestamp": datetime.now().isoformat(),
-        "connectorStatus": "Connected",
-        "sourceParsed": True,
-        "companyName": primary_comp,
-        "vouchers": enriched,
-    }
+    # Send enriched vouchers in batches of 50 (lightweight JSON without base64 bloat)
+    chunk_size = 50
+    total_chunks = ((len(enriched) - 1) // chunk_size) + 1 if enriched else 1
+    last_res = {"success": True, "count": len(enriched)}
 
-    try:
-        resp = requests.post(
-            CLOUD_URL,
-            json=payload,
-            headers={
-                "Content-Type": "application/json",
-                "X-Connector-Token": CONNECTOR_TOKEN,
-                "X-Organization-Id": ORGANIZATION_ID,
-            },
-            timeout=30,
-        )
-        result = resp.json()
-        return result
-    except Exception as e:
-        log.error(f"Cloud push failed: {e}")
-        return {"success": False, "error": str(e)}
+    for i in range(0, len(enriched), chunk_size):
+        chunk = enriched[i:i + chunk_size]
+        payload = {
+            "organizationId": ORGANIZATION_ID,
+            "timestamp": datetime.now().isoformat(),
+            "connectorStatus": "Connected",
+            "sourceParsed": True,
+            "companyName": primary_comp,
+            "vouchers": chunk,
+        }
+
+        try:
+            resp = requests.post(
+                CLOUD_URL,
+                json=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Connector-Token": CONNECTOR_TOKEN,
+                    "X-Organization-Id": ORGANIZATION_ID,
+                },
+                timeout=45,
+            )
+            chunk_res = resp.json()
+            log.info(f"  [Cloud Push] Batch {i//chunk_size + 1}/{total_chunks} ({len(chunk)} vouchers) pushed successfully")
+            last_res = chunk_res
+        except Exception as e:
+            log.error(f"  [Cloud Push] Batch {i//chunk_size + 1}/{total_chunks} failed: {e}")
+            last_res = {"success": False, "error": str(e)}
+
+    return last_res
 
 
 def _push_sync_progress(done: int, total: int, phase: str = "fetch"):

@@ -15,12 +15,15 @@ const getDirection = (inv) => {
   const num     = (inv?.invoice_number || inv?.tally_voucher_number || '').toLowerCase();
   const status  = inv?.status || '';
 
+  const clientName = (inv?.client_name || inv?.tally_ledger || '').toLowerCase();
+
   // 1. OUTGOING / VENDOR TRANSACTIONS
   const isVendorTransaction = 
     dir === 'paid_out' || 
     dir === 'payable' ||
     /^(pay|pmt|pur|drn)/.test(num) ||
-    ['payment', 'bank payment', 'cash payment', 'purchase', 'purchase order', 'vendor'].some(t => vtype.includes(t));
+    ['payment', 'bank payment', 'cash payment', 'purchase', 'purchase order', 'vendor'].some(t => vtype.includes(t)) ||
+    ['pravin gundiya', 'nilesh enterprises', 'jai jalaram', 'driver', 'transport', 'tyre', 'diesel', 'petrol', 'cement', 'insurance', 'deposit', 'toll'].some(k => clientName.includes(k));
 
   if (isVendorTransaction) {
     if (status === 'Paid' || dir === 'paid_out') {
