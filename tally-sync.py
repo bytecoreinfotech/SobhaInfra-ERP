@@ -3218,6 +3218,10 @@ def _push_sync_progress(done: int, total: int, phase: str = "fetch"):
 
 def run_sync():
     """Execute one full Tally -> Cloud sync cycle."""
+    global _CACHED_COMPANY_PROFILES, _CACHED_ORG_PROFILE
+    _CACHED_COMPANY_PROFILES = None
+    _CACHED_ORG_PROFILE = None
+
     log.info("=== Starting Tally sync cycle ===")
     print("\n" + "=" * 55, flush=True)
     print("  TALLYPRIME SYNC STARTING", flush=True)
@@ -3228,6 +3232,7 @@ def run_sync():
     _push_sync_progress(0, 1, "fetching")
 
     records, raw_xml = fetch_from_tally()
+
 
     if not records:
         log.warning("No records extracted. Nothing to push to cloud.")
