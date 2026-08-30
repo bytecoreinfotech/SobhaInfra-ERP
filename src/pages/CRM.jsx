@@ -695,8 +695,8 @@ const CRM = () => {
                 <input type="text" className="input-field" placeholder="₹1,00,000" value={form.budget} onChange={e => setForm(p => ({ ...p, budget: e.target.value }))} />
               </div>
               <div>
-                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Interested Product</label>
-                <input type="text" className="input-field" placeholder="e.g. Tile Adhesive & Grout" value={form.property_interest} onChange={e => setForm(p => ({ ...p, property_interest: e.target.value }))} />
+                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Interested Product / Requirement</label>
+                <input type="text" className="input-field" placeholder="e.g. Product Name, Requirement, or Service" value={form.property_interest} onChange={e => setForm(p => ({ ...p, property_interest: e.target.value }))} />
               </div>
               <div>
                 <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Lead Source</label>

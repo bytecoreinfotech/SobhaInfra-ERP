@@ -157,7 +157,7 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued, initialRecipi
             id: `pasted-${idx}`,
             name: `Recipient ${list.length + 1}`,
             phone: norm,
-            property_interest: campaignVariables.product || 'Tile Adhesive & Grout',
+            property_interest: campaignVariables.product || 'Products & Services',
             budget: campaignVariables.budget || '₹1,50,000',
             company_name: campaignVariables.company || 'Sobha Infratech Pvt. Ltd.',
           });
@@ -175,7 +175,7 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued, initialRecipi
               id: `pasted-space-${idx}`,
               name: `Recipient ${list.length + 1}`,
               phone: norm,
-              property_interest: campaignVariables.product || 'Tile Adhesive & Grout',
+              property_interest: campaignVariables.product || 'Products & Services',
               budget: campaignVariables.budget || '₹1,50,000',
               company_name: campaignVariables.company || 'Sobha Infratech Pvt. Ltd.',
             });
@@ -375,7 +375,7 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued, initialRecipi
   
   const displayProduct = isOverride 
     ? campaignVariables.product 
-    : (sampleLead.property_interest || sampleLead.product || campaignVariables.product || 'Tile Adhesive & Grout');
+    : (sampleLead.property_interest || sampleLead.product || campaignVariables.product || 'Products & Services');
     
   const displayBudget = isOverride 
     ? campaignVariables.budget 

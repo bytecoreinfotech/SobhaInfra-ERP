@@ -337,7 +337,7 @@ const CampaignStudio = () => {
   // Format message text for preview
   const isOverride = campaignVariables.mode === 'override';
   const sampleLead = effectiveRecipients[0] || {};
-  const displayProduct = isOverride ? campaignVariables.product : (sampleLead.property_interest || sampleLead.product || campaignVariables.product || 'Tile Adhesive & Grout');
+  const displayProduct = isOverride ? campaignVariables.product : (sampleLead.property_interest || sampleLead.product || campaignVariables.product || 'Our Products & Services');
   const displayBudget = isOverride ? campaignVariables.budget : (sampleLead.budget || campaignVariables.budget || '₹1,50,000');
   const displayCompany = isOverride ? campaignVariables.company : (sampleLead.company_name || campaignVariables.company || 'ERPPro Solutions Pvt. Ltd.');
   const displayName = sampleLead.name || 'Rahul Sharma';

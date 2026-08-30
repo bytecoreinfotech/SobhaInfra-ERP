@@ -42,7 +42,7 @@ const EmailComposeModal = ({ lead, defaultTo = '', onClose, onEmailSent }) => {
     let compiledBody = tpl.body
       .replace(/{{client_name}}/g, recipientName || 'Valued Client')
       .replace(/{{client_phone}}/g, lead?.phone || 'Not Provided')
-      .replace(/{{property_interest}}/g, lead?.property_interest || 'Tile Adhesives & Construction Chemicals')
+      .replace(/{{property_interest}}/g, lead?.property_interest || 'Products & Services')
       .replace(/{{budget}}/g, lead?.budget || 'As per quotation')
       .replace(/{{company_name}}/g, companyName)
       .replace(/{{sender_name}}/g, senderName)

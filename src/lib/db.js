@@ -1446,6 +1446,7 @@ export async function getProducts() {
 export async function createProduct(productData) {
   if (!isSupabaseConfigured) {
     const newP = { id: 'prod-' + Date.now(), ...productData, is_active: true };
+    if (!MOCK_STORE.products) MOCK_STORE.products = [];
     MOCK_STORE.products.push(newP);
     logAuditEvent('product.create', 'products', newP.id, newP);
     return { data: newP, error: null };
@@ -1459,6 +1460,36 @@ export async function createProduct(productData) {
   if (data) logAuditEvent('product.create', 'products', data.id, data);
   return { data, error };
 }
+
+export async function updateProduct(id, productData) {
+  if (!isSupabaseConfigured) {
+    if (!MOCK_STORE.products) MOCK_STORE.products = [];
+    const idx = MOCK_STORE.products.findIndex(p => p.id === id);
+    if (idx !== -1) {
+      MOCK_STORE.products[idx] = { ...MOCK_STORE.products[idx], ...productData, updated_at: new Date().toISOString() };
+      logAuditEvent('product.update', 'products', id, productData);
+      return { data: MOCK_STORE.products[idx], error: null };
+    }
+    return { data: null, error: { message: 'Product not found' } };
+  }
+  const { data, error } = await supabase.from('products').update({ ...productData, updated_at: new Date().toISOString() }).eq('id', id).select().single();
+  if (data) logAuditEvent('product.update', 'products', id, productData);
+  return { data, error };
+}
+
+export async function deleteProduct(id) {
+  if (!isSupabaseConfigured) {
+    if (MOCK_STORE.products) {
+      MOCK_STORE.products = MOCK_STORE.products.filter(p => p.id !== id);
+    }
+    logAuditEvent('product.delete', 'products', id, {});
+    return { error: null };
+  }
+  const { error } = await supabase.from('products').delete().eq('id', id);
+  if (!error) logAuditEvent('product.delete', 'products', id, {});
+  return { error };
+}
+
 
 export async function getDeals() {
   if (!isSupabaseConfigured) return { data: MOCK_STORE.deals, error: null };
