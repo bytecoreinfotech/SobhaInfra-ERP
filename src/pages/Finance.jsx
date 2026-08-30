@@ -217,25 +217,52 @@ const Finance = () => {
     loadAllFinanceData(false);
   };
 
-  const handleQuickCreateLead = async (m) => {
-    if (!m) return;
-    const phone = m.lead_phone && m.lead_phone !== '—' ? m.lead_phone : '+919876543210';
-    const newLeadRes = await createLead({
-      name: m.tally_ledger_name,
-      phone: phone,
-      company: m.tally_ledger_name,
-      source: 'Tally Accounting',
-      status: 'Qualified',
-      notes: `Auto-created from Tally Ledger (${m.invoice_count || 0} vouchers, ₹${(m.total_billed || 0).toLocaleString('en-IN')})`,
-    });
+  const [linkingId, setLinkingId] = useState(null);
+  const [mappingSearch, setMappingSearch] = useState('');
 
-    if (newLeadRes?.data?.id) {
-      await updateLedgerMapping(m.id, newLeadRes.data.id, m.tally_ledger_name);
-      setShowMapModal(false);
-      setSelectedMapping(null);
-      setReminderToast(`🎉 Created CRM Profile & Linked "${m.tally_ledger_name}"!`);
+  const handleQuickCreateLead = async (m) => {
+    if (!m || linkingId) return;
+    setLinkingId(m.id);
+    try {
+      const cleanPhone = (m.lead_phone && m.lead_phone !== '—') ? m.lead_phone : '';
+      const newLeadRes = await createLead({
+        name: m.tally_ledger_name,
+        phone: cleanPhone,
+        company: m.tally_ledger_name,
+        source: 'Tally Accounting',
+        status: 'Qualified',
+        notes: `Auto-created from Tally Ledger (${m.invoice_count || 0} vouchers, ₹${(m.total_billed || 0).toLocaleString('en-IN')})`,
+      });
+
+      const createdLead = newLeadRes?.data;
+      if (createdLead?.id) {
+        await updateLedgerMapping(m.id, createdLead.id, m.tally_ledger_name);
+        
+        // Immediate local state update for instant UI feedback
+        setMappings(prev => prev.map(item => item.id === m.id ? {
+          ...item,
+          lead_id: createdLead.id,
+          lead_name: createdLead.name,
+          lead_phone: createdLead.phone || item.lead_phone,
+          mapping_status: 'MAPPED',
+          match_confidence: 1.0,
+        } : item));
+
+        setShowMapModal(false);
+        setSelectedMapping(null);
+        setReminderToast(`🎉 Verified & Linked "${m.tally_ledger_name}" to CRM Customer (100% Match)!`);
+        setTimeout(() => setReminderToast(null), 3500);
+        loadAllFinanceData(false);
+      } else {
+        setReminderToast(`⚠️ Could not create CRM lead: ${newLeadRes?.error?.message || 'Unknown error'}`);
+        setTimeout(() => setReminderToast(null), 3500);
+      }
+    } catch (err) {
+      console.error('[Finance] Quick create lead error:', err);
+      setReminderToast(`⚠️ Error: ${err.message}`);
       setTimeout(() => setReminderToast(null), 3500);
-      loadAllFinanceData(false);
+    } finally {
+      setLinkingId(null);
     }
   };
 
@@ -340,6 +367,41 @@ const Finance = () => {
   });
 
   const pausedCount = dateFilteredInvoices.filter(i => i.reminder_paused === true || i.reminder_paused === 'true').length;
+
+  // 4. Ledger Mappings filtered by active company & search
+  const companyFilteredMappings = React.useMemo(() => {
+    let list = mappings;
+    if (!isConsolidated && activeCompany) {
+      const compName = (activeCompany.company_name || '').toUpperCase();
+      const aliases = Array.isArray(activeCompany.alias_names) ? activeCompany.alias_names.map(a => a.toUpperCase()) : [];
+
+      list = mappings.filter(m => {
+        if (m.companies && m.companies.length > 0) {
+          const match = m.companies.some(c => {
+            const up = (c || '').toUpperCase();
+            return [compName, ...aliases].some(n => n && (up.includes(n) || n.includes(up)));
+          });
+          if (match) return true;
+        }
+        if (m.company_name) {
+          const up = m.company_name.toUpperCase();
+          if ([compName, ...aliases].some(n => n && (up.includes(n) || n.includes(up)))) return true;
+        }
+        return invoices.some(inv => (inv.client_name || '').trim().toLowerCase() === (m.tally_ledger_name || '').trim().toLowerCase());
+      });
+    }
+
+    if (mappingSearch.trim()) {
+      const q = mappingSearch.toLowerCase();
+      list = list.filter(m => 
+        (m.tally_ledger_name && m.tally_ledger_name.toLowerCase().includes(q)) ||
+        (m.lead_name && m.lead_name.toLowerCase().includes(q)) ||
+        (m.lead_phone && m.lead_phone.includes(q))
+      );
+    }
+
+    return list;
+  }, [mappings, activeCompany, isConsolidated, invoices, mappingSearch]);
 
   const fmtCurrency = (n) => '₹' + Number(n || 0).toLocaleString('en-IN');
 
@@ -1141,18 +1203,26 @@ const Finance = () => {
          ========================================================================= */}
       {activeTab === 'mappings' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
             <div>
               <h2 style={{ fontSize: '1.05rem', fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
                 <Link size={18} color="var(--accent-primary)" /> Ledger &amp; Customer Mapping Master (Section 30)
               </h2>
               <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0.2rem 0 0 0' }}>
-                Bridges Tally accounting ledgers with CRM customer profiles so automated WhatsApp notifications and payment statements know where to reach.
+                Bridges Tally accounting ledgers with CRM customer profiles so automated WhatsApp notifications and statements reach verified contacts.
               </p>
             </div>
-            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <div style={{ display: 'flex', gap: '0.65rem', alignItems: 'center', flexWrap: 'wrap' }}>
+              <input
+                type="text"
+                className="input-field"
+                placeholder="Search ledger or phone..."
+                value={mappingSearch}
+                onChange={e => setMappingSearch(e.target.value)}
+                style={{ width: 180, height: 32, fontSize: '0.75rem', padding: '0 0.6rem' }}
+              />
               <span className="badge badge-neutral" style={{ fontSize: '0.75rem' }}>
-                {mappings.filter(m => m.mapping_status === 'MAPPED' || m.mapping_status === 'AUTO_FOUND').length} / {mappings.length} Linked
+                {companyFilteredMappings.filter(m => m.mapping_status === 'MAPPED' || m.mapping_status === 'AUTO_FOUND').length} / {companyFilteredMappings.length} Linked ({activeCompany ? activeCompany.company_name : 'All Companies'})
               </span>
             </div>
           </div>
@@ -1170,15 +1240,16 @@ const Finance = () => {
                 </tr>
               </thead>
               <tbody>
-                {mappings.length === 0 ? (
+                {companyFilteredMappings.length === 0 ? (
                   <tr>
                     <td colSpan={6} style={{ textAlign: 'center', padding: '2.5rem', color: 'var(--text-muted)' }}>
-                      No Tally ledger mappings found. Click "Test / Trigger Sync Now" to pull accounting ledgers from Tally.
+                      {mappingSearch ? 'No ledgers match your search query.' : `No Tally ledger mappings found for ${activeCompany ? activeCompany.company_name : 'All Companies'}. Click "Test / Trigger Sync Now" or switch company selector.`}
                     </td>
                   </tr>
                 ) : (
-                  mappings.map(m => {
+                  companyFilteredMappings.map(m => {
                     const isLinked = m.mapping_status === 'MAPPED' || m.mapping_status === 'AUTO_FOUND';
+                    const isLinkingThis = linkingId === m.id;
                     return (
                       <tr
                         key={m.id}
@@ -1196,6 +1267,9 @@ const Finance = () => {
                           {(m.invoice_count > 0 || m.total_billed > 0) && (
                             <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 2 }}>
                               📦 {m.invoice_count} voucher(s) • <span style={{ fontWeight: 600, color: 'var(--accent-secondary)' }}>₹{Number(m.total_billed || 0).toLocaleString('en-IN')}</span>
+                              {isConsolidated && m.company_name && (
+                                <span style={{ marginLeft: 6, opacity: 0.75, fontSize: '0.65rem' }}>[{m.company_name}]</span>
+                              )}
                             </div>
                           )}
                         </td>
@@ -1229,18 +1303,19 @@ const Finance = () => {
                               className="btn btn-secondary btn-sm"
                               style={{ fontSize: '0.72rem', padding: '0.25rem 0.55rem' }}
                               onClick={e => { e.stopPropagation(); setSelectedMapping(m); setTargetLeadId(m.lead_id || ''); setShowMapModal(true); }}
-                              title="Link this Tally ledger to a CRM customer"
+                              title="Link this Tally ledger to an existing CRM customer"
                             >
                               {isLinked ? 'Edit Link' : 'Map Lead'}
                             </button>
                             {!isLinked && (
                               <button
                                 className="btn btn-primary btn-sm"
-                                style={{ fontSize: '0.72rem', padding: '0.25rem 0.55rem', background: 'linear-gradient(135deg, #4f46e5, #6366f1)' }}
+                                style={{ fontSize: '0.72rem', padding: '0.25rem 0.55rem', background: 'linear-gradient(135deg, #4f46e5, #6366f1)', opacity: isLinkingThis ? 0.7 : 1 }}
                                 onClick={e => { e.stopPropagation(); handleQuickCreateLead(m); }}
-                                title="Automatically create this party as a new lead in CRM"
+                                disabled={isLinkingThis}
+                                title="Automatically create this party as a new verified lead in CRM"
                               >
-                                + Quick Add CRM
+                                {isLinkingThis ? <><RefreshCw size={11} className="animate-spin" /> Adding...</> : '+ Quick Add CRM'}
                               </button>
                             )}
                           </div>

@@ -336,6 +336,8 @@ export async function getLedgerMappings() {
       const phoneFromInvoice = relatedInvoices.find(i => i.client_phone && i.client_phone !== '')?.client_phone || '';
       const totalAmount = relatedInvoices.reduce((s, i) => s + Number(i.amount || 0), 0);
       const invoiceCount = relatedInvoices.length;
+      // Extract unique companies where this ledger has vouchers
+      const companies = Array.from(new Set(relatedInvoices.map(i => i.company_name).filter(Boolean)));
 
       const isMapped = Boolean(matchedLead);
       const displayStatus = isMapped ? 'MAPPED' : (phoneFromInvoice ? 'AUTO_FOUND' : 'UNLINKED');
@@ -351,6 +353,8 @@ export async function getLedgerMappings() {
         match_confidence: confidence,
         invoice_count: invoiceCount,
         total_billed: totalAmount,
+        companies: companies,
+        company_name: companies[0] || '',
         invoices: relatedInvoices.slice(0, 5),
         updated_at: row.updated_at,
         organization_id: row.organization_id,
@@ -366,7 +370,7 @@ export async function getLedgerMappings() {
 
 export async function updateLedgerMapping(mappingId, leadId, tallyLedgerName) {
   if (!isSupabaseConfigured) {
-    const idx = MOCK_STORE.ledger_mappings.findIndex(m => m.id === mappingId);
+    const idx = MOCK_STORE.ledger_mappings.findIndex(m => m.id === mappingId || m.tally_ledger_name === tallyLedgerName);
     const targetLead = MOCK_STORE.leads.find(l => l.id === leadId);
     if (idx !== -1 && targetLead) {
       MOCK_STORE.ledger_mappings[idx] = {
@@ -383,8 +387,6 @@ export async function updateLedgerMapping(mappingId, leadId, tallyLedgerName) {
     return { data: null, error: { message: 'Mapping not found' } };
   }
 
-  // Write to lead_id column (new). Also write customer_id for backwards compatibility.
-  // If lead_id column doesn't exist yet (migration not run), fall back gracefully.
   let updatePayload = {
     mapping_status: 'MAPPED',
     confidence_score: 1.0,
@@ -398,20 +400,37 @@ export async function updateLedgerMapping(mappingId, leadId, tallyLedgerName) {
       .select('lead_id')
       .eq('id', mappingId)
       .maybeSingle();
-    // If lead_id column exists (no error), use it
     if (testCol !== undefined) {
       updatePayload.lead_id = leadId;
     }
   } catch {}
 
-  // Also write customer_id (legacy FK — may fail silently if UUID not in customers table)
-  // We swallow the FK error and still mark mapping_status = MAPPED
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from('tally_mappings')
     .update(updatePayload)
     .eq('id', mappingId)
     .select()
     .maybeSingle();
+
+  // If update by ID didn't find the row, try upserting by organization_id + tally_ledger_name
+  if (!data && tallyLedgerName) {
+    try {
+      const upsertRes = await supabase
+        .from('tally_mappings')
+        .upsert({
+          organization_id: DEFAULT_ORG_ID,
+          tally_ledger_name: tallyLedgerName,
+          lead_id: leadId,
+          mapping_status: 'MAPPED',
+          confidence_score: 1.0,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'organization_id,tally_ledger_name' })
+        .select()
+        .maybeSingle();
+      data = upsertRes.data;
+      error = upsertRes.error;
+    } catch {}
+  }
 
   if (data) logAuditEvent('ledger.mapped', 'tally_mappings', mappingId, { leadId, tallyLedgerName });
   return { data, error };
