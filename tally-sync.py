@@ -1128,12 +1128,31 @@ def get_tally_loaded_companies() -> list:
 
 
 def inject_company_into_xml(xml_payload: str, company_name: str = "") -> str:
-    """Inject SVCURRENTCOMPANY into Tally XML request static variables."""
+    """
+    Inject SVCURRENTCOMPANY into Tally XML request static variables.
+    CRITICAL: Preserves all existing tags (SVFROMDATE, SVTODATE, LEDGERNAME, etc.)
+    inside <STATICVARIABLES>. Only adds/replaces SVCURRENTCOMPANY.
+    """
     if not company_name:
         return xml_payload
-    sv_block = f"<STATICVARIABLES>\n          <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>\n          <SVCURRENTCOMPANY>{company_name}</SVCURRENTCOMPANY>\n        </STATICVARIABLES>"
-    if re.search(r'<STATICVARIABLES>[\s\S]*?</STATICVARIABLES>', xml_payload, re.IGNORECASE):
-        return re.sub(r'<STATICVARIABLES>[\s\S]*?</STATICVARIABLES>', sv_block, xml_payload, flags=re.IGNORECASE)
+
+    company_tag = f"<SVCURRENTCOMPANY>{company_name}</SVCURRENTCOMPANY>"
+
+    # If STATICVARIABLES block exists, inject SVCURRENTCOMPANY inside it (preserving everything else)
+    sv_match = re.search(r'(<STATICVARIABLES>)([\s\S]*?)(</STATICVARIABLES>)', xml_payload, re.IGNORECASE)
+    if sv_match:
+        existing_inner = sv_match.group(2)
+        # Remove any existing SVCURRENTCOMPANY tag first to avoid duplicates
+        existing_inner = re.sub(r'\s*<SVCURRENTCOMPANY>[^<]*</SVCURRENTCOMPANY>\s*', '', existing_inner, flags=re.IGNORECASE)
+        # Insert SVCURRENTCOMPANY right after SVEXPORTFORMAT (or at the end of the block)
+        fmt_match = re.search(r'(</SVEXPORTFORMAT>)', existing_inner, re.IGNORECASE)
+        if fmt_match:
+            insert_pos = fmt_match.end()
+            new_inner = existing_inner[:insert_pos] + f"\n          {company_tag}" + existing_inner[insert_pos:]
+        else:
+            new_inner = existing_inner.rstrip() + f"\n          {company_tag}\n        "
+        return xml_payload[:sv_match.start()] + f"<STATICVARIABLES>{new_inner}</STATICVARIABLES>" + xml_payload[sv_match.end():]
+
     return xml_payload
 
 
