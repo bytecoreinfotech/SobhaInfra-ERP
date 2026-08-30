@@ -28,28 +28,40 @@ const statusConfig = {
 /**
  * FIX 2 — Derive payment direction from metadata + invoice number prefix.
  * Returns a config object with label, icon arrow JSX, and colors.
- * Arrow icons: ArrowDownLeft = incoming money (green), ArrowUpRight = outgoing money (amber/red)
+ *
+ * Logic:
+ *   Receipt voucher             → 'Received' (green)   — customer paid us
+ *   Paid status + Sales voucher → 'Received' (green)   — collected, no longer outstanding
+ *   Pending Sales voucher       → 'Receivable' (indigo) — customer still owes us
+ *   Purchase/Payment voucher    → 'Paid Out'  (amber)  — we paid vendor
+ *   Payable voucher             → 'Payable'   (red)    — we owe vendor
  */
 const getDirection = (inv) => {
-  const dir = inv?.metadata?.direction || '';
-  const vtype = (inv?.metadata?.voucher_type || '').toLowerCase();
-  const num   = (inv?.invoice_number || '').toLowerCase();
+  const dir     = inv?.metadata?.direction || '';
+  const vtype   = (inv?.metadata?.voucher_type || '').toLowerCase();
+  const num     = (inv?.invoice_number || '').toLowerCase();
+  const status  = inv?.status || '';
 
-  // Receipt = customer paid us (money IN to us) — bold green arrow pointing down-left (deposit)
+  // Receipt = customer paid us (money IN) — always green
   if (dir === 'received' || /^(rcpt|rct|rec)/.test(num) ||
       ['receipt','bank receipt','cash receipt'].some(t => vtype.includes(t))) {
     return { label: 'Received',   ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', title: 'Customer paid us — Payment received', canRemind: false };
   }
-  // Payment / Purchase = we paid vendor (money OUT from us)
+  // Payment / Purchase = we paid vendor (money OUT)
   if (dir === 'paid_out' || /^(pay|pmt|pur)/.test(num) ||
       ['payment','bank payment','cash payment','purchase'].some(t => vtype.includes(t))) {
-    return { label: 'Paid Out',   ArrowIcon: ArrowUpRight, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', title: 'We paid vendor — Outgoing payment', canRemind: false };
+    return { label: 'Paid Out',   ArrowIcon: ArrowUpRight,  color: '#f59e0b', bg: 'rgba(245,158,11,0.12)',  title: 'We paid vendor — Outgoing payment', canRemind: false };
   }
   // Payable = we owe vendor (Purchase pending)
   if (dir === 'payable') {
-    return { label: 'Payable',    ArrowIcon: ArrowUpRight, color: '#ef4444', bg: 'rgba(239,68,68,0.12)', title: 'We owe vendor — Outstanding payable', canRemind: false };
+    return { label: 'Payable',    ArrowIcon: ArrowUpRight,  color: '#ef4444', bg: 'rgba(239,68,68,0.12)',   title: 'We owe vendor — Outstanding payable', canRemind: false };
   }
-  // Default: Receivable = customer owes us (Sales, Debit Note) — arrow pointing up-right (collect)
+  // KEY FIX: If status is Paid but direction is Receivable → must show 'Received' (collected)
+  // A Sales invoice marked Paid means the customer has settled — NOT still receivable.
+  if (status === 'Paid' || dir === 'received') {
+    return { label: 'Received',   ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', title: 'Collected — customer has paid this invoice', canRemind: false };
+  }
+  // Default: Receivable = customer owes us (Sales, Debit Note, Pending)
   return   { label: 'Receivable', ArrowIcon: ArrowDownRight, color: '#6366f1', bg: 'rgba(99,102,241,0.12)', title: 'Customer owes us — Outstanding receivable', canRemind: true };
 };
 

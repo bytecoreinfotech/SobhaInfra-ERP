@@ -257,17 +257,15 @@ LEDGER_VOUCHERS_XML = f"""<?xml version="1.0" encoding="utf-8"?>
 
 
 
-# Strategy 8: TDL Voucher Collection — BYPASSES session period restriction entirely.
-# This queries Tally's internal voucher object store directly (not a report),
-# so it is NOT filtered by the active session period (Alt+F2 date in Tally).
-# This is the most reliable strategy for fetching ALL historical vouchers.
+# Strategy 8: TDL Voucher Collection — Date-filtered, all voucher types.
+# Uses $$IsInRange which is session-period-independent.
 ALL_VOUCHERS_TDL_XML = f"""<?xml version="1.0" encoding="utf-8"?>
 <ENVELOPE>
   <HEADER>
     <VERSION>1</VERSION>
     <TALLYREQUEST>Export</TALLYREQUEST>
     <TYPE>Collection</TYPE>
-    <ID>AllVoucherCollection</ID>
+    <ID>AllVouchersByDate</ID>
   </HEADER>
   <BODY>
     <DESC>
@@ -276,13 +274,14 @@ ALL_VOUCHERS_TDL_XML = f"""<?xml version="1.0" encoding="utf-8"?>
       </STATICVARIABLES>
       <TDL>
         <TDLMESSAGE>
-          <COLLECTION NAME="AllVoucherCollection" ISMODIFY="No">
+          <COLLECTION NAME="AllVouchersByDate" ISMODIFY="No">
             <TYPE>Voucher</TYPE>
-            <CHILDOF>$$VoucherTypeName:Sales</CHILDOF>
-            <FETCH>DATE, VOUCHERNUMBER, VOUCHERTYPENAME, PARTYLEDGERNAME, BASICBUYERNAME, AMOUNT, NARRATION, PARTYGSTIN, BASICBUYERADDRESS</FETCH>
-            <FILTER>FilterByDate</FILTER>
+            <FETCH>DATE, VOUCHERNUMBER, VOUCHERTYPENAME, PARTYLEDGERNAME, BASICBUYERNAME,
+                   AMOUNT, NARRATION, PARTYGSTIN, BASICBUYERADDRESS, ISOPTIONAL,
+                   ALLLEDGERENTRIES, INVENTORYENTRIES.LIST</FETCH>
+            <FILTER>FilterByDateRange</FILTER>
           </COLLECTION>
-          <SYSTEM TYPE="Formulae" NAME="FilterByDate">
+          <SYSTEM TYPE="Formulae" NAME="FilterByDateRange">
             $$IsInRange:$Date:{_fy_from}:{_fy_to}
           </SYSTEM>
         </TDLMESSAGE>
@@ -291,7 +290,9 @@ ALL_VOUCHERS_TDL_XML = f"""<?xml version="1.0" encoding="utf-8"?>
   </BODY>
 </ENVELOPE>"""
 
-# Strategy 9: TDL — All Sales + Receipt vouchers (broader type collection, no date filter → fetches everything)
+# Strategy 9: TDL — Completely unfiltered, ALL vouchers across ALL dates.
+# This is the most comprehensive — fetches the entire company's voucher database.
+# No date filter, no type filter, no session dependency.
 ALL_VOUCHERS_UNFILTERED_XML = """<?xml version="1.0" encoding="utf-8"?>
 <ENVELOPE>
   <HEADER>
@@ -309,11 +310,57 @@ ALL_VOUCHERS_UNFILTERED_XML = """<?xml version="1.0" encoding="utf-8"?>
         <TDLMESSAGE>
           <COLLECTION NAME="AllVouchersFull" ISMODIFY="No">
             <TYPE>Voucher</TYPE>
-            <FETCH>DATE, VOUCHERNUMBER, VOUCHERTYPENAME, PARTYLEDGERNAME, BASICBUYERNAME, AMOUNT, NARRATION, PARTYGSTIN, BASICBUYERADDRESS, ALLLEDGERENTRIES</FETCH>
+            <FETCH>DATE, VOUCHERNUMBER, VOUCHERTYPENAME, PARTYLEDGERNAME, BASICBUYERNAME,
+                   AMOUNT, NARRATION, PARTYGSTIN, BASICBUYERADDRESS,
+                   ALLLEDGERENTRIES, INVENTORYENTRIES.LIST</FETCH>
           </COLLECTION>
         </TDLMESSAGE>
       </TDL>
     </DESC>
+  </BODY>
+</ENVELOPE>"""
+
+# Strategy 10: EXPORT OBJECT — The definitive method from tally-integration library approach.
+# Uses Tally's Object export (not a Report, not a Collection) which completely bypasses
+# session period. EXPORTALL:Yes forces Tally to dump the ENTIRE voucher object database.
+# This is the correct production approach used by professional Tally integrations.
+EXPORT_OBJECT_XML = """<?xml version="1.0" encoding="utf-8"?>
+<ENVELOPE>
+  <HEADER>
+    <TALLYREQUEST>Export Data</TALLYREQUEST>
+  </HEADER>
+  <BODY>
+    <EXPORTDATA>
+      <REQUESTDESC>
+        <REPORTNAME>Vouchers</REPORTNAME>
+        <STATICVARIABLES>
+          <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+          <EXPORTALL>Yes</EXPORTALL>
+        </STATICVARIABLES>
+      </REQUESTDESC>
+    </EXPORTDATA>
+  </BODY>
+</ENVELOPE>"""
+
+# Strategy 11: Sales Voucher direct Object query (tally-integration style).
+# Queries the Voucher object store for Sales type directly.
+SALES_VOUCHER_OBJECT_XML = """<?xml version="1.0" encoding="utf-8"?>
+<ENVELOPE>
+  <HEADER>
+    <TALLYREQUEST>Export Data</TALLYREQUEST>
+  </HEADER>
+  <BODY>
+    <EXPORTDATA>
+      <REQUESTDESC>
+        <REPORTNAME>Sales Register</REPORTNAME>
+        <STATICVARIABLES>
+          <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+          <EXPORTALL>Yes</EXPORTALL>
+          <SVFROMDATE>19000101</SVFROMDATE>
+          <SVTODATE>20501231</SVTODATE>
+        </STATICVARIABLES>
+      </REQUESTDESC>
+    </EXPORTDATA>
   </BODY>
 </ENVELOPE>"""
 
@@ -1201,12 +1248,16 @@ def fetch_from_tally():
             ("5_BalanceSheet", inject_company_into_xml(COLLECTION_XML, comp)),
             (f"6_SundryDebtors_{comp}" if comp else "6_SundryDebtors", inject_company_into_xml(SUNDRY_DEBTORS_XML, comp)),
             (f"7_LedgerVouchers_{comp}" if comp else "7_LedgerVouchers", inject_company_into_xml(LEDGER_VOUCHERS_XML, comp)),
-            # Strategy 8: TDL Collection — bypasses Tally session period restriction entirely.
-            # Fetches ALL historical Sales vouchers regardless of Alt+F2 date setting.
+            # Strategy 8: TDL Collection with $$IsInRange — session-period-independent date filter.
             (f"8_AllVouchersTDL_{comp}" if comp else "8_AllVouchersTDL", inject_company_into_xml(ALL_VOUCHERS_TDL_XML, comp)),
-            # Strategy 9: TDL Collection — completely unfiltered, fetches every voucher in the company file.
-            # This catches any remaining historical entries that Strategy 8 may miss.
+            # Strategy 9: TDL Collection — completely unfiltered, fetches every voucher in company file.
             (f"9_AllVouchersUnfiltered_{comp}" if comp else "9_AllVouchersUnfiltered", inject_company_into_xml(ALL_VOUCHERS_UNFILTERED_XML, comp)),
+            # Strategy 10: EXPORTALL=Yes — definitive session-independent dump (tally-integration library approach).
+            # Forces Tally to export its ENTIRE voucher object database, bypassing all date/period filters.
+            (f"10_ExportAllVouchers_{comp}" if comp else "10_ExportAllVouchers", inject_company_into_xml(EXPORT_OBJECT_XML, comp)),
+            # Strategy 11: Sales Register with EXPORTALL + max date range.
+            # Specifically targets Sales vouchers across ALL financial years (1900-2050).
+            (f"11_SalesRegisterFull_{comp}" if comp else "11_SalesRegisterFull", inject_company_into_xml(SALES_VOUCHER_OBJECT_XML, comp)),
         ]
 
         # FIX 1: Collect records from ALL strategies (no break after first success)
