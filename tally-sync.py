@@ -2971,145 +2971,194 @@ def generate_and_upload_all_pdfs(voucher: dict, org_profile: dict | None = None)
 
 def push_to_cloud(vouchers):
     """
-    1. Deduplicate vouchers by invoice_number (keep last/best match).
-    2. Generate all 4 PDF types per Tally voucher.
-    3. Save copies locally and upload all 4 to cloud storage.
-    4. Push the enriched multi-company payload to Netlify endpoint.
+    IMPROVED APPROACH (v4.3):
+    1. Load local sync cache — skip vouchers already pushed in previous runs.
+    2. Deduplicate remaining vouchers by invoice_number.
+    3. For each voucher: generate PDFs → push DIRECTLY to Supabase REST API immediately.
+       This bypasses Netlify entirely (Netlify has 10s timeout, Supabase has no such limit).
+    4. Mark each voucher in local cache immediately after successful push.
+    5. Send a lightweight status ping to Netlify at the end (no voucher payload).
     """
-    # Bug fix: Final deduplication pass — if two records share the same invoice_number,
-    # keep the one with the most data (phone > no phone, more fields > fewer).
+
+    # ── Local sync cache (skip already-synced vouchers on re-runs) ────────────
+    cache_file = os.path.join(SCRIPT_DIR, "sync_cache.json")
+    try:
+        with open(cache_file, "r", encoding="utf-8") as f:
+            sync_cache = json.load(f)  # {invoice_number: iso_timestamp}
+    except Exception:
+        sync_cache = {}
+
+    def save_cache():
+        try:
+            with open(cache_file, "w", encoding="utf-8") as f:
+                json.dump(sync_cache, f)
+        except Exception:
+            pass
+
+    # ── Deduplication ─────────────────────────────────────────────────────────
     dedup_map = {}
     for v in vouchers:
         key = v.get("invoice_number", "")
         if not key:
-            enriched_list_placeholder = [v]  # no key, always include
             continue
         existing = dedup_map.get(key)
         if existing is None:
             dedup_map[key] = v
         else:
-            # Prefer the entry with a phone number
             if v.get("phone") and not existing.get("phone"):
                 dedup_map[key] = v
-    unique_vouchers = list(dedup_map.values())
-    log.info(f"  [Dedup] {len(vouchers)} raw records → {len(unique_vouchers)} unique after deduplication")
-    print(f"\n[PDF Generation] {len(unique_vouchers)} unique vouchers → generating PDFs & uploading...", flush=True)
+    all_unique = list(dedup_map.values())
 
-    enriched = []
-    total_v = len(unique_vouchers)
-    for v_idx, v in enumerate(unique_vouchers):
-        # Progress bar every 10 vouchers or on last one
+    # Filter out already-synced vouchers — skip them entirely
+    to_process = [v for v in all_unique if v.get("invoice_number") not in sync_cache]
+    skipped = len(all_unique) - len(to_process)
+    log.info(f"  [Dedup] {len(vouchers)} raw → {len(all_unique)} unique → {len(to_process)} new (skipped {skipped} already synced)")
+
+    if not to_process:
+        log.info("  [Cloud Push] All vouchers already synced. Nothing to do.")
+        return {"success": True, "count": 0, "skipped": skipped}
+
+    print(f"\n[PDF + Upload] {len(to_process)} new vouchers → generating PDFs & pushing to Supabase...", flush=True)
+
+    # ── Supabase REST headers ─────────────────────────────────────────────────
+    sb_headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json",
+        "Prefer": "resolution=merge-duplicates,return=minimal",
+    }
+    sb_invoices_url = f"{SUPABASE_URL}/rest/v1/invoices?on_conflict=invoice_number"
+    sb_ledger_url   = f"{SUPABASE_URL}/rest/v1/ledger_mappings?on_conflict=id"
+
+    pushed_ok = 0
+    push_errors = 0
+    total_v = len(to_process)
+
+    for v_idx, v in enumerate(to_process):
+        inv_num = v.get("invoice_number", "")
+
+        # ── Progress bar ──────────────────────────────────────────────────────
         if v_idx % 10 == 0 or v_idx == total_v - 1:
             pct = int(((v_idx + 1) / total_v) * 100) if total_v else 100
             bar = '█' * (pct // 5) + '░' * (20 - pct // 5)
-            print(f"  [{bar}] {pct}% — {v_idx+1}/{total_v} vouchers processed", flush=True)
+            print(f"  [{bar}] {pct}% — {v_idx+1}/{total_v} vouchers", flush=True)
+            _push_sync_progress(v_idx + 1, total_v, "uploading")
 
-            # Push live progress to Supabase so frontend can display it
-            _push_sync_progress(v_idx + 1, total_v, "pdf_upload")
-
+        # ── Step 1: Generate all 4 PDFs ───────────────────────────────────────
         pdfs = generate_and_upload_all_pdfs(v)
-        enriched.append({
-            **v,
-            "company_name": v.get("company_name", "TallyPrime Live"),
-            # Primary PDF (consignment) URL stored directly
-            "pdf_url": pdfs["pdf_url"],
-            # All 4 URLs stored in metadata for Finance page to show all buttons
+
+        # ── Step 2: Push voucher directly to Supabase REST (no Netlify) ──────
+        inv_date = v.get("invoice_date") or v.get("date") or datetime.now().strftime("%Y-%m-%d")
+        # Normalise 8-digit YYYYMMDD → YYYY-MM-DD
+        if inv_date and len(inv_date) == 8 and inv_date.isdigit():
+            inv_date = f"{inv_date[:4]}-{inv_date[4:6]}-{inv_date[6:8]}"
+
+        invoice_row = {
+            "organization_id": ORGANIZATION_ID,
+            "invoice_number": inv_num,
+            "tally_voucher_number": inv_num,
+            "client_name": v.get("ledger_name") or v.get("client_name") or "Unknown",
+            "client_phone": v.get("phone") or v.get("client_phone") or "",
+            "amount": float(v.get("amount") or 0),
+            "status": v.get("status") or "Pending",
+            "invoice_date": inv_date,
+            "due_date": v.get("due_date") or None,
+            "pdf_url": pdfs.get("pdf_url") or None,
+            "company_name": v.get("company_name") or "TallyPrime Live",
             "metadata": {
                 **(v.get("metadata") or {}),
-                "pdf_url": pdfs["pdf_url"],
-                "eway_pdf_url": pdfs["eway_pdf_url"],
-                "pending_pdf_url": pdfs["pending_pdf_url"],
-                "ledger_pdf_url": pdfs["ledger_pdf_url"],
+                "pdf_url":         pdfs.get("pdf_url"),
+                "eway_pdf_url":    pdfs.get("eway_pdf_url"),
+                "pending_pdf_url": pdfs.get("pending_pdf_url"),
+                "ledger_pdf_url":  pdfs.get("ledger_pdf_url"),
                 "pdfs_generated_at": datetime.now().isoformat(),
-                "voucher_type": v.get("voucher_type", ""),   # FIX 2: propagate type
-                "direction": v.get("direction", ""),          # FIX 2: propagate direction
+                "voucher_type": v.get("voucher_type", ""),
+                "direction":    v.get("direction", ""),
+                "tally_company": v.get("company_name", ""),
+                "sync_source": "TallyPrime XML Bridge v4.3",
             },
-        })
-
-    # Save document template samples locally for user verification
-    save_document_templates_locally()
-
-    # ── Auto-upsert Ledger Mappings ──────────────────────────────────────────
-    # Populates Finance → Ledger Mappings tab with party names from Tally
-    try:
-        seen_ledgers = set()
-        for v in enriched:
-            ledger = (v.get("ledger_name") or v.get("client_name") or "").strip()
-            if not ledger or ledger in seen_ledgers:
-                continue
-            seen_ledgers.add(ledger)
-            phone = (v.get("client_phone") or v.get("ledger_phone") or "").strip()
-            comp_name = v.get("company_name", "")
-            mapping_id = re.sub(r'[^a-z0-9]', '-', ledger.lower())[:60]
-            mapping_payload = {
-                "id": f"tally-{mapping_id}",
-                "organization_id": ORGANIZATION_ID,
-                "tally_ledger_name": ledger,
-                "tally_company": comp_name,
-                "normalized_phone": re.sub(r'[^0-9]', '', phone)[-10:] if phone else None,
-                "match_confidence": "auto",
-                "status": "mapped" if phone else "unmatched",
-                "updated_at": datetime.now().isoformat(),
-            }
-            try:
-                requests.post(
-                    f"{SUPABASE_URL}/rest/v1/ledger_mappings?on_conflict=id",
-                    json=mapping_payload,
-                    headers={
-                        "apikey": SUPABASE_KEY,
-                        "Authorization": f"Bearer {SUPABASE_KEY}",
-                        "Content-Type": "application/json",
-                        "Prefer": "resolution=merge-duplicates",
-                    },
-                    timeout=8,
-                )
-            except Exception:
-                pass
-        if seen_ledgers:
-            log.info(f"  [Ledger Map] Auto-upserted {len(seen_ledgers)} party ledger(s) → Supabase ledger_mappings")
-    except Exception as e:
-        log.debug(f"  [Ledger Map] Non-fatal: {e}")
-
-
-    # Determine primary company or group label
-    unique_comps = list(dict.fromkeys([v.get("company_name") for v in vouchers if v.get("company_name")]))
-    primary_comp = unique_comps[0] if len(unique_comps) == 1 else (f"Group ({len(unique_comps)} Companies)" if len(unique_comps) > 1 else "TallyPrime Live")
-
-    # Send enriched vouchers in batches of 50 (lightweight JSON without base64 bloat)
-    chunk_size = 50
-    total_chunks = ((len(enriched) - 1) // chunk_size) + 1 if enriched else 1
-    last_res = {"success": True, "count": len(enriched)}
-
-    for i in range(0, len(enriched), chunk_size):
-        chunk = enriched[i:i + chunk_size]
-        payload = {
-            "organizationId": ORGANIZATION_ID,
-            "timestamp": datetime.now().isoformat(),
-            "connectorStatus": "Connected",
-            "sourceParsed": True,
-            "companyName": primary_comp,
-            "vouchers": chunk,
         }
 
         try:
             resp = requests.post(
-                CLOUD_URL,
-                json=payload,
-                headers={
-                    "Content-Type": "application/json",
-                    "X-Connector-Token": CONNECTOR_TOKEN,
-                    "X-Organization-Id": ORGANIZATION_ID,
-                },
-                timeout=45,
+                sb_invoices_url,
+                json=invoice_row,
+                headers=sb_headers,
+                timeout=10,
             )
-            chunk_res = resp.json()
-            log.info(f"  [Cloud Push] Batch {i//chunk_size + 1}/{total_chunks} ({len(chunk)} vouchers) pushed successfully")
-            last_res = chunk_res
+            if resp.status_code in (200, 201, 204, 409):
+                pushed_ok += 1
+                # Mark as synced in local cache immediately
+                sync_cache[inv_num] = datetime.now().isoformat()
+                if pushed_ok % 25 == 0:
+                    save_cache()  # Save cache every 25 records
+            else:
+                push_errors += 1
+                log.debug(f"  [Push] {inv_num} → HTTP {resp.status_code}: {resp.text[:120]}")
         except Exception as e:
-            log.error(f"  [Cloud Push] Batch {i//chunk_size + 1}/{total_chunks} failed: {e}")
-            last_res = {"success": False, "error": str(e)}
+            push_errors += 1
+            log.debug(f"  [Push] {inv_num} failed: {e}")
 
-    return last_res
+        # ── Step 3: Upsert ledger mapping ─────────────────────────────────────
+        ledger = (v.get("ledger_name") or v.get("client_name") or "").strip()
+        if ledger:
+            try:
+                mapping_id = re.sub(r'[^a-z0-9]', '-', ledger.lower())[:60]
+                phone = (v.get("client_phone") or v.get("phone") or "").strip()
+                requests.post(
+                    sb_ledger_url,
+                    json={
+                        "id": f"tally-{mapping_id}",
+                        "organization_id": ORGANIZATION_ID,
+                        "tally_ledger_name": ledger,
+                        "tally_company": v.get("company_name", ""),
+                        "normalized_phone": re.sub(r'[^0-9]', '', phone)[-10:] if phone else None,
+                        "match_confidence": "auto",
+                        "status": "mapped" if phone else "unmatched",
+                        "updated_at": datetime.now().isoformat(),
+                    },
+                    headers=sb_headers,
+                    timeout=6,
+                )
+            except Exception:
+                pass
+
+    # Final cache save
+    save_cache()
+    log.info(f"  [Cloud Push] Done: {pushed_ok} pushed, {push_errors} errors, {skipped} skipped (already synced)")
+
+    # Save document template samples locally
+    save_document_templates_locally()
+
+    # ── Lightweight status ping to Netlify (no voucher data, never times out) ─
+    try:
+        ping_payload = {
+            "organizationId": ORGANIZATION_ID,
+            "timestamp": datetime.now().isoformat(),
+            "connectorStatus": "Connected",
+            "sourceParsed": True,
+            "companyName": (list(dict.fromkeys(
+                [v.get("company_name") for v in vouchers if v.get("company_name")]
+            )) or ["TallyPrime Live"])[0],
+            "vouchers": [],  # Empty — data already in Supabase directly
+        }
+        requests.post(
+            CLOUD_URL,
+            json=ping_payload,
+            headers={
+                "Content-Type": "application/json",
+                "X-Connector-Token": CONNECTOR_TOKEN,
+                "X-Organization-Id": ORGANIZATION_ID,
+            },
+            timeout=15,
+        )
+        log.info("  [Cloud Ping] Netlify status ping sent OK")
+    except Exception as e:
+        log.debug(f"  [Cloud Ping] Non-fatal: {e}")
+
+    return {"success": True, "pushed": pushed_ok, "errors": push_errors, "skipped": skipped}
+
+
 
 
 def _push_sync_progress(done: int, total: int, phase: str = "fetch"):
