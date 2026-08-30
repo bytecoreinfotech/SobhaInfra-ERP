@@ -2209,12 +2209,35 @@ def generate_invoice_pdf(voucher: dict, org_profile: dict | None = None, single_
     elements.append(tax_w_tbl)
 
     # Bottom Terms & Signatures Box
+    # -- Per-company bank details from company_profiles (filled in Settings UI) --
+    _bank_name   = (org_profile.get('bank_name') or '').strip()
+    _bank_acno   = (org_profile.get('bank_account_no') or '').strip()
+    _bank_ifsc   = (org_profile.get('bank_ifsc') or '').strip()
+    _bank_branch = (org_profile.get('bank_branch') or '').strip()
+    _upi         = (org_profile.get('upi_id') or '').strip()
+
+    if _bank_name or _bank_acno or _bank_ifsc:
+        _bank_block = (
+            f'<b>Bank Name &nbsp;&nbsp;&nbsp;: {_bank_name or chr(8212)}</b><br/>'
+            f'<b>A/C No. &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: {_bank_acno or chr(8212)}</b><br/>'
+            f'<b>IFSC Code &nbsp;&nbsp;&nbsp;: {_bank_ifsc or chr(8212)}</b>'
+            + (f'<br/><b>Branch &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: {_bank_branch}</b>' if _bank_branch else '')
+            + (f'<br/><b>UPI ID &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: {_upi}</b>' if _upi else '')
+        )
+    else:
+        _bank_block = (
+            f'All Cheques/DDs Payable to "{company_name}"'
+            + (f'<br/>UPI : <b>{_upi}</b>' if _upi else '')
+        )
+
     terms_html = (
         f'<b>Company\'s GSTIN/UIN : {company_gstin}</b><br/>'
-        f'<b>State &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: {state_name} , Code : {state_code}</b><br/>'
-        f'<b>TERMS & CONDITIONS</b><br/>'
+        f'<b>State &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: {state_name} , Code : {state_code}</b><br/>'
+        f'<b>TERMS &amp; CONDITIONS</b><br/>'
         f'• {footer_notes}<br/>'
-        f'• All Cheque and Remittance To Be Made / Payable to "{company_name}"<br/>'
+        f'• All Remittance Payable to "{company_name}"<br/>'
+        f'<b>Bank (NEFT / RTGS / IMPS / UPI) :</b><br/>'
+        f'{_bank_block}<br/>'
         f'<b>UDYAM REG.:-</b> {company_udyam}'
     )
     terms_p = Paragraph(terms_html, st("tmp", fontSize=7, leading=8.5))
