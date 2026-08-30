@@ -481,7 +481,7 @@ const Finance = () => {
     return list;
   }, [mappings, activeCompany, isConsolidated, invoices, mappingSearch]);
 
-  const fmtCurrency = (n) => '₹' + Number(n || 0).toLocaleString('en-IN');
+  const fmtCurrency = (n) => '₹' + Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   return (
     <div className="page-container animate-fade-in">
@@ -647,9 +647,9 @@ const Finance = () => {
           <div className="stats-grid">
             {[
               { label: 'Total Invoiced', value: fmtCurrency(totalInvoiced), sub: `${voucherOnlyInvoices.length} invoices`, icon: <DollarSign size={20} />, color: 'var(--accent-primary)', bg: 'var(--accent-glow)' },
-              { label: 'Total Collected', value: fmtCurrency(totalPaid), sub: `${invoices.filter(i => i.status === 'Paid').length} paid`, icon: <TrendingUp size={20} />, color: 'var(--success)', bg: 'var(--success-bg)' },
-              { label: 'Overdue Recovery', value: fmtCurrency(totalOverdue), sub: `${invoices.filter(i => i.status === 'Overdue').length} overdue`, icon: <AlertTriangle size={20} />, color: 'var(--danger)', bg: 'var(--danger-bg)' },
-              { label: 'Pending Due', value: fmtCurrency(totalPending), sub: `${invoices.filter(i => i.status === 'Pending').length} pending`, icon: <Clock size={20} />, color: 'var(--warning)', bg: 'var(--warning-bg)' },
+              { label: 'Total Collected', value: fmtCurrency(totalPaid), sub: `${voucherOnlyInvoices.filter(i => i.status === 'Paid').length} paid`, icon: <TrendingUp size={20} />, color: 'var(--success)', bg: 'var(--success-bg)' },
+              { label: 'Overdue Recovery', value: fmtCurrency(totalOverdue), sub: `${voucherOnlyInvoices.filter(i => i.status === 'Overdue').length} overdue`, icon: <AlertTriangle size={20} />, color: 'var(--danger)', bg: 'var(--danger-bg)' },
+              { label: 'Pending Due', value: fmtCurrency(totalPending), sub: `${voucherOnlyInvoices.filter(i => i.status === 'Pending').length} pending`, icon: <Clock size={20} />, color: 'var(--warning)', bg: 'var(--warning-bg)' },
             ].map(s => (
               <div key={s.label} className="stat-card" style={{ '--card-accent': s.color }}>
                 <div className="stat-header">
