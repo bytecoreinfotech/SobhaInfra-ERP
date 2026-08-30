@@ -3053,8 +3053,7 @@ export async function getSiteVisits() {
 }
 
 export async function createSiteVisit(visitData) {
-  const newVisit = {
-    id: 'visit-' + Date.now(),
+  const payload = {
     organization_id: DEFAULT_ORG_ID,
     employee_name: visitData.employee_name || 'Field Agent',
     employee_id: String(visitData.employee_id || 'usr-1'),
@@ -3071,17 +3070,30 @@ export async function createSiteVisit(visitData) {
     check_in_time: visitData.check_in_time || new Date().toISOString(),
     photo_url: visitData.photo_url || null,
     notes: visitData.notes || '',
-    created_at: new Date().toISOString(),
   };
 
   if (isSupabaseConfigured) {
     try {
-      const { data, error } = await supabase.from('site_visits').insert([newVisit]).select().single();
-      if (!error && data) return { data, error: null };
+      const { data, error } = await supabase.from('site_visits').insert([payload]).select().single();
+      if (!error && data) {
+        logAuditEvent('field.check_in', 'site_visits', data.id, {
+          site_name: data.site_name,
+          employee: data.employee_name,
+          coords: `${data.lat}, ${data.lng}`
+        });
+        return { data, error: null };
+      }
+      if (error) console.warn('[db] createSiteVisit error:', error.message);
     } catch (e) {
       console.warn('[db] createSiteVisit fallback:', e.message);
     }
   }
+
+  const newVisit = {
+    id: 'visit-' + Date.now(),
+    ...payload,
+    created_at: new Date().toISOString(),
+  };
 
   if (!MOCK_STORE.site_visits) MOCK_STORE.site_visits = [];
   MOCK_STORE.site_visits.unshift(newVisit);
