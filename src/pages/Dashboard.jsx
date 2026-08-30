@@ -13,7 +13,25 @@ import { useAuth } from '../context/AuthContext';
 import { useCompany } from '../context/CompanyContext';
 import './Pages.css';
 
+// Accounting transaction classifier for Dashboard
+const getDirection = (inv) => {
+  const dir     = (inv?.metadata?.direction || inv?.direction || '').toLowerCase();
+  const vtype   = (inv?.metadata?.voucher_type || inv?.voucher_type || '').toLowerCase();
+  const num     = (inv?.invoice_number || inv?.tally_voucher_number || '').toLowerCase();
+  const clientName = (inv?.client_name || inv?.tally_ledger || '').toLowerCase();
+
+  const isVendorTransaction = 
+    dir === 'paid_out' || 
+    dir === 'payable' ||
+    /^(pay|pmt|pur|drn)/.test(num) ||
+    ['payment', 'bank payment', 'cash payment', 'purchase', 'purchase order', 'vendor'].some(t => vtype.includes(t)) ||
+    ['pravin gundiya', 'nilesh enterprises', 'jai jalaram', 'driver', 'transport', 'tyre', 'diesel', 'petrol', 'cement', 'insurance', 'deposit', 'toll'].some(k => clientName.includes(k));
+
+  return { isVendor: isVendorTransaction };
+};
+
 const Dashboard = () => {
+
   const navigate = useNavigate();
   const { user, hasPermission } = useAuth();
   const { activeCompany, isConsolidated } = useCompany();
@@ -90,17 +108,24 @@ const Dashboard = () => {
     return '₹' + Number(n || 0).toLocaleString('en-IN');
   };
 
-  // ── Computed metrics from live data ──────────────────────────────────────
+  // ── Computed metrics from live data (strictly Customer Receivables) ──────
   const totalLeads = leads.length;
   const hotLeads = leads.filter(l => l.status === 'Hot').length;
   const convertedLeads = leads.filter(l => l.status === 'Converted').length;
 
-  const totalInvoiced = invoices.reduce((s, i) => s + Number(i.amount || 0), 0);
-  const totalPaid = invoices.filter(i => i.status === 'Paid').reduce((s, i) => s + Number(i.amount || 0), 0);
-  const pendingAmount = invoices.filter(i => i.status !== 'Paid').reduce((s, i) => s + Number(i.amount || 0), 0);
-  const overdueInvoices = invoices.filter(i => i.status === 'Overdue').length;
-  const overdueAmount = invoices.filter(i => i.status === 'Overdue').reduce((s, i) => s + Number(i.amount || 0), 0);
-  const paidInvoicesCount = invoices.filter(i => i.status === 'Paid').length;
+  // Filter invoices to customer receivables only (exclude LEDGER- closing balances and vendor payables)
+  const customerInvoices = invoices.filter(inv => {
+    const num = (inv?.invoice_number || inv?.tally_voucher_number || '').toUpperCase();
+    if (num.startsWith('LEDGER-')) return false;
+    return !getDirection(inv).isVendor;
+  });
+
+  const totalInvoiced = customerInvoices.reduce((s, i) => s + Number(i.amount || 0), 0);
+  const totalPaid = customerInvoices.filter(i => i.status === 'Paid').reduce((s, i) => s + Number(i.amount || 0), 0);
+  const pendingAmount = customerInvoices.filter(i => i.status === 'Pending').reduce((s, i) => s + Number(i.amount || 0), 0);
+  const overdueInvoices = customerInvoices.filter(i => i.status === 'Overdue').length;
+  const overdueAmount = customerInvoices.filter(i => i.status === 'Overdue').reduce((s, i) => s + Number(i.amount || 0), 0);
+  const paidInvoicesCount = customerInvoices.filter(i => i.status === 'Paid').length;
   const collectionRate = totalInvoiced > 0 ? ((totalPaid / totalInvoiced) * 100).toFixed(1) : '0.0';
 
   const tasksDueCt = taskList.filter(t => t.status !== 'Done').length;
@@ -140,13 +165,14 @@ const Dashboard = () => {
   const fyFrom = new Date(selectedFYStart, 3, 1);       // 1-Apr-startYear
   const fyTo   = new Date(selectedFYStart + 1, 2, 31);  // 31-Mar-nextYear
 
-  // Invoices that fall within the selected FY
-  const fyInvoices = invoices.filter(inv => {
+  // Customer Invoices that fall within the selected FY
+  const fyInvoices = customerInvoices.filter(inv => {
     const dStr = inv.invoice_date || inv.due_date || inv.created_at;
     if (!dStr) return false;
     const d = new Date(dStr);
     return !isNaN(d.getTime()) && d >= fyFrom && d <= fyTo;
   });
+
 
   const monthlyStats = FY_MONTH_ORDER.map(({ name, jsMonth }) => {
     // For Jan/Feb/Mar, they belong to selectedFYStart+1 calendar year
@@ -304,10 +330,11 @@ const Dashboard = () => {
               ) : (
                 <span className="stat-trend up" style={{ color: 'var(--success)' }}><CheckCircle2 size={13} /> 0 Overdue</span>
               )}
-              <span className="stat-period">{invoices.length} Total Invoices</span>
+              <span className="stat-period">{customerInvoices.length} Customer Invoices</span>
             </div>
           </div>
         )}
+
 
         {hasPermission('Finance') ? (
           <div className="stat-card animate-slide-up" style={{ '--card-accent': 'var(--success)' }}>

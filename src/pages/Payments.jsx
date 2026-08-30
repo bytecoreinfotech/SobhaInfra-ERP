@@ -148,7 +148,7 @@ const Payments = () => {
       const data = await res.json();
       if (data.success) {
         setSentIds(prev => [...prev, inv.id]);
-        setInvoices(prev => prev.map(i => i.id === inv.id ? { ...i, reminder_count: (i.reminder_count || 0) + 1 } : i));
+        setAllInvoices(prev => prev.map(i => i.id === inv.id ? { ...i, reminder_count: (i.reminder_count || 0) + 1 } : i));
       } else {
         console.warn('Reminder API error:', data.error);
         // Still mark as sent in UI (may fail in dev due to no live function)
@@ -157,8 +157,9 @@ const Payments = () => {
     } catch (err) {
       // Dev mode — functions not running locally, just simulate
       setSentIds(prev => [...prev, inv.id]);
-      setInvoices(prev => prev.map(i => i.id === inv.id ? { ...i, reminder_count: (i.reminder_count || 0) + 1 } : i));
+      setAllInvoices(prev => prev.map(i => i.id === inv.id ? { ...i, reminder_count: (i.reminder_count || 0) + 1 } : i));
     }
+
     setRemindingId(null);
   };
 
@@ -191,10 +192,10 @@ const Payments = () => {
       {/* Stats */}
       <div className="stats-grid">
         {[
-          { label: 'Overdue Amount', value: fmtAmount(totalOverdue), color: 'var(--danger)', bg: 'var(--danger-bg)', icon: <AlertTriangle size={20} />, count: invoices.filter(i => i.status === 'Overdue').length + ' invoices' },
-          { label: 'Pending Amount', value: fmtAmount(totalPending), color: 'var(--warning)', bg: 'var(--warning-bg)', icon: <Clock size={20} />, count: invoices.filter(i => i.status === 'Pending').length + ' invoices' },
-          { label: 'Collected (MTD)', value: fmtAmount(totalPaid), color: 'var(--success)', bg: 'var(--success-bg)', icon: <CheckCircle2 size={20} />, count: invoices.filter(i => i.status === 'Paid').length + ' invoices' },
-          { label: 'Reminders Sent', value: sentIds.length + invoices.reduce((s, i) => s + (i.reminder_count || 0), 0), color: 'var(--whatsapp)', bg: 'var(--whatsapp-bg)', icon: <MessageCircle size={20} />, count: 'total logged' },
+          { label: 'Overdue Amount', value: fmtAmount(totalOverdue), color: 'var(--danger)', bg: 'var(--danger-bg)', icon: <AlertTriangle size={20} />, count: customerOnly.filter(i => i.status === 'Overdue').length + ' invoices' },
+          { label: 'Pending Amount', value: fmtAmount(totalPending), color: 'var(--warning)', bg: 'var(--warning-bg)', icon: <Clock size={20} />, count: customerOnly.filter(i => i.status === 'Pending').length + ' invoices' },
+          { label: 'Collected (MTD)', value: fmtAmount(totalPaid), color: 'var(--success)', bg: 'var(--success-bg)', icon: <CheckCircle2 size={20} />, count: customerOnly.filter(i => i.status === 'Paid').length + ' invoices' },
+          { label: 'Reminders Sent', value: sentIds.length + customerOnly.reduce((s, i) => s + (i.reminder_count || 0), 0), color: 'var(--whatsapp)', bg: 'var(--whatsapp-bg)', icon: <MessageCircle size={20} />, count: 'total logged' },
         ].map(s => (
           <div key={s.label} className="stat-card" style={{ '--card-accent': s.color }}>
             <div className="stat-header">
@@ -213,7 +214,7 @@ const Payments = () => {
       <div className="filter-bar">
         {filters.map(f => (
           <button key={f} className={`filter-chip ${activeFilter === f ? 'active' : ''}`} onClick={() => setActiveFilter(f)}>
-            {f} {f !== 'All' && `(${invoices.filter(i => i.status === f).length})`}
+            {f} {f !== 'All' && `(${customerOnly.filter(i => i.status === f).length})`}
           </button>
         ))}
       </div>
