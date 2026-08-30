@@ -1031,7 +1031,7 @@ const Finance = () => {
                   <div style={{ marginTop: '0.25rem', color: 'var(--text-secondary)' }}>
                     To sync live vouchers, ensure TallyPrime is open with ODBC/HTTP Server enabled (Port 9000) and run:
                     <div style={{ marginTop: '0.35rem', fontFamily: 'monospace', background: 'var(--bg-tertiary)', padding: '0.35rem 0.5rem', borderRadius: 4, color: 'var(--text-primary)' }}>
-                      node scripts/tally-connector.js
+                      python tally-sync.py &nbsp;(or node scripts/tally-connector.js)
                     </div>
                   </div>
                 </div>

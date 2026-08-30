@@ -1,15 +1,15 @@
 /**
- * TallyPrime Secure Local Connector / Bridge
- * Conforms to Techma Master Spec v4.0 (Sections 26, 28, 29)
- *
+ * SobhaInfra ERP — TallyPrime Secure Local Connector / Bridge
+ * 
  * Runs locally on the Windows desktop where TallyPrime is running.
  * Communicates with Tally XML Server on port 9000 and synchronizes with Cloud API.
  *
- * Production Features:
- *  - Real XML parsing of TallyPrime ODBC/XML response
- *  - Fallback to static snapshot ONLY when Tally is unreachable
- *  - Phone extraction from ledger address fields
- *  - Robust error handling and retry logic
+ * Upgraded Features (All 11 Production Strategies):
+ *  - Full Multi-Company Auto-Discovery
+ *  - Master Ledger Phone Registry extraction directly from Tally TDL
+ *  - 11 Robust XML & TDL Extraction Strategies (including EXPORTALL and Object collections)
+ *  - Session-Period-Independent multi-year date range (2024 to 2027+)
+ *  - Accurate party phone matching and scoped ledger extraction
  *
  * Usage:
  *   node scripts/tally-connector.js --port 9000 --cloudUrl https://your-domain.netlify.app
@@ -24,46 +24,16 @@ const CONNECTOR_TOKEN = process.env.TALLY_CONNECTOR_TOKEN || 'erppro_tally_sec_t
 const ORG_ID     = process.env.ORGANIZATION_ID || '00000000-0000-0000-0000-000000000001';
 const POLL_INTERVAL_MS = (process.env.SYNC_INTERVAL_MINS || 15) * 60 * 1000;
 
-// ── 1. TDL XML Envelopes ──────────────────────────────────────────────────────
-const VOUCHER_EXPORT_XML = `
-<ENVELOPE>
-  <HEADER>
-    <TALLYREQUEST>Export Data</TALLYREQUEST>
-  </HEADER>
-  <BODY>
-    <EXPORTDATA>
-      <REQUESTDESC>
-        <REPORTNAME>List of Accounts</REPORTNAME>
-        <STATICVARIABLES>
-          <SVCURRENTCOMPANY>##SVCURRENTCOMPANY</SVCURRENTCOMPANY>
-          <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-        </STATICVARIABLES>
-      </REQUESTDESC>
-    </EXPORTDATA>
-  </BODY>
-</ENVELOPE>
-`;
+// Dynamic Financial Year Boundaries (20240401 to 20270331)
+const _now = new Date();
+const _curYear = _now.getFullYear();
+const _fyStartYear = (_now.getMonth() >= 3 ? _curYear : _curYear - 1) - 2; // 2 FYs back
+const _fyEndYear = (_now.getMonth() >= 3 ? _curYear + 1 : _curYear);
+const FY_FROM = `${_fyStartYear}0401`;
+const FY_TO   = `${_fyEndYear}0331`;
 
-const OUTSTANDING_XML = `
-<ENVELOPE>
-  <HEADER>
-    <TALLYREQUEST>Export Data</TALLYREQUEST>
-  </HEADER>
-  <BODY>
-    <EXPORTDATA>
-      <REQUESTDESC>
-        <REPORTNAME>Bills Outstanding</REPORTNAME>
-        <STATICVARIABLES>
-          <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-        </STATICVARIABLES>
-      </REQUESTDESC>
-    </EXPORTDATA>
-  </BODY>
-</ENVELOPE>
-`;
-
-// ── 2. Helper: Query Local Tally Server ───────────────────────────────────────
-function queryTally(xmlRequest) {
+// ── 1. Helper: Query Local Tally Server ───────────────────────────────────────
+function queryTally(xmlRequest, label = '') {
   return new Promise((resolve, reject) => {
     const postData = xmlRequest.trim();
     const options = {
@@ -75,7 +45,7 @@ function queryTally(xmlRequest) {
         'Content-Type': 'text/xml;charset=utf-8',
         'Content-Length': Buffer.byteLength(postData),
       },
-      timeout: 10000,
+      timeout: 30000,
     };
 
     const req = http.request(options, (res) => {
@@ -87,7 +57,7 @@ function queryTally(xmlRequest) {
     req.on('error', (err) => { reject(err); });
     req.on('timeout', () => {
       req.destroy();
-      reject(new Error('Tally XML server timeout on port ' + TALLY_PORT));
+      reject(new Error(`Tally XML server timeout on port ${TALLY_PORT}`));
     });
 
     req.write(postData);
@@ -95,130 +65,486 @@ function queryTally(xmlRequest) {
   });
 }
 
-// ── 3. XML Parser — Extract vouchers from Tally XML response ──────────────────
-function parseTallyVouchers(xmlString) {
-  const vouchers = [];
+// ── 2. Helper: Company Injection into XML ────────────────────────────────────
+function injectCompany(xmlPayload, companyName) {
+  if (!companyName) return xmlPayload;
+  const companyTag = `<SVCURRENTCOMPANY>${companyName}</SVCURRENTCOMPANY>`;
 
+  const svRegex = /(<STATICVARIABLES>)([\s\S]*?)(<\/STATICVARIABLES>)/i;
+  const match = xmlPayload.match(svRegex);
+  if (match) {
+    let inner = match[2].replace(/<SVCURRENTCOMPANY>[^<]*<\/SVCURRENTCOMPANY>/gi, '');
+    const fmtMatch = inner.match(/(<\/SVEXPORTFORMAT>)/i);
+    if (fmtMatch) {
+      const idx = fmtMatch.index + fmtMatch[0].length;
+      inner = inner.slice(0, idx) + `\n          ${companyTag}` + inner.slice(idx);
+    } else {
+      inner = inner.trimEnd() + `\n          ${companyTag}\n        `;
+    }
+    return xmlPayload.replace(svRegex, `<STATICVARIABLES>${inner}</STATICVARIABLES>`);
+  }
+  return xmlPayload;
+}
+
+// ── 3. Phone Extraction & Normalization ───────────────────────────────────────
+function extractPhone(text) {
+  if (!text) return '';
+  const str = String(text).trim();
+  const m = str.match(/(?:(?:\+?91|0)[\s-]?)?([6-9]\d{4}[\s-]?\d{5}|[6-9]\d{9})/);
+  if (m) {
+    let digits = m[0].replace(/\D/g, '');
+    if (digits.length === 12 && digits.startsWith('91')) digits = digits.slice(2);
+    else if (digits.length === 11 && digits.startsWith('0')) digits = digits.slice(1);
+    else if (digits.length > 10 && digits.startsWith('91')) digits = digits.slice(-10);
+
+    if (digits.length === 10 && ['6','7','8','9'].includes(digits[0])) {
+      return '+91' + digits;
+    }
+  }
+  return '';
+}
+
+function extractTag(block, tagName) {
+  const re = new RegExp(`<(?:\\w+:)?${tagName}[^>]*>([\\s\\S]*?)<\\/(?:\\w+:)?${tagName}>`, 'i');
+  const m = block.match(re);
+  return m ? m[1].trim() : '';
+}
+
+// ── 4. Master Ledger Phone Registry Fetcher ──────────────────────────────────
+async function fetchMasterPhoneMap(companyName = '') {
+  const phoneMap = {};
+  const tdlXml = `<?xml version="1.0" encoding="utf-8"?>
+<ENVELOPE>
+  <HEADER>
+    <VERSION>1</VERSION>
+    <TALLYREQUEST>Export</TALLYREQUEST>
+    <TYPE>Collection</TYPE>
+    <ID>MasterLedgerPhoneList</ID>
+  </HEADER>
+  <BODY>
+    <DESC>
+      <STATICVARIABLES>
+        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+      </STATICVARIABLES>
+      <TDL>
+        <TDLMESSAGE>
+          <COLLECTION NAME="MasterLedgerPhoneList" ISMODIFY="No">
+            <TYPE>Ledger</TYPE>
+            <FETCH>NAME, PARENT, LEDMOBILE, LEDPHONENO, MOBILENO, PHONENO, CONTACTNO, GSTIN</FETCH>
+          </COLLECTION>
+        </TDLMESSAGE>
+      </TDL>
+    </DESC>
+  </BODY>
+</ENVELOPE>`;
+
+  try {
+    const payload = injectCompany(tdlXml, companyName);
+    const resp = await queryTally(payload, 'MasterPhones');
+    const ledgerBlocks = resp.match(/<LEDGER[^>]*>([\s\S]*?)<\/LEDGER>/gi) || [];
+    for (const lb of ledgerBlocks) {
+      const name = extractTag(lb, 'NAME') || extractTag(lb, 'LEDGERNAME');
+      if (!name) continue;
+      const phoneTags = ['LEDMOBILE', 'LEDPHONENO', 'MOBILENO', 'PHONENO', 'CONTACTNO'];
+      let phone = '';
+      for (const t of phoneTags) {
+        const val = extractTag(lb, t);
+        if (val) {
+          phone = extractPhone(val);
+          if (phone) break;
+        }
+      }
+      if (phone) {
+        phoneMap[name.trim().toLowerCase()] = phone;
+      }
+    }
+  } catch (err) {
+    console.warn(`[PhoneMap] Could not fetch TDL phone master: ${err.message}`);
+  }
+  return phoneMap;
+}
+
+// ── 5. XML Parser — Parse Vouchers with Scoped Party Phone ───────────────────
+function parseTallyVouchers(xmlString, fallbackCompany = '', phoneMap = {}) {
+  const vouchers = [];
   if (!xmlString || xmlString.length < 50) return vouchers;
 
-  // Extract VOUCHER blocks
   const voucherRegex = /<VOUCHER[^>]*>([\s\S]*?)<\/VOUCHER>/gi;
   let match;
 
   while ((match = voucherRegex.exec(xmlString)) !== null) {
     const block = match[1];
 
-    const extractTag = (tag) => {
-      const re = new RegExp(`<${tag}[^>]*>([^<]*)</${tag}>`, 'i');
-      const m = block.match(re);
-      return m ? m[1].trim() : '';
-    };
+    const voucherNumber = extractTag(block, 'VOUCHERNUMBER') || extractTag(block, 'NUMBER') || extractTag(block, 'VCHKEY');
+    const party = extractTag(block, 'BASICBUYERNAME') || extractTag(block, 'PARTYLEDGERNAME') || extractTag(block, 'PARTYNAME') || extractTag(block, 'LEDGERNAME');
+    const amountStr = extractTag(block, 'AMOUNT') || extractTag(block, 'CLOSINGBALANCE') || '0';
+    const date = extractTag(block, 'DATE') || extractTag(block, 'VOUCHERDATE') || '';
+    const voucherType = extractTag(block, 'VOUCHERTYPENAME') || extractTag(block, 'VOUCHERTYPE') || 'Sales';
+    const compName = extractTag(block, 'SVCURRENTCOMPANY') || extractTag(block, 'COMPANYNAME') || fallbackCompany || 'Tally Company';
 
-    const voucherNumber = extractTag('VOUCHERNUMBER') || extractTag('NUMBER');
-    const ledgerName = extractTag('PARTYLEDGERNAME') || extractTag('LEDGERNAME') || extractTag('PARTYNAME');
-    const amount = parseFloat(extractTag('AMOUNT') || extractTag('CLOSINGBALANCE') || '0');
-    const date = extractTag('DATE') || extractTag('VOUCHERDATE');
-    const voucherType = extractTag('VOUCHERTYPENAME') || extractTag('VOUCHERTYPE');
+    if (!voucherNumber && !party) continue;
 
-    // Skip if no invoice number
-    if (!voucherNumber) continue;
+    const rawAmt = parseFloat(amountStr.replace(/[^\d.-]/g, '')) || 0;
+    const amount = Math.abs(rawAmt);
+    if (amount === 0) continue;
 
-    // Parse date: Tally uses YYYYMMDD format
-    let dueDate = '';
     let invoiceDate = '';
+    let dueDate = '';
     if (date && date.length === 8) {
-      invoiceDate = `${date.substring(0, 4)}-${date.substring(4, 6)}-${date.substring(6, 8)}`;
-      // Estimate due date: 30 days from invoice date
+      invoiceDate = `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}`;
       const d = new Date(invoiceDate);
       d.setDate(d.getDate() + 30);
       dueDate = d.toISOString().split('T')[0];
     } else if (date) {
       invoiceDate = date;
       dueDate = date;
+    } else {
+      invoiceDate = new Date().toISOString().split('T')[0];
+      dueDate = invoiceDate;
     }
 
-    // Determine status based on amount and type
+    const vchLower = voucherType.toLowerCase();
+    const isReceipt = vchLower.includes('receipt');
+    const isOutgoing = ['purchase', 'payment', 'credit note'].some(t => vchLower.includes(t));
+
     let status = 'Pending';
-    const absAmount = Math.abs(amount);
-    if (absAmount === 0) status = 'Paid';
-    if (voucherType && voucherType.toLowerCase().includes('receipt')) status = 'Paid';
+    let direction = 'receivable';
+    if (isReceipt) {
+      status = 'Paid';
+      direction = 'received';
+    } else if (isOutgoing) {
+      status = 'Paid';
+      direction = 'paid_out';
+    }
 
-    // Extract phone from ledger address if available
-    const phone = extractPhoneFromBlock(block);
-
-    vouchers.push({
-      invoice_number: voucherNumber,
-      ledger_name: ledgerName,
-      phone: phone,
-      amount: absAmount,
-      due_date: dueDate || new Date().toISOString().split('T')[0],
-      invoice_date: invoiceDate,
-      status: status,
-      voucher_type: voucherType,
-    });
-  }
-
-  // If no VOUCHER tags found, try BILLCREDITPERIOD / BILL structure
-  if (vouchers.length === 0) {
-    const billRegex = /<BILL[^>]*>([\s\S]*?)<\/BILL>/gi;
-    while ((match = billRegex.exec(xmlString)) !== null) {
-      const block = match[1];
-      const extractTag = (tag) => {
-        const re = new RegExp(`<${tag}[^>]*>([^<]*)</${tag}>`, 'i');
-        const m = block.match(re);
-        return m ? m[1].trim() : '';
-      };
-
-      const billName = extractTag('NAME') || extractTag('BILLREF');
-      const amount = parseFloat(extractTag('CLOSINGBALANCE') || extractTag('OPENINGBALANCE') || '0');
-
-      if (billName) {
-        vouchers.push({
-          invoice_number: billName,
-          ledger_name: '',
-          phone: '',
-          amount: Math.abs(amount),
-          due_date: new Date().toISOString().split('T')[0],
-          status: amount > 0 ? 'Pending' : 'Paid',
-        });
+    // Resolve party phone from Master Phone Map or XML block
+    let phone = '';
+    if (party && phoneMap[party.trim().toLowerCase()]) {
+      phone = phoneMap[party.trim().toLowerCase()];
+    }
+    if (!phone) {
+      const topBlock = block.split(/<(?:ALLLEDGERENTRIES|LEDGERENTRIES)\.LIST/i)[0];
+      for (const t of ['BASICBUYERPHONE', 'PARTYPHONE', 'LEDMOBILE', 'LEDPHONENO', 'MOBILENO', 'PHONENO']) {
+        const val = extractTag(topBlock, t);
+        if (val) {
+          phone = extractPhone(val);
+          if (phone) break;
+        }
       }
     }
+
+    vouchers.push({
+      invoice_number: voucherNumber || `VCH-${(party || 'X').slice(0, 8)}`,
+      ledger_name: party,
+      client_name: party,
+      phone: phone,
+      amount: amount,
+      invoice_date: invoiceDate,
+      due_date: dueDate,
+      status: status,
+      voucher_type: voucherType,
+      company_name: compName,
+      metadata: { direction, voucher_type: voucherType },
+    });
   }
 
   return vouchers;
 }
 
-// ── 4. Phone extraction from XML block ───────────────────────────────────────
-function extractPhoneFromBlock(xmlBlock) {
-  // Dedicated phone tags ONLY (Strict 1-to-1 mirror from Tally)
-  const phonePatterns = [
-    /<(?:LEDMOBILE|LEDPHONENO|MOBILENO|PHONENO|CONTACTNO|PARTYPHONE|BASICBUYERPHONE|PHONENUMBER|LEDGERPHONE|MOBILENUMBER)[^>]*>([^<]+)<\/(?:LEDMOBILE|LEDPHONENO|MOBILENO|PHONENO|CONTACTNO|PARTYPHONE|BASICBUYERPHONE|PHONENUMBER|LEDGERPHONE|MOBILENUMBER)>/i,
-  ];
-
-  for (const pattern of phonePatterns) {
-    const match = xmlBlock.match(pattern);
-    if (match) {
-      const phoneMatch = match[1].match(/(?:\+?91[\s-]?)?[6-9]\d{9}/);
-      if (phoneMatch) {
-        let phone = phoneMatch[0].replace(/[\s-]/g, '');
-        if (phone.length === 10) phone = '+91' + phone;
-        if (!phone.startsWith('+')) phone = '+' + phone;
-        return phone;
-      }
-    }
-  }
-  return '';
-}
-
-// ── 5. Fallback Static Snapshot (used ONLY when Tally is unreachable) ─────────
-const FALLBACK_VOUCHERS = [
-  { invoice_number: 'INV-2026-041', ledger_name: 'Ravi Mehta', phone: '+919876543210', amount: 250000, due_date: '2026-08-04', status: 'Overdue' },
-  { invoice_number: 'INV-2026-045', ledger_name: 'Priya Kapoor', phone: '+916543210987', amount: 450000, due_date: '2026-08-23', status: 'Pending' },
-  { invoice_number: 'INV-2026-032', ledger_name: 'Kavita Joshi', phone: '+914321098765', amount: 50000, due_date: '2026-08-08', status: 'Paid' },
-  { invoice_number: 'INV-2026-048', ledger_name: 'Arjun Sharma', phone: '+917654321098', amount: 1000000, due_date: '2026-07-18', status: 'Overdue' },
+// ── 6. ALL 11 TDL XML REQUEST TEMPLATES ───────────────────────────────────────
+const STRATEGIES = [
+  // 1. Day Book with Full Date Range
+  {
+    name: '1_DayBook',
+    xml: `<?xml version="1.0" encoding="utf-8"?>
+<ENVELOPE>
+  <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
+  <BODY>
+    <EXPORTDATA>
+      <REQUESTDESC>
+        <REPORTNAME>Day Book</REPORTNAME>
+        <STATICVARIABLES>
+          <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+          <SVFROMDATE>${FY_FROM}</SVFROMDATE>
+          <SVTODATE>${FY_TO}</SVTODATE>
+        </STATICVARIABLES>
+      </REQUESTDESC>
+    </EXPORTDATA>
+  </BODY>
+</ENVELOPE>`,
+  },
+  // 2. List of Vouchers with Date Range
+  {
+    name: '2_Vouchers',
+    xml: `<?xml version="1.0" encoding="utf-8"?>
+<ENVELOPE>
+  <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
+  <BODY>
+    <EXPORTDATA>
+      <REQUESTDESC>
+        <REPORTNAME>List of Vouchers</REPORTNAME>
+        <STATICVARIABLES>
+          <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+          <SVFROMDATE>${FY_FROM}</SVFROMDATE>
+          <SVTODATE>${FY_TO}</SVTODATE>
+        </STATICVARIABLES>
+      </REQUESTDESC>
+    </EXPORTDATA>
+  </BODY>
+</ENVELOPE>`,
+  },
+  // 3. Bills Outstanding
+  {
+    name: '3_Outstanding',
+    xml: `<?xml version="1.0" encoding="utf-8"?>
+<ENVELOPE>
+  <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
+  <BODY>
+    <EXPORTDATA>
+      <REQUESTDESC>
+        <REPORTNAME>Bills Outstanding</REPORTNAME>
+        <STATICVARIABLES>
+          <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+          <SVFROMDATE>${FY_FROM}</SVFROMDATE>
+          <SVTODATE>${FY_TO}</SVTODATE>
+        </STATICVARIABLES>
+      </REQUESTDESC>
+    </EXPORTDATA>
+  </BODY>
+</ENVELOPE>`,
+  },
+  // 4. List of Accounts
+  {
+    name: '4_Accounts',
+    xml: `<?xml version="1.0" encoding="utf-8"?>
+<ENVELOPE>
+  <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
+  <BODY>
+    <EXPORTDATA>
+      <REQUESTDESC>
+        <REPORTNAME>List of Accounts</REPORTNAME>
+        <STATICVARIABLES>
+          <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+        </STATICVARIABLES>
+      </REQUESTDESC>
+    </EXPORTDATA>
+  </BODY>
+</ENVELOPE>`,
+  },
+  // 5. Balance Sheet
+  {
+    name: '5_BalanceSheet',
+    xml: `<?xml version="1.0" encoding="utf-8"?>
+<ENVELOPE>
+  <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
+  <BODY>
+    <EXPORTDATA>
+      <REQUESTDESC>
+        <REPORTNAME>Balance Sheet</REPORTNAME>
+        <STATICVARIABLES>
+          <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+        </STATICVARIABLES>
+      </REQUESTDESC>
+    </EXPORTDATA>
+  </BODY>
+</ENVELOPE>`,
+  },
+  // 6. Sundry Debtors TDL Collection
+  {
+    name: '6_SundryDebtors',
+    xml: `<?xml version="1.0" encoding="utf-8"?>
+<ENVELOPE>
+  <HEADER>
+    <VERSION>1</VERSION>
+    <TALLYREQUEST>Export</TALLYREQUEST>
+    <TYPE>Collection</TYPE>
+    <ID>Sundry Debtors List</ID>
+  </HEADER>
+  <BODY>
+    <DESC>
+      <STATICVARIABLES>
+        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+      </STATICVARIABLES>
+      <TDL>
+        <TDLMESSAGE>
+          <COLLECTION NAME="Sundry Debtors List" ISMODIFY="No">
+            <TYPE>Ledger</TYPE>
+            <BELONGSTO>Sundry Debtors</BELONGSTO>
+            <FETCH>NAME, PARENT, CLOSINGBALANCE, OPENINGBALANCE, LEDPHONENO, LEDMOBILE, ADDRESS, PINCODE, EMAIL, GSTIN</FETCH>
+          </COLLECTION>
+        </TDLMESSAGE>
+      </TDL>
+    </DESC>
+  </BODY>
+</ENVELOPE>`,
+  },
+  // 7. Ledger Vouchers
+  {
+    name: '7_LedgerVouchers',
+    xml: `<?xml version="1.0" encoding="utf-8"?>
+<ENVELOPE>
+  <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
+  <BODY>
+    <EXPORTDATA>
+      <REQUESTDESC>
+        <REPORTNAME>Ledger Vouchers</REPORTNAME>
+        <STATICVARIABLES>
+          <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+          <SVFROMDATE>${FY_FROM}</SVFROMDATE>
+          <SVTODATE>${FY_TO}</SVTODATE>
+          <LEDGERNAME>Sundry Debtors</LEDGERNAME>
+        </STATICVARIABLES>
+      </REQUESTDESC>
+    </EXPORTDATA>
+  </BODY>
+</ENVELOPE>`,
+  },
+  // 8. All Vouchers TDL with $$IsInRange Formula
+  {
+    name: '8_AllVouchersTDL',
+    xml: `<?xml version="1.0" encoding="utf-8"?>
+<ENVELOPE>
+  <HEADER>
+    <VERSION>1</VERSION>
+    <TALLYREQUEST>Export</TALLYREQUEST>
+    <TYPE>Collection</TYPE>
+    <ID>AllVouchersByDate</ID>
+  </HEADER>
+  <BODY>
+    <DESC>
+      <STATICVARIABLES>
+        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+      </STATICVARIABLES>
+      <TDL>
+        <TDLMESSAGE>
+          <COLLECTION NAME="AllVouchersByDate" ISMODIFY="No">
+            <TYPE>Voucher</TYPE>
+            <FETCH>DATE, VOUCHERNUMBER, VOUCHERTYPENAME, PARTYLEDGERNAME, BASICBUYERNAME, AMOUNT, NARRATION, PARTYGSTIN, BASICBUYERADDRESS, ALLLEDGERENTRIES</FETCH>
+            <FILTER>FilterByDateRange</FILTER>
+          </COLLECTION>
+          <SYSTEM TYPE="Formulae" NAME="FilterByDateRange">
+            $$IsInRange:$Date:${FY_FROM}:${FY_TO}
+          </SYSTEM>
+        </TDLMESSAGE>
+      </TDL>
+    </DESC>
+  </BODY>
+</ENVELOPE>`,
+  },
+  // 9. All Vouchers Unfiltered TDL Collection
+  {
+    name: '9_AllVouchersUnfiltered',
+    xml: `<?xml version="1.0" encoding="utf-8"?>
+<ENVELOPE>
+  <HEADER>
+    <VERSION>1</VERSION>
+    <TALLYREQUEST>Export</TALLYREQUEST>
+    <TYPE>Collection</TYPE>
+    <ID>AllVouchersFull</ID>
+  </HEADER>
+  <BODY>
+    <DESC>
+      <STATICVARIABLES>
+        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+      </STATICVARIABLES>
+      <TDL>
+        <TDLMESSAGE>
+          <COLLECTION NAME="AllVouchersFull" ISMODIFY="No">
+            <TYPE>Voucher</TYPE>
+            <FETCH>DATE, VOUCHERNUMBER, VOUCHERTYPENAME, PARTYLEDGERNAME, BASICBUYERNAME, AMOUNT, NARRATION, PARTYGSTIN, BASICBUYERADDRESS, ALLLEDGERENTRIES</FETCH>
+          </COLLECTION>
+        </TDLMESSAGE>
+      </TDL>
+    </DESC>
+  </BODY>
+</ENVELOPE>`,
+  },
+  // 10. EXPORTALL: Yes Object Dump (Tally Integration Library Standard)
+  {
+    name: '10_ExportAllVouchers',
+    xml: `<?xml version="1.0" encoding="utf-8"?>
+<ENVELOPE>
+  <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
+  <BODY>
+    <EXPORTDATA>
+      <REQUESTDESC>
+        <REPORTNAME>Vouchers</REPORTNAME>
+        <STATICVARIABLES>
+          <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+          <EXPORTALL>Yes</EXPORTALL>
+        </STATICVARIABLES>
+      </REQUESTDESC>
+    </EXPORTDATA>
+  </BODY>
+</ENVELOPE>`,
+  },
+  // 11. Sales Register Full with EXPORTALL
+  {
+    name: '11_SalesRegisterFull',
+    xml: `<?xml version="1.0" encoding="utf-8"?>
+<ENVELOPE>
+  <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
+  <BODY>
+    <EXPORTDATA>
+      <REQUESTDESC>
+        <REPORTNAME>Sales Register</REPORTNAME>
+        <STATICVARIABLES>
+          <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+          <EXPORTALL>Yes</EXPORTALL>
+          <SVFROMDATE>19000101</SVFROMDATE>
+          <SVTODATE>20501231</SVTODATE>
+        </STATICVARIABLES>
+      </REQUESTDESC>
+    </EXPORTDATA>
+  </BODY>
+</ENVELOPE>`,
+  },
 ];
 
-// ── 6. Helper: Push Clean Data to Cloud Backend ────────────────────────────────
+// ── 7. Multi-Company Auto-Discovery ──────────────────────────────────────────
+async function discoverCompanies() {
+  const companyXml = `<?xml version="1.0" encoding="utf-8"?>
+<ENVELOPE>
+  <HEADER>
+    <VERSION>1</VERSION>
+    <TALLYREQUEST>Export</TALLYREQUEST>
+    <TYPE>Collection</TYPE>
+    <ID>OpenCompanies</ID>
+  </HEADER>
+  <BODY>
+    <DESC>
+      <STATICVARIABLES>
+        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+      </STATICVARIABLES>
+      <TDL>
+        <TDLMESSAGE>
+          <COLLECTION NAME="OpenCompanies" ISMODIFY="No">
+            <TYPE>Company</TYPE>
+            <FETCH>NAME</FETCH>
+          </COLLECTION>
+        </TDLMESSAGE>
+      </TDL>
+    </DESC>
+  </BODY>
+</ENVELOPE>`;
+
+  try {
+    const resp = await queryTally(companyXml, 'DiscoverCompanies');
+    const compMatches = resp.match(/<COMPANY[^>]+NAME="([^"]+)"/gi) || [];
+    const names = [];
+    for (const cm of compMatches) {
+      const m = cm.match(/NAME="([^"]+)"/i);
+      if (m && m[1] && !names.includes(m[1])) {
+        names.push(m[1].trim());
+      }
+    }
+    return names.length > 0 ? names : [''];
+  } catch (err) {
+    return [''];
+  }
+}
+
+// ── 8. Helper: Push Clean Data to Cloud Backend ────────────────────────────────
 async function pushToCloud(payload) {
   try {
     const res = await fetch(CLOUD_URL, {
@@ -237,70 +563,70 @@ async function pushToCloud(payload) {
   }
 }
 
-// ── 7. Main Synchronization Cycle ─────────────────────────────────────────────
+// ── 9. Main Synchronization Cycle ─────────────────────────────────────────────
 async function runSyncCycle() {
-  console.log(`\n🔄 [${new Date().toLocaleTimeString()}] Starting TallyPrime Sync Cycle...`);
+  console.log(`\n🔄 [${new Date().toLocaleTimeString()}] Starting TallyPrime Multi-Strategy Sync Cycle...`);
 
   try {
     console.log(`📡 Connecting to Tally XML Server at http://${TALLY_HOST}:${TALLY_PORT}...`);
-    let vouchers = [];
-    let isLiveTally = false;
+    const companies = await discoverCompanies();
+    console.log(`🏢 Detected ${companies.length} company context(s): ${companies.join(', ') || 'Default Active'}`);
 
-    try {
-      const tallyXmlResponse = await queryTally(OUTSTANDING_XML);
-      isLiveTally = true;
-      console.log(`✅ TallyPrime XML Server responded (${tallyXmlResponse.length} bytes).`);
+    const allVouchers = [];
+    const seenKeys = new Set();
 
-      // Parse the actual XML response into structured vouchers
-      vouchers = parseTallyVouchers(tallyXmlResponse);
-      console.log(`📊 Parsed ${vouchers.length} vouchers from Tally XML response.`);
+    for (const comp of companies) {
+      console.log(`\n--- Querying Tally Company: [${comp || 'Default'}] ---`);
+      const phoneMap = await fetchMasterPhoneMap(comp);
+      console.log(`  📞 Master Ledger Phone Registry: ${Object.keys(phoneMap).length} contacts loaded`);
 
-      if (vouchers.length === 0) {
-        console.warn('⚠️ No vouchers parsed from XML. Attempting secondary voucher export...');
+      for (let i = 0; i < STRATEGIES.length; i++) {
+        const strat = STRATEGIES[i];
         try {
-          const secondaryXml = await queryTally(VOUCHER_EXPORT_XML);
-          vouchers = parseTallyVouchers(secondaryXml);
-          console.log(`📊 Secondary parse: ${vouchers.length} vouchers found.`);
-        } catch {}
+          const payload = injectCompany(strat.xml, comp);
+          const xmlResp = await queryTally(payload, strat.name);
+          if (xmlResp && xmlResp.length > 50) {
+            const parsed = parseTallyVouchers(xmlResp, comp, phoneMap);
+            let newCount = 0;
+            for (const v of parsed) {
+              const key = `${v.company_name}_${v.invoice_number}`;
+              if (!seenKeys.has(key)) {
+                seenKeys.add(key);
+                allVouchers.push(v);
+                newCount++;
+              }
+            }
+            console.log(`  [Strategy ${i+1}/11] ${strat.name}: +${newCount} new vouchers (total: ${allVouchers.length})`);
+          }
+        } catch (stratErr) {
+          // Continue to next strategy
+        }
       }
-    } catch (tallyErr) {
-      console.warn(`⚠️ TallyPrime not responding on port ${TALLY_PORT} (${tallyErr.message}).`);
-      console.warn('📦 Using fallback static snapshot payload.');
-      vouchers = FALLBACK_VOUCHERS;
     }
 
-    // Use fallback if no vouchers parsed from live Tally
-    if (vouchers.length === 0 && !isLiveTally) {
-      vouchers = FALLBACK_VOUCHERS;
-    }
-
-    // Prepare payload
-    const syncPayload = {
-      organizationId: ORG_ID,
-      timestamp: new Date().toISOString(),
-      connectorStatus: isLiveTally ? 'ONLINE' : 'STANDBY',
-      sourceParsed: isLiveTally && vouchers !== FALLBACK_VOUCHERS,
-      vouchers,
-    };
-
-    console.log(`☁️ Pushing ${vouchers.length} vouchers to cloud endpoint...`);
-    const cloudRes = await pushToCloud(syncPayload);
-    console.log('☁️ Cloud Sync Result:', JSON.stringify(cloudRes));
-
-    if (cloudRes.success) {
-      console.log(`✅ Sync complete: ${cloudRes.stats?.upsertedInvoices || 0} invoices synced, ${cloudRes.stats?.mappedLedgers || 0} ledgers mapped.`);
+    if (allVouchers.length > 0) {
+      console.log(`\n☁️ Pushing ${allVouchers.length} clean vouchers to cloud endpoint...`);
+      const syncPayload = {
+        organizationId: ORG_ID,
+        timestamp: new Date().toISOString(),
+        connectorStatus: 'ONLINE',
+        sourceParsed: true,
+        vouchers: allVouchers,
+      };
+      const cloudRes = await pushToCloud(syncPayload);
+      console.log('☁️ Cloud Sync Result:', JSON.stringify(cloudRes));
     } else {
-      console.error('❌ Cloud sync failed:', cloudRes.error || 'Unknown error');
+      console.warn('⚠️ No vouchers collected across all 11 strategies. Ensure Tally is open and port 9000 is active.');
     }
   } catch (err) {
     console.error('❌ Sync Cycle Exception:', err.message);
   }
 }
 
-// ── 8. Daemon Loop ────────────────────────────────────────────────────────────
+// ── 10. Daemon Loop ───────────────────────────────────────────────────────────
 console.log('════════════════════════════════════════════════════════════');
-console.log('  SOBHAINFRA ERP — TALLYPRIME LOCAL CONNECTOR BRIDGE');
-console.log('  Version: 4.0 (Production-Ready)');
+console.log('  SOBHAINFRA ERP — TALLYPRIME LOCAL CONNECTOR BRIDGE (JS)');
+console.log('  Version: 5.0 (All 11 Production Strategies Enabled)');
 console.log('════════════════════════════════════════════════════════════');
 console.log(`  Target Tally: http://${TALLY_HOST}:${TALLY_PORT}`);
 console.log(`  Cloud URL   : ${CLOUD_URL}`);
