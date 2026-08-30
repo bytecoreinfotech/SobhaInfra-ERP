@@ -136,6 +136,7 @@ const getDirection = (inv) => {
 const Finance = () => {
   const { activeCompany, isConsolidated, activeCompanyId } = useCompany();
   const [activeTab, setActiveTab] = useState('invoices'); // 'invoices' | 'tally' | 'mappings' | 'errors'
+  const [financeView, setFinanceView] = useState('receivables'); // 'receivables' | 'payables'
   
   // Invoices & Outstandings State
   const [allInvoices, setAllInvoices] = useState([]);
@@ -405,22 +406,40 @@ const Finance = () => {
 
   // 2. Metrics dynamically reflect the selected date range
   // IMPORTANT: Exclude LEDGER- prefixed records from financial totals.
-  // LEDGER- records are Tally party ledger CLOSING BALANCES (cumulative historical totals),
-  // not individual invoice transactions. Including them inflates totals by 200-300%.
-  // Only VCH-, SRP-, actual voucher records represent real invoice transactions.
   const isActualVoucher = (inv) => {
     const num = (inv?.invoice_number || inv?.tally_voucher_number || '').toUpperCase();
     return !num.startsWith('LEDGER-');
   };
   const voucherOnlyInvoices = dateFilteredInvoices.filter(isActualVoucher);
-  const totalInvoiced = voucherOnlyInvoices.reduce((s, i) => s + Number(i.amount || 0), 0);
-  const totalPaid     = voucherOnlyInvoices.filter(i => i.status === 'Paid').reduce((s, i) => s + Number(i.amount || 0), 0);
-  const totalOverdue  = voucherOnlyInvoices.filter(i => i.status === 'Overdue').reduce((s, i) => s + Number(i.amount || 0), 0);
-  const totalPending  = voucherOnlyInvoices.filter(i => i.status === 'Pending').reduce((s, i) => s + Number(i.amount || 0), 0);
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // SPLIT: Customer Receivables (incoming) vs Vendor Payables (outgoing)
+  // Uses the getDirection() classifier to cleanly separate the two flows.
+  // ══════════════════════════════════════════════════════════════════════════
+  const customerInvoices = voucherOnlyInvoices.filter(i => !getDirection(i).isVendor);
+  const vendorInvoices   = voucherOnlyInvoices.filter(i => getDirection(i).isVendor);
+
+  // Active view determines which dataset feeds KPI cards and table
+  const activeViewInvoices = financeView === 'payables' ? vendorInvoices : customerInvoices;
+
+  // KPI metrics for the active view
+  const totalInvoiced = activeViewInvoices.reduce((s, i) => s + Number(i.amount || 0), 0);
+  const totalPaid     = activeViewInvoices.filter(i => i.status === 'Paid').reduce((s, i) => s + Number(i.amount || 0), 0);
+  const totalOverdue  = activeViewInvoices.filter(i => i.status === 'Overdue').reduce((s, i) => s + Number(i.amount || 0), 0);
+  const totalPending  = activeViewInvoices.filter(i => i.status === 'Pending').reduce((s, i) => s + Number(i.amount || 0), 0);
 
 
-  // 3. Search & Status Filter
+  // 3. Search & Status Filter — also filtered by active financeView (receivables vs payables)
   const filtered = dateFilteredInvoices.filter(inv => {
+    // Direction filter: only show invoices matching the active sub-tab
+    const dirInfo = getDirection(inv);
+    if (financeView === 'receivables' && dirInfo.isVendor) return false;
+    if (financeView === 'payables' && !dirInfo.isVendor) return false;
+
+    // Exclude LEDGER- records from table when in either view
+    const num = (inv?.invoice_number || inv?.tally_voucher_number || '').toUpperCase();
+    if (num.startsWith('LEDGER-')) return false;
+
     const matchSearch = !search ||
       inv.invoice_number?.toLowerCase().includes(search.toLowerCase()) ||
       inv.client_name?.toLowerCase().includes(search.toLowerCase()) ||
@@ -434,6 +453,7 @@ const Finance = () => {
     if (filter === 'Paid') return inv.status === 'Paid';
     if (filter === 'Paused') return inv.reminder_paused === true || inv.reminder_paused === 'true';
     return true;
+
   }).sort((a, b) => {
     const da = new Date(a.invoice_date || a.due_date || a.created_at || 0);
     const db = new Date(b.invoice_date || b.due_date || b.created_at || 0);
@@ -643,14 +663,74 @@ const Finance = () => {
          ========================================================================= */}
       {activeTab === 'invoices' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-          {/* KPI Summary Cards */}
+
+          {/* ══ RECEIVABLES / PAYABLES SUB-TAB TOGGLE ═══════════════════════ */}
+          <div style={{
+            display: 'flex', gap: '0.5rem', background: 'var(--bg-secondary)',
+            padding: '0.35rem', borderRadius: 'var(--radius-md)',
+            border: '1px solid var(--border-color)',
+          }}>
+            <button
+              onClick={() => setFinanceView('receivables')}
+              style={{
+                flex: 1, padding: '0.65rem 1rem', borderRadius: 'var(--radius-sm)',
+                border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: '0.85rem',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
+                background: financeView === 'receivables'
+                  ? 'linear-gradient(135deg, #10b981, #059669)' : 'transparent',
+                color: financeView === 'receivables' ? 'white' : 'var(--text-secondary)',
+                boxShadow: financeView === 'receivables' ? '0 4px 12px rgba(16,185,129,0.3)' : 'none',
+                transition: 'all 0.2s ease',
+              }}
+            >
+              <ArrowDownRight size={18} />
+              📥 Customer Receivables
+              <span style={{
+                background: financeView === 'receivables' ? 'rgba(255,255,255,0.25)' : 'var(--bg-tertiary)',
+                padding: '0.1rem 0.5rem', borderRadius: 10, fontSize: '0.72rem',
+                fontWeight: 800,
+              }}>
+                {customerInvoices.length}
+              </span>
+            </button>
+            <button
+              onClick={() => setFinanceView('payables')}
+              style={{
+                flex: 1, padding: '0.65rem 1rem', borderRadius: 'var(--radius-sm)',
+                border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: '0.85rem',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
+                background: financeView === 'payables'
+                  ? 'linear-gradient(135deg, #f59e0b, #d97706)' : 'transparent',
+                color: financeView === 'payables' ? 'white' : 'var(--text-secondary)',
+                boxShadow: financeView === 'payables' ? '0 4px 12px rgba(245,158,11,0.3)' : 'none',
+                transition: 'all 0.2s ease',
+              }}
+            >
+              <ArrowUpRight size={18} />
+              📤 Vendor Payables
+              <span style={{
+                background: financeView === 'payables' ? 'rgba(255,255,255,0.25)' : 'var(--bg-tertiary)',
+                padding: '0.1rem 0.5rem', borderRadius: 10, fontSize: '0.72rem',
+                fontWeight: 800,
+              }}>
+                {vendorInvoices.length}
+              </span>
+            </button>
+          </div>
+
+          {/* KPI Summary Cards — dynamically show per active view */}
           <div className="stats-grid">
-            {[
-              { label: 'Total Invoiced', value: fmtCurrency(totalInvoiced), sub: `${voucherOnlyInvoices.length} invoices`, icon: <DollarSign size={20} />, color: 'var(--accent-primary)', bg: 'var(--accent-glow)' },
-              { label: 'Total Collected', value: fmtCurrency(totalPaid), sub: `${voucherOnlyInvoices.filter(i => i.status === 'Paid').length} paid`, icon: <TrendingUp size={20} />, color: 'var(--success)', bg: 'var(--success-bg)' },
-              { label: 'Overdue Recovery', value: fmtCurrency(totalOverdue), sub: `${voucherOnlyInvoices.filter(i => i.status === 'Overdue').length} overdue`, icon: <AlertTriangle size={20} />, color: 'var(--danger)', bg: 'var(--danger-bg)' },
-              { label: 'Pending Due', value: fmtCurrency(totalPending), sub: `${voucherOnlyInvoices.filter(i => i.status === 'Pending').length} pending`, icon: <Clock size={20} />, color: 'var(--warning)', bg: 'var(--warning-bg)' },
-            ].map(s => (
+            {(financeView === 'receivables' ? [
+              { label: 'Total Billed to Customers', value: fmtCurrency(totalInvoiced), sub: `${activeViewInvoices.length} invoices`, icon: <DollarSign size={20} />, color: '#6366f1', bg: 'rgba(99,102,241,0.12)' },
+              { label: 'Collected (Paid)', value: fmtCurrency(totalPaid), sub: `${activeViewInvoices.filter(i => i.status === 'Paid').length} paid`, icon: <TrendingUp size={20} />, color: '#10b981', bg: 'rgba(16,185,129,0.12)' },
+              { label: 'Overdue from Customers', value: fmtCurrency(totalOverdue), sub: `${activeViewInvoices.filter(i => i.status === 'Overdue').length} overdue`, icon: <AlertTriangle size={20} />, color: '#ef4444', bg: 'rgba(239,68,68,0.12)' },
+              { label: 'Pending Receivable', value: fmtCurrency(totalPending), sub: `${activeViewInvoices.filter(i => i.status === 'Pending').length} pending`, icon: <Clock size={20} />, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)' },
+            ] : [
+              { label: 'Total Vendor Bills', value: fmtCurrency(totalInvoiced), sub: `${activeViewInvoices.length} bills`, icon: <DollarSign size={20} />, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)' },
+              { label: 'Paid Out to Vendors', value: fmtCurrency(totalPaid), sub: `${activeViewInvoices.filter(i => i.status === 'Paid').length} paid`, icon: <TrendingUp size={20} />, color: '#10b981', bg: 'rgba(16,185,129,0.12)' },
+              { label: 'Overdue Vendor Bills', value: fmtCurrency(totalOverdue), sub: `${activeViewInvoices.filter(i => i.status === 'Overdue').length} overdue`, icon: <AlertTriangle size={20} />, color: '#ef4444', bg: 'rgba(239,68,68,0.12)' },
+              { label: 'Pending Payable', value: fmtCurrency(totalPending), sub: `${activeViewInvoices.filter(i => i.status === 'Pending').length} pending`, icon: <Clock size={20} />, color: '#d97706', bg: 'rgba(217,119,6,0.12)' },
+            ]).map(s => (
               <div key={s.label} className="stat-card" style={{ '--card-accent': s.color }}>
                 <div className="stat-header">
                   <div>

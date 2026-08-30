@@ -120,13 +120,21 @@ const Payments = () => {
     setLoading(false);
   };
 
-  const filters = ['All', 'Overdue', 'Pending', 'Paid'];
-  const filtered = invoices.filter(inv => activeFilter === 'All' || inv.status === activeFilter);
+  // Only show customer receivables on Payment Follow-up page (not vendor payables)
+  const customerOnly = invoices.filter(inv => {
+    const num = (inv?.invoice_number || inv?.tally_voucher_number || '').toUpperCase();
+    if (num.startsWith('LEDGER-')) return false; // Exclude ledger closing balances
+    return !getDirection(inv).isVendor;
+  });
 
-  const totalOverdue = invoices.filter(i => i.status === 'Overdue').reduce((s, i) => s + Number(i.amount), 0);
-  const totalPending = invoices.filter(i => i.status === 'Pending').reduce((s, i) => s + Number(i.amount), 0);
-  const totalPaid = invoices.filter(i => i.status === 'Paid').reduce((s, i) => s + Number(i.amount), 0);
+  const filters = ['All', 'Overdue', 'Pending', 'Paid'];
+  const filtered = customerOnly.filter(inv => activeFilter === 'All' || inv.status === activeFilter);
+
+  const totalOverdue = customerOnly.filter(i => i.status === 'Overdue').reduce((s, i) => s + Number(i.amount), 0);
+  const totalPending = customerOnly.filter(i => i.status === 'Pending').reduce((s, i) => s + Number(i.amount), 0);
+  const totalPaid = customerOnly.filter(i => i.status === 'Paid').reduce((s, i) => s + Number(i.amount), 0);
   const fmtAmount = (n) => '₹' + Number(n).toLocaleString('en-IN');
+
 
   const handleRemind = async (inv) => {
     setRemindingId(inv.id);
