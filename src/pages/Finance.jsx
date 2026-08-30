@@ -404,10 +404,20 @@ const Finance = () => {
   });
 
   // 2. Metrics dynamically reflect the selected date range
-  const totalInvoiced = dateFilteredInvoices.reduce((s, i) => s + Number(i.amount || 0), 0);
-  const totalPaid = dateFilteredInvoices.filter(i => i.status === 'Paid').reduce((s, i) => s + Number(i.amount || 0), 0);
-  const totalOverdue = dateFilteredInvoices.filter(i => i.status === 'Overdue').reduce((s, i) => s + Number(i.amount || 0), 0);
-  const totalPending = dateFilteredInvoices.filter(i => i.status === 'Pending').reduce((s, i) => s + Number(i.amount || 0), 0);
+  // IMPORTANT: Exclude LEDGER- prefixed records from financial totals.
+  // LEDGER- records are Tally party ledger CLOSING BALANCES (cumulative historical totals),
+  // not individual invoice transactions. Including them inflates totals by 200-300%.
+  // Only VCH-, SRP-, actual voucher records represent real invoice transactions.
+  const isActualVoucher = (inv) => {
+    const num = (inv?.invoice_number || inv?.tally_voucher_number || '').toUpperCase();
+    return !num.startsWith('LEDGER-');
+  };
+  const voucherOnlyInvoices = dateFilteredInvoices.filter(isActualVoucher);
+  const totalInvoiced = voucherOnlyInvoices.reduce((s, i) => s + Number(i.amount || 0), 0);
+  const totalPaid     = voucherOnlyInvoices.filter(i => i.status === 'Paid').reduce((s, i) => s + Number(i.amount || 0), 0);
+  const totalOverdue  = voucherOnlyInvoices.filter(i => i.status === 'Overdue').reduce((s, i) => s + Number(i.amount || 0), 0);
+  const totalPending  = voucherOnlyInvoices.filter(i => i.status === 'Pending').reduce((s, i) => s + Number(i.amount || 0), 0);
+
 
   // 3. Search & Status Filter
   const filtered = dateFilteredInvoices.filter(inv => {
@@ -636,7 +646,7 @@ const Finance = () => {
           {/* KPI Summary Cards */}
           <div className="stats-grid">
             {[
-              { label: 'Total Invoiced', value: fmtCurrency(totalInvoiced), sub: `${invoices.length} invoices`, icon: <DollarSign size={20} />, color: 'var(--accent-primary)', bg: 'var(--accent-glow)' },
+              { label: 'Total Invoiced', value: fmtCurrency(totalInvoiced), sub: `${voucherOnlyInvoices.length} invoices`, icon: <DollarSign size={20} />, color: 'var(--accent-primary)', bg: 'var(--accent-glow)' },
               { label: 'Total Collected', value: fmtCurrency(totalPaid), sub: `${invoices.filter(i => i.status === 'Paid').length} paid`, icon: <TrendingUp size={20} />, color: 'var(--success)', bg: 'var(--success-bg)' },
               { label: 'Overdue Recovery', value: fmtCurrency(totalOverdue), sub: `${invoices.filter(i => i.status === 'Overdue').length} overdue`, icon: <AlertTriangle size={20} />, color: 'var(--danger)', bg: 'var(--danger-bg)' },
               { label: 'Pending Due', value: fmtCurrency(totalPending), sub: `${invoices.filter(i => i.status === 'Pending').length} pending`, icon: <Clock size={20} />, color: 'var(--warning)', bg: 'var(--warning-bg)' },
