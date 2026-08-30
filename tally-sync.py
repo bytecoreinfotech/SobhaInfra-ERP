@@ -98,12 +98,17 @@ log = logging.getLogger("tally-sync")
 # TDL XML REQUEST TEMPLATES (5 different strategies)
 # ==============================================================================
 
-# Strategy 1: Day Book (captures ALL vouchers — 2 full financial years to catch previous-FY outstanding bills)
+# Strategy 1: Day Book (captures ALL vouchers — 3 full financial years for complete history)
 _today = datetime.now()
-_fy_start_year = (_today.year if _today.month >= 4 else _today.year - 1) - 1  # 1 extra FY back (e.g. 2025)
-_fy_end_year   = (_today.year + 1 if _today.month >= 4 else _today.year)      # End of current FY (e.g. 2027)
-_fy_from = f"{_fy_start_year}0401"  # 20250401 (1-Apr-2025)
-_fy_to   = f"{_fy_end_year}0331"    # 20270331 (31-Mar-2027) covers full 2026-2027 period
+# Go back 2 full FYs to capture complete historical data.
+# NOTE: TallyPrime's Day Book respects the session period (Alt+F2) as a HARD filter,
+# so SVFROMDATE alone is not enough. The client MUST set Tally's session period
+# to at least 1-Apr-2024 via Alt+F2 for this to fetch pre-2026 data.
+# Strategy 8 (TDL Voucher Collection) bypasses the session period entirely.
+_fy_start_year = (_today.year if _today.month >= 4 else _today.year - 1) - 2  # 2 extra FYs back (e.g. 2024)
+_fy_end_year   = (_today.year + 1 if _today.month >= 4 else _today.year)       # End of current FY (e.g. 2027)
+_fy_from = f"{_fy_start_year}0401"  # 20240401 (1-Apr-2024)
+_fy_to   = f"{_fy_end_year}0331"    # 20270331 (31-Mar-2027) covers 3 full FY periods
 
 DAYBOOK_XML = f"""<?xml version="1.0" encoding="utf-8"?>
 <ENVELOPE>
@@ -124,8 +129,8 @@ DAYBOOK_XML = f"""<?xml version="1.0" encoding="utf-8"?>
   </BODY>
 </ENVELOPE>"""
 
-# Strategy 2: List of Vouchers
-VOUCHERS_XML = """<?xml version="1.0" encoding="utf-8"?>
+# Strategy 2: List of Vouchers (now includes date range to match session override)
+VOUCHERS_XML = f"""<?xml version="1.0" encoding="utf-8"?>
 <ENVELOPE>
   <HEADER>
     <TALLYREQUEST>Export Data</TALLYREQUEST>
@@ -136,6 +141,8 @@ VOUCHERS_XML = """<?xml version="1.0" encoding="utf-8"?>
         <REPORTNAME>List of Vouchers</REPORTNAME>
         <STATICVARIABLES>
           <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+          <SVFROMDATE>{_fy_from}</SVFROMDATE>
+          <SVTODATE>{_fy_to}</SVTODATE>
         </STATICVARIABLES>
       </REQUESTDESC>
     </EXPORTDATA>
@@ -248,6 +255,67 @@ LEDGER_VOUCHERS_XML = f"""<?xml version="1.0" encoding="utf-8"?>
 </ENVELOPE>"""
 
 
+
+
+# Strategy 8: TDL Voucher Collection — BYPASSES session period restriction entirely.
+# This queries Tally's internal voucher object store directly (not a report),
+# so it is NOT filtered by the active session period (Alt+F2 date in Tally).
+# This is the most reliable strategy for fetching ALL historical vouchers.
+ALL_VOUCHERS_TDL_XML = f"""<?xml version="1.0" encoding="utf-8"?>
+<ENVELOPE>
+  <HEADER>
+    <VERSION>1</VERSION>
+    <TALLYREQUEST>Export</TALLYREQUEST>
+    <TYPE>Collection</TYPE>
+    <ID>AllVoucherCollection</ID>
+  </HEADER>
+  <BODY>
+    <DESC>
+      <STATICVARIABLES>
+        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+      </STATICVARIABLES>
+      <TDL>
+        <TDLMESSAGE>
+          <COLLECTION NAME="AllVoucherCollection" ISMODIFY="No">
+            <TYPE>Voucher</TYPE>
+            <CHILDOF>$$VoucherTypeName:Sales</CHILDOF>
+            <FETCH>DATE, VOUCHERNUMBER, VOUCHERTYPENAME, PARTYLEDGERNAME, BASICBUYERNAME, AMOUNT, NARRATION, PARTYGSTIN, BASICBUYERADDRESS</FETCH>
+            <FILTER>FilterByDate</FILTER>
+          </COLLECTION>
+          <SYSTEM TYPE="Formulae" NAME="FilterByDate">
+            $$IsInRange:$Date:{_fy_from}:{_fy_to}
+          </SYSTEM>
+        </TDLMESSAGE>
+      </TDL>
+    </DESC>
+  </BODY>
+</ENVELOPE>"""
+
+# Strategy 9: TDL — All Sales + Receipt vouchers (broader type collection, no date filter → fetches everything)
+ALL_VOUCHERS_UNFILTERED_XML = """<?xml version="1.0" encoding="utf-8"?>
+<ENVELOPE>
+  <HEADER>
+    <VERSION>1</VERSION>
+    <TALLYREQUEST>Export</TALLYREQUEST>
+    <TYPE>Collection</TYPE>
+    <ID>AllVouchersFull</ID>
+  </HEADER>
+  <BODY>
+    <DESC>
+      <STATICVARIABLES>
+        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+      </STATICVARIABLES>
+      <TDL>
+        <TDLMESSAGE>
+          <COLLECTION NAME="AllVouchersFull" ISMODIFY="No">
+            <TYPE>Voucher</TYPE>
+            <FETCH>DATE, VOUCHERNUMBER, VOUCHERTYPENAME, PARTYLEDGERNAME, BASICBUYERNAME, AMOUNT, NARRATION, PARTYGSTIN, BASICBUYERADDRESS, ALLLEDGERENTRIES</FETCH>
+          </COLLECTION>
+        </TDLMESSAGE>
+      </TDL>
+    </DESC>
+  </BODY>
+</ENVELOPE>"""
 
 
 # ==============================================================================
@@ -1114,6 +1182,12 @@ def fetch_from_tally():
             ("5_BalanceSheet", inject_company_into_xml(COLLECTION_XML, comp)),
             (f"6_SundryDebtors_{comp}" if comp else "6_SundryDebtors", inject_company_into_xml(SUNDRY_DEBTORS_XML, comp)),
             (f"7_LedgerVouchers_{comp}" if comp else "7_LedgerVouchers", inject_company_into_xml(LEDGER_VOUCHERS_XML, comp)),
+            # Strategy 8: TDL Collection — bypasses Tally session period restriction entirely.
+            # Fetches ALL historical Sales vouchers regardless of Alt+F2 date setting.
+            (f"8_AllVouchersTDL_{comp}" if comp else "8_AllVouchersTDL", inject_company_into_xml(ALL_VOUCHERS_TDL_XML, comp)),
+            # Strategy 9: TDL Collection — completely unfiltered, fetches every voucher in the company file.
+            # This catches any remaining historical entries that Strategy 8 may miss.
+            (f"9_AllVouchersUnfiltered_{comp}" if comp else "9_AllVouchersUnfiltered", inject_company_into_xml(ALL_VOUCHERS_UNFILTERED_XML, comp)),
         ]
 
         # FIX 1: Collect records from ALL strategies (no break after first success)
