@@ -189,7 +189,7 @@ function parseTallyVouchers(xmlString, fallbackCompany = '', phoneMap = {}) {
     if (amount === 0) continue;
 
     let invoiceDate = '';
-    let dueDate = '';
+    let dueDate = null;
     if (date && date.length === 8) {
       invoiceDate = `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}`;
       const d = new Date(invoiceDate);
@@ -204,17 +204,23 @@ function parseTallyVouchers(xmlString, fallbackCompany = '', phoneMap = {}) {
     }
 
     const vchLower = voucherType.toLowerCase();
-    const isReceipt = vchLower.includes('receipt');
-    const isOutgoing = ['purchase', 'payment', 'credit note'].some(t => vchLower.includes(t));
+    const isReceipt = ['receipt', 'bank receipt', 'cash receipt'].some(t => vchLower.includes(t));
+    const isPayment = ['payment', 'bank payment', 'cash payment', 'credit note'].some(t => vchLower.includes(t));
+    const isPurchase = ['purchase', 'purchase order'].some(t => vchLower.includes(t));
 
     let status = 'Pending';
     let direction = 'receivable';
     if (isReceipt) {
       status = 'Paid';
       direction = 'received';
-    } else if (isOutgoing) {
+      dueDate = null;
+    } else if (isPayment) {
       status = 'Paid';
       direction = 'paid_out';
+      dueDate = null;
+    } else if (isPurchase) {
+      status = 'Pending';
+      direction = 'payable';
     }
 
     // Resolve party phone from Master Phone Map or XML block

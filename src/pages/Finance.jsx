@@ -25,44 +25,109 @@ const statusConfig = {
   'Draft':   { badge: 'badge-neutral', icon: <Clock size={13} /> },
 };
 
+// Utility to decode HTML entities in party names and strings (e.g. &amp; -> &)
+const decodeHtml = (str) => {
+  if (!str) return '';
+  return String(str)
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'");
+};
+
 /**
- * FIX 2 — Derive payment direction from metadata + invoice number prefix.
- * Returns a config object with label, icon arrow JSX, and colors.
- *
- * Logic:
- *   Receipt voucher             → 'Received' (green)   — customer paid us
- *   Paid status + Sales voucher → 'Received' (green)   — collected, no longer outstanding
- *   Pending Sales voucher       → 'Receivable' (indigo) — customer still owes us
- *   Purchase/Payment voucher    → 'Paid Out'  (amber)  — we paid vendor
- *   Payable voucher             → 'Payable'   (red)    — we owe vendor
+ * Enhanced Accounting Transaction Classifier
+ * Differentiates Customer (Receivable / Collected / Received) vs Vendor (Payable / Paid Out)
+ * 
+ * Rules:
+ *   1. Vendor Payment / Purchase (We pay someone):
+ *      - If Paid / Settled -> 'Paid Out' (↗ amber arrow) — Money went OUT to vendor
+ *      - If Pending / Overdue -> 'Payable' (↗ red arrow) — Money we owe to vendor
+ *   2. Customer Receipt / Settlement (Customer pays us):
+ *      - 'Received' (↙ green arrow) — Money came IN from customer
+ *   3. Customer Sales Invoice:
+ *      - If Paid -> 'Collected' (↙ green arrow) — Customer invoice settled
+ *      - If Pending / Overdue -> 'Receivable' (↙ indigo arrow) — Customer owes us money
  */
 const getDirection = (inv) => {
-  const dir     = inv?.metadata?.direction || '';
-  const vtype   = (inv?.metadata?.voucher_type || '').toLowerCase();
-  const num     = (inv?.invoice_number || '').toLowerCase();
+  const dir     = (inv?.metadata?.direction || inv?.direction || '').toLowerCase();
+  const vtype   = (inv?.metadata?.voucher_type || inv?.voucher_type || '').toLowerCase();
+  const num     = (inv?.invoice_number || inv?.tally_voucher_number || '').toLowerCase();
   const status  = inv?.status || '';
 
-  // Receipt = customer paid us (money IN) — always green
-  if (dir === 'received' || /^(rcpt|rct|rec)/.test(num) ||
-      ['receipt','bank receipt','cash receipt'].some(t => vtype.includes(t))) {
-    return { label: 'Received',   ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', title: 'Customer paid us — Payment received', canRemind: false };
+  // 1. OUTGOING / VENDOR TRANSACTIONS (My client pays money OUT to vendor/supplier)
+  const isVendorTransaction = 
+    dir === 'paid_out' || 
+    dir === 'payable' ||
+    /^(pay|pmt|pur|drn)/.test(num) ||
+    ['payment', 'bank payment', 'cash payment', 'purchase', 'purchase order', 'vendor'].some(t => vtype.includes(t));
+
+  if (isVendorTransaction) {
+    if (status === 'Paid' || dir === 'paid_out') {
+      return { 
+        label: 'Paid Out', 
+        ArrowIcon: ArrowUpRight, 
+        color: '#f59e0b', 
+        bg: 'rgba(245,158,11,0.12)', 
+        title: 'Paid to Vendor — Outgoing payment completed', 
+        canRemind: false, 
+        isVendor: true 
+      };
+    }
+    return { 
+      label: 'Payable', 
+      ArrowIcon: ArrowUpRight, 
+      color: '#ef4444', 
+      bg: 'rgba(239,68,68,0.12)', 
+      title: 'Vendor Payable — Outstanding amount we owe to vendor', 
+      canRemind: false, 
+      isVendor: true 
+    };
   }
-  // Payment / Purchase = we paid vendor (money OUT)
-  if (dir === 'paid_out' || /^(pay|pmt|pur)/.test(num) ||
-      ['payment','bank payment','cash payment','purchase'].some(t => vtype.includes(t))) {
-    return { label: 'Paid Out',   ArrowIcon: ArrowUpRight,  color: '#f59e0b', bg: 'rgba(245,158,11,0.12)',  title: 'We paid vendor — Outgoing payment', canRemind: false };
+
+  // 2. INCOMING / CUSTOMER SETTLEMENT (Customer paid money IN to us)
+  const isIncomingReceipt = 
+    dir === 'received' || 
+    /^(rcpt|rct|rec)/.test(num) ||
+    ['receipt', 'bank receipt', 'cash receipt'].some(t => vtype.includes(t));
+
+  if (isIncomingReceipt) {
+    return { 
+      label: 'Received', 
+      ArrowIcon: ArrowDownRight, 
+      color: '#10b981', 
+      bg: 'rgba(16,185,129,0.12)', 
+      title: 'Customer Payment Received — Money collected into our account', 
+      canRemind: false, 
+      isVendor: false 
+    };
   }
-  // Payable = we owe vendor (Purchase pending)
-  if (dir === 'payable') {
-    return { label: 'Payable',    ArrowIcon: ArrowUpRight,  color: '#ef4444', bg: 'rgba(239,68,68,0.12)',   title: 'We owe vendor — Outstanding payable', canRemind: false };
+
+  // 3. SALES INVOICE SETTLED (Customer has paid their sales invoice)
+  if (status === 'Paid') {
+    return { 
+      label: 'Collected', 
+      ArrowIcon: ArrowDownRight, 
+      color: '#10b981', 
+      bg: 'rgba(16,185,129,0.12)', 
+      title: 'Sales Invoice Collected — Customer has fully paid', 
+      canRemind: false, 
+      isVendor: false 
+    };
   }
-  // KEY FIX: If status is Paid but direction is Receivable → must show 'Received' (collected)
-  // A Sales invoice marked Paid means the customer has settled — NOT still receivable.
-  if (status === 'Paid' || dir === 'received') {
-    return { label: 'Received',   ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', title: 'Collected — customer has paid this invoice', canRemind: false };
-  }
-  // Default: Receivable = customer owes us (Sales, Debit Note, Pending)
-  return   { label: 'Receivable', ArrowIcon: ArrowDownRight, color: '#6366f1', bg: 'rgba(99,102,241,0.12)', title: 'Customer owes us — Outstanding receivable', canRemind: true };
+
+  // 4. DEFAULT: OUTSTANDING CUSTOMER RECEIVABLE (Customer owes us money)
+  return { 
+    label: 'Receivable', 
+    ArrowIcon: ArrowDownRight, 
+    color: '#6366f1', 
+    bg: 'rgba(99,102,241,0.12)', 
+    title: 'Customer Receivable — Outstanding amount customer owes us', 
+    canRemind: true, 
+    isVendor: false 
+  };
 };
 
 const Finance = () => {
@@ -872,22 +937,50 @@ const Finance = () => {
                           </div>
                         )}
                       </td>
-                      <td style={{ fontWeight: 600 }}>{inv.client_name}</td>
+                      <td style={{ fontWeight: 600 }}>
+                        {(() => {
+                          const dir = getDirection(inv);
+                          const cleanName = decodeHtml(inv.client_name || inv.tally_ledger || 'Client');
+                          return (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
+                              <span style={{ color: 'var(--text-primary)' }}>{cleanName}</span>
+                              <span style={{
+                                fontSize: '0.62rem',
+                                fontWeight: 700,
+                                color: dir.isVendor ? '#d97706' : 'var(--text-muted)',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '0.2rem',
+                              }}>
+                                {dir.isVendor ? '🏢 Vendor / Payee' : '👤 Customer'}
+                              </span>
+                            </div>
+                          );
+                        })()}
+                      </td>
                       <td style={{ fontFamily: 'monospace', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
                         {normalizePhone(inv.client_phone)}
                       </td>
                       <td style={{ fontSize: '0.78rem' }}>
-                        <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
-                          {inv.invoice_date ? new Date(inv.invoice_date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
-                        </div>
-                        {inv.due_date && (
-                          <div style={{ fontSize: '0.67rem', color: 'var(--text-muted)' }}>
-                            Due: {new Date(inv.due_date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' })}
-                          </div>
-                        )}
+                        {(() => {
+                          const dir = getDirection(inv);
+                          const isSettled = inv.status === 'Paid' || dir.label === 'Paid Out' || dir.label === 'Received' || dir.label === 'Collected';
+                          return (
+                            <div>
+                              <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                                {inv.invoice_date ? new Date(inv.invoice_date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
+                              </div>
+                              {!isSettled && inv.due_date && (
+                                <div style={{ fontSize: '0.67rem', color: 'var(--text-muted)' }}>
+                                  Due: {new Date(inv.due_date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' })}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </td>
                       <td style={{ fontWeight: 700, fontSize: '0.88rem' }}>
-                        {/* FIX 2: Direction badge + amount */}
+                        {/* Direction badge + amount */}
                         {(() => {
                           const dir = getDirection(inv);
                           return (
@@ -916,35 +1009,55 @@ const Finance = () => {
 
                       {/* Reminder Automation Status */}
                       <td>
-                        {(inv.reminder_paused === true || inv.reminder_paused === 'true') ? (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.7rem', fontWeight: 700, color: 'var(--warning)' }}>
-                              <PauseCircle size={12} /> Paused
+                        {(() => {
+                          const dir = getDirection(inv);
+                          if (dir.isVendor) {
+                            return (
+                              <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                                N/A (Vendor)
+                              </span>
+                            );
+                          }
+                          if (inv.status === 'Paid') {
+                            return (
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.7rem', color: 'var(--success)', fontWeight: 600 }}>
+                                <CheckCircle2 size={12} /> Settled
+                              </span>
+                            );
+                          }
+                          if (inv.reminder_paused === true || inv.reminder_paused === 'true') {
+                            return (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.7rem', fontWeight: 700, color: 'var(--warning)' }}>
+                                  <PauseCircle size={12} /> Paused
+                                </span>
+                                {inv.payment_promised_date && (
+                                  <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
+                                    <CalendarClock size={10} />
+                                    Until {new Date(inv.payment_promised_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
+                                  </span>
+                                )}
+                                {inv.promise_committed_by && (
+                                  <span style={{ fontSize: '0.6rem', color: 'var(--text-muted)' }}>
+                                    via {
+                                      inv.promise_committed_by === 'whatsapp_auto' ? '🤖 WhatsApp AI' :
+                                      inv.promise_committed_by === 'admin_phone_call' ? '📞 Phone Call' :
+                                      inv.promise_committed_by === 'admin_in_person' ? '🤝 In-Person' :
+                                      inv.promise_committed_by === 'admin_email' ? '📧 Email' :
+                                      inv.promise_committed_by === 'admin_whatsapp_manual' ? '💬 WhatsApp (Manual)' :
+                                      '👤 Admin'
+                                    }
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          }
+                          return (
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.7rem', color: 'var(--success)', fontWeight: 600 }}>
+                              <PlayCircle size={12} /> Active
                             </span>
-                            {inv.payment_promised_date && (
-                              <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
-                                <CalendarClock size={10} />
-                                Until {new Date(inv.payment_promised_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
-                              </span>
-                            )}
-                            {inv.promise_committed_by && (
-                              <span style={{ fontSize: '0.6rem', color: 'var(--text-muted)' }}>
-                                via {
-                                  inv.promise_committed_by === 'whatsapp_auto' ? '🤖 WhatsApp AI' :
-                                  inv.promise_committed_by === 'admin_phone_call' ? '📞 Phone Call' :
-                                  inv.promise_committed_by === 'admin_in_person' ? '🤝 In-Person' :
-                                  inv.promise_committed_by === 'admin_email' ? '📧 Email' :
-                                  inv.promise_committed_by === 'admin_whatsapp_manual' ? '💬 WhatsApp (Manual)' :
-                                  '👤 Admin'
-                                }
-                              </span>
-                            )}
-                          </div>
-                        ) : (
-                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.7rem', color: 'var(--success)', fontWeight: 600 }}>
-                            <PlayCircle size={12} /> Active
-                          </span>
-                        )}
+                          );
+                        })()}
                       </td>
                       <td>
                         <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flexWrap: 'wrap' }}>
@@ -1003,20 +1116,19 @@ const Finance = () => {
                           })()}
 
 
-                          {/* Remind / Settled — Only for receivable items (money customers OWE us)
-                               NEVER show remind for paid_out/payable — that's money we owe vendors */}
+                          {/* Remind / Settled / Paid Out */}
                           {(() => {
                             const dir = getDirection(inv);
-                            if (!dir.canRemind) {
+                            if (dir.isVendor) {
                               // Outgoing / vendor payment — no reminder option
                               return (
-                                <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
-                                  {dir.label === 'Paid Out' ? '✓ Vendor paid' : 'Vendor payable'}
+                                <span style={{ fontSize: '0.72rem', color: dir.label === 'Paid Out' ? '#f59e0b' : '#ef4444', fontWeight: 600 }}>
+                                  {dir.label === 'Paid Out' ? '✓ Paid to Vendor' : 'Vendor Payable'}
                                 </span>
                               );
                             }
                             if (inv.status === 'Paid') {
-                              return <span style={{ fontSize: '0.72rem', color: 'var(--success)', fontWeight: 600 }}>Settled</span>;
+                              return <span style={{ fontSize: '0.72rem', color: 'var(--success)', fontWeight: 600 }}>✓ Settled</span>;
                             }
                             return (
                               <button

@@ -816,8 +816,8 @@ def parse_voucher_block(block, fallback_company: str = "", ledger_phone_map: dic
     # Voucher type classification
     SKIP_TYPES = {"contra", "bank contra", "cash contra"}
     # Outgoing money types (we pay someone — Purchase, Payment, Credit Note)
-    OUTGOING_TYPES = {"purchase", "payment", "bank payment", "cash payment",
-                      "credit note", "purchase order"}
+    PAYMENT_TYPES  = {"payment", "bank payment", "cash payment"}
+    PURCHASE_TYPES = {"purchase", "purchase order"}
     # Incoming settlement types (customer paid us — Receipt)
     RECEIPT_TYPES  = {"receipt", "bank receipt", "cash receipt"}
     vch_type_lower = vch_type.lower()
@@ -830,13 +830,22 @@ def parse_voucher_block(block, fallback_company: str = "", ledger_phone_map: dic
         log.debug(f"  [Skip] Voucher {vch_number} has no party ledger name — skipped")
         return None
 
-    # Determine status and flow direction
+    # Determine status, flow direction, and due date
     if any(s in vch_type_lower for s in RECEIPT_TYPES):
         status = "Paid"
         direction = "received"       # Customer paid us (money IN)
-    elif any(s in vch_type_lower for s in OUTGOING_TYPES):
+        due_date = None              # Already settled at transaction date
+    elif any(s in vch_type_lower for s in PAYMENT_TYPES):
         status = "Paid"
         direction = "paid_out"       # We paid vendor (money OUT)
+        due_date = None              # Already settled at payment date
+    elif any(s in vch_type_lower for s in PURCHASE_TYPES):
+        status = "Pending"
+        direction = "payable"        # We owe vendor for purchase
+    elif "credit note" in vch_type_lower:
+        status = "Paid"
+        direction = "paid_out"
+        due_date = None
     else:
         status = "Pending"           # Sales, Debit Note, Journal = receivable
         direction = "receivable"     # Money owed TO us
@@ -885,7 +894,7 @@ def parse_voucher_block(block, fallback_company: str = "", ledger_phone_map: dic
     # Tier 1: Tally Master Ledger Registry lookup (Exact match from Tally Master)
     # Tier 2: Party's own isolated ledger sub-block in voucher XML
     # ─────────────────────────────────────────────────────────────────────────────
-    clean_party = (party or "").strip()
+    clean_party = html.unescape((party or "").strip())
     norm_key = re.sub(r'[^a-z0-9]', '', clean_party.lower())
 
     phone_val = ""
