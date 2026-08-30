@@ -432,24 +432,8 @@ def fetch_tally_ledger_phone_master(company_name: str = "") -> dict:
             if not name:
                 continue
 
-            # Priority 1: Dedicated phone fields
+            # Dedicated phone fields ONLY: LEDMOBILE, LEDPHONENO, PHONENO, MOBILENO, CONTACTNO
             phone = extract_phone_from_party_fields(lblock)
-
-            if not phone:
-                # Priority 2: All ADDRESS lines (Tally uses multiple <ADDRESS> tags in a list)
-                # Concatenate all address lines then search for phone pattern
-                all_addr_lines = re.findall(r'<ADDRESS[^>]*>([^<]+)</ADDRESS>', lblock, re.IGNORECASE)
-                combined_addr = " ".join(all_addr_lines)
-                phone = extract_phone(combined_addr)
-
-            if not phone:
-                # Priority 3: MAILINGNAME, BASICBUYERADDRESS, BILLMAILINGADDRESS
-                for extra_tag in ["MAILINGADDRESS", "BILLINGADDRESS", "PINCODE"]:
-                    val = extract_tag_value(lblock, extra_tag)
-                    if val:
-                        phone = extract_phone(val)
-                        if phone:
-                            break
 
             if phone:
                 name_clean = name.strip().lower()
@@ -477,7 +461,7 @@ def fetch_tally_ledger_phone_master(company_name: str = "") -> dict:
         <TDLMESSAGE>
           <COLLECTION NAME="MasterLedgerPhoneList" ISMODIFY="No">
             <TYPE>Ledger</TYPE>
-            <FETCH>NAME, PARENT, LEDMOBILE, LEDPHONENO, MOBILENO, PHONENO, CONTACTNO, ADDRESS, GSTIN</FETCH>
+            <FETCH>NAME, PARENT, LEDMOBILE, LEDPHONENO, MOBILENO, PHONENO, CONTACTNO, GSTIN</FETCH>
           </COLLECTION>
         </TDLMESSAGE>
       </TDL>
@@ -526,52 +510,34 @@ def fetch_tally_ledger_phone_master(company_name: str = "") -> dict:
     log.info(f"  [Master Phone Map] Final registry before purge: {len(phone_map)} party phone number(s)")
 
     # ---- DIAGNOSTIC REPORT: shows phone data from Tally per party ---------------
-    # This clearly shows if the SAME number is in Tally for multiple parties
-    # (that would be a Tally data entry problem, not our script's fault).
     MAX_SHARED_PHONE_THRESHOLD = 3
 
+    # Group distinct ledger names per phone (avoid duplicate normalized keys)
     phone_to_parties = {}
     for k, ph in phone_map.items():
-        if ph not in phone_to_parties:
-            phone_to_parties[ph] = set()
-        phone_to_parties[ph].add(k)
+        # Only process natural name keys (skip stripped norm keys to prevent false duplicates)
+        if ' ' in k or not any(k == re.sub(r'[^a-z0-9]', '', orig) for orig in phone_map if ' ' in orig):
+            if ph not in phone_to_parties:
+                phone_to_parties[ph] = set()
+            phone_to_parties[ph].add(k)
 
     print("\n" + "=" * 68)
-    print("  TALLY MASTER LEDGER PHONE DIAGNOSTIC REPORT")
-    print("  Shows what phone each party has in Tally master ledger.")
-    print("  SAME phone for MULTIPLE parties = Tally data entry issue.")
+    print("  TALLY MASTER LEDGER PHONE AUDIT & DIAGNOSTIC REPORT")
+    print("  Shows registered phone/mobile number for each party in Tally.")
+    print("  Note: Duplicate/repeated numbers are fetched exactly as-is from Tally.")
     print("=" * 68)
-    has_shared = False
+    has_dups = False
     for ph, parties in sorted(phone_to_parties.items(), key=lambda x: -len(x[1])):
         count = len(parties)
-        if count >= MAX_SHARED_PHONE_THRESHOLD:
-            has_shared = True
-            print(f"  [SHARED x{count}] Phone: {ph}  -- WILL BE PURGED")
-            for p in sorted(parties):
-                print(f"    Ledger: {p}")
-            print("  FIX: Open TallyPrime, go to each ledger above, correct phone number.")
-        elif count == 2:
-            print(f"  [DUPLICATE x2] Phone: {ph}  -> Ledgers: {sorted(parties)}")
-    if not has_shared:
-        print("  CLEAN: All phones are unique per party. No shared numbers found.")
+        if count > 1:
+            has_dups = True
+            print(f"  [REPEATED x{count}] Phone: {ph} -> Ledgers: {', '.join(sorted(parties))}")
+    if not has_dups:
+        print("  CLEAN: All party phones in Tally are unique.")
+    print(f"  Total registered party phones in Tally: {len(phone_map)}")
     print("=" * 68 + "\n")
-    # ---------------------------------------------------------------------------
 
-    # Find phones shared by too many parties (company own number / data entry error)
-    bleeding_phones = {
-        ph for ph, parties in phone_to_parties.items()
-        if len(parties) >= MAX_SHARED_PHONE_THRESHOLD
-    }
-
-    if bleeding_phones:
-        log.warning(
-            f"  [Master Phone Map] Purging {len(bleeding_phones)} shared phone(s) "
-            f"(appear in {MAX_SHARED_PHONE_THRESHOLD}+ Tally ledgers): "
-            + ", ".join(sorted(bleeding_phones))
-        )
-        phone_map = {k: v for k, v in phone_map.items() if v not in bleeding_phones}
-
-    log.info(f"  [Master Phone Map] Final registry after purge: {len(phone_map)} clean party phone number(s)")
+    log.info(f"  [Master Phone Map] Exact party phone registry: {len(phone_map)} contact(s) mapped directly from Tally")
     return phone_map
 
 
@@ -716,10 +682,10 @@ def parse_voucher_block(block, fallback_company: str = "", ledger_phone_map: dic
         inv_code = f"VCH-{(party or 'X')[:8]}-{abs(hash(party or '')) % 10000}"
 
     # ─────────────────────────────────────────────────────────────────────────────
-    # FIX 3 — AUTHORITATIVE MULTI-TIER PHONE EXTRACTION
+    # ─────────────────────────────────────────────────────────────────────────────
+    # AUTHORITATIVE MULTI-TIER PHONE EXTRACTION (100% Faithful Tally Mirror)
     # Tier 1: Tally Master Ledger Registry lookup (Exact match from Tally Master)
     # Tier 2: Party's own isolated ledger sub-block in voucher XML
-    # Tier 3: Buyer Address block inside voucher
     # ─────────────────────────────────────────────────────────────────────────────
     clean_party = (party or "").strip()
     norm_key = re.sub(r'[^a-z0-9]', '', clean_party.lower())
@@ -733,28 +699,6 @@ def parse_voucher_block(block, fallback_company: str = "", ledger_phone_map: dic
     # Tier 2: Voucher party sub-block
     if not phone_val:
         phone_val = extract_party_phone_from_voucher(block, clean_party)
-
-    # Tier 3: Buyer address block
-    if not phone_val:
-        buyer_addr_block = extract_tag_value(block, "BASICBUYERADDRESS") or ""
-        phone_val = extract_phone(buyer_addr_block)
-
-    # Blacklist: never use a phone number that is the company's own number.
-    # The COMPANY_BLACKLIST is populated dynamically by fetch_tally_ledger_phone_master
-    # (any phone shared by 3+ ledgers is added). We also keep a hardcoded fallback
-    # in case the master map wasn't built yet.
-    _static_blacklist = {"+916262575967", "+919868948208", "+919876543210", "9868948208", "6262575967"}
-    _dynamic_blacklist = getattr(parse_voucher_block, '_bleeding_phones', set())
-    _all_blacklist = _static_blacklist | _dynamic_blacklist
-
-    if phone_val:
-        # Normalize for comparison — strip spaces, dashes
-        _ph_norm = re.sub(r'[\s\-\(\)]', '', phone_val)
-        _ph_digits = re.sub(r'[^\d]', '', _ph_norm)[-10:]  # last 10 digits
-        if any(re.sub(r'[^\d]', '', bl)[-10:] == _ph_digits for bl in _all_blacklist if bl):
-            if not any(k in clean_party.lower() for k in ["shobha", "infra", "ready plast", "buildtech"]):
-                log.debug(f"  [Phone Blacklist] Blocked own-company phone {phone_val!r} for party '{clean_party}'")
-                phone_val = ""
 
     return {
         "invoice_number": inv_code,
@@ -1161,22 +1105,6 @@ def fetch_from_tally():
         ledger_phone_map = fetch_tally_ledger_phone_master(comp)
         if ledger_phone_map:
             print(f"  📞 Master Ledger Phone Registry: {len(ledger_phone_map)} party contact(s) loaded", flush=True)
-
-        # Wire bleeding phones into the voucher parser's dynamic blacklist
-        # (phones purged from map because they appeared in 3+ ledgers = company's own number)
-        # We detect them by comparing pre-purge vs post-purge.
-        # Simpler approach: any phone NOT in the final map but WAS in all phones from earlier builds.
-        # The cleanest approach: rebuild what was purged by using the phone_to_parties structure.
-        # Since we can't call internal function vars directly, we just pass the remaining map
-        # back through and mark any phone that appears > 1 time in the map values as suspicious.
-        _map_values = list(ledger_phone_map.values())
-        from collections import Counter as _Counter
-        _phone_counts = _Counter(_map_values)
-        # Consider any phone appearing in 2+ entries as suspicious
-        _bleeding = {ph for ph, cnt in _phone_counts.items() if cnt >= 2}
-        parse_voucher_block._bleeding_phones = _bleeding
-        if _bleeding:
-            log.info(f"  [Phone Guard] Dynamic blacklist: {len(_bleeding)} shared phone(s) flagged: {', '.join(sorted(_bleeding))}")
 
         strategies = [
             (f"1_DayBook_{comp}" if comp else "1_DayBook", inject_company_into_xml(DAYBOOK_XML, comp)),

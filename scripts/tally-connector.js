@@ -190,18 +190,14 @@ function parseTallyVouchers(xmlString) {
 
 // ── 4. Phone extraction from XML block ───────────────────────────────────────
 function extractPhoneFromBlock(xmlBlock) {
-  // Try to find phone patterns in address or phone fields
+  // Dedicated phone tags ONLY (Strict 1-to-1 mirror from Tally)
   const phonePatterns = [
-    /<PHONENUMBER[^>]*>([^<]+)<\/PHONENUMBER>/i,
-    /<LEDGERPHONE[^>]*>([^<]+)<\/LEDGERPHONE>/i,
-    /<MOBILENUMBER[^>]*>([^<]+)<\/MOBILENUMBER>/i,
-    /<ADDRESS[^>]*>([^<]+)<\/ADDRESS>/i,
+    /<(?:LEDMOBILE|LEDPHONENO|MOBILENO|PHONENO|CONTACTNO|PARTYPHONE|BASICBUYERPHONE|PHONENUMBER|LEDGERPHONE|MOBILENUMBER)[^>]*>([^<]+)<\/(?:LEDMOBILE|LEDPHONENO|MOBILENO|PHONENO|CONTACTNO|PARTYPHONE|BASICBUYERPHONE|PHONENUMBER|LEDGERPHONE|MOBILENUMBER)>/i,
   ];
 
   for (const pattern of phonePatterns) {
     const match = xmlBlock.match(pattern);
     if (match) {
-      // Extract phone number from the matched text
       const phoneMatch = match[1].match(/(?:\+?91[\s-]?)?[6-9]\d{9}/);
       if (phoneMatch) {
         let phone = phoneMatch[0].replace(/[\s-]/g, '');
