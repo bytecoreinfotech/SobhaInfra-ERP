@@ -1522,6 +1522,9 @@ def auto_seed_tally_company(company_name: str) -> dict:
 
     if SUPABASE_URL and SUPABASE_KEY:
         try:
+            # CRITICAL: Use ignore-duplicates so we NEVER overwrite admin-set
+            # logo, bank details, or UPI ID that was configured in Settings UI.
+            # This only inserts if the company does not already exist.
             resp = requests.post(
                 f"{SUPABASE_URL}/rest/v1/company_profiles?on_conflict=organization_id,company_name",
                 json=new_profile,
@@ -1529,14 +1532,14 @@ def auto_seed_tally_company(company_name: str) -> dict:
                     "apikey": SUPABASE_KEY,
                     "Authorization": f"Bearer {SUPABASE_KEY}",
                     "Content-Type": "application/json",
-                    "Prefer": "resolution=merge-duplicates,return=representation",
+                    "Prefer": "resolution=ignore-duplicates,return=representation",
                 },
                 timeout=5
             )
             if resp.status_code in (200, 201):
                 result = resp.json()
                 if isinstance(result, list) and result:
-                    log.info(f"  [Company Seed] '{company_name}' → synced to Settings dashboard (✅ tally_sourced=true)")
+                    log.info(f"  [Company Seed] '{company_name}' → registered in Settings (✅ first-time only)")
                     return result[0]
             else:
                 log.debug(f"  [Company Seed] Upsert {resp.status_code}: {resp.text[:150]}")
@@ -1635,7 +1638,8 @@ def get_matching_company_profile(company_name: str | None = None, profiles: list
         "is_default": False,
     }
 
-    # Auto-register in Supabase — Bug 6 fix: correct conflict key
+    # Auto-register in Supabase — ONLY insert if company doesn't exist yet.
+    # Use ignore-duplicates to protect any admin-configured logo/bank/UPI.
     if SUPABASE_URL and SUPABASE_KEY:
         try:
             resp = requests.post(
@@ -1645,12 +1649,12 @@ def get_matching_company_profile(company_name: str | None = None, profiles: list
                     "apikey": SUPABASE_KEY,
                     "Authorization": f"Bearer {SUPABASE_KEY}",
                     "Content-Type": "application/json",
-                    "Prefer": "resolution=merge-duplicates,return=minimal",
+                    "Prefer": "resolution=ignore-duplicates,return=minimal",
                 },
                 timeout=5
             )
             if resp.status_code in (200, 201):
-                log.info(f"  [Company Auto-Seed] New company registered: '{company_name}' → appears in Settings dashboard!")
+                log.info(f"  [Company Auto-Seed] New company registered: '{company_name}' → appears in Settings!")
             else:
                 log.debug(f"  [Company Auto-Seed] Supabase returned {resp.status_code}: {resp.text[:200]}")
         except Exception as e:
@@ -1929,10 +1933,19 @@ def generate_invoice_pdf(voucher: dict, org_profile: dict | None = None, single_
     if custom_qr and (str(custom_qr).startswith("http") or "base64," in str(custom_qr)):
         qr_data = custom_qr
     else:
-        upi_id = org_profile.get("upi_id") or "shobhareadyplast@okhdfcbank"
-        safe_pn = urllib.parse.quote(company_name)
-        safe_tr = re.sub(r'[^a-zA-Z0-9]', '', str(inv_number))
-        qr_data = f"upi://pay?pa={upi_id}&pn={safe_pn}&am={amount:.2f}&cu=INR&tr={safe_tr}"
+        # Only generate a scannable UPI QR if the admin has set a valid UPI VPA
+        # (must contain '@'). An invalid/blank ID produces a QR that UPI apps reject.
+        upi_id = (org_profile.get("upi_id") or "").strip()
+        if upi_id and "@" in upi_id:
+            safe_pn = urllib.parse.quote(company_name)
+            safe_tr = re.sub(r'[^a-zA-Z0-9]', '', str(inv_number))
+            qr_data = f"upi://pay?pa={upi_id}&pn={safe_pn}&am={amount:.2f}&cu=INR&tr={safe_tr}"
+            log.debug(f"  [QR] UPI QR generated for VPA: {upi_id}")
+        else:
+            # No valid UPI configured — encode a human-readable fallback so the
+            # QR box still renders but clearly states to configure UPI in Settings.
+            qr_data = f"Pay to: {company_name}\nConfigure UPI ID in Settings"
+            log.debug(f"  [QR] No valid UPI VPA in company profile — using text placeholder")
 
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -3032,10 +3045,37 @@ def push_to_cloud(vouchers):
                 dedup_map[key] = v
     all_unique = list(dedup_map.values())
 
-    # Filter out already-synced vouchers — skip them entirely
-    to_process = [v for v in all_unique if v.get("invoice_number") not in sync_cache]
+    # Phone-aware deduplication:
+    # Skip vouchers already synced AND whose phone number hasn't changed.
+    # If the phone was updated in Tally, force a re-push to update the record.
+    to_process = []
+    phone_updates = 0
+    for v in all_unique:
+        inv_num = v.get("invoice_number", "")
+        new_phone = (v.get("phone") or v.get("client_phone") or "").strip()
+        cached = sync_cache.get(inv_num)
+        if cached is None:
+            # Never synced before — always include
+            to_process.append(v)
+        elif isinstance(cached, dict):
+            # New-format cache entry with phone tracking
+            cached_phone = (cached.get("phone") or "").strip()
+            if new_phone and cached_phone != new_phone:
+                # Phone changed in Tally — force re-push
+                v["_force_phone_update"] = True
+                to_process.append(v)
+                phone_updates += 1
+            # else: already synced, phone unchanged — skip
+        # else: old string-format cache entry — skip (already synced)
+
     skipped = len(all_unique) - len(to_process)
-    log.info(f"  [Dedup] {len(vouchers)} raw → {len(all_unique)} unique → {len(to_process)} new (skipped {skipped} already synced)")
+    log.info(
+        f"  [Dedup] {len(vouchers)} raw → {len(all_unique)} unique → "
+        f"{len(to_process)} to process "
+        f"({phone_updates} phone updates, {skipped} already synced)"
+    )
+    if phone_updates > 0:
+        log.info(f"  [Phone Sync] ✅ {phone_updates} voucher(s) have updated phone numbers — will re-push!")
 
     if not to_process:
         log.info("  [Cloud Push] All vouchers already synced. Nothing to do.")
@@ -3111,8 +3151,11 @@ def push_to_cloud(vouchers):
             )
             if resp.status_code in (200, 201, 204, 409):
                 pushed_ok += 1
-                # Mark as synced in local cache immediately
-                sync_cache[inv_num] = datetime.now().isoformat()
+                # Store phone in cache so future syncs detect phone changes
+                sync_cache[inv_num] = {
+                    "ts": datetime.now().isoformat(),
+                    "phone": (v.get("phone") or v.get("client_phone") or "").strip()
+                }
                 if pushed_ok % 25 == 0:
                     save_cache()  # Save cache every 25 records
             else:
