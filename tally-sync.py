@@ -1585,11 +1585,12 @@ def get_matching_company_profile(company_name: str | None = None, profiles: list
     if not profiles:
         profiles = fetch_all_company_profiles()
 
-    if not company_name:
+    if not company_name or company_name.strip().lower() in ('default', 'unknown', 'tally company', 'tallyprime live'):
         for p in profiles:
             if p.get("is_default"):
                 return p
         return profiles[0] if profiles else fetch_org_profile()
+
 
     target = company_name.strip().upper()
 
@@ -3090,8 +3091,8 @@ def push_to_cloud(vouchers):
         "Content-Type": "application/json",
         "Prefer": "resolution=merge-duplicates,return=minimal",
     }
-    sb_invoices_url = f"{SUPABASE_URL}/rest/v1/invoices?on_conflict=invoice_number"
-    sb_ledger_url   = f"{SUPABASE_URL}/rest/v1/ledger_mappings?on_conflict=id"
+    sb_invoices_url = f"{SUPABASE_URL}/rest/v1/invoices?on_conflict=organization_id,tally_voucher_number"
+    sb_ledger_url   = f"{SUPABASE_URL}/rest/v1/tally_mappings?on_conflict=organization_id,tally_ledger_name"
 
     pushed_ok = 0
     push_errors = 0
@@ -3169,18 +3170,14 @@ def push_to_cloud(vouchers):
         ledger = (v.get("ledger_name") or v.get("client_name") or "").strip()
         if ledger:
             try:
-                mapping_id = re.sub(r'[^a-z0-9]', '-', ledger.lower())[:60]
                 phone = (v.get("client_phone") or v.get("phone") or "").strip()
                 requests.post(
                     sb_ledger_url,
                     json={
-                        "id": f"tally-{mapping_id}",
                         "organization_id": ORGANIZATION_ID,
                         "tally_ledger_name": ledger,
-                        "tally_company": v.get("company_name", ""),
-                        "normalized_phone": re.sub(r'[^0-9]', '', phone)[-10:] if phone else None,
-                        "match_confidence": "auto",
-                        "status": "mapped" if phone else "unmatched",
+                        "mapping_status": "exact_match" if phone else "possible_match",
+                        "confidence_score": 1.0 if phone else 0.5,
                         "updated_at": datetime.now().isoformat(),
                     },
                     headers=sb_headers,
