@@ -1154,26 +1154,29 @@ const Finance = () => {
                       </td>
                       <td>
                         <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                          {/* All 4 PDF Types */}
+                          {/* All 4 PDF Types — Always show Tax Bill button */}
                           {(() => {
                             const meta = inv.metadata || {};
                             const consignmentUrl = inv.pdf_url || meta.pdf_url;
                             const ewayUrl = meta.eway_pdf_url;
                             const pendingUrl = meta.pending_pdf_url;
                             const ledgerUrl = meta.ledger_pdf_url;
-                            if (!consignmentUrl && !ewayUrl && !pendingUrl && !ledgerUrl) return null;
                             return (
                               <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap' }}>
-                                {consignmentUrl && (
-                                  <button
-                                    className="btn btn-secondary btn-sm"
-                                    style={{ padding: '0.2rem 0.45rem', fontSize: '0.68rem', color: 'var(--accent-primary)', display: 'flex', alignItems: 'center', gap: '0.2rem' }}
-                                    onClick={() => setPreviewPdfUrl(consignmentUrl)}
-                                    title="Tax Invoice + e-Way Bill (2-Page Consignment Bill)"
-                                  >
-                                    <FileText size={11} /> Tax Bill
-                                  </button>
-                                )}
+                                <button
+                                  className="btn btn-secondary btn-sm"
+                                  style={{ padding: '0.2rem 0.45rem', fontSize: '0.68rem', color: 'var(--accent-primary)', display: 'flex', alignItems: 'center', gap: '0.2rem' }}
+                                  onClick={() => {
+                                    if (consignmentUrl) {
+                                      setPreviewPdfUrl(consignmentUrl);
+                                    } else {
+                                      setShowTemplatesModal(true);
+                                    }
+                                  }}
+                                  title="Tax Invoice + e-Way Bill (2-Page Consignment Bill)"
+                                >
+                                  <FileText size={11} /> Tax Bill
+                                </button>
                                 {ewayUrl && (
                                   <button
                                     className="btn btn-secondary btn-sm"

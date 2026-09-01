@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   CreditCard, Send, CheckCircle2, AlertTriangle, Clock,
   MessageCircle, Phone, RefreshCw, IndianRupee, Plus,
-  ArrowUpRight, ArrowDownRight
+  ArrowUpRight, ArrowDownRight, FileText
 } from 'lucide-react';
 import { getInvoices, logPaymentReminder } from '../lib/db';
 import { useCompany } from '../context/CompanyContext';
@@ -98,6 +98,7 @@ const Payments = () => {
   const [remindingId, setRemindingId] = useState(null);
   const [sentIds, setSentIds] = useState([]);
   const [activeFilter, setActiveFilter] = useState('All');
+  const [previewPdfUrl, setPreviewPdfUrl] = useState(null);
 
   useEffect(() => { loadInvoices(); }, []);
 
@@ -276,24 +277,39 @@ const Payments = () => {
                     <td><span className="badge badge-neutral">{(isSent ? (inv.reminder_count || 0) + 1 : (inv.reminder_count || 0))} sent</span></td>
                     <td>
                       {(() => {
-                        const dir = getDirection(inv);
-                        if (!dir.canRemind) {
-                          // Vendor payment — no reminder needed
-                          return <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>{dir.label === 'Paid Out' ? '✓ Vendor paid' : 'Vendor payable'}</span>;
-                        }
-                        if (inv.status === 'Paid') {
-                          return <span style={{ fontSize: '0.78rem', color: 'var(--success)', fontWeight: 600 }}>✓ Cleared</span>;
-                        }
+                        const consignmentUrl = inv.pdf_url || inv.metadata?.pdf_url;
                         return (
-                          <div style={{ display: 'flex', gap: '0.4rem' }}>
+                          <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
                             <button
-                              className={`btn btn-sm ${isSent ? 'btn-success' : isReminding ? 'btn-secondary' : 'btn-whatsapp'}`}
-                              onClick={() => !isSent && !isReminding && handleRemind(inv)}
-                              disabled={isReminding || isSent}
+                              className="btn btn-secondary btn-sm"
+                              style={{ padding: '0.2rem 0.45rem', fontSize: '0.68rem', color: 'var(--accent-primary)', display: 'flex', alignItems: 'center', gap: '0.2rem' }}
+                              onClick={() => {
+                                if (consignmentUrl) {
+                                  setPreviewPdfUrl(consignmentUrl);
+                                } else {
+                                  window.location.href = `/finance`;
+                                }
+                              }}
+                              title="View Tax Invoice & Consignment Bill"
                             >
-                              {isSent ? <><CheckCircle2 size={13} /> Sent</> : isReminding ? 'Sending...' : <><Send size={13} /> Remind</>}
+                              <FileText size={11} /> Bill
                             </button>
-                            <button className="btn btn-secondary btn-sm" title="Call"><Phone size={13} /></button>
+                            {!dir.canRemind ? (
+                              <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>{dir.label === 'Paid Out' ? '✓ Vendor paid' : 'Vendor payable'}</span>
+                            ) : inv.status === 'Paid' ? (
+                              <span style={{ fontSize: '0.78rem', color: 'var(--success)', fontWeight: 600 }}>✓ Cleared</span>
+                            ) : (
+                              <>
+                                <button
+                                  className={`btn btn-sm ${isSent ? 'btn-success' : isReminding ? 'btn-secondary' : 'btn-whatsapp'}`}
+                                  onClick={() => !isSent && !isReminding && handleRemind(inv)}
+                                  disabled={isReminding || isSent}
+                                >
+                                  {isSent ? <><CheckCircle2 size={13} /> Sent</> : isReminding ? 'Sending...' : <><Send size={13} /> Remind</>}
+                                </button>
+                                <button className="btn btn-secondary btn-sm" title="Call"><Phone size={13} /></button>
+                              </>
+                            )}
                           </div>
                         );
                       })()}
@@ -330,6 +346,28 @@ const Payments = () => {
           ))}
         </div>
       </div>
+
+      {/* PDF Bill Preview Modal */}
+      {previewPdfUrl && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', zIndex: 9999,
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '1.5rem',
+        }}>
+          <div style={{
+            background: 'var(--bg-card, #1e293b)', borderRadius: '12px', width: '90vw', maxWidth: '1000px',
+            height: '88vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', border: '1px solid var(--border-color, #334155)',
+          }}>
+            <div style={{ padding: '0.75rem 1.25rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color, #334155)' }}>
+              <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>Consignment Bill & Tax Invoice Preview</span>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <a href={previewPdfUrl} target="_blank" rel="noreferrer" className="btn btn-secondary btn-sm">Open in New Tab</a>
+                <button className="btn btn-danger btn-sm" onClick={() => setPreviewPdfUrl(null)}>Close</button>
+              </div>
+            </div>
+            <iframe src={previewPdfUrl} style={{ width: '100%', height: '100%', border: 'none' }} title="Invoice Preview" />
+          </div>
+        </div>
+      )}
     </div>
   );
 };

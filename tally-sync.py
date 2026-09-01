@@ -543,16 +543,28 @@ def extract_phone(text):
     return ""
 
 
+ALL_PHONE_TAGS = [
+    "LEDGERMOBILE", "LEDGERPHONE", "LEDGERCONTACT", "LEDMOBILE", "LEDPHONENO",
+    "MOBILENO", "PHONENO", "MOBILENUMBER", "PHONENUMBER", "PARTYPHONE",
+    "BASICBUYERPHONE", "BUYERPHONE", "BUYERCONTACT", "TELEPHONE", "TELNO",
+    "PHONE", "MOBILE", "CONTACTPERSON", "CONTACTNO", "LEDGERCONTACTPERSON"
+]
+
+
 def extract_phone_from_party_fields(block):
     """
-    Extract phone ONLY from dedicated Tally phone fields (LEDPHONENO, LEDMOBILE,
-    PHONENO, MOBILENO, CONTACTNO) — not from free-text like narrations.
-    This prevents phone numbers from one ledger bleeding into another.
+    Extract phone from dedicated Tally phone tags, as well as buyer/ledger address fields.
     """
-    for tag in ["LEDMOBILE", "LEDPHONENO", "PHONENO", "MOBILENO", "CONTACTNO", "PARTYPHONE"]:
+    for tag in ALL_PHONE_TAGS:
         val = extract_tag_value(block, tag)
         if val:
             phone = extract_phone(val)
+            if phone:
+                return phone
+    # Also check address lines in the block
+    for addr_tag in ["ADDRESS", "BASICBUYERADDRESS", "LEDGERADDRESS"]:
+        for m in re.finditer(rf"<(?:\w+:)?{addr_tag}[^>]*>([^<]+)</(?:\w+:)?{addr_tag}>", block, re.IGNORECASE):
+            phone = extract_phone(m.group(1))
             if phone:
                 return phone
     return ""
@@ -560,16 +572,9 @@ def extract_phone_from_party_fields(block):
 
 def extract_party_phone_from_voucher(block, party_name):
     """
-    FIX 3 — Scoped phone extraction: Prevents the same phone number bleeding
-    into every voucher in a batch.
-
-    Strategy:
-      1. Find the specific <ALLLEDGERENTRIES.LIST> or <LEDGERENTRIES.LIST>
-         sub-block where LEDGERNAME exactly matches the party name.
-      2. Search for phone tags ONLY inside that sub-block.
-      3. If not found there, check top-level voucher phone tags (not nested
-         entry tags — they belong to OTHER parties like IGST/CGST ledgers).
-      4. Never search in narration, address, or free-text fields.
+    Scoped phone extraction from voucher XML:
+    1. Search inside the party's own <ALLLEDGERENTRIES.LIST> or <LEDGERENTRIES.LIST> sub-block.
+    2. Search inside top-level buyer/party tags and address lines.
     """
     # Step 1: Try to find the party's own ledger sub-block
     if party_name:
@@ -591,18 +596,15 @@ def extract_party_phone_from_voucher(block, party_name):
                     if phone:
                         return phone
 
-    # Step 2: Check top-level voucher phone tags (before first subledger entry)
+    # Step 2: Check top-level voucher phone tags and buyer address lines
     top_level_block = re.split(
         r'<(?:ALLLLEDGERENTRIES|ALLLEDGERENTRIES|LEDGERENTRIES)\.LIST',
         block, maxsplit=1, flags=re.IGNORECASE
     )[0]
 
-    for tag in ["BASICBUYERPHONE", "PARTYPHONE", "LEDMOBILE", "LEDPHONENO", "PHONENO", "MOBILENO"]:
-        val = extract_tag_value(top_level_block, tag)
-        if val:
-            phone = extract_phone(val)
-            if phone:
-                return phone
+    phone = extract_phone_from_party_fields(top_level_block)
+    if phone:
+        return phone
 
     return ""
 
@@ -659,7 +661,7 @@ def fetch_tally_ledger_phone_master(company_name: str = "") -> dict:
         <TDLMESSAGE>
           <COLLECTION NAME="MasterLedgerPhoneList" ISMODIFY="No">
             <TYPE>Ledger</TYPE>
-            <FETCH>NAME, PARENT, LEDMOBILE, LEDPHONENO, MOBILENO, PHONENO, CONTACTNO, GSTIN</FETCH>
+            <FETCH>NAME, PARENT, LEDGERMOBILE, LEDGERPHONE, LEDGERCONTACT, LEDMOBILE, LEDPHONENO, MOBILENO, PHONENO, CONTACTNO, MOBILENUMBER, PHONENUMBER, PARTYPHONE, ADDRESS, PINCODE, EMAIL, GSTIN</FETCH>
           </COLLECTION>
         </TDLMESSAGE>
       </TDL>
@@ -879,14 +881,23 @@ def parse_voucher_block(block, fallback_company: str = "", ledger_phone_map: dic
             "hsn": hsn,
         })
 
-    # Smart unique invoice numbering
+    # Smart unique invoice numbering with company scoping to prevent cross-company overwrite
+    comp_prefix = ""
+    if comp_name:
+        words = [w for w in re.split(r'[^a-zA-Z0-9]', comp_name) if w]
+        comp_prefix = "".join(w[0].upper() for w in words if len(w) > 1)[:4] or comp_name[:3].upper()
+
     if vch_number:
-        if vch_type and not any(c.isalpha() for c in str(vch_number)):
-            inv_code = f"{vch_type[:3].upper()}-{vch_number}"
-        else:
+        # If invoice number is already company-prefixed like SRP/0570/26-27 or SB/081/26-27, keep it as is!
+        if "/" in str(vch_number) or "-" in str(vch_number):
             inv_code = str(vch_number)
+        elif vch_type and not any(c.isalpha() for c in str(vch_number)):
+            # Purely numeric voucher e.g. 560 for Receipt -> SB-REC-560 or SRP-REC-560
+            inv_code = f"{comp_prefix}-{vch_type[:3].upper()}-{vch_number}" if comp_prefix else f"{vch_type[:3].upper()}-{vch_number}"
+        else:
+            inv_code = f"{comp_prefix}-{vch_number}" if comp_prefix and not str(vch_number).upper().startswith(comp_prefix) else str(vch_number)
     else:
-        inv_code = f"VCH-{(party or 'X')[:8]}-{abs(hash(party or '')) % 10000}"
+        inv_code = f"VCH-{(comp_prefix or 'X')}-{(party or 'X')[:6]}-{abs(hash((party or '') + (comp_name or ''))) % 10000}"
 
     # ─────────────────────────────────────────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────────
@@ -1930,23 +1941,27 @@ def generate_invoice_pdf(voucher: dict, org_profile: dict | None = None, single_
     ack_no   = voucher.get("ack_no") or "162625648066372"
     ack_date = voucher.get("ack_date") or "19-Aug-26"
 
+    # ── Official GST e-Invoice QR Code (Authentic B2B e-Invoice Format) ────────
+    # For corporate invoices, the top-right e-Invoice QR code encodes the authentic
+    # GST e-Invoice payload according to GSTN specifications (Seller GSTIN, Buyer GSTIN,
+    # Invoice Number, Date, Amount, HSN, IRN).
     custom_qr = org_profile.get("company_qr_code_url") or org_profile.get("company_qr_url")
     if custom_qr and (str(custom_qr).startswith("http") or "base64," in str(custom_qr)):
         qr_data = custom_qr
     else:
-        # Only generate a scannable UPI QR if the admin has set a valid UPI VPA
-        # (must contain '@'). An invalid/blank ID produces a QR that UPI apps reject.
-        upi_id = (org_profile.get("upi_id") or "").strip()
-        if upi_id and "@" in upi_id:
-            safe_pn = urllib.parse.quote(company_name)
-            safe_tr = re.sub(r'[^a-zA-Z0-9]', '', str(inv_number))
-            qr_data = f"upi://pay?pa={upi_id}&pn={safe_pn}&am={amount:.2f}&cu=INR&tr={safe_tr}"
-            log.debug(f"  [QR] UPI QR generated for VPA: {upi_id}")
-        else:
-            # No valid UPI configured — encode a human-readable fallback so the
-            # QR box still renders but clearly states to configure UPI in Settings.
-            qr_data = f"Pay to: {company_name}\nConfigure UPI ID in Settings"
-            log.debug(f"  [QR] No valid UPI VPA in company profile — using text placeholder")
+        qr_payload_dict = {
+            "SellerGSTN": company_gstin,
+            "BuyerGSTN": buyer_gstin,
+            "DocNo": str(inv_number),
+            "DocTyp": "INV",
+            "DocDt": str(inv_date),
+            "TotInvVal": round(amount, 2),
+            "ItemCnt": 1,
+            "MainHsnCode": str(hsn_code),
+            "Irn": irn_hash,
+        }
+        qr_data = json.dumps(qr_payload_dict, separators=(',', ':'))
+
 
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
