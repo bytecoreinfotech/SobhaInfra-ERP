@@ -8,87 +8,42 @@ import { getInvoices, logPaymentReminder } from '../lib/db';
 import { useCompany } from '../context/CompanyContext';
 import './Pages.css';
 
-/** Enhanced Accounting Transaction Classifier for Payments page */
+/** Accounting Transaction Classifier — trusts backend metadata.direction */
 const getDirection = (inv) => {
   const dir     = (inv?.metadata?.direction || inv?.direction || '').toLowerCase();
   const vtype   = (inv?.metadata?.voucher_type || inv?.voucher_type || '').toLowerCase();
-  const num     = (inv?.invoice_number || inv?.tally_voucher_number || '').toLowerCase();
   const status  = inv?.status || '';
 
-  const clientName = (inv?.client_name || inv?.tally_ledger || '').toLowerCase();
-
-  // 1. OUTGOING / VENDOR TRANSACTIONS
-  const isVendorTransaction = 
-    dir === 'paid_out' || 
-    dir === 'payable' ||
-    /^(pay|pmt|pur|drn)/.test(num) ||
-    ['payment', 'bank payment', 'cash payment', 'purchase', 'purchase order', 'vendor'].some(t => vtype.includes(t)) ||
-    ['pravin gundiya', 'nilesh enterprises', 'jai jalaram', 'driver', 'transport', 'tyre', 'diesel', 'petrol', 'cement', 'insurance', 'deposit', 'toll'].some(k => clientName.includes(k));
-
-  if (isVendorTransaction) {
-    if (status === 'Paid' || dir === 'paid_out') {
-      return { 
-        label: 'Paid Out', 
-        ArrowIcon: ArrowUpRight, 
-        color: '#f59e0b', 
-        bg: 'rgba(245,158,11,0.12)', 
-        title: 'Paid to Vendor — Outgoing payment completed', 
-        canRemind: false, 
-        isVendor: true 
-      };
+  // 1. Trust backend direction (set by tally-sync.py from Tally voucher types)
+  if (dir === 'paid_out') {
+    return { label: 'Paid Out', ArrowIcon: ArrowUpRight, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', title: 'Paid to Vendor — Outgoing payment completed', canRemind: false, isVendor: true };
+  }
+  if (dir === 'payable') {
+    return { label: 'Payable', ArrowIcon: ArrowUpRight, color: '#ef4444', bg: 'rgba(239,68,68,0.12)', title: 'Vendor Payable — Outstanding amount we owe to vendor', canRemind: false, isVendor: true };
+  }
+  if (dir === 'received') {
+    return { label: 'Received', ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', title: 'Customer Payment Received', canRemind: false, isVendor: false };
+  }
+  if (dir === 'receivable') {
+    if (status === 'Paid') {
+      return { label: 'Collected', ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', title: 'Sales Invoice Settled', canRemind: false, isVendor: false };
     }
-    return { 
-      label: 'Payable', 
-      ArrowIcon: ArrowUpRight, 
-      color: '#ef4444', 
-      bg: 'rgba(239,68,68,0.12)', 
-      title: 'Vendor Payable — Outstanding amount we owe to vendor', 
-      canRemind: false, 
-      isVendor: true 
-    };
+    return { label: 'Receivable', ArrowIcon: ArrowDownRight, color: '#6366f1', bg: 'rgba(99,102,241,0.12)', title: 'Customer Receivable', canRemind: true, isVendor: false };
   }
 
-  // 2. INCOMING / CUSTOMER SETTLEMENT
-  const isIncomingReceipt = 
-    dir === 'received' || 
-    /^(rcpt|rct|rec)/.test(num) ||
-    ['receipt', 'bank receipt', 'cash receipt'].some(t => vtype.includes(t));
-
-  if (isIncomingReceipt) {
-    return { 
-      label: 'Received', 
-      ArrowIcon: ArrowDownRight, 
-      color: '#10b981', 
-      bg: 'rgba(16,185,129,0.12)', 
-      title: 'Customer Payment Received', 
-      canRemind: false, 
-      isVendor: false 
-    };
+  // 2. Fallback: use voucher_type only (no keyword guessing)
+  if (['payment', 'bank payment', 'cash payment', 'purchase', 'purchase order'].some(t => vtype.includes(t))) {
+    return { label: 'Payable', ArrowIcon: ArrowUpRight, color: '#ef4444', bg: 'rgba(239,68,68,0.12)', title: 'Vendor Payable', canRemind: false, isVendor: true };
+  }
+  if (['receipt', 'bank receipt', 'cash receipt'].some(t => vtype.includes(t))) {
+    return { label: 'Received', ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', title: 'Customer Payment Received', canRemind: false, isVendor: false };
   }
 
-  // 3. SALES INVOICE SETTLED
+  // 3. Default: customer receivable
   if (status === 'Paid') {
-    return { 
-      label: 'Collected', 
-      ArrowIcon: ArrowDownRight, 
-      color: '#10b981', 
-      bg: 'rgba(16,185,129,0.12)', 
-      title: 'Sales Invoice Settled', 
-      canRemind: false, 
-      isVendor: false 
-    };
+    return { label: 'Collected', ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', title: 'Sales Invoice Settled', canRemind: false, isVendor: false };
   }
-
-  // 4. DEFAULT: OUTSTANDING RECEIVABLE
-  return { 
-    label: 'Receivable', 
-    ArrowIcon: ArrowDownRight, 
-    color: '#6366f1', 
-    bg: 'rgba(99,102,241,0.12)', 
-    title: 'Customer Receivable', 
-    canRemind: true, 
-    isVendor: false 
-  };
+  return { label: 'Receivable', ArrowIcon: ArrowDownRight, color: '#6366f1', bg: 'rgba(99,102,241,0.12)', title: 'Customer Receivable', canRemind: true, isVendor: false };
 };
 
 const Payments = () => {
@@ -195,7 +150,7 @@ const Payments = () => {
       <div className="stats-grid">
         {[
           { label: 'Overdue Amount', value: fmtAmount(totalOverdue), color: 'var(--danger)', bg: 'var(--danger-bg)', icon: <AlertTriangle size={20} />, count: customerOnly.filter(i => i.status === 'Overdue').length + ' invoices' },
-          { label: 'Pending Amount', value: fmtAmount(totalPending), color: 'var(--warning)', bg: 'var(--warning-bg)', icon: <Clock size={20} />, count: customerOnly.filter(i => i.status === 'Pending').length + ' invoices' },
+          { label: 'Not Yet Due', value: fmtAmount(totalPending), color: 'var(--warning)', bg: 'var(--warning-bg)', icon: <Clock size={20} />, count: customerOnly.filter(i => i.status === 'Pending').length + ' invoices' },
           { label: 'Collected (MTD)', value: fmtAmount(totalPaid), color: 'var(--success)', bg: 'var(--success-bg)', icon: <CheckCircle2 size={20} />, count: customerOnly.filter(i => i.status === 'Paid').length + ' invoices' },
           { label: 'Reminders Sent', value: sentIds.length + customerOnly.reduce((s, i) => s + (i.reminder_count || 0), 0), color: 'var(--whatsapp)', bg: 'var(--whatsapp-bg)', icon: <MessageCircle size={20} />, count: 'total logged' },
         ].map(s => (

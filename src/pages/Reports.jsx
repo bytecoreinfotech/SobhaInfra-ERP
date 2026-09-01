@@ -5,7 +5,26 @@ import {
   FileSpreadsheet, ExternalLink, Printer, Calendar
 } from 'lucide-react';
 import { getDashboardStats, getLeads, getCampaigns, getInvoices, getAutomationRuns, syncToGoogleSheets, exportLiveTableCsv } from '../lib/db';
+import { useCompany } from '../context/CompanyContext';
 import './Pages.css';
+
+// Accounting transaction classifier — trusts backend metadata.direction
+const getDirection = (inv) => {
+  const dir     = (inv?.metadata?.direction || inv?.direction || '').toLowerCase();
+  const vtype   = (inv?.metadata?.voucher_type || inv?.voucher_type || '').toLowerCase();
+
+  // 1. Trust backend direction (set by tally-sync.py from Tally voucher types)
+  if (dir === 'paid_out' || dir === 'payable') return { isVendor: true };
+  if (dir === 'received' || dir === 'receivable') return { isVendor: false };
+
+  // 2. Fallback: use voucher_type only (no keyword guessing)
+  if (['payment', 'bank payment', 'cash payment', 'purchase', 'purchase order'].some(t => vtype.includes(t))) {
+    return { isVendor: true };
+  }
+
+  // 3. Default: customer receivable
+  return { isVendor: false };
+};
 
 // ── Helper: build a date-range window from the period selector ───────────────
 function getPeriodWindow(period) {
@@ -33,15 +52,35 @@ function parseDate(str) {
 }
 
 const Reports = () => {
+  const { activeCompany, isConsolidated } = useCompany();
   const [period, setPeriod] = useState('month');
   const [loading, setLoading] = useState(true);
   const [leads, setLeads] = useState([]);
   const [campaigns, setCampaigns] = useState([]);
-  const [invoices, setInvoices] = useState([]);
+  const [allInvoices, setAllInvoices] = useState([]);
   const [autoRuns, setAutoRuns] = useState([]);
   const [stats, setStats] = useState(null);
   const [syncingSheets, setSyncingSheets] = useState(false);
   const [sheetSyncResult, setSheetSyncResult] = useState(null);
+
+  // ── Company-filtered invoices (same pattern as Finance/Dashboard/Payments) ──
+  const companyFilteredInvoices = isConsolidated
+    ? allInvoices
+    : allInvoices.filter(inv => {
+        if (!activeCompany) return true;
+        const compName = (activeCompany.company_name || '').toUpperCase();
+        const aliases = Array.isArray(activeCompany.alias_names) ? activeCompany.alias_names.map(a => a.toUpperCase()) : [];
+        const invCompany = (inv.company_name || inv.tally_company || '').toUpperCase();
+        if (!invCompany) return false;
+        return [compName, ...aliases].some(n => n && (invCompany.includes(n) || n.includes(invCompany)));
+      });
+
+  // ── Customer-only invoices (exclude vendor payables and LEDGER- closing balances) ──
+  const invoices = companyFilteredInvoices.filter(inv => {
+    const num = (inv?.invoice_number || inv?.tally_voucher_number || '').toUpperCase();
+    if (num.startsWith('LEDGER-')) return false;
+    return !getDirection(inv).isVendor;
+  });
 
   useEffect(() => { loadData(); }, []);
 
@@ -57,7 +96,7 @@ const Reports = () => {
     setStats(sRes.data || {});
     setLeads(lRes.data || []);
     setCampaigns(cRes.data || []);
-    setInvoices(iRes.data || []);
+    setAllInvoices(iRes.data || []);
     setAutoRuns(aRes.data || []);
     setLoading(false);
   };

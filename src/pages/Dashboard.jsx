@@ -13,21 +13,22 @@ import { useAuth } from '../context/AuthContext';
 import { useCompany } from '../context/CompanyContext';
 import './Pages.css';
 
-// Accounting transaction classifier for Dashboard
+// Accounting transaction classifier for Dashboard — trusts backend direction
 const getDirection = (inv) => {
   const dir     = (inv?.metadata?.direction || inv?.direction || '').toLowerCase();
   const vtype   = (inv?.metadata?.voucher_type || inv?.voucher_type || '').toLowerCase();
-  const num     = (inv?.invoice_number || inv?.tally_voucher_number || '').toLowerCase();
-  const clientName = (inv?.client_name || inv?.tally_ledger || '').toLowerCase();
 
-  const isVendorTransaction = 
-    dir === 'paid_out' || 
-    dir === 'payable' ||
-    /^(pay|pmt|pur|drn)/.test(num) ||
-    ['payment', 'bank payment', 'cash payment', 'purchase', 'purchase order', 'vendor'].some(t => vtype.includes(t)) ||
-    ['pravin gundiya', 'nilesh enterprises', 'jai jalaram', 'driver', 'transport', 'tyre', 'diesel', 'petrol', 'cement', 'insurance', 'deposit', 'toll'].some(k => clientName.includes(k));
+  // 1. Trust backend direction (set by tally-sync.py from Tally voucher types)
+  if (dir === 'paid_out' || dir === 'payable') return { isVendor: true };
+  if (dir === 'received' || dir === 'receivable') return { isVendor: false };
 
-  return { isVendor: isVendorTransaction };
+  // 2. Fallback: use voucher_type only (no keyword guessing)
+  if (['payment', 'bank payment', 'cash payment', 'purchase', 'purchase order'].some(t => vtype.includes(t))) {
+    return { isVendor: true };
+  }
+
+  // 3. Default: customer receivable
+  return { isVendor: false };
 };
 
 const Dashboard = () => {
@@ -317,8 +318,8 @@ const Dashboard = () => {
           <div className="stat-card animate-slide-up" style={{ '--card-accent': 'var(--danger)' }}>
             <div className="stat-header">
               <div>
-                <div className="stat-label">Pending Receivables</div>
-                <div className="stat-value">{fmtAmount(pendingAmount)}</div>
+                <div className="stat-label">Outstanding Receivables</div>
+                <div className="stat-value">{fmtAmount(overdueAmount + pendingAmount)}</div>
               </div>
               <div className="stat-icon" style={{ background: 'var(--danger-bg)' }}>
                 <CreditCard size={22} style={{ color: 'var(--danger)' }} />
@@ -326,11 +327,11 @@ const Dashboard = () => {
             </div>
             <div className="stat-footer">
               {overdueInvoices > 0 ? (
-                <span className="stat-trend down"><ArrowDownRight size={13} /> {overdueInvoices} Overdue ({fmtAmount(overdueAmount)})</span>
+                <span className="stat-trend down"><ArrowDownRight size={13} /> {fmtAmount(overdueAmount)} Overdue</span>
               ) : (
                 <span className="stat-trend up" style={{ color: 'var(--success)' }}><CheckCircle2 size={13} /> 0 Overdue</span>
               )}
-              <span className="stat-period">{customerInvoices.length} Customer Invoices</span>
+              <span className="stat-period">{fmtAmount(pendingAmount)} Not Yet Due</span>
             </div>
           </div>
         )}

@@ -57,80 +57,60 @@ const getDirection = (inv) => {
   const num     = (inv?.invoice_number || inv?.tally_voucher_number || '').toLowerCase();
   const status  = inv?.status || '';
 
-  const clientName = (inv?.client_name || inv?.tally_ledger || '').toLowerCase();
+  // ═══════════════════════════════════════════════════════════════════════════
+  // AUTHORITATIVE CLASSIFICATION: Trust backend direction field from tally-sync.py
+  // The backend sets direction precisely based on Tally voucher types:
+  //   - "receivable" = Sales invoice (customer owes us)
+  //   - "received"   = Receipt voucher (customer paid us)
+  //   - "payable"    = Purchase invoice (we owe vendor)
+  //   - "paid_out"   = Payment voucher (we paid vendor)
+  // Only fall back to heuristics when direction is missing (old/manual data).
+  // ═══════════════════════════════════════════════════════════════════════════
 
-  // 1. OUTGOING / VENDOR TRANSACTIONS (My client pays money OUT to vendor/supplier)
-  const isVendorTransaction = 
-    dir === 'paid_out' || 
-    dir === 'payable' ||
-    /^(pay|pmt|pur|drn)/.test(num) ||
-    ['payment', 'bank payment', 'cash payment', 'purchase', 'purchase order', 'vendor'].some(t => vtype.includes(t)) ||
-    ['pravin gundiya', 'nilesh enterprises', 'jai jalaram', 'driver', 'transport', 'tyre', 'diesel', 'petrol', 'cement', 'insurance', 'deposit', 'toll'].some(k => clientName.includes(k));
-
-  if (isVendorTransaction) {
-    if (status === 'Paid' || dir === 'paid_out') {
-      return { 
-        label: 'Paid Out', 
-        ArrowIcon: ArrowUpRight, 
-        color: '#f59e0b', 
-        bg: 'rgba(245,158,11,0.12)', 
-        title: 'Paid to Vendor — Outgoing payment completed', 
-        canRemind: false, 
-        isVendor: true 
-      };
+  // 1. BACKEND DIRECTION IS SET → use it directly (most reliable)
+  if (dir === 'paid_out') {
+    return { label: 'Paid Out', ArrowIcon: ArrowUpRight, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', title: 'Paid to Vendor — Outgoing payment completed', canRemind: false, isVendor: true };
+  }
+  if (dir === 'payable') {
+    if (status === 'Paid') {
+      return { label: 'Paid Out', ArrowIcon: ArrowUpRight, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', title: 'Vendor Payable — Settled', canRemind: false, isVendor: true };
     }
-    return { 
-      label: 'Payable', 
-      ArrowIcon: ArrowUpRight, 
-      color: '#ef4444', 
-      bg: 'rgba(239,68,68,0.12)', 
-      title: 'Vendor Payable — Outstanding amount we owe to vendor', 
-      canRemind: false, 
-      isVendor: true 
-    };
+    return { label: 'Payable', ArrowIcon: ArrowUpRight, color: '#ef4444', bg: 'rgba(239,68,68,0.12)', title: 'Vendor Payable — Outstanding amount we owe to vendor', canRemind: false, isVendor: true };
+  }
+  if (dir === 'received') {
+    return { label: 'Received', ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', title: 'Customer Payment Received — Money collected into our account', canRemind: false, isVendor: false };
+  }
+  if (dir === 'receivable') {
+    if (status === 'Paid') {
+      return { label: 'Collected', ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', title: 'Sales Invoice Collected — Customer has fully paid', canRemind: false, isVendor: false };
+    }
+    return { label: 'Receivable', ArrowIcon: ArrowDownRight, color: '#6366f1', bg: 'rgba(99,102,241,0.12)', title: 'Customer Receivable — Outstanding amount customer owes us', canRemind: true, isVendor: false };
   }
 
-  // 2. INCOMING / CUSTOMER SETTLEMENT (Customer paid money IN to us)
-  const isIncomingReceipt = 
-    dir === 'received' || 
-    /^(rcpt|rct|rec)/.test(num) ||
+  // 2. FALLBACK: direction not set (old data, manual entries, LEDGER- records)
+  //    Use voucher_type as secondary signal (no keyword guessing!)
+  const isVendorByVoucherType =
+    ['payment', 'bank payment', 'cash payment', 'purchase', 'purchase order'].some(t => vtype.includes(t));
+
+  if (isVendorByVoucherType) {
+    if (status === 'Paid') {
+      return { label: 'Paid Out', ArrowIcon: ArrowUpRight, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', title: 'Paid to Vendor — Outgoing payment completed', canRemind: false, isVendor: true };
+    }
+    return { label: 'Payable', ArrowIcon: ArrowUpRight, color: '#ef4444', bg: 'rgba(239,68,68,0.12)', title: 'Vendor Payable — Outstanding amount we owe to vendor', canRemind: false, isVendor: true };
+  }
+
+  const isReceiptByVoucherType =
     ['receipt', 'bank receipt', 'cash receipt'].some(t => vtype.includes(t));
 
-  if (isIncomingReceipt) {
-    return { 
-      label: 'Received', 
-      ArrowIcon: ArrowDownRight, 
-      color: '#10b981', 
-      bg: 'rgba(16,185,129,0.12)', 
-      title: 'Customer Payment Received — Money collected into our account', 
-      canRemind: false, 
-      isVendor: false 
-    };
+  if (isReceiptByVoucherType) {
+    return { label: 'Received', ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', title: 'Customer Payment Received — Money collected into our account', canRemind: false, isVendor: false };
   }
 
-  // 3. SALES INVOICE SETTLED (Customer has paid their sales invoice)
+  // 3. LAST RESORT: no direction, no voucher_type → default to customer receivable
   if (status === 'Paid') {
-    return { 
-      label: 'Collected', 
-      ArrowIcon: ArrowDownRight, 
-      color: '#10b981', 
-      bg: 'rgba(16,185,129,0.12)', 
-      title: 'Sales Invoice Collected — Customer has fully paid', 
-      canRemind: false, 
-      isVendor: false 
-    };
+    return { label: 'Collected', ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', title: 'Sales Invoice Collected — Customer has fully paid', canRemind: false, isVendor: false };
   }
-
-  // 4. DEFAULT: OUTSTANDING CUSTOMER RECEIVABLE (Customer owes us money)
-  return { 
-    label: 'Receivable', 
-    ArrowIcon: ArrowDownRight, 
-    color: '#6366f1', 
-    bg: 'rgba(99,102,241,0.12)', 
-    title: 'Customer Receivable — Outstanding amount customer owes us', 
-    canRemind: true, 
-    isVendor: false 
-  };
+  return { label: 'Receivable', ArrowIcon: ArrowDownRight, color: '#6366f1', bg: 'rgba(99,102,241,0.12)', title: 'Customer Receivable — Outstanding amount customer owes us', canRemind: true, isVendor: false };
 };
 
 const Finance = () => {
@@ -723,13 +703,9 @@ const Finance = () => {
             {(financeView === 'receivables' ? [
               { label: 'Total Billed to Customers', value: fmtCurrency(totalInvoiced), sub: `${activeViewInvoices.length} invoices`, icon: <DollarSign size={20} />, color: '#6366f1', bg: 'rgba(99,102,241,0.12)' },
               { label: 'Collected (Paid)', value: fmtCurrency(totalPaid), sub: `${activeViewInvoices.filter(i => i.status === 'Paid').length} paid`, icon: <TrendingUp size={20} />, color: '#10b981', bg: 'rgba(16,185,129,0.12)' },
-              { label: 'Overdue from Customers', value: fmtCurrency(totalOverdue), sub: `${activeViewInvoices.filter(i => i.status === 'Overdue').length} overdue`, icon: <AlertTriangle size={20} />, color: '#ef4444', bg: 'rgba(239,68,68,0.12)' },
-              { label: 'Pending Receivable', value: fmtCurrency(totalPending), sub: `${activeViewInvoices.filter(i => i.status === 'Pending').length} pending`, icon: <Clock size={20} />, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)' },
             ] : [
               { label: 'Total Vendor Bills', value: fmtCurrency(totalInvoiced), sub: `${activeViewInvoices.length} bills`, icon: <DollarSign size={20} />, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)' },
               { label: 'Paid Out to Vendors', value: fmtCurrency(totalPaid), sub: `${activeViewInvoices.filter(i => i.status === 'Paid').length} paid`, icon: <TrendingUp size={20} />, color: '#10b981', bg: 'rgba(16,185,129,0.12)' },
-              { label: 'Overdue Vendor Bills', value: fmtCurrency(totalOverdue), sub: `${activeViewInvoices.filter(i => i.status === 'Overdue').length} overdue`, icon: <AlertTriangle size={20} />, color: '#ef4444', bg: 'rgba(239,68,68,0.12)' },
-              { label: 'Pending Payable', value: fmtCurrency(totalPending), sub: `${activeViewInvoices.filter(i => i.status === 'Pending').length} pending`, icon: <Clock size={20} />, color: '#d97706', bg: 'rgba(217,119,6,0.12)' },
             ]).map(s => (
               <div key={s.label} className="stat-card" style={{ '--card-accent': s.color }}>
                 <div className="stat-header">
@@ -742,7 +718,85 @@ const Finance = () => {
                 </div>
               </div>
             ))}
+
+            {/* ═══ TOTAL OUTSTANDING BOX — groups Overdue + Not Yet Due ═══ */}
+            <div style={{
+              gridColumn: 'span 2',
+              background: 'var(--bg-secondary)',
+              border: '1px solid var(--border-color)',
+              borderRadius: 'var(--radius-lg)',
+              padding: '1rem 1.25rem',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '0.75rem',
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                    {financeView === 'receivables' ? 'Total Outstanding from Customers' : 'Total Outstanding to Vendors'}
+                  </div>
+                  <div style={{ fontSize: '1.65rem', fontWeight: 800, color: 'var(--text-primary)', marginTop: '0.15rem' }}>
+                    {fmtCurrency(totalOverdue + totalPending)}
+                  </div>
+                  <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '0.1rem' }}>
+                    {activeViewInvoices.filter(i => i.status === 'Overdue' || i.status === 'Pending').length} unpaid invoices — Outstanding = Overdue + Not Yet Due
+                  </div>
+                </div>
+                <div style={{
+                  width: 44, height: 44, borderRadius: 12,
+                  background: 'rgba(239,68,68,0.1)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}>
+                  <AlertTriangle size={22} style={{ color: '#ef4444' }} />
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '0.75rem' }}>
+                {/* Overdue sub-card */}
+                <div style={{
+                  flex: 1,
+                  background: 'rgba(239,68,68,0.08)',
+                  border: '1px solid rgba(239,68,68,0.2)',
+                  borderRadius: 'var(--radius-md)',
+                  padding: '0.65rem 0.85rem',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', marginBottom: '0.3rem' }}>
+                    <AlertTriangle size={14} style={{ color: '#ef4444' }} />
+                    <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#ef4444', textTransform: 'uppercase', letterSpacing: '0.3px' }}>
+                      {financeView === 'receivables' ? 'Overdue (Past Due Date)' : 'Overdue Vendor Bills'}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#ef4444' }}>
+                    {fmtCurrency(totalOverdue)}
+                  </div>
+                  <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
+                    {activeViewInvoices.filter(i => i.status === 'Overdue').length} invoices past due date
+                  </div>
+                </div>
+                {/* Not Yet Due sub-card */}
+                <div style={{
+                  flex: 1,
+                  background: 'rgba(245,158,11,0.08)',
+                  border: '1px solid rgba(245,158,11,0.2)',
+                  borderRadius: 'var(--radius-md)',
+                  padding: '0.65rem 0.85rem',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', marginBottom: '0.3rem' }}>
+                    <Clock size={14} style={{ color: '#f59e0b' }} />
+                    <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#f59e0b', textTransform: 'uppercase', letterSpacing: '0.3px' }}>
+                      {financeView === 'receivables' ? 'Not Yet Due (Pending)' : 'Pending Payable'}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#f59e0b' }}>
+                    {fmtCurrency(totalPending)}
+                  </div>
+                  <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
+                    {activeViewInvoices.filter(i => i.status === 'Pending').length} invoices not yet due
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
+
 
           {/* ── Search & Filter Bar ─────────────────────────────────── */}
           <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap', alignItems: 'center' }}>
