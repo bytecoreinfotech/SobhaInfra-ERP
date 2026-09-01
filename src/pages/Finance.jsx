@@ -1778,152 +1778,50 @@ const Finance = () => {
                   className="btn btn-secondary btn-sm"
                   style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.75rem', padding: '0.3rem 0.65rem' }}
                   onClick={() => {
-                    const samplePdf = previewPdfUrl || allInvoices.find(i => i.pdf_url)?.pdf_url;
-                    if (samplePdf) {
-                      window.open(samplePdf, '_blank');
-                      return;
-                    }
                     const printWindow = window.open('', '_blank');
                     if (!printWindow) return;
+                    const contentEl = document.getElementById('template-preview-content');
+                    const innerHtml = contentEl ? contentEl.innerHTML : '';
                     const compName = activeCompany?.company_name || 'SHOBHA READY PLAST';
-                    const compAddr = activeCompany?.company_address || 'NH48, NEAR KOLEI KHADI SARODHI, VALSAD, GUJARAT - 396001';
-                    const compEmail = activeCompany?.admin_email || 'shobhareadyplast@gmail.com';
-                    const compPhone = activeCompany?.contact_phone || '+91 98765 43210';
-                    const compGstin = activeCompany?.gstin_number || '24AGCPJ2785R1ZV';
-                    const compState = `${activeCompany?.state_name || 'Gujarat'} (${activeCompany?.state_code || '24'})`;
-                    const logoHtml = activeCompany?.company_logo_url
-                      ? `<img src="${activeCompany.company_logo_url}" style="width:56px;height:56px;object-fit:contain;border-radius:6px;border:1px solid #e2e8f0;padding:2px;" alt="Logo" />`
-                      : `<div style="width:56px;height:56px;background:#f59e0b;color:white;font-weight:800;font-size:20px;display:flex;align-items:center;justify-content:center;border-radius:8px;">${compName.slice(0, 2).toUpperCase()}</div>`;
+                    const tabNames = {
+                      tax_invoice: 'Complete 2-Page Consignment Bill (Invoice + e-Way Bill)',
+                      eway_bill: 'Standard e-Way Bill (Conveyance Permit)',
+                      pending_bills: 'Bill-wise Pending Bills Statement',
+                      ledger_account: 'Customer Ledger Account',
+                    };
+                    const docTitle = `${compName} - ${tabNames[selectedTemplateTab] || 'Commercial Document'}`;
 
                     printWindow.document.write(`
                       <!DOCTYPE html>
                       <html>
                       <head>
-                        <title>${compName} - Consignment Tax Invoice & e-Way Bill</title>
+                        <title>${docTitle}</title>
                         <style>
-                          @page { size: A4 portrait; margin: 10mm; }
-                          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; font-size: 11px; color: #111; line-height: 1.35; margin: 0; padding: 20px; background: #f8fafc; }
-                          .page-card { max-width: 800px; margin: 0 auto 24px auto; background: white; padding: 24px; border-radius: 6px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-                          .tbl { width: 100%; border-collapse: collapse; border: 1px solid #374151; font-size: 10px; }
-                          .tbl th, .tbl td { border: 1px solid #374151; padding: 4px 6px; }
-                          .tbl th { background: #f9fafb; font-weight: 700; text-align: left; }
+                          @page { size: A4 portrait; margin: 8mm; }
+                          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; font-size: 11px; color: #111; line-height: 1.35; margin: 0; padding: 20px; background: #cbd5e1; display: flex; flex-direction: column; align-items: center; }
+                          .no-print { width: 100%; max-width: 780px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; background: #1e293b; color: white; padding: 12px 18px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+                          .print-btn { background: #6366f1; color: white; border: none; padding: 8px 16px; border-radius: 6px; font-weight: 700; cursor: pointer; font-size: 13px; }
+                          .print-btn:hover { background: #4f46e5; }
                           @media print {
                             body { background: white; padding: 0; }
-                            .page-card { box-shadow: none; padding: 0; margin: 0 0 20mm 0; page-break-after: always; }
                             .no-print { display: none !important; }
                           }
                         </style>
                       </head>
                       <body>
-                        <div class="no-print" style="max-width:800px;margin:0 auto 16px auto;display:flex;justify-content:space-between;align-items:center;background:#1e293b;color:white;padding:10px 16px;border-radius:8px;">
-                          <span style="font-weight:600;font-size:13px;">Official 2-Page Consignment Document (Invoice + e-Way Bill)</span>
-                          <button onclick="window.print()" style="background:#6366f1;color:white;border:none;padding:6px 14px;border-radius:6px;font-weight:700;cursor:pointer;font-size:12px;">🖨️ Print / Save as PDF</button>
+                        <div class="no-print">
+                          <span style="font-weight:700;font-size:14px;">${docTitle}</span>
+                          <button class="print-btn" onclick="window.print()">🖨️ Print / Save as PDF</button>
                         </div>
-                        <div class="page-card">
-                          <div style="text-align:right;font-size:10px;color:#94a3b8;font-weight:700;margin-bottom:4px;">PAGE 1 OF 2</div>
-                          <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #111;padding-bottom:10px;">
-                            <div style="display:flex;gap:12px;align-items:center;">
-                              ${logoHtml}
-                              <div>
-                                <div style="font-size:18px;font-weight:800;">${compName}</div>
-                                <div style="font-size:9.5px;color:#4b5563;">${compAddr}</div>
-                                <div style="font-size:9.5px;color:#4b5563;">Email: ${compEmail} | Phone: ${compPhone}</div>
-                                <div style="font-size:9.5px;font-weight:700;">GSTIN: ${compGstin} | State: ${compState}</div>
-                              </div>
-                            </div>
-                            <div style="text-align:right;">
-                              <div style="font-size:14px;font-weight:800;">Tax Invoice &nbsp;<span style="font-size:12px;color:#6b7280;">e-Invoice</span></div>
-                              <img src="https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=%7B%22DocNo%22%3A%22SRP%2F0570%2F26-27%22%2C%22TotVal%22%3A74962.0%7D" style="width:60px;height:60px;margin-top:4px;border:1px solid #cbd5e1;" alt="QR" />
-                            </div>
-                          </div>
-                          <div style="background:#f9fafb;border:1px solid #374151;border-top:none;padding:4px 8px;font-size:9.5px;">
-                            <div><strong>IRN :</strong> a45684e7e4ef9d7c7c9b29e3cf08d0919d11d1df3db16-13f50f26c11e0e32e6c</div>
-                            <div><strong>Ack No. :</strong> 162625648066372 &nbsp;&nbsp;&nbsp;&nbsp; <strong>Ack Date :</strong> 19-Aug-26</div>
-                          </div>
-                          <div style="display:grid;grid-template-columns:1fr 1fr;border:1px solid #374151;border-top:none;font-size:10px;">
-                            <div style="padding:8px;border-right:1px solid #374151;">
-                              <div style="color:#6b7280;font-weight:700;">Details of Buyer / Billed To</div>
-                              <div style="font-size:13px;font-weight:800;">VAISHNAV CONSTRUCTION</div>
-                              <div style="color:#374151;">DEU APARTMENT, SHOP NO 4, KHET UPPER VILLEGE, THANE WEST</div>
-                              <div><strong>State Name :</strong> Maharashtra, <strong>Code :</strong> 27</div>
-                              <div><strong>GSTIN/UIN :</strong> 27ALPRP4116L1ZM</div>
-                              <div style="margin-top:4px;"><strong>ORDER NO. :</strong> PO-9912 &nbsp;|&nbsp; <strong>Dispatched through :</strong> Road</div>
-                            </div>
-                            <div style="padding:8px;">
-                              <div style="color:#6b7280;font-weight:700;">Detail of Consignee / Shipped To</div>
-                              <div style="font-size:13px;font-weight:800;">VAISHNAV CONSTRUCTION</div>
-                              <div style="color:#374151;">DEU APARTMENT, SHOP NO 4, KHET UPPER VILLEGE, THANE WEST</div>
-                              <div><strong>BILL NO. :</strong> <strong>SRP/0570/26-27</strong> &nbsp;|&nbsp; <strong>Dated :</strong> 10-Aug-26</div>
-                              <div><strong>Delivery Note :</strong> DN-0570 &nbsp;|&nbsp; <strong>CREDIT DAYS :</strong> 30 Days</div>
-                            </div>
-                          </div>
-                          <table class="tbl" style="border-top:none;">
-                            <thead>
-                              <tr style="text-align:center;">
-                                <th style="width:30px;">Sl</th><th>Description of Goods</th><th style="width:65px;">HSN/SAC</th><th style="width:75px;">Truck No</th><th style="width:55px;">Challan</th><th style="width:55px;">Site</th><th style="width:65px;">Quantity</th><th style="width:55px;text-align:right;">Rate</th><th style="width:45px;">per</th><th style="width:75px;text-align:right;">Amount</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              <tr>
-                                <td style="text-align:center;">1</td><td><strong>SAND & READY PLAST</strong></td><td style="text-align:center;">25051011</td><td style="text-align:center;">MH04-4550</td><td style="text-align:center;">10199</td><td style="text-align:center;">THANE</td><td style="text-align:center;"><strong>776 BAGS</strong></td><td style="text-align:right;">92.00</td><td style="text-align:center;">BAGS</td><td style="text-align:right;"><strong>71,392.00</strong></td>
-                              </tr>
-                              <tr><td colspan="9" style="text-align:right;font-weight:700;">OUTPUT IGST (5%)</td><td style="text-align:right;font-weight:700;">3,569.60</td></tr>
-                              <tr><td colspan="9" style="text-align:right;font-weight:700;">ROUND OFF</td><td style="text-align:right;">0.40</td></tr>
-                              <tr style="background:#f9fafb;font-weight:800;font-size:11px;"><td colspan="6">Total</td><td style="text-align:center;">776 BAGS</td><td colspan="2"></td><td style="text-align:right;">₹ 74,962.00</td></tr>
-                            </tbody>
-                          </table>
-                          <div style="border:1px solid #374151;border-top:none;padding:6px 8px;display:flex;justify-content:space-between;font-size:10px;">
-                            <div>Amount Chargeable (in words):<br/><strong>INR Seventy Four Thousand Nine Hundred Sixty Two Only</strong></div><div><strong>E. & O.E</strong></div>
-                          </div>
-                          <table class="tbl" style="border-top:none;font-size:9.5px;">
-                            <thead><tr><th>HSN/SAC</th><th style="text-align:right;">Taxable Value</th><th style="text-align:center;">IGST Rate</th><th style="text-align:right;">IGST Amount</th><th style="text-align:right;">Total Tax Amount</th></tr></thead>
-                            <tbody><tr><td style="text-align:center;">25051011</td><td style="text-align:right;">71,392.00</td><td style="text-align:center;">5%</td><td style="text-align:right;">3,569.60</td><td style="text-align:right;">3,569.60</td></tr></tbody>
-                          </table>
-                          <div style="display:grid;grid-template-columns:1.2fr 0.8fr;border:1px solid #374151;border-top:none;font-size:9px;padding:6px 8px;">
-                            <div><strong>TERMS & CONDITIONS:</strong><br/>• Unpaid Invoice Will Be Charged 24% P.A. Interest After Given Credit Days.<br/>• Goods Once Sold Will Not Be Taken Back.<br/>• All Cheque and Remittance To Be Made / Payable to "${compName}"</div>
-                            <div style="text-align:right;"><div>For <strong>${compName}</strong></div><div style="height:32px;"></div><strong>Authorised Signatory</strong></div>
-                          </div>
-                        </div>
-
-                        <!-- PAGE 2 -->
-                        <div class="page-card">
-                          <div style="text-align:right;font-size:10px;color:#94a3b8;font-weight:700;margin-bottom:4px;">PAGE 2 OF 2 (TRANSPORTER / TRUCK CONVEYANCE)</div>
-                          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-                            <div style="font-size:16px;font-weight:800;">e-Way Bill</div>
-                            <div style="text-align:right;">
-                              <div style="font-weight:700;font-size:11px;">e-Way Bill</div>
-                              <img src="https://api.qrserver.com/v1/create-qr-code/?size=100x100&data=%7B%22EWB%22%3A%22602165786131%22%7D" style="width:50px;height:50px;border:1px solid #cbd5e1;" alt="EWB QR" />
-                            </div>
-                          </div>
-                          <div style="font-size:9.5px;margin-bottom:10px;">
-                            <div><strong>Doc No. :</strong> Tax Invoice - SRP/0570/26-27 &nbsp;|&nbsp; <strong>Date :</strong> 10-Aug-26</div>
-                            <div><strong>IRN :</strong> a45684e7e4ef9d7c7c9b29e3cf08d0919d11d1df3db1613f50f26c11e0e32e6c</div>
-                          </div>
-                          <div style="font-weight:700;border-bottom:1px solid #111;padding-bottom:2px;margin-bottom:6px;">1. e-Way Bill Details</div>
-                          <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:6px;font-size:9.5px;margin-bottom:12px;">
-                            <div><strong>e-Way Bill No.:</strong> 602165786131</div><div><strong>Mode :</strong> 1 - Road</div><div><strong>Generated Date :</strong> 19-Aug-26 10:30 AM</div>
-                            <div><strong>Generated By :</strong> ${compGstin}</div><div><strong>Approx Distance :</strong> 176 KM</div><div><strong>Valid Upto :</strong> 20-Aug-26 11:59 PM</div>
-                          </div>
-                          <div style="font-weight:700;border-bottom:1px solid #111;padding-bottom:2px;margin-bottom:6px;">2. Address Details</div>
-                          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:9.5px;margin-bottom:12px;">
-                            <div><strong>From:</strong> ${compName} (GSTIN: ${compGstin}, Gujarat)<br/><strong>Dispatch From:</strong> ${compAddr}</div>
-                            <div><strong>To:</strong> VAISHNAV CONSTRUCTION (GSTIN: 27ALPRP4116L1ZM, Maharashtra)<br/><strong>Ship To:</strong> DEU APARTMENT, SHOP NO 4, KOLShet UPPER VILLEGE, THANE WEST, 400607</div>
-                          </div>
-                          <div style="font-weight:700;border-bottom:1px solid #111;padding-bottom:2px;margin-bottom:6px;">3. Goods & Transportation Details</div>
-                          <table class="tbl" style="margin-bottom:12px;">
-                            <thead><tr><th>HSN Code</th><th>Product Name & Desc</th><th style="text-align:center;">Quantity</th><th style="text-align:right;">Taxable Amt</th><th style="text-align:center;">Tax Rate (%)</th></tr></thead>
-                            <tbody><tr><td>25051011</td><td>SAND & READY PLAST</td><td style="text-align:center;">776 BAG</td><td style="text-align:right;">71,392.00</td><td style="text-align:center;">5%</td></tr></tbody>
-                          </table>
-                          <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:6px;font-size:9.5px;">
-                            <div><strong>Transporter:</strong> SHOBHA TRANSPORT</div><div><strong>Vehicle No.:</strong> MH04-4550</div><div><strong>From:</strong> Valsad, GUJARAT</div>
-                          </div>
+                        <div style="width: 100%; max-width: 780px;">
+                          ${innerHtml}
                         </div>
                       </body>
                       </html>
                     `);
                     printWindow.document.close();
                   }}
-                  title="Open Document in New Tab"
+                  title="Open Selected Document in New Tab"
                 >
                   <ExternalLink size={13} /> Open in New Tab
                 </button>
@@ -1958,7 +1856,7 @@ const Finance = () => {
             </div>
 
             {/* Template Content Viewer */}
-            <div style={{ flex: 1, overflowY: 'auto', padding: '1.25rem', display: 'flex', justifyContent: 'center', background: '#cbd5e1' }}>
+            <div id="template-preview-content" style={{ flex: 1, overflowY: 'auto', padding: '1.25rem', display: 'flex', justifyContent: 'center', background: '#cbd5e1' }}>
               
               {/* TAB 1: 2-PAGE CONSIGNMENT BILL (TAX INVOICE + E-WAY BILL) */}
               {selectedTemplateTab === 'tax_invoice' && (
