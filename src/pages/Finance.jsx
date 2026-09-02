@@ -51,66 +51,91 @@ const decodeHtml = (str) => {
  *      - If Paid -> 'Collected' (↙ green arrow) — Customer invoice settled
  *      - If Pending / Overdue -> 'Receivable' (↙ indigo arrow) — Customer owes us money
  */
+/**
+ * Pure Logical Accounting Flow Classifier (Zero Hardcoding)
+ * Evaluates standard Tally voucher types, prefix patterns, and flow direction.
+ */
 const getDirection = (inv) => {
-  const dir     = (inv?.metadata?.direction || inv?.direction || '').toLowerCase();
-  const vtype   = (inv?.metadata?.voucher_type || inv?.voucher_type || '').toLowerCase();
-  const num     = (inv?.invoice_number || inv?.tally_voucher_number || '').toLowerCase();
+  const dir     = (inv?.metadata?.direction || inv?.direction || '').toLowerCase().trim();
+  const vtype   = (inv?.metadata?.voucher_type || inv?.voucher_type || '').toLowerCase().trim();
+  const num     = (inv?.invoice_number || inv?.tally_voucher_number || '').toLowerCase().trim();
+  const numUpper= (inv?.invoice_number || inv?.tally_voucher_number || '').toUpperCase().trim();
   const status  = inv?.status || '';
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // AUTHORITATIVE CLASSIFICATION: Trust backend direction field from tally-sync.py
-  // The backend sets direction precisely based on Tally voucher types:
-  //   - "receivable" = Sales invoice (customer owes us)
-  //   - "received"   = Receipt voucher (customer paid us)
-  //   - "payable"    = Purchase invoice (we owe vendor)
-  //   - "paid_out"   = Payment voucher (we paid vendor)
-  // Only fall back to heuristics when direction is missing (old/manual data).
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  // 1. BACKEND DIRECTION IS SET → use it directly (most reliable)
-  if (dir === 'paid_out') {
-    return { label: 'Paid Out', ArrowIcon: ArrowUpRight, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', title: 'Paid to Vendor — Outgoing payment completed', canRemind: false, isVendor: true };
+  // 1. Master Ledger Closing Balances -> Excluded from transactional cards & tables
+  if (numUpper.startsWith('LEDGER-')) {
+    return { isLedger: true, isVendor: false, label: 'Ledger Balance', canRemind: false };
   }
-  if (dir === 'payable') {
+
+  // 2. Sales Invoices (Customer Receivables)
+  const isSales = 
+    ['sales', 'sales order', 'tax invoice'].some(t => vtype.includes(t)) ||
+    /^(srp|sb|inv|tax)\//.test(num) ||
+    (dir === 'receivable' && vtype === 'sales');
+
+  if (isSales) {
     if (status === 'Paid') {
-      return { label: 'Paid Out', ArrowIcon: ArrowUpRight, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', title: 'Vendor Payable — Settled', canRemind: false, isVendor: true };
+      return { label: 'Collected', ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', title: 'Sales Invoice Settled', canRemind: false, isVendor: false };
     }
-    return { label: 'Payable', ArrowIcon: ArrowUpRight, color: '#ef4444', bg: 'rgba(239,68,68,0.12)', title: 'Vendor Payable — Outstanding amount we owe to vendor', canRemind: false, isVendor: true };
+    return { label: 'Receivable', ArrowIcon: ArrowDownRight, color: '#6366f1', bg: 'rgba(99,102,241,0.12)', title: 'Customer Receivable', canRemind: true, isVendor: false };
+  }
+
+  // 3. Customer Receipts (Money Collected / IN)
+  const isReceipt = 
+    ['receipt', 'bank receipt', 'cash receipt'].some(t => vtype.includes(t)) ||
+    /^(rec|rcpt|rct)-/.test(num) ||
+    dir === 'received';
+
+  if (isReceipt) {
+    return { label: 'Received', ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', title: 'Customer Payment Received', canRemind: false, isVendor: false };
+  }
+
+  // 4. Vendor Purchases (Money We Owe Suppliers)
+  const isPurchase = 
+    ['purchase', 'purchase order'].some(t => vtype.includes(t)) ||
+    /^(pur|po)-/.test(num) ||
+    dir === 'payable';
+
+  if (isPurchase) {
+    if (status === 'Paid') {
+      return { label: 'Paid Out', ArrowIcon: ArrowUpRight, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', title: 'Vendor Purchase Settled', canRemind: false, isVendor: true };
+    }
+    return { label: 'Payable', ArrowIcon: ArrowUpRight, color: '#ef4444', bg: 'rgba(239,68,68,0.12)', title: 'Vendor Payable — Outstanding bill', canRemind: false, isVendor: true };
+  }
+
+  // 5. Vendor / Outgoing Payments (Money Paid Out)
+  const isPayment = 
+    ['payment', 'bank payment', 'cash payment'].some(t => vtype.includes(t)) ||
+    /^(pay|pmt)-/.test(num) ||
+    dir === 'paid_out';
+
+  if (isPayment) {
+    return { label: 'Paid Out', ArrowIcon: ArrowUpRight, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', title: 'Outgoing Payment Completed', canRemind: false, isVendor: true };
+  }
+
+  // 6. Credit Notes (Outgoing Credit / Settlement)
+  if (vtype.includes('credit note') || num.startsWith('cn/') || num.startsWith('cn-')) {
+    return { label: 'Paid Out', ArrowIcon: ArrowUpRight, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', title: 'Credit Note Settled', canRemind: false, isVendor: true };
+  }
+
+  // 7. Debit Notes (Customer Receivable Adjustment)
+  if (vtype.includes('debit note') || num.startsWith('dn/') || num.startsWith('dn-')) {
+    return { label: 'Receivable', ArrowIcon: ArrowDownRight, color: '#6366f1', bg: 'rgba(99,102,241,0.12)', title: 'Debit Note Receivable', canRemind: true, isVendor: false };
+  }
+
+  // 8. Fallback by flow direction
+  if (dir === 'paid_out' || dir === 'payable') {
+    return { label: 'Paid Out', ArrowIcon: ArrowUpRight, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', title: 'Vendor Payable', canRemind: false, isVendor: true };
   }
   if (dir === 'received') {
-    return { label: 'Received', ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', title: 'Customer Payment Received — Money collected into our account', canRemind: false, isVendor: false };
-  }
-  if (dir === 'receivable') {
-    if (status === 'Paid') {
-      return { label: 'Collected', ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', title: 'Sales Invoice Collected — Customer has fully paid', canRemind: false, isVendor: false };
-    }
-    return { label: 'Receivable', ArrowIcon: ArrowDownRight, color: '#6366f1', bg: 'rgba(99,102,241,0.12)', title: 'Customer Receivable — Outstanding amount customer owes us', canRemind: true, isVendor: false };
+    return { label: 'Received', ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', title: 'Customer Payment Received', canRemind: false, isVendor: false };
   }
 
-  // 2. FALLBACK: direction not set (old data, manual entries, LEDGER- records)
-  //    Use voucher_type as secondary signal (no keyword guessing!)
-  const isVendorByVoucherType =
-    ['payment', 'bank payment', 'cash payment', 'purchase', 'purchase order'].some(t => vtype.includes(t));
-
-  if (isVendorByVoucherType) {
-    if (status === 'Paid') {
-      return { label: 'Paid Out', ArrowIcon: ArrowUpRight, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', title: 'Paid to Vendor — Outgoing payment completed', canRemind: false, isVendor: true };
-    }
-    return { label: 'Payable', ArrowIcon: ArrowUpRight, color: '#ef4444', bg: 'rgba(239,68,68,0.12)', title: 'Vendor Payable — Outstanding amount we owe to vendor', canRemind: false, isVendor: true };
-  }
-
-  const isReceiptByVoucherType =
-    ['receipt', 'bank receipt', 'cash receipt'].some(t => vtype.includes(t));
-
-  if (isReceiptByVoucherType) {
-    return { label: 'Received', ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', title: 'Customer Payment Received — Money collected into our account', canRemind: false, isVendor: false };
-  }
-
-  // 3. LAST RESORT: no direction, no voucher_type → default to customer receivable
+  // 9. Default: Customer Receivable
   if (status === 'Paid') {
-    return { label: 'Collected', ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', title: 'Sales Invoice Collected — Customer has fully paid', canRemind: false, isVendor: false };
+    return { label: 'Collected', ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', title: 'Sales Invoice Collected', canRemind: false, isVendor: false };
   }
-  return { label: 'Receivable', ArrowIcon: ArrowDownRight, color: '#6366f1', bg: 'rgba(99,102,241,0.12)', title: 'Customer Receivable — Outstanding amount customer owes us', canRemind: true, isVendor: false };
+  return { label: 'Receivable', ArrowIcon: ArrowDownRight, color: '#6366f1', bg: 'rgba(99,102,241,0.12)', title: 'Customer Receivable', canRemind: true, isVendor: false };
 };
 
 const Finance = () => {

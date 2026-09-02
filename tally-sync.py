@@ -241,7 +241,7 @@ ACCOUNTS_XML = """<?xml version="1.0" encoding="utf-8"?>
 </ENVELOPE>"""
 
 # ==============================================================================
-# STRATEGY 5: Sales Vouchers TDL — only SALES type vouchers
+# STRATEGY 5: All DayBook Vouchers TDL (Sales, Purchases, Receipts, Payments, Notes, Journals)
 # ==============================================================================
 DAYBOOK_XML = f"""<?xml version="1.0" encoding="utf-8"?>
 <ENVELOPE>
@@ -249,7 +249,7 @@ DAYBOOK_XML = f"""<?xml version="1.0" encoding="utf-8"?>
     <VERSION>1</VERSION>
     <TALLYREQUEST>Export</TALLYREQUEST>
     <TYPE>Collection</TYPE>
-    <ID>SalesVouchersOnly</ID>
+    <ID>AllDayBookVouchers</ID>
   </HEADER>
   <BODY>
     <DESC>
@@ -258,17 +258,19 @@ DAYBOOK_XML = f"""<?xml version="1.0" encoding="utf-8"?>
       </STATICVARIABLES>
       <TDL>
         <TDLMESSAGE>
-          <COLLECTION NAME="SalesVouchersOnly" ISMODIFY="No">
+          <COLLECTION NAME="AllDayBookVouchers" ISMODIFY="No">
             <TYPE>Voucher</TYPE>
             <FETCH>DATE, VOUCHERNUMBER, VOUCHERTYPENAME, PARTYLEDGERNAME, BASICBUYERNAME,
                    AMOUNT, NARRATION, PARTYGSTIN, BASICBUYERADDRESS,
                    ALLLEDGERENTRIES, INVENTORYENTRIES.LIST</FETCH>
-            <FILTER>SalesVouchersFilter</FILTER>
+            <FILTER>AllDayBookFilter</FILTER>
           </COLLECTION>
-          <SYSTEM TYPE="Formulae" NAME="SalesVouchersFilter">
+          <SYSTEM TYPE="Formulae" NAME="AllDayBookFilter">
             $VoucherTypeName = "Sales" OR $VoucherTypeName = "Sales Order" OR
-            $VoucherTypeName = "Receipt" OR $VoucherTypeName = "Cash Receipt" OR
-            $VoucherTypeName = "Bank Receipt" OR $VoucherTypeName = "Debit Note"
+            $VoucherTypeName = "Purchase" OR $VoucherTypeName = "Purchase Order" OR
+            $VoucherTypeName = "Receipt" OR $VoucherTypeName = "Cash Receipt" OR $VoucherTypeName = "Bank Receipt" OR
+            $VoucherTypeName = "Payment" OR $VoucherTypeName = "Cash Payment" OR $VoucherTypeName = "Bank Payment" OR
+            $VoucherTypeName = "Credit Note" OR $VoucherTypeName = "Debit Note" OR $VoucherTypeName = "Journal"
           </SYSTEM>
         </TDLMESSAGE>
       </TDL>
@@ -848,8 +850,57 @@ def parse_voucher_block(block, fallback_company: str = "", ledger_phone_map: dic
         status = "Paid"
         direction = "paid_out"
         due_date = None
+    elif "sales" in vch_type_lower or "debit note" in vch_type_lower:
+        status = "Pending"
+        direction = "receivable"     # Sales invoice — customer owes us money
+    elif "journal" in vch_type_lower:
+        # ── Journal voucher: determine money direction from ledger entry sign ──
+        # In Tally XML, AMOUNT on a ledger entry is signed:
+        #   Negative (-) = DEBIT  → company paid money OUT  (e.g. advance to driver/staff)
+        #   Positive (+) = CREDIT → company received money IN (e.g. adjustment income)
+        # We look at the party ledger entry (not bank/cash) to determine direction.
+        journal_direction = "receivable"  # safe default
+        journal_amounts = []
+        for jou_entry in re.findall(
+            r'<(?:ALLLLEDGERENTRIES|ALLLEDGERENTRIES|LEDGERENTRIES)\.LIST[^>]*>([\s\S]*?)</(?:ALLLLEDGERENTRIES|ALLLEDGERENTRIES|LEDGERENTRIES)\.LIST>',
+            block, re.IGNORECASE
+        ):
+            entry_name = (extract_tag_value(jou_entry, "LEDGERNAME") or "").upper()
+            entry_amt_raw = extract_tag_value(jou_entry, "AMOUNT") or "0"
+            # Skip bank/cash/tax ledgers — look at the party/counterpart ledger
+            skip_ledger_keywords = ["BANK", "CASH", "IGST", "CGST", "SGST", "TAX", "TDS", "GST"]
+            if any(k in entry_name for k in skip_ledger_keywords):
+                continue
+            # Try to read the signed amount from Tally (it preserves +/-)
+            try:
+                # Tally amounts may have spaces, commas, and Cr/Dr suffixes
+                raw_clean = entry_amt_raw.replace(",", "").replace(" ", "").strip()
+                # Positive in Tally XML for party = CREDIT = they owe us = receivable
+                # Negative in Tally XML for party = DEBIT  = we paid them = paid_out
+                signed_val = float(raw_clean) if raw_clean else 0.0
+                if signed_val != 0:
+                    journal_amounts.append(signed_val)
+            except (ValueError, TypeError):
+                pass
+
+        if journal_amounts:
+            # If the party ledger amount is NEGATIVE → debit → company paid OUT
+            # If POSITIVE → credit → we are owed money → receivable
+            net_journal = sum(journal_amounts)
+            if net_journal < 0:
+                journal_direction = "paid_out"   # Company sent money OUT (staff advance, misc expense)
+                status = "Paid"
+                due_date = None
+            else:
+                journal_direction = "receivable"  # Adjustment in our favour
+                status = "Pending"
+        else:
+            # No parseable ledger amounts — keep as receivable (safe default)
+            status = "Pending"
+
+        direction = journal_direction
     else:
-        status = "Pending"           # Sales, Debit Note, Journal = receivable
+        status = "Pending"           # Debit Note, other = receivable by default
         direction = "receivable"     # Money owed TO us
 
     # Extract truck number from narration

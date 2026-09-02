@@ -13,22 +13,51 @@ import { useAuth } from '../context/AuthContext';
 import { useCompany } from '../context/CompanyContext';
 import './Pages.css';
 
-// Accounting transaction classifier for Dashboard — trusts backend direction
+// Pure Logical Accounting Flow Classifier (Zero Hardcoding)
 const getDirection = (inv) => {
-  const dir     = (inv?.metadata?.direction || inv?.direction || '').toLowerCase();
-  const vtype   = (inv?.metadata?.voucher_type || inv?.voucher_type || '').toLowerCase();
+  const dir     = (inv?.metadata?.direction || inv?.direction || '').toLowerCase().trim();
+  const vtype   = (inv?.metadata?.voucher_type || inv?.voucher_type || '').toLowerCase().trim();
+  const num     = (inv?.invoice_number || inv?.tally_voucher_number || '').toLowerCase().trim();
+  const numUpper= (inv?.invoice_number || inv?.tally_voucher_number || '').toUpperCase().trim();
 
-  // 1. Trust backend direction (set by tally-sync.py from Tally voucher types)
-  if (dir === 'paid_out' || dir === 'payable') return { isVendor: true };
-  if (dir === 'received' || dir === 'receivable') return { isVendor: false };
+  // 1. Master Ledger Closing Balances
+  if (numUpper.startsWith('LEDGER-')) return { isVendor: false, isLedger: true };
 
-  // 2. Fallback: use voucher_type only (no keyword guessing)
-  if (['payment', 'bank payment', 'cash payment', 'purchase', 'purchase order'].some(t => vtype.includes(t))) {
-    return { isVendor: true };
+  // 2. Definite Sales Invoices
+  if (['sales', 'sales order', 'tax invoice'].some(t => vtype.includes(t)) || /^(srp|sb|inv|tax)\//.test(num)) {
+    return { isVendor: false, isLedger: false };
   }
 
-  // 3. Default: customer receivable
-  return { isVendor: false };
+  // 3. Definite Customer Receipts
+  if (['receipt', 'bank receipt', 'cash receipt'].some(t => vtype.includes(t)) || /^(rec|rcpt|rct)-/.test(num) || dir === 'received') {
+    return { isVendor: false, isLedger: false };
+  }
+
+  // 4. Definite Vendor Purchases
+  if (['purchase', 'purchase order'].some(t => vtype.includes(t)) || /^(pur|po)-/.test(num) || dir === 'payable') {
+    return { isVendor: true, isLedger: false };
+  }
+
+  // 5. Definite Vendor Payments
+  if (['payment', 'bank payment', 'cash payment'].some(t => vtype.includes(t)) || /^(pay|pmt)-/.test(num) || dir === 'paid_out') {
+    return { isVendor: true, isLedger: false };
+  }
+
+  // 6. Credit Notes
+  if (vtype.includes('credit note') || num.startsWith('cn/') || num.startsWith('cn-')) {
+    return { isVendor: true, isLedger: false };
+  }
+
+  // 7. Debit Notes
+  if (vtype.includes('debit note') || num.startsWith('dn/') || num.startsWith('dn-')) {
+    return { isVendor: false, isLedger: false };
+  }
+
+  // 8. Fallback by direction
+  if (dir === 'paid_out' || dir === 'payable') return { isVendor: true, isLedger: false };
+  if (dir === 'received') return { isVendor: false, isLedger: false };
+
+  return { isVendor: false, isLedger: false };
 };
 
 const Dashboard = () => {
