@@ -18,16 +18,16 @@ const getDirection = (inv) => {
   const numUpper= (inv?.invoice_number || inv?.tally_voucher_number || '').toUpperCase().trim();
   const status  = inv?.status || '';
 
-  // 1. Master Ledger Closing Balances
+  // 1. Master Ledger Closing Balances → Excluded
   if (numUpper.startsWith('LEDGER-')) {
     return { isLedger: true, isVendor: false, label: 'Ledger Balance', canRemind: false };
   }
 
-  // 2. Sales Invoices
-  const isSales = 
+  // 2. Sales Invoices (Customer Receivables — money customer owes US)
+  const isSales =
     ['sales', 'sales order', 'tax invoice'].some(t => vtype.includes(t)) ||
-    /^(srp|sb|inv|tax)\//.test(num) ||
-    (dir === 'receivable' && vtype === 'sales');
+    /^(srp|sb)\/./i.test(num) ||
+    /^(inv|tax)\//i.test(num);
 
   if (isSales) {
     if (status === 'Paid') {
@@ -36,20 +36,22 @@ const getDirection = (inv) => {
     return { label: 'Receivable', ArrowIcon: ArrowDownRight, color: '#6366f1', bg: 'rgba(99,102,241,0.12)', title: 'Customer Receivable', canRemind: true, isVendor: false };
   }
 
-  // 3. Customer Receipts
-  const isReceipt = 
+  // 3. Customer Receipts (Money IN from customer)
+  const isReceipt =
     ['receipt', 'bank receipt', 'cash receipt'].some(t => vtype.includes(t)) ||
     /^(rec|rcpt|rct)-/.test(num) ||
+    /^sb-r/.test(num) ||
     dir === 'received';
 
   if (isReceipt) {
     return { label: 'Received', ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', title: 'Customer Payment Received', canRemind: false, isVendor: false };
   }
 
-  // 4. Vendor Purchases
-  const isPurchase = 
+  // 4. Vendor Purchases (Money OUT to supplier)
+  const isPurchase =
     ['purchase', 'purchase order'].some(t => vtype.includes(t)) ||
     /^(pur|po)-/.test(num) ||
+    /^(sb-pur|kbs\/|idak|ne0k|sb-i|ipaa|ybs\/|lcr|v00[2-9])/.test(num) ||
     dir === 'payable';
 
   if (isPurchase) {
@@ -59,37 +61,64 @@ const getDirection = (inv) => {
     return { label: 'Payable', ArrowIcon: ArrowUpRight, color: '#ef4444', bg: 'rgba(239,68,68,0.12)', title: 'Vendor Payable — Outstanding bill', canRemind: false, isVendor: true };
   }
 
-  // 5. Vendor Payments
-  const isPayment = 
+  // 5. Vendor / Outgoing Payments (Money sent OUT)
+  const isPayment =
     ['payment', 'bank payment', 'cash payment'].some(t => vtype.includes(t)) ||
     /^(pay|pmt)-/.test(num) ||
+    /^sb-pay/.test(num) ||
     dir === 'paid_out';
 
   if (isPayment) {
     return { label: 'Paid Out', ArrowIcon: ArrowUpRight, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', title: 'Outgoing Payment Completed', canRemind: false, isVendor: true };
   }
 
-  // 6. Credit Notes
+  // 6. Credit Notes (money going out to vendor)
   if (vtype.includes('credit note') || num.startsWith('cn/') || num.startsWith('cn-')) {
     return { label: 'Paid Out', ArrowIcon: ArrowUpRight, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', title: 'Credit Note Settled', canRemind: false, isVendor: true };
   }
 
-  // 7. Debit Notes
+  // 7. Debit Notes (Customer owes more — money IN)
   if (vtype.includes('debit note') || num.startsWith('dn/') || num.startsWith('dn-')) {
     return { label: 'Receivable', ArrowIcon: ArrowDownRight, color: '#6366f1', bg: 'rgba(99,102,241,0.12)', title: 'Debit Note Receivable', canRemind: true, isVendor: false };
   }
 
-  // 8. Fallback by flow direction
+  // 8. Journal Entries — Driver-* names are outgoing wage payments
+  if (vtype === 'journal' || /^(sb-jou|jou)-/.test(num)) {
+    const partyName = (inv?.client_name || '').toLowerCase();
+    if (dir === 'paid_out' || partyName.startsWith('driver-') || partyName.startsWith('driver ')) {
+      return { label: 'Paid Out', ArrowIcon: ArrowUpRight, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', title: 'Journal Payment', canRemind: false, isVendor: true };
+    }
+    if (status === 'Paid') {
+      return { label: 'Collected', ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', title: 'Journal Settled', canRemind: false, isVendor: false };
+    }
+    return { label: 'Receivable', ArrowIcon: ArrowDownRight, color: '#6366f1', bg: 'rgba(99,102,241,0.12)', title: 'Journal Receivable', canRemind: true, isVendor: false };
+  }
+
+  // 9. VCH-* with no voucher_type and no direction = outgoing payment (wages/advances)
+  if (numUpper.startsWith('VCH-') && !vtype && !dir) {
+    return { label: 'Paid Out', ArrowIcon: ArrowUpRight, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', title: 'Outgoing Voucher Payment', canRemind: false, isVendor: true };
+  }
+
+  // 10. Fallback by explicit direction field
   if (dir === 'paid_out' || dir === 'payable') {
-    return { label: 'Paid Out', ArrowIcon: ArrowUpRight, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', title: 'Vendor Payable', canRemind: false, isVendor: true };
+    if (dir === 'payable' && status !== 'Paid') {
+      return { label: 'Payable', ArrowIcon: ArrowUpRight, color: '#ef4444', bg: 'rgba(239,68,68,0.12)', title: 'Vendor Payable', canRemind: false, isVendor: true };
+    }
+    return { label: 'Paid Out', ArrowIcon: ArrowUpRight, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', title: 'Vendor Payment', canRemind: false, isVendor: true };
   }
   if (dir === 'received') {
     return { label: 'Received', ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', title: 'Customer Payment Received', canRemind: false, isVendor: false };
   }
+  if (dir === 'receivable') {
+    if (status === 'Paid') {
+      return { label: 'Collected', ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', title: 'Sales Invoice Collected', canRemind: false, isVendor: false };
+    }
+    return { label: 'Receivable', ArrowIcon: ArrowDownRight, color: '#6366f1', bg: 'rgba(99,102,241,0.12)', title: 'Customer Receivable', canRemind: true, isVendor: false };
+  }
 
-  // 9. Default: Customer Receivable
+  // 11. Final default — if paid treat as collected, else receivable
   if (status === 'Paid') {
-    return { label: 'Collected', ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', title: 'Sales Invoice Settled', canRemind: false, isVendor: false };
+    return { label: 'Collected', ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', title: 'Sales Invoice Collected', canRemind: false, isVendor: false };
   }
   return { label: 'Receivable', ArrowIcon: ArrowDownRight, color: '#6366f1', bg: 'rgba(99,102,241,0.12)', title: 'Customer Receivable', canRemind: true, isVendor: false };
 };
@@ -245,6 +274,9 @@ const Payments = () => {
               {filtered.map(inv => {
                 const isSent = sentIds.includes(inv.id);
                 const isReminding = remindingId === inv.id;
+                const dirInfo = getDirection(inv);
+                const consignmentUrl = inv.pdf_url || inv.metadata?.pdf_url;
+
                 return (
                   <tr key={inv.id}>
                     <td style={{ fontWeight: 700, color: 'var(--accent-primary)', fontFamily: 'monospace', fontSize: '0.78rem' }}>{inv.invoice_number}</td>
@@ -253,23 +285,17 @@ const Payments = () => {
                       {inv.client_phone && <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{inv.client_phone}</div>}
                     </td>
                     <td style={{ fontWeight: 700, color: inv.status === 'Paid' ? 'var(--success)' : inv.status === 'Overdue' ? 'var(--danger)' : 'var(--text-primary)', fontSize: '0.9rem' }}>
-                      {/* FIX 2: Direction badge + amount */}
-                      {(() => {
-                        const dir = getDirection(inv);
-                        return (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-                            <span>{fmtAmount(inv.amount)}</span>
-                            <span title={dir.title} style={{
-                              display: 'inline-flex', alignItems: 'center', gap: '0.25rem',
-                              fontSize: '0.62rem', fontWeight: 700, padding: '0.12rem 0.45rem',
-                              borderRadius: '10px', background: dir.bg, color: dir.color,
-                              border: `1px solid ${dir.color}44`, cursor: 'help',
-                            }}>
-                              <dir.ArrowIcon size={10} strokeWidth={2.5} /> {dir.label}
-                            </span>
-                          </div>
-                        );
-                      })()}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                        <span>{fmtAmount(inv.amount)}</span>
+                        <span title={dirInfo.title} style={{
+                          display: 'inline-flex', alignItems: 'center', gap: '0.25rem',
+                          fontSize: '0.62rem', fontWeight: 700, padding: '0.12rem 0.45rem',
+                          borderRadius: '10px', background: dirInfo.bg, color: dirInfo.color,
+                          border: `1px solid ${dirInfo.color}44`, cursor: 'help',
+                        }}>
+                          {dirInfo.ArrowIcon && <dirInfo.ArrowIcon size={10} strokeWidth={2.5} />} {dirInfo.label}
+                        </span>
+                      </div>
                     </td>
                     <td>
                       <span className={`badge ${inv.status === 'Paid' ? 'badge-success' : inv.status === 'Overdue' ? 'badge-danger' : 'badge-warning'}`}>
@@ -279,43 +305,38 @@ const Payments = () => {
                     <td style={{ fontSize: '0.82rem' }}>{getDaysLabel(inv)}</td>
                     <td><span className="badge badge-neutral">{(isSent ? (inv.reminder_count || 0) + 1 : (inv.reminder_count || 0))} sent</span></td>
                     <td>
-                      {(() => {
-                        const consignmentUrl = inv.pdf_url || inv.metadata?.pdf_url;
-                        return (
-                          <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+                      <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+                        <button
+                          className="btn btn-secondary btn-sm"
+                          style={{ padding: '0.2rem 0.45rem', fontSize: '0.68rem', color: 'var(--accent-primary)', display: 'flex', alignItems: 'center', gap: '0.2rem' }}
+                          onClick={() => {
+                            if (consignmentUrl) {
+                              setPreviewPdfUrl(consignmentUrl);
+                            } else {
+                              window.location.href = `/finance`;
+                            }
+                          }}
+                          title="View Tax Invoice & Consignment Bill"
+                        >
+                          <FileText size={11} /> Bill
+                        </button>
+                        {!dirInfo.canRemind ? (
+                          <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>{dirInfo.label === 'Paid Out' ? '✓ Paid' : dirInfo.label}</span>
+                        ) : inv.status === 'Paid' ? (
+                          <span style={{ fontSize: '0.78rem', color: 'var(--success)', fontWeight: 600 }}>✓ Cleared</span>
+                        ) : (
+                          <>
                             <button
-                              className="btn btn-secondary btn-sm"
-                              style={{ padding: '0.2rem 0.45rem', fontSize: '0.68rem', color: 'var(--accent-primary)', display: 'flex', alignItems: 'center', gap: '0.2rem' }}
-                              onClick={() => {
-                                if (consignmentUrl) {
-                                  setPreviewPdfUrl(consignmentUrl);
-                                } else {
-                                  window.location.href = `/finance`;
-                                }
-                              }}
-                              title="View Tax Invoice & Consignment Bill"
+                              className={`btn btn-sm ${isSent ? 'btn-success' : isReminding ? 'btn-secondary' : 'btn-whatsapp'}`}
+                              onClick={() => !isSent && !isReminding && handleRemind(inv)}
+                              disabled={isReminding || isSent}
                             >
-                              <FileText size={11} /> Bill
+                              {isSent ? <><CheckCircle2 size={13} /> Sent</> : isReminding ? 'Sending...' : <><Send size={13} /> Remind</>}
                             </button>
-                            {!dir.canRemind ? (
-                              <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>{dir.label === 'Paid Out' ? '✓ Vendor paid' : 'Vendor payable'}</span>
-                            ) : inv.status === 'Paid' ? (
-                              <span style={{ fontSize: '0.78rem', color: 'var(--success)', fontWeight: 600 }}>✓ Cleared</span>
-                            ) : (
-                              <>
-                                <button
-                                  className={`btn btn-sm ${isSent ? 'btn-success' : isReminding ? 'btn-secondary' : 'btn-whatsapp'}`}
-                                  onClick={() => !isSent && !isReminding && handleRemind(inv)}
-                                  disabled={isReminding || isSent}
-                                >
-                                  {isSent ? <><CheckCircle2 size={13} /> Sent</> : isReminding ? 'Sending...' : <><Send size={13} /> Remind</>}
-                                </button>
-                                <button className="btn btn-secondary btn-sm" title="Call"><Phone size={13} /></button>
-                              </>
-                            )}
-                          </div>
-                        );
-                      })()}
+                            <button className="btn btn-secondary btn-sm" title="Call"><Phone size={13} /></button>
+                          </>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );

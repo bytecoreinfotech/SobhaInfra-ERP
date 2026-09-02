@@ -900,19 +900,19 @@ exports.handler = async (event) => {
           payload: body, processed: true,
         }], { onConflict: 'provider_event_id' });
 
-        // Lead upsert with multi-format phone search
+        // Lead lookup with multi-format phone search (use limit(1) to avoid PGRST116 multi-row error)
         const cleanFromDigits = fromPhone.replace(/[^\d]/g, '');
-        const { data: existingLead } = await supabase.from('leads')
+        const { data: existingLeads } = await supabase.from('leads')
           .select('id')
           .or(`phone.eq.${fromPhone},phone.eq.+${fromPhone},phone.eq.${cleanFromDigits},phone.eq.+${cleanFromDigits}`)
-          .maybeSingle();
+          .limit(1);
 
-        if (existingLead) {
-          leadId = existingLead.id;
+        if (existingLeads && existingLeads.length > 0) {
+          leadId = existingLeads[0].id;
         } else {
           const newLeadPayload = {
             organization_id: DEFAULT_ORG_ID,
-            name: contactName,
+            name: contactName || `WhatsApp User (${fromPhone})`,
             phone: fromPhone.startsWith('+') ? fromPhone : '+' + fromPhone,
             source: 'WhatsApp',
             status: 'New',

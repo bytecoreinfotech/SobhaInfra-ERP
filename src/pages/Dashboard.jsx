@@ -23,39 +23,53 @@ const getDirection = (inv) => {
   // 1. Master Ledger Closing Balances
   if (numUpper.startsWith('LEDGER-')) return { isVendor: false, isLedger: true };
 
-  // 2. Definite Sales Invoices
-  if (['sales', 'sales order', 'tax invoice'].some(t => vtype.includes(t)) || /^(srp|sb|inv|tax)\//.test(num)) {
+  // 2. Sales Invoices (Customer Receivables)
+  if (['sales', 'sales order', 'tax invoice'].some(t => vtype.includes(t)) || /^(srp|sb)\/./.test(num) || /^(inv|tax)\//.test(num)) {
     return { isVendor: false, isLedger: false };
   }
 
-  // 3. Definite Customer Receipts
-  if (['receipt', 'bank receipt', 'cash receipt'].some(t => vtype.includes(t)) || /^(rec|rcpt|rct)-/.test(num) || dir === 'received') {
+  // 3. Customer Receipts (Money IN from customer)
+  if (['receipt', 'bank receipt', 'cash receipt'].some(t => vtype.includes(t)) || /^(rec|rcpt|rct)-/.test(num) || /^sb-r/.test(num) || dir === 'received') {
     return { isVendor: false, isLedger: false };
   }
 
-  // 4. Definite Vendor Purchases
-  if (['purchase', 'purchase order'].some(t => vtype.includes(t)) || /^(pur|po)-/.test(num) || dir === 'payable') {
+  // 4. Vendor Purchases (Money OUT to supplier)
+  if (['purchase', 'purchase order'].some(t => vtype.includes(t)) || /^(pur|po)-/.test(num) || /^(sb-pur|kbs\/|idak|ne0k|sb-i|ipaa|ybs\/|lcr|v00[2-9])/.test(num) || dir === 'payable') {
     return { isVendor: true, isLedger: false };
   }
 
-  // 5. Definite Vendor Payments
-  if (['payment', 'bank payment', 'cash payment'].some(t => vtype.includes(t)) || /^(pay|pmt)-/.test(num) || dir === 'paid_out') {
+  // 5. Vendor Payments (Outgoing payment vouchers)
+  if (['payment', 'bank payment', 'cash payment'].some(t => vtype.includes(t)) || /^(pay|pmt)-/.test(num) || /^sb-pay/.test(num) || dir === 'paid_out') {
     return { isVendor: true, isLedger: false };
   }
 
-  // 6. Credit Notes
+  // 6. Credit Notes (Outgoing to vendor)
   if (vtype.includes('credit note') || num.startsWith('cn/') || num.startsWith('cn-')) {
     return { isVendor: true, isLedger: false };
   }
 
-  // 7. Debit Notes
+  // 7. Debit Notes (Customer owes more — Incoming)
   if (vtype.includes('debit note') || num.startsWith('dn/') || num.startsWith('dn-')) {
     return { isVendor: false, isLedger: false };
   }
 
-  // 8. Fallback by direction
+  // 8. Journal Entries — Driver-* party names are outgoing wage payments
+  if (vtype === 'journal' || /^(sb-jou|jou)-/.test(num)) {
+    const partyName = (inv?.client_name || '').toLowerCase();
+    if (dir === 'paid_out' || partyName.startsWith('driver-') || partyName.startsWith('driver ')) {
+      return { isVendor: true, isLedger: false };
+    }
+    return { isVendor: false, isLedger: false };
+  }
+
+  // 9. VCH-* with no voucher_type and no direction = outgoing payment voucher
+  if (numUpper.startsWith('VCH-') && !vtype && !dir) {
+    return { isVendor: true, isLedger: false };
+  }
+
+  // 10. Fallback by explicit direction field
   if (dir === 'paid_out' || dir === 'payable') return { isVendor: true, isLedger: false };
-  if (dir === 'received') return { isVendor: false, isLedger: false };
+  if (dir === 'received' || dir === 'receivable') return { isVendor: false, isLedger: false };
 
   return { isVendor: false, isLedger: false };
 };

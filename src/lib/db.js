@@ -479,17 +479,37 @@ export async function sendPaymentReminderWhatsApp(invoiceId) {
 // ─────────────────────────────────────────────────────────────────────────────
 export async function getInvoices() {
   if (!isSupabaseConfigured) return { data: MOCK_STORE.invoices, error: null };
-  const { data, error } = await supabase.from('invoices').select('*').order('created_at', { ascending: false });
-  if (error) {
-    console.warn('[db] getInvoices error:', error.message);
-    return { data: [], error };
+  try {
+    let allData = [];
+    let offset = 0;
+    const batchSize = 1000;
+    while (true) {
+      const { data, error } = await supabase
+        .from('invoices')
+        .select('*')
+        .range(offset, offset + batchSize - 1)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.warn('[db] getInvoices batch error:', error.message);
+        break;
+      }
+      if (!data || data.length === 0) break;
+      allData.push(...data);
+      if (data.length < batchSize) break;
+      offset += batchSize;
+    }
+
+    const normalized = (allData.length > 0 ? allData : []).map(inv => ({
+      ...inv,
+      invoice_number: inv.invoice_number || inv.tally_voucher_number || `INV-${inv.id?.slice(0, 8)}`,
+      tally_voucher_number: inv.tally_voucher_number || inv.invoice_number || '',
+    }));
+    return { data: normalized, error: null };
+  } catch (err) {
+    console.warn('[db] getInvoices error:', err.message);
+    return { data: [], error: err };
   }
-  const normalized = (data || []).map(inv => ({
-    ...inv,
-    invoice_number: inv.invoice_number || inv.tally_voucher_number || `INV-${inv.id?.slice(0, 8)}`,
-    tally_voucher_number: inv.tally_voucher_number || inv.invoice_number || '',
-  }));
-  return { data: normalized, error: null };
 }
 
 export async function logPaymentReminder(invoiceId, message) {
@@ -1188,7 +1208,27 @@ export async function getLeads() {
     console.warn('[db] getLeads error:', error.message);
     return { data: [], error };
   }
-  return { data: data || [], error: null };
+
+  // Deduplicate by normalized phone number so each person appears exactly ONCE in the list
+  const seen = new Map();
+  for (const lead of (data || [])) {
+    const rawPhone = lead.phone || '';
+    const cleanDigits = rawPhone.replace(/\D/g, '');
+    const key = cleanDigits.length >= 10 ? cleanDigits.slice(-10) : (lead.name ? lead.name.toLowerCase().trim() : lead.id);
+    if (!seen.has(key)) {
+      seen.set(key, lead);
+    } else {
+      // Keep the most recent or highest scored lead, merge notes/details
+      const existing = seen.get(key);
+      const existingTime = new Date(existing.updated_at || existing.created_at || 0).getTime();
+      const leadTime = new Date(lead.updated_at || lead.created_at || 0).getTime();
+      if (leadTime > existingTime || (lead.lead_score || 0) > (existing.lead_score || 0)) {
+        seen.set(key, { ...existing, ...lead });
+      }
+    }
+  }
+
+  return { data: Array.from(seen.values()), error: null };
 }
 
 export async function createLead(lead) {

@@ -62,16 +62,19 @@ const getDirection = (inv) => {
   const numUpper= (inv?.invoice_number || inv?.tally_voucher_number || '').toUpperCase().trim();
   const status  = inv?.status || '';
 
-  // 1. Master Ledger Closing Balances -> Excluded from transactional cards & tables
+  // 1. Master Ledger Closing Balances → Excluded from transactional cards & tables
   if (numUpper.startsWith('LEDGER-')) {
     return { isLedger: true, isVendor: false, label: 'Ledger Balance', canRemind: false };
   }
 
-  // 2. Sales Invoices (Customer Receivables)
-  const isSales = 
+  // 2. Sales Invoices (Customer Receivables) — money the customer owes US
+  // Voucher types: Sales, Sales Order, Tax Invoice
+  // Number prefixes: SRP/, SB/0, INV/, TAX/
+  const isSales =
     ['sales', 'sales order', 'tax invoice'].some(t => vtype.includes(t)) ||
-    /^(srp|sb|inv|tax)\//.test(num) ||
-    (dir === 'receivable' && vtype === 'sales');
+    /^(srp|sb)\/./.test(num) ||
+    /^inv\//.test(num) ||
+    /^tax\//.test(num);
 
   if (isSales) {
     if (status === 'Paid') {
@@ -80,20 +83,23 @@ const getDirection = (inv) => {
     return { label: 'Receivable', ArrowIcon: ArrowDownRight, color: '#6366f1', bg: 'rgba(99,102,241,0.12)', title: 'Customer Receivable', canRemind: true, isVendor: false };
   }
 
-  // 3. Customer Receipts (Money Collected / IN)
-  const isReceipt = 
+  // 3. Customer Receipts (Money IN from customer) — direction=received is definitive
+  const isReceipt =
     ['receipt', 'bank receipt', 'cash receipt'].some(t => vtype.includes(t)) ||
     /^(rec|rcpt|rct)-/.test(num) ||
+    /^sb-r/.test(num) ||
     dir === 'received';
 
   if (isReceipt) {
     return { label: 'Received', ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', title: 'Customer Payment Received', canRemind: false, isVendor: false };
   }
 
-  // 4. Vendor Purchases (Money We Owe Suppliers)
-  const isPurchase = 
+  // 4. Vendor Purchases (We owe the supplier — money going OUT)
+  const isPurchase =
     ['purchase', 'purchase order'].some(t => vtype.includes(t)) ||
     /^(pur|po)-/.test(num) ||
+    /^(sb-pur|sb-p)/.test(num) ||
+    /^(kbs\/|idak|ne0k|sb-i|ipaa|ybs\/|ism|lcr|v00[2-9])/.test(num) ||
     dir === 'payable';
 
   if (isPurchase) {
@@ -103,35 +109,68 @@ const getDirection = (inv) => {
     return { label: 'Payable', ArrowIcon: ArrowUpRight, color: '#ef4444', bg: 'rgba(239,68,68,0.12)', title: 'Vendor Payable — Outstanding bill', canRemind: false, isVendor: true };
   }
 
-  // 5. Vendor / Outgoing Payments (Money Paid Out)
-  const isPayment = 
+  // 5. Vendor / Outgoing Payments (Money sent OUT to vendor)
+  const isPayment =
     ['payment', 'bank payment', 'cash payment'].some(t => vtype.includes(t)) ||
     /^(pay|pmt)-/.test(num) ||
+    /^sb-pay/.test(num) ||
     dir === 'paid_out';
 
   if (isPayment) {
     return { label: 'Paid Out', ArrowIcon: ArrowUpRight, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', title: 'Outgoing Payment Completed', canRemind: false, isVendor: true };
   }
 
-  // 6. Credit Notes (Outgoing Credit / Settlement)
+  // 6. Credit Notes (Company giving credit to vendor — money out)
   if (vtype.includes('credit note') || num.startsWith('cn/') || num.startsWith('cn-')) {
     return { label: 'Paid Out', ArrowIcon: ArrowUpRight, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', title: 'Credit Note Settled', canRemind: false, isVendor: true };
   }
 
-  // 7. Debit Notes (Customer Receivable Adjustment)
+  // 7. Debit Notes (Customer owes more — money IN)
   if (vtype.includes('debit note') || num.startsWith('dn/') || num.startsWith('dn-')) {
     return { label: 'Receivable', ArrowIcon: ArrowDownRight, color: '#6366f1', bg: 'rgba(99,102,241,0.12)', title: 'Debit Note Receivable', canRemind: true, isVendor: false };
   }
 
-  // 8. Fallback by flow direction
+  // 8. Journal Entries — only mark as paid_out if:
+  //    (a) direction=paid_out was explicitly set, OR
+  //    (b) party name starts with "Driver-" (wage advance — outgoing)
+  if (vtype === 'journal' || /^(sb-jou|jou)-/.test(num)) {
+    const partyName = (inv?.client_name || '').toLowerCase();
+    const isDriverPayment = partyName.startsWith('driver-') || partyName.startsWith('driver ');
+    if (dir === 'paid_out' || isDriverPayment) {
+      return { label: 'Paid Out', ArrowIcon: ArrowUpRight, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', title: 'Journal Payment', canRemind: false, isVendor: true };
+    }
+    // Other journal entries (inter-company, adjustments) → treat as receivable
+    if (status === 'Paid') {
+      return { label: 'Collected', ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', title: 'Journal Settled', canRemind: false, isVendor: false };
+    }
+    return { label: 'Receivable', ArrowIcon: ArrowDownRight, color: '#6366f1', bg: 'rgba(99,102,241,0.12)', title: 'Journal Receivable', canRemind: true, isVendor: false };
+  }
+
+  // 9. VCH-* prefix with NO voucher_type and NO direction
+  //    These come from Tally as generic voucher journal entries — typically outgoing payments
+  //    (wages, advances, misc expenses). If direction was set on these, the earlier checks above caught it.
+  if (numUpper.startsWith('VCH-') && !vtype && !dir) {
+    return { label: 'Paid Out', ArrowIcon: ArrowUpRight, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', title: 'Outgoing Voucher Payment', canRemind: false, isVendor: true };
+  }
+
+  // 10. Fallback by explicit flow direction field
   if (dir === 'paid_out' || dir === 'payable') {
-    return { label: 'Paid Out', ArrowIcon: ArrowUpRight, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', title: 'Vendor Payable', canRemind: false, isVendor: true };
+    if (dir === 'payable' && status !== 'Paid') {
+      return { label: 'Payable', ArrowIcon: ArrowUpRight, color: '#ef4444', bg: 'rgba(239,68,68,0.12)', title: 'Vendor Payable', canRemind: false, isVendor: true };
+    }
+    return { label: 'Paid Out', ArrowIcon: ArrowUpRight, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', title: 'Vendor Payment', canRemind: false, isVendor: true };
   }
   if (dir === 'received') {
     return { label: 'Received', ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', title: 'Customer Payment Received', canRemind: false, isVendor: false };
   }
+  if (dir === 'receivable') {
+    if (status === 'Paid') {
+      return { label: 'Collected', ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', title: 'Sales Invoice Collected', canRemind: false, isVendor: false };
+    }
+    return { label: 'Receivable', ArrowIcon: ArrowDownRight, color: '#6366f1', bg: 'rgba(99,102,241,0.12)', title: 'Customer Receivable', canRemind: true, isVendor: false };
+  }
 
-  // 9. Default: Customer Receivable
+  // 11. Final safe default: if status=Paid with no other signals, treat as collected
   if (status === 'Paid') {
     return { label: 'Collected', ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', title: 'Sales Invoice Collected', canRemind: false, isVendor: false };
   }

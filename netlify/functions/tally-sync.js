@@ -137,6 +137,27 @@ exports.handler = async (event) => {
               try { invoiceDateStr = new Date(rawDate).toISOString().split('T')[0]; } catch {}
             }
           }
+          // Derive direction from voucher_type — NEVER assume 'receivable' by default
+          const rawVoucherType = (v.voucher_type || v.metadata?.voucher_type || '').toLowerCase().trim();
+          const rawDirection = (v.direction || v.metadata?.direction || '').toLowerCase().trim();
+          let derivedDirection = rawDirection;
+          if (!derivedDirection) {
+            if (['payment', 'bank payment', 'cash payment'].some(t => rawVoucherType.includes(t))) {
+              derivedDirection = 'paid_out';
+            } else if (['purchase', 'purchase order'].some(t => rawVoucherType.includes(t))) {
+              derivedDirection = 'payable';
+            } else if (['sales', 'sales order', 'tax invoice'].some(t => rawVoucherType.includes(t))) {
+              derivedDirection = 'receivable';
+            } else if (['receipt', 'bank receipt', 'cash receipt'].some(t => rawVoucherType.includes(t))) {
+              derivedDirection = 'received';
+            } else if (rawVoucherType.includes('credit note')) {
+              derivedDirection = 'paid_out';
+            } else if (rawVoucherType.includes('debit note')) {
+              derivedDirection = 'receivable';
+            }
+            // If voucher_type is also empty (e.g. VCH-* with no type synced), leave direction as empty string.
+            // The frontend classifier will then fall back to voucher number prefix analysis.
+          }
 
           const invoiceRow = {
             organization_id: '00000000-0000-0000-0000-000000000001',
@@ -155,10 +176,8 @@ exports.handler = async (event) => {
               tally_ledger: v.ledger_name,
               tally_company: v.company_name || companyName || '',
               sync_source: 'TallyPrime XML Bridge',
-              // FIX 2: Store voucher type & direction for Finance page direction badges
-              voucher_type: v.voucher_type || v.metadata?.voucher_type || '',
-              direction:    v.direction    || v.metadata?.direction    || 'receivable',
-              // All 4 PDF URLs from tally-sync.py
+              voucher_type: rawVoucherType,
+              direction:    derivedDirection,
               eway_pdf_url:    v.metadata?.eway_pdf_url    || null,
               pending_pdf_url: v.metadata?.pending_pdf_url || null,
               ledger_pdf_url:  v.metadata?.ledger_pdf_url  || null,
