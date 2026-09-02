@@ -13,7 +13,7 @@ import './Sidebar.css';
 const Sidebar = ({ collapsed, isCollapsed, onToggle, mobileOpen, onMobileClose }) => {
   const isSideCollapsed = collapsed ?? isCollapsed ?? false;
   const { user, hasPermission } = useAuth();
-  const { whatsapp, leads, tasks, payments } = useLiveCounts();
+  const { whatsapp, takeovers, leads, tasks, payments } = useLiveCounts();
   const { companyProfiles, activeCompanyId, setActiveCompanyId, isConsolidated, activeCompany } = useCompany();
 
   // Badge values: only show when > 0, cap display at 99
@@ -30,7 +30,14 @@ const Sidebar = ({ collapsed, isCollapsed, onToggle, mobileOpen, onMobileClose }
     {
       label: 'WhatsApp & CRM',
       items: [
-        { name: 'WhatsApp Campaign',    path: '/whatsapp',        icon: <MessageCircle size={18} />, badge: badge(whatsapp), module: 'WhatsApp' },
+        {
+          name: 'WhatsApp Campaign',
+          path: '/whatsapp',
+          icon: <MessageCircle size={18} />,
+          badge: takeovers > 0 ? `🚨 ${takeovers}` : badge(whatsapp),
+          isUrgent: takeovers > 0,
+          module: 'WhatsApp'
+        },
         { name: 'Campaign Studio',      path: '/campaign-studio', icon: <Sparkles size={18} />,                              module: 'WhatsApp' },
         { name: 'Gmail & Email Center', path: '/email-hub',       icon: <Mail size={18} />,                                  module: 'CRM' },
         { name: 'Chatbot & Auto-Reply', path: '/chatbot',         icon: <Bot size={18} />,                                  module: 'WhatsApp' },
@@ -157,7 +164,20 @@ const Sidebar = ({ collapsed, isCollapsed, onToggle, mobileOpen, onMobileClose }
                     >
                       <span className="nav-icon">{item.icon}</span>
                       <span className="nav-label">{item.name}</span>
-                      {item.badge && <span className="nav-badge">{item.badge}</span>}
+                      {item.badge && (
+                        <span
+                          className="nav-badge"
+                          style={item.isUrgent ? {
+                            background: 'linear-gradient(135deg, #ef4444, #dc2626)',
+                            color: '#ffffff',
+                            fontWeight: 800,
+                            boxShadow: '0 0 10px rgba(239, 68, 68, 0.65)',
+                            animation: 'pulse 2s infinite',
+                          } : {}}
+                        >
+                          {item.badge}
+                        </span>
+                      )}
                     </NavLink>
                   </li>
                 ))}

@@ -17,6 +17,8 @@ import Customer360Modal from '../components/Customer360Modal';
 import CampaignBuilderModal from '../components/CampaignBuilderModal';
 import HumanHandoffModal from '../components/HumanHandoffModal';
 import { uploadToWhatsAppMedia, getWhatsAppMediaType, parseMessageMedia } from '../lib/storage';
+import { supabase } from '../lib/supabase';
+import { useLiveCounts } from '../context/LiveCountsContext';
 import './Pages.css';
 
 const statusConfig = {
@@ -70,8 +72,10 @@ const WhatsApp = () => {
   const [conversations, setConversations] = useState([]);
   const [selectedConv, setSelectedConv] = useState(null);
   const [messages, setMessages] = useState([]);
+  const { refresh: refreshLiveCounts } = useLiveCounts();
   const [msgInput, setMsgInput] = useState('');
   const [searchConv, setSearchConv] = useState('');
+  const [chatFilter, setChatFilter] = useState('all'); // 'all' | 'takeover' | 'unread'
   const [convLoading, setConvLoading] = useState(true);
   const [sendingMsg, setSendingMsg] = useState(false);
   const [selected360LeadId, setSelected360LeadId] = useState(null);
@@ -177,6 +181,14 @@ const WhatsApp = () => {
       loadMessages(selectedConv.id);
       setAttachedFile(null);
       setAttachedPreview(null);
+
+      // Clear unread count when opening conversation
+      if (selectedConv.unread_count > 0) {
+        supabase.from('whatsapp_conversations').update({ unread_count: 0 }).eq('id', selectedConv.id).then(() => {
+          setConversations(prev => prev.map(c => c.id === selectedConv.id ? { ...c, unread_count: 0 } : c));
+          refreshLiveCounts?.();
+        });
+      }
     }
   }, [selectedConv]);
 
@@ -353,7 +365,12 @@ const WhatsApp = () => {
   const readRate = totalSent > 0 ? ((totalRead / totalSent) * 100).toFixed(1) : '0.0';
 
 
+  const takeoverCount = conversations.filter(c => c.conversation_mode === 'HUMAN TAKEOVER REQUESTED').length;
+  const unreadCount = conversations.filter(c => (c.unread_count || 0) > 0).length;
+
   const filteredConversations = conversations.filter(c => {
+    if (chatFilter === 'takeover' && c.conversation_mode !== 'HUMAN TAKEOVER REQUESTED') return false;
+    if (chatFilter === 'unread' && !(c.unread_count > 0)) return false;
     if (!searchConv) return true;
     const s = searchConv.toLowerCase();
     return c.contact_name?.toLowerCase().includes(s) || c.contact_phone?.includes(s) || c.last_message_text?.toLowerCase().includes(s);
@@ -378,9 +395,30 @@ const WhatsApp = () => {
                 background: activeTab === 'inbox' ? 'var(--whatsapp)' : 'var(--bg-tertiary)',
                 color: activeTab === 'inbox' ? 'white' : 'var(--text-secondary)',
                 padding: '0.45rem 1rem',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.4rem',
               }}
             >
-              <MessageCircle size={15} /> Live Inbox ({conversations.length})
+              <MessageCircle size={15} />
+              <span>Live Inbox ({conversations.length})</span>
+              {takeoverCount > 0 && (
+                <span
+                  style={{
+                    background: '#ef4444',
+                    color: '#ffffff',
+                    borderRadius: 99,
+                    padding: '0.1rem 0.45rem',
+                    fontSize: '0.65rem',
+                    fontWeight: 800,
+                    animation: 'pulse 2s infinite',
+                    boxShadow: '0 0 6px rgba(239, 68, 68, 0.6)',
+                  }}
+                  title={`${takeoverCount} customer(s) requested human takeover / rate list`}
+                >
+                  🚨 {takeoverCount}
+                </span>
+              )}
             </button>
             <button
               className="btn"
@@ -428,17 +466,73 @@ const WhatsApp = () => {
           
           {/* PANE 1: CONVERSATIONS LIST */}
           <div className="whatsapp-conv-pane" style={{ borderRight: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', background: 'var(--bg-secondary)', overflow: 'hidden' }}>
-            <div style={{ padding: '0.85rem', borderBottom: '1px solid var(--border-color)' }}>
-              <div className="input-group">
+            <div style={{ padding: '0.75rem 0.85rem 0.4rem', borderBottom: '1px solid var(--border-color)' }}>
+              <div className="input-group" style={{ marginBottom: '0.45rem' }}>
                 <Search size={14} className="input-icon" />
                 <input
                   type="text"
                   className="input-field"
                   placeholder="Search chats..."
-                  style={{ fontSize: '0.8rem', padding: '0.5rem 0.5rem 0.5rem 2rem' }}
+                  style={{ fontSize: '0.8rem', padding: '0.45rem 0.5rem 0.45rem 2rem' }}
                   value={searchConv}
                   onChange={e => setSearchConv(e.target.value)}
                 />
+              </div>
+
+              {/* Actionable Filter Pills */}
+              <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap', paddingBottom: '0.25rem' }}>
+                <button
+                  type="button"
+                  onClick={() => setChatFilter('all')}
+                  style={{
+                    fontSize: '0.68rem',
+                    padding: '0.2rem 0.5rem',
+                    borderRadius: 6,
+                    border: '1px solid var(--border-color)',
+                    background: chatFilter === 'all' ? 'var(--accent-primary)' : 'var(--bg-tertiary)',
+                    color: chatFilter === 'all' ? '#ffffff' : 'var(--text-secondary)',
+                    cursor: 'pointer',
+                    fontWeight: chatFilter === 'all' ? 700 : 500,
+                  }}
+                >
+                  All ({conversations.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setChatFilter('takeover')}
+                  style={{
+                    fontSize: '0.68rem',
+                    padding: '0.2rem 0.55rem',
+                    borderRadius: 6,
+                    border: takeoverCount > 0 ? '1px solid #ef4444' : '1px solid var(--border-color)',
+                    background: chatFilter === 'takeover' ? '#ef4444' : (takeoverCount > 0 ? 'rgba(239, 68, 68, 0.15)' : 'var(--bg-tertiary)'),
+                    color: chatFilter === 'takeover' ? '#ffffff' : (takeoverCount > 0 ? '#ef4444' : 'var(--text-secondary)'),
+                    cursor: 'pointer',
+                    fontWeight: takeoverCount > 0 ? 800 : 500,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.25rem',
+                  }}
+                >
+                  <span>🚨</span>
+                  <span>Takeover ({takeoverCount})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setChatFilter('unread')}
+                  style={{
+                    fontSize: '0.68rem',
+                    padding: '0.2rem 0.5rem',
+                    borderRadius: 6,
+                    border: '1px solid var(--border-color)',
+                    background: chatFilter === 'unread' ? 'var(--accent-primary)' : 'var(--bg-tertiary)',
+                    color: chatFilter === 'unread' ? '#ffffff' : 'var(--text-secondary)',
+                    cursor: 'pointer',
+                    fontWeight: chatFilter === 'unread' ? 700 : 500,
+                  }}
+                >
+                  Unread ({unreadCount})
+                </button>
               </div>
             </div>
 
@@ -462,6 +556,7 @@ const WhatsApp = () => {
               ) : (
                 filteredConversations.map(c => {
                   const isSelected = selectedConv?.id === c.id;
+                  const isTakeover = c.conversation_mode === 'HUMAN TAKEOVER REQUESTED';
                   return (
                     <div
                       key={c.id}
@@ -470,13 +565,19 @@ const WhatsApp = () => {
                         padding: '0.85rem 1rem',
                         borderBottom: '1px solid var(--border-color)',
                         cursor: 'pointer',
-                        background: isSelected ? 'rgba(99,102,241,0.1)' : 'transparent',
-                        borderLeft: isSelected ? '3px solid var(--accent-primary)' : '3px solid transparent',
+                        background: isTakeover
+                          ? (isSelected ? 'rgba(239,68,68,0.18)' : 'rgba(239,68,68,0.06)')
+                          : (isSelected ? 'rgba(99,102,241,0.1)' : 'transparent'),
+                        borderLeft: isTakeover
+                          ? '4px solid #ef4444'
+                          : (isSelected ? '3px solid var(--accent-primary)' : '3px solid transparent'),
                         transition: 'all 0.15s ease',
                       }}
                     >
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.15rem' }}>
-                        <div style={{ fontWeight: 700, fontSize: '0.84rem', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '60%' }}>{c.contact_name || c.contact_phone}</div>
+                        <div style={{ fontWeight: 700, fontSize: '0.84rem', color: isTakeover ? '#ef4444' : 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '60%' }}>
+                          {c.contact_name || c.contact_phone}
+                        </div>
                         <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>
                           {new Date(c.last_message_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         </span>
@@ -486,16 +587,38 @@ const WhatsApp = () => {
                         {c.last_message_text}
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span
-                          className="badge"
-                          style={{
-                            fontSize: '0.6rem',
-                            background: c.conversation_mode === 'AI ACTIVE' ? 'rgba(16,185,129,0.15)' : c.conversation_mode === 'HUMAN ACTIVE' ? 'rgba(99,102,241,0.15)' : 'rgba(245,158,11,0.15)',
-                            color: c.conversation_mode === 'AI ACTIVE' ? 'var(--success)' : c.conversation_mode === 'HUMAN ACTIVE' ? 'var(--accent-primary)' : 'var(--warning)',
-                          }}
-                        >
-                          {c.conversation_mode === 'AI ACTIVE' ? '🤖 AI Active' : c.conversation_mode === 'HUMAN ACTIVE' ? '👤 Human Active' : '⏸️ AI Paused'}
-                        </span>
+                        {isTakeover ? (
+                          <span
+                            className="badge"
+                            style={{
+                              fontSize: '0.62rem',
+                              fontWeight: 800,
+                              background: 'linear-gradient(135deg, #ef4444, #b91c1c)',
+                              color: '#ffffff',
+                              boxShadow: '0 0 8px rgba(239, 68, 68, 0.55)',
+                              animation: 'pulse 2s infinite',
+                              padding: '0.15rem 0.5rem',
+                              borderRadius: 6,
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '0.25rem',
+                            }}
+                          >
+                            <span>🚨</span>
+                            <span>TAKEOVER NEEDED</span>
+                          </span>
+                        ) : (
+                          <span
+                            className="badge"
+                            style={{
+                              fontSize: '0.6rem',
+                              background: c.conversation_mode === 'AI ACTIVE' ? 'rgba(16,185,129,0.15)' : c.conversation_mode === 'HUMAN ACTIVE' ? 'rgba(99,102,241,0.15)' : 'rgba(245,158,11,0.15)',
+                              color: c.conversation_mode === 'AI ACTIVE' ? 'var(--success)' : c.conversation_mode === 'HUMAN ACTIVE' ? 'var(--accent-primary)' : 'var(--warning)',
+                            }}
+                          >
+                            {c.conversation_mode === 'AI ACTIVE' ? '🤖 AI Active' : c.conversation_mode === 'HUMAN ACTIVE' ? '👤 Human Active' : '⏸️ AI Paused'}
+                          </span>
+                        )}
                         {c.unread_count > 0 && (
                           <span className="badge badge-danger" style={{ fontSize: '0.6rem', borderRadius: 99, padding: '0.1rem 0.4rem' }}>
                             {c.unread_count}
@@ -513,6 +636,54 @@ const WhatsApp = () => {
           <div className="whatsapp-chat-pane" style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-primary)' }}>
             {selectedConv ? (
               <>
+                {/* Human Takeover Alert Banner (Active when customer requested human callback/rates) */}
+                {selectedConv.conversation_mode === 'HUMAN TAKEOVER REQUESTED' && (
+                  <div style={{
+                    background: 'linear-gradient(90deg, rgba(239, 68, 68, 0.16), rgba(245, 158, 11, 0.12))',
+                    borderBottom: '2px solid #ef4444',
+                    padding: '0.75rem 1.25rem',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '1rem',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.7rem' }}>
+                      <div style={{ width: 34, height: 34, borderRadius: '50%', background: 'rgba(239, 68, 68, 0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.2rem', flexShrink: 0 }}>
+                        🚨
+                      </div>
+                      <div>
+                        <div style={{ fontWeight: 800, fontSize: '0.8rem', color: '#ef4444', letterSpacing: '0.04em' }}>
+                          HUMAN TAKEOVER REQUESTED
+                        </div>
+                        <div style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', marginTop: '0.1rem' }}>
+                          Customer requested official rate list / executive assistance. <strong>AI assistant is actively answering incoming questions</strong> until you take over.
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => handleModeChange('HUMAN ACTIVE')}
+                      style={{
+                        background: 'linear-gradient(135deg, #ef4444, #dc2626)',
+                        color: '#ffffff',
+                        border: 'none',
+                        borderRadius: 8,
+                        padding: '0.45rem 0.95rem',
+                        fontSize: '0.76rem',
+                        fontWeight: 800,
+                        cursor: 'pointer',
+                        boxShadow: '0 2px 10px rgba(239, 68, 68, 0.45)',
+                        whiteSpace: 'nowrap',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.35rem',
+                      }}
+                    >
+                      <User size={13} />
+                      <span>Take Over Now (Mute AI)</span>
+                    </button>
+                  </div>
+                )}
+
                 {/* Chat Top bar */}
                 <div style={{ padding: '0.75rem 1.25rem', borderBottom: '1px solid var(--border-color)', background: 'var(--bg-secondary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
@@ -749,13 +920,26 @@ const WhatsApp = () => {
                 {/* 1. Mode Toggle */}
                 <div>
                   <span className="section-title" style={{ fontSize: '0.82rem' }}>Conversation Mode</span>
+
+                  {selectedConv.conversation_mode === 'HUMAN TAKEOVER REQUESTED' && (
+                    <div style={{ background: 'rgba(239, 68, 68, 0.12)', border: '1px solid #ef4444', borderRadius: 8, padding: '0.65rem 0.8rem', marginTop: '0.4rem', marginBottom: '0.4rem' }}>
+                      <div style={{ fontWeight: 800, fontSize: '0.74rem', color: '#ef4444', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                        <span>🚨</span>
+                        <span>Takeover Requested</span>
+                      </div>
+                      <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginTop: '0.25rem', lineHeight: 1.3 }}>
+                        Customer requested Rate List or Executive Callback. AI continues holding the chat until you take over.
+                      </div>
+                    </div>
+                  )}
+
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', marginTop: '0.5rem' }}>
                     <button
-                      className={`btn btn-sm ${selectedConv.conversation_mode === 'HUMAN ACTIVE' ? 'btn-primary' : 'btn-secondary'}`}
-                      style={{ width: '100%', justifyContent: 'flex-start' }}
+                      className={`btn btn-sm ${selectedConv.conversation_mode === 'HUMAN ACTIVE' ? 'btn-primary' : (selectedConv.conversation_mode === 'HUMAN TAKEOVER REQUESTED' ? 'btn-danger' : 'btn-secondary')}`}
+                      style={{ width: '100%', justifyContent: 'flex-start', ...(selectedConv.conversation_mode === 'HUMAN TAKEOVER REQUESTED' ? { background: '#ef4444', color: '#ffffff', fontWeight: 700 } : {}) }}
                       onClick={() => handleModeChange('HUMAN ACTIVE')}
                     >
-                      <User size={13} /> Human Takeover (Mute AI)
+                      <User size={13} /> Take Over Now (Mute AI)
                     </button>
                     <button
                       className={`btn btn-sm ${selectedConv.conversation_mode === 'AI ACTIVE' ? 'btn-success' : 'btn-secondary'}`}

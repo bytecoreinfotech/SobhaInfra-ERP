@@ -153,6 +153,9 @@ const CampaignStudio = () => {
   const [simChatHistory, setSimChatHistory] = useState([]);
   const [simCurrentButtons, setSimCurrentButtons] = useState(DEFAULT_PRESETS[0].buttons);
   const [simHandedOver, setSimHandedOver] = useState(false);
+  const [simTakeoverFlagged, setSimTakeoverFlagged] = useState(false);
+  const [simInputText, setSimInputText] = useState('');
+  const simCanvasRef = useRef(null);
 
   // Execution
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -173,6 +176,13 @@ const CampaignStudio = () => {
   useEffect(() => {
     resetSimulator();
   }, [customText, buttons, campaignVariables, campaignFilePreview]);
+
+  // Auto-scroll simulator canvas
+  useEffect(() => {
+    if (simCanvasRef.current) {
+      simCanvasRef.current.scrollTop = simCanvasRef.current.scrollHeight;
+    }
+  }, [simChatHistory, simCurrentButtons, simTakeoverFlagged]);
 
   const loadCrmLeads = async () => {
     const { data } = await getLeads();
@@ -366,6 +376,8 @@ const CampaignStudio = () => {
     ]);
     setSimCurrentButtons(buttons);
     setSimHandedOver(false);
+    setSimTakeoverFlagged(false);
+    setSimInputText('');
   };
 
   const handleSimulatorButtonClick = (button) => {
@@ -377,31 +389,163 @@ const CampaignStudio = () => {
     };
 
     const nextHistory = [...simChatHistory, userMsg];
+    const bId = (button.id || '').toLowerCase();
+    const bTitle = (button.title || '').toLowerCase();
 
-    // 2. Process Button Action
-    if (button.actionType === 'human_handoff' || button.title.toLowerCase().includes('human') || button.title.toLowerCase().includes('agent')) {
+    // 2. Brochure / Catalog trigger
+    if (bId.includes('catalog') || bId.includes('brochure') || bTitle.includes('brochure') || bTitle.includes('catalog')) {
       nextHistory.push({
         id: `bot-${Date.now()}`,
         sender: 'bot',
-        text: `👋 Hello ${displayName}, I have paused automated AI assistance and transferred your chat to our senior sales specialist.\n\nAn agent will review your inquiry and connect with you personally shortly!`,
-        isHandoverNotice: true,
+        fileName: 'Sobha_Infratech_Product_Catalog.pdf',
+        mediaUrl: 'https://sobhainfra-erp.netlify.app/sobha-products.pdf',
+        text: `📄 Namaste ${displayName}!\n\nPlease find our official *Sobhainfra Tech Product Catalog & Technical Specification Guide* attached above in PDF format.\n\nIt covers our complete manufacturing range:\n• Sobha Block Fix (Thin Joint Mortar)\n• Sobha Plast (Ready Mix Plaster)\n• Sobha Tile Adhesives (CE, VT, SA, HF)\n• Super Fine Flyash & GGBS Cement\n\nHow would you like to proceed?`,
       });
-      setSimCurrentButtons([]);
-      setSimHandedOver(true);
-    } else if (button.actionType === 'media_or_link' && button.linkUrl) {
+      setSimCurrentButtons([
+        { id: 'sim_rate', title: '💰 Rate List', actionType: 'human_handoff' },
+        { id: 'sim_exec', title: '👤 Talk to Executive', actionType: 'human_handoff' },
+        { id: 'sim_specs', title: '📦 Product Specs', actionType: 'specs' },
+      ]);
+    }
+    // 3. Rate list trigger -> Handover flagged in CRM, but AI CONTINUES ANSWERING!
+    else if (bId.includes('rate') || bTitle.includes('rate') || bTitle.includes('price') || bTitle.includes('quote')) {
       nextHistory.push({
         id: `bot-${Date.now()}`,
         sender: 'bot',
-        text: `${formatText(button.replyText || 'Here is the direct link for you:')}\n🔗 ${button.linkUrl}`,
+        text: `💰 Namaste ${displayName}!\n\nOur official rate lists and project quotations are provided directly by our sales executive based on your delivery location and order quantity.\n\n🚨 I have transferred your request to our executive who will connect with you shortly! 📞\n\nIn the meantime, feel free to ask about any product specifications, applications, or test certificates right here!`,
       });
-      setSimCurrentButtons(button.subButtons || []);
+      setSimTakeoverFlagged(true);
+      setSimCurrentButtons([
+        { id: 'sim_brochure', title: '📄 Product Catalog', actionType: 'brochure' },
+        { id: 'sim_exec', title: '👤 Talk to Executive', actionType: 'human_handoff' },
+        { id: 'sim_specs', title: '📦 Product Specs', actionType: 'specs' },
+      ]);
+    }
+    // 4. Executive callback trigger
+    else if (bTitle.includes('executive') || bTitle.includes('human') || bTitle.includes('agent') || button.actionType === 'human_handoff') {
+      nextHistory.push({
+        id: `bot-${Date.now()}`,
+        sender: 'bot',
+        text: `👋 Namaste ${displayName}! I have alerted our senior sales executive to connect with you directly.\n\nWhile our team gets in touch, our AI assistant remains active right here to answer any product specifications, applications, or technical details! 📞`,
+      });
+      setSimTakeoverFlagged(true);
+      setSimCurrentButtons([
+        { id: 'sim_brochure', title: '📄 Product Catalog', actionType: 'brochure' },
+        { id: 'sim_specs', title: '📦 Product Specs', actionType: 'specs' },
+      ]);
+    }
+    // 5. Product Specs trigger
+    else if (bTitle.includes('spec')) {
+      nextHistory.push({
+        id: `bot-${Date.now()}`,
+        sender: 'bot',
+        text: `📦 *Sobha Manufacturing Range & Specifications:*\n\n🧱 *Sobha Block Fix*: Self-curing thin joint mortar (3mm joint, reduces mortar consumption by 75%)\n🛡️ *Sobha Plast*: Premixed cement plaster (IS 16777 certified)\n🏗️ *Sobha Tile Adhesives*: Type 1 CE (Ceramic), Type 2 VT (Vitrified), Type 3 SA (Large Format/Granite), Type 4 HF (High Flexibility/Swimming Pools)\n⚡ *Super Fine Flyash & GGBS Cement*: High-grade pozzolanic binder`,
+      });
+      setSimCurrentButtons([
+        { id: 'sim_brochure', title: '📄 Get Brochure', actionType: 'brochure' },
+        { id: 'sim_rate', title: '💰 Rate List', actionType: 'human_handoff' },
+        { id: 'sim_exec', title: '👤 Talk to Executive', actionType: 'human_handoff' },
+      ]);
+    }
+    // 6. Sub-buttons or custom reply
+    else if (button.subButtons && button.subButtons.length > 0) {
+      nextHistory.push({
+        id: `bot-${Date.now()}`,
+        sender: 'bot',
+        text: formatText(button.replyText || 'Thank you! Please select a follow-up option:'),
+      });
+      setSimCurrentButtons(button.subButtons);
     } else {
       nextHistory.push({
         id: `bot-${Date.now()}`,
         sender: 'bot',
         text: formatText(button.replyText || 'Thank you for your response! How else may we assist you?'),
       });
-      setSimCurrentButtons(button.subButtons || []);
+      setSimCurrentButtons([
+        { id: 'sim_brochure', title: '📄 Get Brochure', actionType: 'brochure' },
+        { id: 'sim_rate', title: '💰 Rate List', actionType: 'human_handoff' },
+        { id: 'sim_exec', title: '👤 Talk to Executive', actionType: 'human_handoff' },
+      ]);
+    }
+
+    setSimChatHistory(nextHistory);
+  };
+
+  // Interactive Typing in Simulator
+  const handleSimulatorSendMessage = () => {
+    const raw = simInputText.trim();
+    if (!raw) return;
+    setSimInputText('');
+
+    const userMsg = { id: `user-${Date.now()}`, sender: 'user', text: raw };
+    const nextHistory = [...simChatHistory, userMsg];
+    const lower = raw.toLowerCase();
+
+    if (lower.includes('rate') || lower.includes('price') || lower.includes('quote') || lower.includes('bhav') || lower.includes('discount')) {
+      nextHistory.push({
+        id: `bot-${Date.now()}`,
+        sender: 'bot',
+        text: `💰 Namaste ${displayName}!\n\nOur official rate lists and customized project quotations are provided directly by our senior sales specialists based on your delivery location and order quantity.\n\n🚨 I have transferred your request to our executive who will connect with you shortly! 📞\n\nIn the meantime, feel free to ask any technical, application, or packing questions about our products right here!`,
+      });
+      setSimTakeoverFlagged(true);
+      setSimCurrentButtons([
+        { id: 'sim_brochure', title: '📄 Product Catalog', actionType: 'brochure' },
+        { id: 'sim_exec', title: '👤 Talk to Executive', actionType: 'human_handoff' },
+      ]);
+    } else if (lower.includes('brochure') || lower.includes('catalog') || lower.includes('pdf') || lower.includes('details')) {
+      nextHistory.push({
+        id: `bot-${Date.now()}`,
+        sender: 'bot',
+        fileName: 'Sobha_Infratech_Product_Catalog.pdf',
+        mediaUrl: 'https://sobhainfra-erp.netlify.app/sobha-products.pdf',
+        text: `📄 Namaste ${displayName}! Please find our official *Sobhainfra Tech Product Catalog & Technical Specification Guide* attached above in PDF format.`,
+      });
+      setSimCurrentButtons([
+        { id: 'sim_rate', title: '💰 Rate List', actionType: 'human_handoff' },
+        { id: 'sim_exec', title: '👤 Talk to Executive', actionType: 'human_handoff' },
+        { id: 'sim_specs', title: '📦 Product Specs', actionType: 'specs' },
+      ]);
+    } else if (lower.includes('factory') || lower.includes('plant') || lower.includes('location') || lower.includes('address') || lower.includes('kaha')) {
+      nextHistory.push({
+        id: `bot-${Date.now()}`,
+        sender: 'bot',
+        text: `🏭 *Sobhainfra Tech Manufacturing Plant:*\n\nOur state-of-the-art production plant is located in Gujarat with an automated manufacturing capacity of 20,000+ bags/day. We operate computer-controlled batching and continuous German dry-mix blending technology.`,
+      });
+      setSimCurrentButtons([
+        { id: 'sim_brochure', title: '📄 Get Brochure', actionType: 'brochure' },
+        { id: 'sim_rate', title: '💰 Rate List', actionType: 'human_handoff' },
+      ]);
+    } else if (lower.includes('block fix') || lower.includes('mortar') || lower.includes('aac')) {
+      nextHistory.push({
+        id: `bot-${Date.now()}`,
+        sender: 'bot',
+        text: `🧱 *Sobha Block Fix (Thin Joint Mortar):*\n\n• High-strength polymer-modified mortar designed for AAC blocks and fly ash bricks.\n• Application thickness: 3-4mm (eliminates conventional 15mm mortar).\n• Curing: Self-curing, saves water and speeds construction by 3x.\n• Coverage: Approx. 140–160 sq.ft per 40kg bag for 4-inch AAC blocks.`,
+      });
+      setSimCurrentButtons([
+        { id: 'sim_brochure', title: '📄 Get Brochure', actionType: 'brochure' },
+        { id: 'sim_rate', title: '💰 Rate List', actionType: 'human_handoff' },
+      ]);
+    } else if (lower.includes('adhesive') || lower.includes('tile') || lower.includes('marble') || lower.includes('granite')) {
+      nextHistory.push({
+        id: `bot-${Date.now()}`,
+        sender: 'bot',
+        text: `🏗️ *Sobha Tile Adhesive Range:*\n\n• *Type 1 CE*: For ceramic and small tiles on internal floors/walls.\n• *Type 2 VT*: High-strength for vitrified and porcelain tiles.\n• *Type 3 SA*: High polymer for large slabs, granite, marble & external dry areas.\n• *Type 4 HF*: Highly flexible for external facades, swimming pools & heavy traffic zones.`,
+      });
+      setSimCurrentButtons([
+        { id: 'sim_brochure', title: '📄 Get Brochure', actionType: 'brochure' },
+        { id: 'sim_rate', title: '💰 Rate List', actionType: 'human_handoff' },
+      ]);
+    } else {
+      nextHistory.push({
+        id: `bot-${Date.now()}`,
+        sender: 'bot',
+        text: `Hello ${displayName}! 👋 Thank you for messaging Sobhainfra Tech. Our automated AI assistant is active right here to help with product catalogs, technical specifications, or connect you with our sales team!`,
+      });
+      setSimCurrentButtons([
+        { id: 'sim_brochure', title: '📄 Get Brochure', actionType: 'brochure' },
+        { id: 'sim_rate', title: '💰 Rate List', actionType: 'human_handoff' },
+        { id: 'sim_exec', title: '👤 Talk to Executive', actionType: 'human_handoff' },
+      ]);
     }
 
     setSimChatHistory(nextHistory);
@@ -1323,16 +1467,18 @@ const CampaignStudio = () => {
               </div>
 
               {/* Chat Canvas (WhatsApp Background Texture) */}
-              <div style={{
-                height: 440,
-                overflowY: 'auto',
-                padding: '0.85rem',
-                background: '#0b141a',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '0.65rem',
-              }}>
-                
+              <div
+                ref={simCanvasRef}
+                style={{
+                  height: 440,
+                  overflowY: 'auto',
+                  padding: '0.85rem',
+                  background: '#0b141a',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '0.65rem',
+                }}
+              >
                 <div style={{ textAlign: 'center', margin: '0.2rem 0' }}>
                   <span style={{ fontSize: '0.62rem', background: '#182229', color: '#8696a0', padding: '0.2rem 0.6rem', borderRadius: 6 }}>
                     TODAY · INTERACTIVE SIMULATION
@@ -1366,14 +1512,34 @@ const CampaignStudio = () => {
                           </div>
                         )}
 
-                        {/* Document Preview */}
+                        {/* Document PDF Card Preview */}
                         {item.fileName && !item.mediaPreview && (
-                          <div style={{ padding: '0.5rem 0.65rem', background: '#182229', borderBottom: '1px solid #2a3942', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                            <div style={{ fontSize: '1.2rem' }}>📄</div>
-                            <div style={{ fontSize: '0.72rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              {item.fileName}
+                          <a
+                            href={item.mediaUrl || 'https://sobhainfra-erp.netlify.app/sobha-products.pdf'}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{
+                              padding: '0.55rem 0.75rem',
+                              background: '#182229',
+                              borderBottom: '1px solid #2a3942',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '0.55rem',
+                              textDecoration: 'none',
+                              color: '#e9edef',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            <div style={{ fontSize: '1.3rem', flexShrink: 0 }}>📄</div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: '0.74rem', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {item.fileName}
+                              </div>
+                              <div style={{ fontSize: '0.62rem', color: '#00a884', fontWeight: 600 }}>
+                                PDF Document · Click to View ↗
+                              </div>
                             </div>
-                          </div>
+                          </a>
                         )}
 
                         <div style={{ padding: '0.55rem 0.7rem', fontSize: '0.76rem', lineHeight: 1.4, whiteSpace: 'pre-wrap' }}>
@@ -1387,8 +1553,29 @@ const CampaignStudio = () => {
                   );
                 })}
 
+                {/* Handover / Escalation notification in simulator */}
+                {simTakeoverFlagged && (
+                  <div style={{
+                    background: 'rgba(239, 68, 68, 0.15)',
+                    border: '1px solid #ef4444',
+                    borderRadius: 8,
+                    padding: '0.45rem 0.65rem',
+                    textAlign: 'center',
+                    fontSize: '0.68rem',
+                    color: '#ef4444',
+                    fontWeight: 700,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '0.35rem',
+                  }}>
+                    <span>🚨</span>
+                    <span>Executive Callback Flagged in ERP · AI continues answering below!</span>
+                  </div>
+                )}
+
                 {/* CLICKABLE QUICK REPLY BUTTONS IN SIMULATOR */}
-                {!simHandedOver && simCurrentButtons && simCurrentButtons.length > 0 && (
+                {simCurrentButtons && simCurrentButtons.length > 0 && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', marginTop: '0.2rem' }}>
                     <div style={{ fontSize: '0.65rem', color: '#8696a0', textAlign: 'center', fontWeight: 600 }}>
                       ⚡ Tap a reply button to simulate client action:
@@ -1423,34 +1610,49 @@ const CampaignStudio = () => {
                   </div>
                 )}
 
-                {/* Handover notification in simulator */}
-                {simHandedOver && (
-                  <div style={{ background: 'rgba(245,158,11,0.15)', border: '1px solid #f59e0b', borderRadius: 8, padding: '0.5rem', textAlign: 'center', fontSize: '0.7rem', color: '#f59e0b', fontWeight: 600 }}>
-                    👤 Chat control transferred to human agent. AI is paused.
-                  </div>
-                )}
-
               </div>
 
-              {/* Phone Footer Input bar */}
+              {/* Phone Footer Input bar (Fully Interactive Customer Chat Simulator) */}
               <div style={{ background: '#202c33', padding: '0.5rem 0.75rem', display: 'flex', alignItems: 'center', gap: '0.4rem', borderTop: '1px solid #2a3942' }}>
                 <input
                   type="text"
-                  readOnly
-                  placeholder={simHandedOver ? 'Agent chat active...' : 'Client interacting via buttons...'}
+                  value={simInputText}
+                  onChange={e => setSimInputText(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') handleSimulatorSendMessage(); }}
+                  placeholder="Type message (e.g. Rate list, factory, Tile adhesive)..."
                   style={{
                     flex: 1,
                     background: '#2a3942',
-                    border: 'none',
+                    border: '1px solid #3a4b56',
                     borderRadius: 20,
-                    padding: '0.35rem 0.75rem',
-                    color: '#8696a0',
-                    fontSize: '0.72rem',
+                    padding: '0.4rem 0.75rem',
+                    color: '#e9edef',
+                    fontSize: '0.74rem',
+                    outline: 'none',
                   }}
                 />
-                <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#00a884', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: '0.75rem' }}>
-                  <Send size={12} />
-                </div>
+                <button
+                  type="button"
+                  onClick={handleSimulatorSendMessage}
+                  title="Send simulated customer message"
+                  style={{
+                    width: 30,
+                    height: 30,
+                    borderRadius: '50%',
+                    background: '#00a884',
+                    border: 'none',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: 'white',
+                    fontSize: '0.75rem',
+                    flexShrink: 0,
+                    boxShadow: '0 2px 4px rgba(0,0,0,0.3)',
+                  }}
+                >
+                  <Send size={13} />
+                </button>
               </div>
 
             </div>

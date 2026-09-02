@@ -1162,16 +1162,16 @@ exports.handler = async (event) => {
     if (isHumanTrigger) {
       if (supabase && conversationId) {
         await supabase.from('whatsapp_conversations').update({
-          conversation_mode: 'HUMAN ACTIVE',
-          last_message_text: `[Human Takeover Requested] ${messageText}`,
+          conversation_mode: 'HUMAN TAKEOVER REQUESTED',
+          last_message_text: `[Executive Callback Requested] ${messageText}`,
           last_message_at: new Date().toISOString(),
         }).eq('id', conversationId);
 
         try {
           await supabase.from('tasks').insert([{
             organization_id: DEFAULT_ORG_ID,
-            title: `⚡ Immediate WhatsApp Callback: ${contactName}`,
-            description: `Customer ${contactName} (${fromPhone}) requested human takeover on WhatsApp. Inquired: ${messageText}`,
+            title: `⚡ Executive WhatsApp Callback: ${contactName}`,
+            description: `Customer ${contactName} (${fromPhone}) requested executive callback on WhatsApp: "${messageText}".`,
             assigned_to: 'Rajesh Kumar',
             priority: 'High',
             due_date: new Date(Date.now() + 3600000).toISOString(),
@@ -1181,8 +1181,12 @@ exports.handler = async (event) => {
         } catch {}
       }
 
-      const handoffReply = `👋 Namaste ${contactName}, I have paused automated AI assistance and transferred your chat to our senior sales specialist.\n\nAn executive will review your inquiry and connect with you personally shortly. Feel free to message any details here in the meantime! 📞`;
-      await sendWhatsAppMessage(fromPhone, handoffReply);
+      const handoffReply = `👋 Namaste ${contactName}, I have alerted our senior sales executive to connect with you directly.\n\nWhile our team gets in touch, our AI assistant remains active right here to answer any product specifications, applications, or technical details! 📞`;
+      const handoffButtons = [
+        { id: 'btn_catalog', title: '📄 Product Catalog' },
+        { id: 'btn_specs', title: '📦 Product Specs' }
+      ];
+      await sendWhatsAppInteractive(fromPhone, handoffReply, handoffButtons);
 
       if (supabase && conversationId) {
         try {
@@ -1197,7 +1201,7 @@ exports.handler = async (event) => {
         } catch {}
       }
 
-      return { statusCode: 200, headers, body: JSON.stringify({ status: 'human_handoff_executed' }) };
+      return { statusCode: 200, headers, body: JSON.stringify({ status: 'human_takeover_flagged' }) };
     }
 
     // 2. Check for Brochure / Catalog Request -> STRICTLY DISPATCH PDF DOCUMENT ATTACHMENT
@@ -1258,7 +1262,7 @@ exports.handler = async (event) => {
       return { statusCode: 200, headers, body: JSON.stringify({ status: 'brochure_pdf_dispatched' }) };
     }
 
-    // 3. Check for Rate List / Pricing Inquiry -> MANDATORY HUMAN ESCALATION
+    // 3. Check for Rate List / Pricing Inquiry -> FLAG FOR HUMAN ESCALATION WHILE KEEPING AI ACTIVE
     const isRateListTrigger = buttonId.includes('price') ||
       buttonId.includes('pricing') ||
       buttonId.includes('rate') ||
@@ -1271,10 +1275,10 @@ exports.handler = async (event) => {
     if (isRateListTrigger) {
       console.log(JSON.stringify({ step: 'rate_list_escalation', to: fromPhone, name: contactName }));
 
-      // Switch conversation mode to HUMAN ACTIVE
+      // Flag conversation mode to HUMAN TAKEOVER REQUESTED (operator alerted, but AI continues answering subsequent questions!)
       if (supabase && conversationId) {
         await supabase.from('whatsapp_conversations').update({
-          conversation_mode: 'HUMAN ACTIVE',
+          conversation_mode: 'HUMAN TAKEOVER REQUESTED',
           last_message_text: `[Rate List Requested] ${messageText}`,
           last_message_at: new Date().toISOString(),
         }).eq('id', conversationId);
@@ -1293,10 +1297,10 @@ exports.handler = async (event) => {
         } catch {}
       }
 
-      const rateReply = `💰 Namaste ${contactName}!\n\nOur official rate lists and customized project quotations are provided directly by our senior sales specialists based on your delivery location and order quantity.\n\nI have transferred your request to our executive who will share the latest rate chart and connect with you shortly! 📞`;
+      const rateReply = `💰 Namaste ${contactName}!\n\nOur official rate lists and customized project quotations are provided directly by our senior sales specialists based on your delivery location and order quantity.\n\nI have transferred your request to our executive who will share the latest rate chart and connect with you shortly! 📞\n\nIn the meantime, feel free to ask any technical, application, or packing questions about our products right here!`;
       const rateButtons = [
         { id: 'btn_catalog', title: '📄 Product Catalog' },
-        { id: 'btn_human', title: '👤 Call Executive' }
+        { id: 'btn_human', title: '👤 Talk to Executive' }
       ];
 
       await sendWhatsAppInteractive(fromPhone, rateReply, rateButtons);
@@ -1314,17 +1318,15 @@ exports.handler = async (event) => {
         } catch {}
       }
 
-      return { statusCode: 200, headers, body: JSON.stringify({ status: 'rate_list_escalated_to_human' }) };
+      return { statusCode: 200, headers, body: JSON.stringify({ status: 'rate_list_flagged_for_human' }) };
     }
 
     // ── INVOICE / BILL REQUEST HANDLER (before AI — highest priority self-service) ──
-    // Intercepts any message asking for bill, receipt, outstanding, etc.
     if (detectInvoiceIntent(messageText)) {
       const invoiceHandled = await handleInvoiceRequest(supabase, fromPhone, contactName, conversationId);
       if (invoiceHandled) {
         return { statusCode: 200, headers, body: JSON.stringify({ status: 'invoice_request_fulfilled' }) };
       }
-      // If invoice lookup failed, fall through to AI for graceful reply
     }
 
     // Suppress AI if explicitly paused or closed
@@ -1333,7 +1335,8 @@ exports.handler = async (event) => {
       return { statusCode: 200, headers, body: JSON.stringify({ status: 'suppressed', reason: conversationMode }) };
     }
 
-    // Human mode: do NOT reply but don't block either (let it through for handoff tracking)
+    // Human mode: ONLY silence AI if an actual human agent has taken over (HUMAN ACTIVE)
+    // If conversationMode === 'HUMAN TAKEOVER REQUESTED', AI CONTINUES ANSWERING until human operator connects!
     if (conversationMode === 'HUMAN ACTIVE') {
       console.log(JSON.stringify({ step: 'ai_reply', status: 'human_mode', note: 'no_ai_reply_sent' }));
       return { statusCode: 200, headers, body: JSON.stringify({ status: 'human_active' }) };
