@@ -537,34 +537,41 @@ const Customer360Modal = ({ leadId, onClose, onLeadUpdated }) => {
                                     </div>
                                   )}
 
-                                  {/* Document preview */}
+                                  {/* Document PDF Card Preview */}
                                   {mediaUrl && mediaType === 'document' && (
-                                    <div style={{ marginBottom: cleanText ? '0.45rem' : 0 }}>
+                                    <div style={{ marginBottom: cleanText ? '0.55rem' : 0 }}>
                                       <a
                                         href={mediaUrl}
                                         target="_blank"
                                         rel="noopener noreferrer"
                                         style={{
-                                          display: 'inline-flex',
+                                          display: 'flex',
                                           alignItems: 'center',
-                                          gap: '0.4rem',
-                                          padding: '0.35rem 0.6rem',
-                                          background: 'rgba(99,102,241,0.15)',
-                                          border: '1px solid var(--accent-primary)',
-                                          borderRadius: 6,
+                                          gap: '0.65rem',
+                                          padding: '0.6rem 0.85rem',
+                                          background: 'rgba(239, 68, 68, 0.1)',
+                                          border: '1px solid rgba(239, 68, 68, 0.35)',
+                                          borderRadius: 8,
                                           color: 'var(--text-primary)',
                                           textDecoration: 'none',
-                                          fontSize: '0.78rem',
-                                          fontWeight: 500
+                                          transition: 'all 0.2s',
                                         }}
                                       >
-                                        📎 {cleanText || 'Document'} ↗
+                                        <span style={{ fontSize: '1.4rem', flexShrink: 0 }}>📄</span>
+                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                          <div style={{ fontWeight: 600, fontSize: '0.8rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                            {fileName || (mediaUrl.split('/').pop().split('?')[0]) || 'Sobha_Infratech_Product_Catalog.pdf'}
+                                          </div>
+                                          <div style={{ fontSize: '0.68rem', color: 'var(--accent-primary)', fontWeight: 500 }}>
+                                            PDF Document · Click to View / Download ↗
+                                          </div>
+                                        </div>
                                       </a>
                                     </div>
                                   )}
 
-                                  {/* Clean Text Body */}
-                                  {cleanText && (mediaType !== 'document' || !mediaUrl) && (
+                                  {/* Clean Text Body - Always Rendered */}
+                                  {cleanText && (
                                     <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.45 }}>{cleanText}</div>
                                   )}
                                 </>

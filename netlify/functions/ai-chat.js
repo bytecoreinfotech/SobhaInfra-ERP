@@ -15,11 +15,12 @@
 
 const { createClient } = require('@supabase/supabase-js');
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const SUPABASE_URL   = process.env.SUPABASE_URL;
-const SUPABASE_KEY   = process.env.SUPABASE_ANON_KEY;
-const DEFAULT_ORG_ID = '00000000-0000-0000-0000-000000000001';
+const GEMINI_API_KEY     = process.env.GEMINI_API_KEY;
+const OPENAI_API_KEY     = process.env.OPENAI_API_KEY;
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY || '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';
+const SUPABASE_URL       = process.env.SUPABASE_URL;
+const SUPABASE_KEY       = process.env.SUPABASE_ANON_KEY;
+const DEFAULT_ORG_ID     = '00000000-0000-0000-0000-000000000001';
 
 // ─── 1. Supabase Client Factory ───────────────────────────────────────────────
 function getSupabase() {
@@ -458,8 +459,61 @@ exports.handler = async (event) => {
     let promptTokensEst = 0;
     let completionTokensEst = 0;
 
-    // 1. Try Google Gemini API
-    if (GEMINI_API_KEY && !GEMINI_API_KEY.includes('placeholder')) {
+    // 1. Try OpenRouter Multi-Model Cascading
+    if (OPENROUTER_API_KEY && OPENROUTER_API_KEY.startsWith('sk-or-')) {
+      const openRouterModels = [
+        'deepseek/deepseek-chat',
+        'nvidia/nemotron-3-super-120b-a12b:free',
+        'minimax/minimax-m3:free',
+        'google/gemma-4-26b-a4b-it:free'
+      ];
+
+      for (const model of openRouterModels) {
+        try {
+          const messages = [
+            { role: 'system', content: systemPrompt },
+            ...history.slice(-6).map(h => ({
+              role: h.sender_type === 'customer' ? 'user' : 'assistant',
+              content: h.body,
+            })),
+            { role: 'user', content: messageText },
+          ];
+
+          promptTokensEst = Math.ceil(JSON.stringify(messages).length / 4);
+
+          const orRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+              'HTTP-Referer': 'https://sobhainfra-erp.netlify.app',
+              'X-Title': 'SobhaInfra ERP',
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              model,
+              messages,
+              max_tokens: 300,
+              temperature: 0.2,
+            }),
+          });
+
+          const orData = await orRes.json();
+          const reply = orData.choices?.[0]?.message?.content?.trim();
+          if (reply && reply.length > 5) {
+            finalResponseText = reply;
+            completionTokensEst = orData.usage?.completion_tokens || Math.ceil(reply.length / 4);
+            promptTokensEst = orData.usage?.prompt_tokens || promptTokensEst;
+            modelUsed = `openrouter:${model}`;
+            break;
+          }
+        } catch (orErr) {
+          console.warn('[AI Chat] OpenRouter attempt error:', orErr.message);
+        }
+      }
+    }
+
+    // 2. Try Google Gemini API
+    if (!finalResponseText && GEMINI_API_KEY && !GEMINI_API_KEY.includes('placeholder')) {
       try {
         const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
         const fullPrompt = `${systemPrompt}\n\nCustomer asks: "${messageText}"\n\nProvide helpful sales assistant reply:`;
@@ -489,8 +543,8 @@ exports.handler = async (event) => {
       }
     }
 
-    // 2. Try OpenAI API if Gemini not used
-    if (!finalResponseText && OPENAI_API_KEY && !OPENAI_API_KEY.includes('placeholder')) {
+    // 3. Try OpenAI API if not resolved
+    if (!finalResponseText && OPENAI_API_KEY && !OPENAI_API_KEY.includes('placeholder') && !OPENAI_API_KEY.startsWith('sk-or-')) {
       try {
         const messages = [
           { role: 'system', content: systemPrompt },

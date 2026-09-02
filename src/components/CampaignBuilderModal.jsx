@@ -10,28 +10,28 @@ import { estimateCampaignAudience, queueCampaign, processCampaignBatch, getLeads
 import { uploadToWhatsAppMedia, getWhatsAppMediaType } from '../lib/storage';
 
 const STANDARD_TEMPLATES = [
-  { id: 1, tag: 'Announcement', name: 'New Product Launch', text: 'Hi {name}! 👋 We have introduced our new {product}. Would you like the official rate chart and brochure?' },
-  { id: 2, tag: 'Inquiry Offer', name: 'Special Inquiry Offer', text: 'Dear {name}, thank you for inquiring about {product}! We are offering exclusive pricing this week. Would you like a callback?' },
-  { id: 3, tag: 'Payment', name: 'Payment Reminder', text: 'Dear {name}, gentle reminder regarding your outstanding invoice for {product}. Please clear at the earliest.' },
-  { id: 4, tag: 'Follow-up', name: 'Customer Follow-up', text: 'Hello {name}, following up on your inquiry for {product}. Let us know if you would like to schedule a call with our team.' },
+  { id: 1, tag: 'Catalog', name: 'Sobha Product Range & Catalog', text: 'Namaste {name}! 🙏\n\nWelcome to *Sobhainfra Tech Private Limited* ("Har Nirman Ki Jaan").\n\nWe manufacture advanced dry mix building materials:\n• Sobha Block Fix (Thin Joint Mortar)\n• Sobha Plast (Ready Mix Plaster - IS 16777)\n• Tile Adhesives (Type 1 to 4)\n• Super Fine Flyash & GGBS Cement\n\n📄 Official product catalog PDF is attached. Would you like a callback or quotation?' },
+  { id: 2, tag: 'Mortar & Plaster', name: 'Dry Mix Solutions Campaign', text: 'Dear {name}, 🚀\n\nLooking for certified, high-bond dry mix solutions for your projects? Sobhainfra Tech offers direct factory supply with 20,000+ bags/day capacity from Gujarat. Let us know if you would like product samples or our latest rate chart.' },
+  { id: 3, tag: 'Payment', name: 'Payment Reminder', text: 'Dear {name}, gentle reminder regarding your outstanding invoice for {product}. Please clear at the earliest. Thank you! 🙏' },
+  { id: 4, tag: 'Follow-up', name: 'Customer Follow-up', text: 'Namaste {name}, following up on your inquiry for *{product}*. Please let us know if you would like our sales engineer to assist you with technical specifications or site delivery.' },
 ];
 
 const PRESET_MESSAGES = [
   {
-    name: 'Special Offer / Discount',
-    text: 'Hello {name}! 👋\n\nWe have an exclusive offer on *{product}* valid this week only! 🎁\n\nGet best bulk pricing starting at *{budget}*. Would you like us to share the catalog and quote?',
+    name: 'Sobha Catalog & Product Range',
+    text: 'Namaste {name}! 🙏\n\nWelcome to *Sobhainfra Tech Private Limited* ("Har Nirman Ki Jaan") — manufacturing high-performance dry mix construction materials since 2003.\n\n🏗️ *Our Core Product Range:*\n• Sobha Block Fix (Thin Joint Mortar)\n• Sobha Plast (Ready Mix Plaster - IS 16777)\n• Sobha Tile Adhesives (Type 1 CE to Type 4 HF)\n• Super Fine Flyash & GGBS Cement\n\n📄 Please find our official product catalog attached in PDF format. Feel free to reply for rates or to speak with our sales executive!',
+  },
+  {
+    name: 'Special Offer / Bulk Quotation',
+    text: 'Hello {name}! 👋\n\nWe have an exclusive factory-direct volume offer on our *{product}* valid this week! 🎁\n\nDirect supply from {company} with 20,000+ bags/day capacity from Gujarat.\n\nWould you like us to share our technical specs and quotation?',
   },
   {
     name: 'New Product Launch',
-    text: 'Dear {name}, 🚀\n\nExciting news! We have just launched our new range of *{product}* from {company}.\n\nCheck out the attached brochure and let us know if you would like a free sample or demo!',
+    text: 'Dear {name}, 🚀\n\nExciting news! {company} has introduced our all-new *{product}*.\n\nCheck out the attached technical guide and let us know if you would like a free sample or site demonstration!',
   },
   {
     name: 'Payment Follow-up',
-    text: 'Dear {name},\n\nGentle reminder regarding your pending invoice for *{product}* of *{budget}*. Kindly arrange payment at your earliest convenience. Thank you! 🙏',
-  },
-  {
-    name: 'Quick Feedback / Follow-up',
-    text: 'Hi {name}, hope you are doing well! 😊\n\nFollowing up on our recent conversation about *{product}*. Please let us know if you have any questions or need further assistance!',
+    text: 'Dear {name},\n\nGentle reminder regarding your pending invoice for *{product}* amounting to *{budget}*. Kindly arrange payment at your earliest convenience. Thank you! 🙏',
   },
 ];
 
@@ -68,11 +68,11 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued, initialRecipi
   // 4. Custom Campaign Dynamic Variables & Fallbacks (Gear Icon)
   const [showVariablesPanel, setShowVariablesPanel] = useState(false);
   const [campaignVariables, setCampaignVariables] = useState({
-    product: 'Tile Adhesive & Grout',
+    product: 'Sobha Block Fix & Tile Adhesive',
     budget: '₹1,50,000',
-    company: 'ERPPro Solutions Pvt. Ltd.',
+    company: 'Sobhainfra Tech Private Limited',
     phone: '+91 99990 00001',
-    mode: 'fallback', // 'fallback' (use if missing in contact) | 'override' (force for all contacts in this campaign)
+    mode: 'fallback',
   });
 
   // Message compose mode: 'custom' | 'template'

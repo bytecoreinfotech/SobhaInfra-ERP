@@ -28,10 +28,10 @@ const statusConfig = {
 };
 
 const templates = [
-  { id: 1, tag: 'Launch', name: 'New Product Launch', preview: 'Hi {name}! 🚀 We have introduced our new {product}. Would you like the official catalog and brochure?' },
-  { id: 2, tag: 'Catalog', name: 'Product Catalog & Demo', preview: 'Dear {name}, thank you for inquiring about {product}! We are offering free samples & demo this week. Would you like a callback?' },
+  { id: 1, tag: 'Catalog', name: 'Sobha Product Range & Catalog', preview: 'Namaste {name}! 🙏 Welcome to Sobhainfra Tech. Our official product catalog PDF is attached. Would you like product rates or to talk to an executive?' },
+  { id: 2, tag: 'Launch', name: 'Dry Mix Solutions Broadcast', preview: 'Dear {name}, 🚀 Sobhainfra Tech provides direct factory supply of Sobha Block Fix & Tile Adhesives with 20,000+ bags/day capacity from Gujarat.' },
   { id: 3, tag: 'Payment', name: 'Product Payment Reminder', preview: 'Dear {name}, your payment of {amount} for {product} is due on {date}. Please clear at the earliest.' },
-  { id: 4, tag: 'Festival', name: 'Special Product Offer', preview: '🎉 {name}, this week get special volume discounts on our {product}! Limited period offer.' },
+  { id: 4, tag: 'Offer', name: 'Special Volume Discount', preview: '🎉 {name}, this week get special volume discounts on our {product}! Direct factory supply from Gujarat.' },
 ];
 
 const AI_FEEDBACK_TAGS = ['AI Helpful', 'Wrong Information', 'Premature Handoff', 'Late Handoff', 'Customer Annoyed'];
@@ -274,28 +274,35 @@ const WhatsApp = () => {
     e.preventDefault();
     if ((!msgInput.trim() && !attachedFile) || !selectedConv) return;
     setSendingMsg(true);
-    const textToSend = msgInput;
-    setMsgInput('');
+    const textToSend = msgInput.trim();
+    const fileToSend = attachedFile;
 
     let mediaUrl = null;
     let mediaType = 'text';
+    let mediaFileName = null;
 
     try {
-      if (attachedFile) {
-        mediaUrl = await uploadToWhatsAppMedia(attachedFile, 'crm', setUploadProgress);
-        mediaType = getWhatsAppMediaType(attachedFile);
+      if (fileToSend) {
+        mediaFileName = fileToSend.name;
+        mediaType = getWhatsAppMediaType(fileToSend);
+        mediaUrl = await uploadToWhatsAppMedia(fileToSend, 'crm', setUploadProgress);
       }
 
-      const { data: newMsg } = await sendWhatsAppMessage(
+      const { data: newMsg, error: sendErr } = await sendWhatsAppMessage(
         selectedConv.id,
         textToSend,
         'human_agent',
         selectedConv.contact_phone,
         mediaType,
         mediaUrl,
-        attachedFile?.name || null
+        mediaFileName
       );
 
+      if (sendErr) {
+        console.warn('[WhatsApp Page] Send warning:', sendErr);
+      }
+
+      setMsgInput('');
       clearAttachment();
 
       if (newMsg) {
@@ -306,9 +313,11 @@ const WhatsApp = () => {
       }
     } catch (err) {
       console.error('[WhatsApp Page] Send error:', err);
+      alert(`Message sending failed: ${err.message || 'Please try again.'}`);
+    } finally {
+      setSendingMsg(false);
+      setUploadProgress(0);
     }
-
-    setSendingMsg(false);
   };
 
   const handleModeChange = async (newMode) => {
@@ -559,7 +568,7 @@ const WhatsApp = () => {
                 <div className="whatsapp-chat-messages" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                   {messages.map(m => {
                     const isOutbound = m.direction === 'outbound';
-                    const { text: cleanText, mediaUrl, mediaType } = parseMessageMedia(m);
+                    const { text: cleanText, mediaUrl, mediaType, fileName } = parseMessageMedia(m);
                     return (
                       <div
                         key={m.id}
@@ -624,35 +633,42 @@ const WhatsApp = () => {
                           </div>
                         )}
 
-                        {/* Document Preview */}
+                        {/* Document PDF Card Preview */}
                         {mediaUrl && mediaType === 'document' && (
-                          <div style={{ marginBottom: cleanText ? '0.45rem' : 0 }}>
+                          <div style={{ marginBottom: cleanText ? '0.55rem' : 0 }}>
                             <a
                               href={mediaUrl}
                               target="_blank"
                               rel="noopener noreferrer"
                               style={{
-                                display: 'inline-flex',
+                                display: 'flex',
                                 alignItems: 'center',
-                                gap: '0.4rem',
-                                padding: '0.35rem 0.6rem',
-                                background: 'rgba(99,102,241,0.15)',
-                                border: '1px solid var(--accent-primary)',
-                                borderRadius: 6,
+                                gap: '0.65rem',
+                                padding: '0.6rem 0.85rem',
+                                background: 'rgba(239, 68, 68, 0.1)',
+                                border: '1px solid rgba(239, 68, 68, 0.35)',
+                                borderRadius: 8,
                                 color: 'var(--text-primary)',
                                 textDecoration: 'none',
-                                fontSize: '0.78rem',
-                                fontWeight: 500
+                                transition: 'all 0.2s',
                               }}
                             >
-                              📎 {cleanText || 'Document'} ↗
+                              <span style={{ fontSize: '1.4rem', flexShrink: 0 }}>📄</span>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontWeight: 600, fontSize: '0.8rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {fileName || (mediaUrl.split('/').pop().split('?')[0]) || 'Sobha_Infratech_Product_Catalog.pdf'}
+                                </div>
+                                <div style={{ fontSize: '0.68rem', color: 'var(--accent-primary)', fontWeight: 500 }}>
+                                  PDF Document · Click to View / Download ↗
+                                </div>
+                              </div>
                             </a>
                           </div>
                         )}
 
-                        {/* Clean Text Body */}
-                        {cleanText && (mediaType !== 'document' || !mediaUrl) && (
-                          <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.4 }}>{cleanText}</div>
+                        {/* Clean Text Body - Always Rendered */}
+                        {cleanText && (
+                          <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.45 }}>{cleanText}</div>
                         )}
 
                         {isOutbound && (

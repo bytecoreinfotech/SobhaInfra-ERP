@@ -36,6 +36,16 @@ async function sendMetaWhatsApp(to, text, mediaType = 'text', mediaUrl = null, m
 
   let payload;
 
+  // Auto-resolve relative or sobha catalog document URLs
+  if (mediaType === 'document') {
+    if (!mediaUrl || !mediaUrl.startsWith('http')) {
+      mediaUrl = 'https://sobhainfra-erp.netlify.app/sobha-products.pdf';
+    }
+    if (!mediaFileName) {
+      mediaFileName = 'Sobha_Infratech_Product_Catalog.pdf';
+    }
+  }
+
   if (mediaType === 'image' && mediaUrl) {
     payload = {
       messaging_product: 'whatsapp',
@@ -50,7 +60,7 @@ async function sendMetaWhatsApp(to, text, mediaType = 'text', mediaUrl = null, m
       type: 'document',
       document: {
         link: mediaUrl,
-        ...(mediaFileName ? { filename: mediaFileName } : {}),
+        filename: mediaFileName || 'Sobha_Infratech_Product_Catalog.pdf',
         ...(text ? { caption: text } : {}),
       },
     };
@@ -73,7 +83,7 @@ async function sendMetaWhatsApp(to, text, mediaType = 'text', mediaUrl = null, m
       messaging_product: 'whatsapp',
       to: cleanPhone,
       type: 'text',
-      text: { body: text },
+      text: { body: text || '' },
     };
   }
 
@@ -144,7 +154,7 @@ exports.handler = async (event) => {
               contact_name: leadMatch?.name || 'Customer',
               contact_phone: cleanPhone.startsWith('+') ? cleanPhone : '+' + cleanPhone,
               conversation_mode: 'HUMAN ACTIVE',
-              last_message_text: text || mediaFileName || 'Media',
+              last_message_text: text || (mediaType === 'document' ? `📄 ${mediaFileName || 'PDF Document'}` : `[${mediaType}]`),
               last_message_at: new Date().toISOString(),
               unread_count: 0,
             };
@@ -155,15 +165,13 @@ exports.handler = async (event) => {
         }
 
         if (effectiveConvId) {
-          // Only use columns that actually exist in the DB schema
-          const msgBody = mediaUrl
-            ? (text ? `${text}\n[${mediaType}: ${mediaUrl}]` : `[${mediaType}: ${mediaUrl}]`)
-            : (text || '');
           const msgPayload = {
             conversation_id: effectiveConvId,
             direction: 'outbound',
             sender_type: senderType,
-            body: msgBody,
+            message_type: mediaType,
+            media_url: mediaUrl,
+            body: text || (mediaType === 'document' ? `📄 ${mediaFileName || 'PDF Document'}` : `[${mediaType}]`),
             status: sendRes.success ? 'delivered' : 'failed',
             provider_message_id: sendRes.messageId || null,
           };
@@ -173,7 +181,7 @@ exports.handler = async (event) => {
           // Update conversation last message
           const newMode = senderType === 'ai' ? 'AI ACTIVE' : 'HUMAN ACTIVE';
           await supabase.from('whatsapp_conversations').update({
-            last_message_text: text || (mediaType !== 'text' ? `[${mediaType}]` : ''),
+            last_message_text: text || (mediaType === 'document' ? `📄 ${mediaFileName || 'PDF Document'}` : `[${mediaType}]`),
             last_message_at: new Date().toISOString(),
             conversation_mode: newMode,
             unread_count: 0,

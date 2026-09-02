@@ -14,69 +14,69 @@ import './Pages.css';
 
 const DEFAULT_PRESETS = [
   {
-    name: 'Special Offer & Catalog Flow',
-    text: 'Hello {name}! 👋\n\nWe have an exclusive volume offer on our *{product}* valid this week only! 🎁\n\nStarting at *{budget}* with direct factory supply from {company}.\n\nPlease choose an option below to proceed:',
+    name: 'Sobha Product Range & Brochure Broadcast',
+    text: 'Namaste {name}! 🙏\n\nWelcome to *Sobhainfra Tech Private Limited* ("Har Nirman Ki Jaan") — manufacturing high-performance dry mix construction materials since 2003.\n\n🏗️ *Our Core Product Range:*\n• Sobha Block Fix (Thin Joint Mortar)\n• Sobha Plast (Ready Mix Plaster - IS 16777)\n• Sobha Tile Adhesives (Type 1 CE to Type 4 HF)\n• Super Fine Flyash & GGBS Cement\n\n📄 Download our complete product catalog attached or choose an option below:',
     buttons: [
       {
         id: 'btn_catalog',
-        title: '📄 Get Catalog',
+        title: '📄 Get Brochure',
         actionType: 'media_or_link',
-        replyText: 'Here is our official product brochure and technical specs. Would you like a custom quote?',
-        linkUrl: 'https://example.com/catalog.pdf',
+        replyText: '📄 Official Sobha Product Catalog PDF attached directly. Would you like a customized bulk quote?',
+        linkUrl: 'https://sobhainfra-erp.netlify.app/sobha-products.pdf',
         subButtons: [
-          { id: 'sub_quote', title: '💰 Get Quote', actionType: 'reply', replyText: 'Our standard pricing starts at {budget}. Would you like to speak with a sales rep?' },
-          { id: 'sub_agent', title: '👤 Talk to Agent', actionType: 'human_handoff', replyText: 'Connecting you with an agent...' }
+          { id: 'sub_rate', title: '💰 Rate List', actionType: 'human_handoff', replyText: 'Transferring to sales executive for latest rate chart...' },
+          { id: 'sub_human', title: '👤 Talk to Executive', actionType: 'human_handoff', replyText: 'Connecting you with our sales executive...' }
         ]
       },
       {
-        id: 'btn_quote',
-        title: '💰 Get Instant Quote',
-        actionType: 'nested_message',
-        replyText: 'Great! Which quantity tier are you looking for?',
+        id: 'btn_rate_list',
+        title: '💰 Rate List',
+        actionType: 'human_handoff',
+        replyText: 'Our official rate list and bulk project quotations are provided directly by our sales executive. Transferring your request...',
         subButtons: [
-          { id: 'sub_retail', title: '📦 Standard (1-50 Bags)', actionType: 'reply', replyText: 'For standard orders, price is {budget} with immediate dispatch.' },
-          { id: 'sub_bulk', title: '🏢 Bulk Wholesale', actionType: 'human_handoff', replyText: 'For bulk wholesale orders, transferring to senior manager...' }
+          { id: 'sub_catalog2', title: '📄 Product Catalog', actionType: 'media_or_link', linkUrl: 'https://sobhainfra-erp.netlify.app/sobha-products.pdf' },
+          { id: 'sub_agent2', title: '👤 Call Executive', actionType: 'human_handoff', replyText: 'Sales executive will call you shortly.' }
         ]
       },
       {
         id: 'btn_human',
-        title: '👤 Talk to Human Agent',
+        title: '👤 Talk to Executive',
         actionType: 'human_handoff',
-        replyText: 'Transferring chat to an agent...',
+        replyText: 'Transferring chat to our sales executive...',
       }
     ]
   },
   {
-    name: 'New Product Launch Flow',
-    text: 'Dear {name}, 🚀\n\nExciting announcement! {company} has introduced our all-new *{product}*.\n\nEnjoy launch discounts starting at *{budget}*. How would you like to proceed?',
+    name: 'Sobha Dry Mix & Mortar Campaign',
+    text: 'Dear {name}, 🚀\n\nLooking for certified, high-bond dry mix solutions for your upcoming construction projects?\n\n*Sobhainfra Tech* provides direct factory supply of *{product}* with 20,000+ bags/day capacity from Gujarat.\n\nSelect an option below to get product details or request a quotation:',
     buttons: [
       {
-        id: 'btn_specs',
-        title: '📑 View Specs',
-        actionType: 'reply',
-        replyText: 'Technical specifications for {product}: High tensile bond strength, polymer-modified, ISI certified.',
+        id: 'btn_brochure_dm',
+        title: '📄 Get Brochure',
+        actionType: 'media_or_link',
+        replyText: 'Here is our complete technical catalog and test certificate guide.',
+        linkUrl: 'https://sobhainfra-erp.netlify.app/sobha-products.pdf',
         subButtons: [
-          { id: 'sub_sample', title: '🎁 Free Sample', actionType: 'human_handoff', replyText: 'Free sample request logged. Sales rep will confirm shipping.' },
-          { id: 'sub_quote2', title: '💰 Price Chart', actionType: 'reply', replyText: 'Rate chart sent! Special launch price: {budget}.' }
+          { id: 'sub_quote_dm', title: '💰 Rate List', actionType: 'human_handoff', replyText: 'Connecting to sales team for project quotation...' },
+          { id: 'sub_human_dm', title: '👤 Talk to Executive', actionType: 'human_handoff', replyText: 'Connecting with specialist...' }
         ]
       },
       {
-        id: 'btn_demo',
-        title: '🎥 Video Demo',
-        actionType: 'media_or_link',
-        replyText: 'Watch our 2-minute product application video here:',
-        linkUrl: 'https://youtube.com/watch?v=demo',
+        id: 'btn_rate_dm',
+        title: '💰 Rate List',
+        actionType: 'human_handoff',
+        replyText: 'Our sales team will share the latest project rate chart with you shortly.',
       },
       {
-        id: 'btn_agent_launch',
-        title: '👤 Talk to Agent',
+        id: 'btn_agent_dm',
+        title: '👤 Talk to Executive',
         actionType: 'human_handoff',
-        replyText: 'Connecting you with our technical product specialist...',
+        replyText: 'Connecting you with our technical sales engineer...',
       }
     ]
   },
   {
-    name: 'Payment & Invoice Clearance',
+    name: 'Payment & Invoice Follow-up',
     text: 'Dear {name},\n\nGentle reminder regarding the pending invoice for *{product}* amounting to *{budget}*.\n\nKindly select your preferred action:',
     buttons: [
       {
@@ -116,9 +116,9 @@ const CampaignStudio = () => {
   // Dynamic Variables Customization
   const [showVarSettings, setShowVarSettings] = useState(false);
   const [campaignVariables, setCampaignVariables] = useState({
-    product: 'Tile Adhesive & Grout',
+    product: 'Sobha Block Fix & Tile Adhesive',
     budget: '₹1,50,000',
-    company: 'ERPPro Solutions Pvt. Ltd.',
+    company: 'Sobhainfra Tech Private Limited',
     phone: '+91 99990 00001',
     mode: 'fallback', // 'fallback' | 'override'
   });
@@ -1140,7 +1140,7 @@ const CampaignStudio = () => {
                                   onChange={e => updateSubButtonField(editingButtonIndex, sIdx, 'actionType', e.target.value)}
                                 >
                                   <option value="reply">💬 Send Reply Message</option>
-                                  <option value="human_handoff">👤 Talk to Human Agent</option>
+                                  <option value="human_handoff">👤 Connect with Executive</option>
                                 </select>
                                 <button
                                   type="button"
