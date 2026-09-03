@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   DollarSign, TrendingUp, AlertTriangle, CheckCircle2,
   Clock, Plus, Search, Filter, ArrowUpRight, ArrowDownRight,
@@ -10,8 +10,10 @@ import {
   getInvoices, getTallyConnectionStatus, triggerTallySyncNow,
   getLedgerMappings, updateLedgerMapping, getSyncErrors,
   sendPaymentReminderWhatsApp, getLeads, normalizePhone,
-  pauseInvoiceReminder, resumeInvoiceReminder, createLead
+  pauseInvoiceReminder, resumeInvoiceReminder, createLead,
+  getCustomerMaster
 } from '../lib/db';
+import { buildCustomerIndex, matchCustomer } from '../lib/customerMatcher';
 import { supabase } from '../lib/supabase';
 import { useCompany } from '../context/CompanyContext';
 import LedgerDetailDrawer from '../components/LedgerDetailDrawer';
@@ -65,6 +67,15 @@ const getDirection = (inv) => {
   // 1. Master Ledger Closing Balances → Excluded from transactional cards & tables
   if (numUpper.startsWith('LEDGER-')) {
     return { isLedger: true, isVendor: false, label: 'Ledger Balance', canRemind: false };
+  }
+
+  // 1.5. Master Google Sheet Customer Priority:
+  // If matched in Google Sheet Master, this party is 1000% a CUSTOMER — NEVER a vendor!
+  if (inv?._is_sheet_customer) {
+    if (status === 'Paid') {
+      return { label: 'Collected', ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', title: 'Customer Payment Settled', canRemind: false, isVendor: false };
+    }
+    return { label: 'Receivable', ArrowIcon: ArrowDownRight, color: '#6366f1', bg: 'rgba(99,102,241,0.12)', title: 'Customer Receivable (Sheet Verified)', canRemind: true, isVendor: false };
   }
 
   // 2. Sales Invoices (Customer Receivables) — money the customer owes US
@@ -184,6 +195,7 @@ const Finance = () => {
   
   // Invoices & Outstandings State
   const [allInvoices, setAllInvoices] = useState([]);
+  const [customerMaster, setCustomerMaster] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('All');
   const [search, setSearch] = useState('');
@@ -264,33 +276,45 @@ const Finance = () => {
     }, 2000); // poll every 2 seconds
   };
 
-  // Re-filter when company switcher changes
-  const invoices = isConsolidated
-    ? allInvoices
-    : allInvoices.filter(inv => {
-        if (!activeCompany) return true;  // 'All Companies' — show everything
-        const compName = (activeCompany.company_name || '').toUpperCase();
-        const aliases = Array.isArray(activeCompany.alias_names)
-          ? activeCompany.alias_names.map(a => a.toUpperCase())
-          : [];
-        const allNames = [compName, ...aliases];
-        const invCompany = (inv.company_name || inv.tally_company || '').toUpperCase();
-        // If invoice has no company tag and a specific company is selected,
-        // hide it — it shouldn't bleed into another company's view
-        if (!invCompany) return false;
-        return allNames.some(n => n && (invCompany.includes(n) || n.includes(invCompany)));
-      });
+  const customerIndex = useMemo(() => buildCustomerIndex(customerMaster), [customerMaster]);
+
+  // Re-filter when company switcher changes + tag verified sheet customers
+  const invoices = useMemo(() => {
+    const base = isConsolidated
+      ? allInvoices
+      : allInvoices.filter(inv => {
+          if (!activeCompany) return true;
+          const compName = (activeCompany.company_name || '').toUpperCase();
+          const aliases = Array.isArray(activeCompany.alias_names)
+            ? activeCompany.alias_names.map(a => a.toUpperCase())
+            : [];
+          const allNames = [compName, ...aliases];
+          const invCompany = (inv.company_name || inv.tally_company || '').toUpperCase();
+          if (!invCompany) return false;
+          return allNames.some(n => n && (invCompany.includes(n) || n.includes(invCompany)));
+        });
+
+    return base.map(inv => {
+      const match = customerIndex ? matchCustomer(inv, customerIndex) : { status: 'unverified' };
+      return {
+        ...inv,
+        _is_sheet_customer: match.status === 'verified',
+      };
+    });
+  }, [allInvoices, activeCompany, isConsolidated, customerIndex]);
 
   const loadAllFinanceData = async (showSpinner = true) => {
     if (showSpinner) setLoading(true);
-    const [invRes, tallyRes, mapRes, errRes, leadsRes] = await Promise.all([
+    const [invRes, tallyRes, mapRes, errRes, leadsRes, masterRes] = await Promise.all([
       getInvoices(),
       getTallyConnectionStatus(),
       getLedgerMappings(),
       getSyncErrors(),
       getLeads(),
+      getCustomerMaster(),
     ]);
     setAllInvoices(invRes.data || []);
+    setCustomerMaster(masterRes.data || []);
     setTallyStatus(tallyRes.data || null);
     setMappings(mapRes.data || []);
     setSyncErrors(errRes.data || []);

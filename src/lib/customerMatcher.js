@@ -1,4 +1,4 @@
-﻿/**
+/**
  * customerMatcher.js
  * Smart 4-tier fuzzy matching engine against Google Sheet customer master.
  * Tier 1: Exact match (case-insensitive)
@@ -40,6 +40,8 @@ export function buildCustomerIndex(customers) {
   const exactMap = new Map();
   const normMap  = new Map();
   const phoneMap = new Map();
+  const memoCache = new Map(); // O(1) Cache for party name matching
+
   for (const c of customers) {
     if (!c.company_name) continue;
     exactMap.set(c.company_name.toLowerCase().trim(), c);
@@ -50,28 +52,46 @@ export function buildCustomerIndex(customers) {
       if (digits.length === 10) phoneMap.set(digits, c);
     }
   }
-  return { exactMap, normMap, phoneMap, all: customers };
+  return { exactMap, normMap, phoneMap, all: customers, memoCache };
 }
 
 export function matchCustomer(inv, index) {
   if (!index || !index.all || index.all.length === 0) return { status: 'unverified', customer: null };
-  const { exactMap, normMap, phoneMap, all } = index;
   const partyName = (inv.client_name || '').trim();
   if (!partyName) return { status: 'unverified', customer: null };
 
-  // Tier 1: Exact
+  const cacheKey = partyName.toLowerCase();
+  if (index.memoCache && index.memoCache.has(cacheKey)) {
+    return index.memoCache.get(cacheKey);
+  }
+
+  const { exactMap, normMap, phoneMap, all } = index;
+
+  // Tier 1: Exact Match (case-insensitive)
   const exactKey = partyName.toLowerCase().trim();
-  if (exactMap.has(exactKey)) return { status: 'verified', customer: exactMap.get(exactKey) };
+  if (exactMap.has(exactKey)) {
+    const res = { status: 'verified', customer: exactMap.get(exactKey) };
+    if (index.memoCache) index.memoCache.set(cacheKey, res);
+    return res;
+  }
 
-  // Tier 2: Normalized
+  // Tier 2: Normalized Match (stripped suffixes)
   const normKey = normalizeName(partyName);
-  if (normKey && normMap.has(normKey)) return { status: 'verified', customer: normMap.get(normKey) };
+  if (normKey && normMap.has(normKey)) {
+    const res = { status: 'verified', customer: normMap.get(normKey) };
+    if (index.memoCache) index.memoCache.set(cacheKey, res);
+    return res;
+  }
 
-  // Tier 3: Phone
+  // Tier 3: Phone Cross-Match
   const invPhone = (inv.client_phone || '').replace(/\D/g, '').slice(-10);
-  if (invPhone.length === 10 && phoneMap.has(invPhone)) return { status: 'verified', customer: phoneMap.get(invPhone) };
+  if (invPhone.length === 10 && phoneMap.has(invPhone)) {
+    const res = { status: 'verified', customer: phoneMap.get(invPhone) };
+    if (index.memoCache) index.memoCache.set(cacheKey, res);
+    return res;
+  }
 
-  // Tier 4: Fuzzy >= 85%
+  // Tier 4: Fuzzy Levenshtein >= 85%
   if (normKey && normKey.length >= 4) {
     let bestScore = 0, bestCustomer = null;
     for (const c of all) {
@@ -81,8 +101,14 @@ export function matchCustomer(inv, index) {
       if (score > bestScore) { bestScore = score; bestCustomer = c; }
       if (score === 1) break;
     }
-    if (bestScore >= 0.85 && bestCustomer) return { status: 'verified', customer: bestCustomer };
+    if (bestScore >= 0.85 && bestCustomer) {
+      const res = { status: 'verified', customer: bestCustomer };
+      if (index.memoCache) index.memoCache.set(cacheKey, res);
+      return res;
+    }
   }
 
-  return { status: 'unverified', customer: null };
+  const res = { status: 'unverified', customer: null };
+  if (index.memoCache) index.memoCache.set(cacheKey, res);
+  return res;
 }

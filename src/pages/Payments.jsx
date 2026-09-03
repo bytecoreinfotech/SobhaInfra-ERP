@@ -3,50 +3,52 @@ import {
   CreditCard, Send, CheckCircle2, AlertTriangle, Clock,
   MessageCircle, Phone, RefreshCw, IndianRupee,
   ArrowUpRight, ArrowDownRight, FileText, ShieldCheck,
-  RotateCcw, Search, AlertCircle, X, ExternalLink, HelpCircle
+  RotateCcw, Search, AlertCircle, X, ExternalLink, ChevronLeft, ChevronRight
 } from 'lucide-react';
-import { getInvoices, getCustomerMaster, triggerSheetSync, getSheetSyncLog } from '../lib/db';
+import { getInvoices, getCustomerMaster, triggerSheetSync, getSheetSyncLog, invalidateInvoicesCache, invalidateCustomerMasterCache } from '../lib/db';
 import { buildCustomerIndex, matchCustomer } from '../lib/customerMatcher';
 import { useCompany } from '../context/CompanyContext';
 import './Pages.css';
 
 /**
- * Accounting direction classifier — mirrors Finance.jsx logic
+ * Direction classifier: If party is verified in Google Sheet, they are 1000% a CUSTOMER
  */
-const getDirection = (inv) => {
+const getDirection = (inv, customerIndex) => {
+  const status   = inv?.status || '';
+  const numUpper = (inv?.invoice_number || inv?.tally_voucher_number || '').toUpperCase().trim();
+
+  // 1. Master Ledger Balances excluded
+  if (numUpper.startsWith('LEDGER-')) return { isLedger: true, isVendor: false, canRemind: false };
+
+  // 2. Google Sheet Verified Master Customer: Guaranteed 1000% CUSTOMER
+  if (customerIndex) {
+    const match = matchCustomer(inv, customerIndex);
+    if (match.status === 'verified') {
+      if (status === 'Paid') {
+        return { label: 'Collected', ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', canRemind: false, isVendor: false };
+      }
+      return { label: 'Receivable', ArrowIcon: ArrowDownRight, color: '#6366f1', bg: 'rgba(99,102,241,0.12)', canRemind: true, isVendor: false };
+    }
+  }
+
+  // 3. Fallback heuristic for standard invoices
   const dir     = (inv?.metadata?.direction || inv?.direction || '').toLowerCase().trim();
   const vtype   = (inv?.metadata?.voucher_type || inv?.voucher_type || '').toLowerCase().trim();
   const num     = (inv?.invoice_number || inv?.tally_voucher_number || '').toLowerCase().trim();
-  const numUpper= (inv?.invoice_number || inv?.tally_voucher_number || '').toUpperCase().trim();
-  const status  = inv?.status || '';
 
-  if (numUpper.startsWith('LEDGER-')) return { isLedger: true, isVendor: false, canRemind: false };
   const isSales = ['sales', 'sales order', 'tax invoice'].some(t => vtype.includes(t)) || /^(srp|sb)\//i.test(num) || /^(inv|tax)\//i.test(num);
   if (isSales) return status === 'Paid'
     ? { label: 'Collected', ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', canRemind: false, isVendor: false }
     : { label: 'Receivable', ArrowIcon: ArrowDownRight, color: '#6366f1', bg: 'rgba(99,102,241,0.12)', canRemind: true, isVendor: false };
+  
   const isReceipt = ['receipt', 'bank receipt', 'cash receipt'].some(t => vtype.includes(t)) || /^(rec|rcpt|rct)-/.test(num) || /^sb-r/.test(num) || dir === 'received';
   if (isReceipt) return { label: 'Received', ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', canRemind: false, isVendor: false };
+  
   const isPurchase = ['purchase', 'purchase order'].some(t => vtype.includes(t)) || /^(pur|po)-/.test(num) || dir === 'payable';
   if (isPurchase) return status === 'Paid'
     ? { label: 'Paid Out', ArrowIcon: ArrowUpRight, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', canRemind: false, isVendor: true }
     : { label: 'Payable', ArrowIcon: ArrowUpRight, color: '#ef4444', bg: 'rgba(239,68,68,0.12)', canRemind: false, isVendor: true };
-  const isPayment = ['payment', 'bank payment', 'cash payment'].some(t => vtype.includes(t)) || /^(pay|pmt)-/.test(num) || /^sb-pay/.test(num) || dir === 'paid_out';
-  if (isPayment) return { label: 'Paid Out', ArrowIcon: ArrowUpRight, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', canRemind: false, isVendor: true };
-  if (vtype.includes('credit note') || num.startsWith('cn/') || num.startsWith('cn-')) return { label: 'Paid Out', ArrowIcon: ArrowUpRight, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', canRemind: false, isVendor: true };
-  if (vtype.includes('debit note') || num.startsWith('dn/') || num.startsWith('dn-')) return { label: 'Receivable', ArrowIcon: ArrowDownRight, color: '#6366f1', bg: 'rgba(99,102,241,0.12)', canRemind: true, isVendor: false };
-  if (vtype === 'journal' || /^(sb-jou|jou)-/.test(num)) {
-    const pn = (inv?.client_name || '').toLowerCase();
-    if (dir === 'paid_out' || pn.startsWith('driver-') || pn.startsWith('driver ')) return { label: 'Paid Out', ArrowIcon: ArrowUpRight, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', canRemind: false, isVendor: true };
-    if (status === 'Paid') return { label: 'Collected', ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', canRemind: false, isVendor: false };
-    return { label: 'Receivable', ArrowIcon: ArrowDownRight, color: '#6366f1', bg: 'rgba(99,102,241,0.12)', canRemind: true, isVendor: false };
-  }
-  if (numUpper.startsWith('VCH-') && !vtype && !dir) return { label: 'Paid Out', ArrowIcon: ArrowUpRight, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', canRemind: false, isVendor: true };
-  if (dir === 'paid_out' || dir === 'payable') return { label: dir === 'payable' && status !== 'Paid' ? 'Payable' : 'Paid Out', ArrowIcon: ArrowUpRight, color: dir === 'payable' && status !== 'Paid' ? '#ef4444' : '#f59e0b', bg: dir === 'payable' && status !== 'Paid' ? 'rgba(239,68,68,0.12)' : 'rgba(245,158,11,0.12)', canRemind: false, isVendor: true };
-  if (dir === 'received') return { label: 'Received', ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', canRemind: false, isVendor: false };
-  if (dir === 'receivable') return status === 'Paid'
-    ? { label: 'Collected', ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', canRemind: false, isVendor: false }
-    : { label: 'Receivable', ArrowIcon: ArrowDownRight, color: '#6366f1', bg: 'rgba(99,102,241,0.12)', canRemind: true, isVendor: false };
+
   if (status === 'Paid') return { label: 'Collected', ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', canRemind: false, isVendor: false };
   return { label: 'Receivable', ArrowIcon: ArrowDownRight, color: '#6366f1', bg: 'rgba(99,102,241,0.12)', canRemind: true, isVendor: false };
 };
@@ -67,13 +69,17 @@ const Payments = () => {
   const [previewPdfUrl, setPreviewPdfUrl]     = useState(null);
   const [detailModalInv, setDetailModalInv]   = useState(null);
 
+  // Pagination state (prevents DOM lag)
+  const [currentPage, setCurrentPage]         = useState(1);
+  const [pageSize, setPageSize]               = useState(50); // 25, 50, 100, -1 (All)
+
   useEffect(() => { loadAll(); }, []);
 
-  const loadAll = async () => {
+  const loadAll = async (forceRefresh = false) => {
     setLoading(true);
     const [invRes, masterRes, logRes] = await Promise.all([
-      getInvoices(),
-      getCustomerMaster(),
+      getInvoices({ forceRefresh }),
+      getCustomerMaster({ forceRefresh }),
       getSheetSyncLog(),
     ]);
     setAllInvoices(invRes.data || []);
@@ -82,37 +88,38 @@ const Payments = () => {
     setLoading(false);
   };
 
-  // Build customer fuzzy index once whenever customerMaster updates
+  // Build memoized customer index once per customerMaster update
   const customerIndex = useMemo(() => buildCustomerIndex(customerMaster), [customerMaster]);
 
   // Company filtering across active workspace
-  const invoices = isConsolidated
-    ? allInvoices
-    : allInvoices.filter(inv => {
-        if (!activeCompany) return true;
-        const compName = (activeCompany.company_name || '').toUpperCase();
-        const aliases = Array.isArray(activeCompany.alias_names) ? activeCompany.alias_names.map(a => a.toUpperCase()) : [];
-        const invCompany = (inv.company_name || inv.tally_company || '').toUpperCase();
-        if (!invCompany) return false;
-        return [compName, ...aliases].some(n => n && (invCompany.includes(n) || n.includes(invCompany)));
-      });
+  const invoices = useMemo(() => {
+    if (isConsolidated) return allInvoices;
+    if (!activeCompany) return allInvoices;
+    const compName = (activeCompany.company_name || '').toUpperCase();
+    const aliases = Array.isArray(activeCompany.alias_names) ? activeCompany.alias_names.map(a => a.toUpperCase()) : [];
+    return allInvoices.filter(inv => {
+      const invCompany = (inv.company_name || inv.tally_company || '').toUpperCase();
+      if (!invCompany) return false;
+      return [compName, ...aliases].some(n => n && (invCompany.includes(n) || n.includes(invCompany)));
+    });
+  }, [allInvoices, activeCompany, isConsolidated]);
 
-  // Step 1: Exclude ledger closing balances & vendor entries
-  const receivableInvoices = invoices.filter(inv => {
-    const num = (inv?.invoice_number || inv?.tally_voucher_number || '').toUpperCase();
-    if (num.startsWith('LEDGER-')) return false;
-    return !getDirection(inv).isVendor;
-  });
+  // Exclude non-transactional ledger closing balance lines
+  const transactionalInvoices = useMemo(() => {
+    return invoices.filter(inv => {
+      const num = (inv?.invoice_number || inv?.tally_voucher_number || '').toUpperCase();
+      return !num.startsWith('LEDGER-');
+    });
+  }, [invoices]);
 
-  // Step 2: ONLY include parties verified against the Google Sheet Master
+  // Enriched Customer Invoices: If matched in Google Sheet, they are guaranteed CUSTOMERS (never vendor)
   const enrichedInvoices = useMemo(() => {
-    return receivableInvoices
+    return transactionalInvoices
       .map(inv => {
         const match = matchCustomer(inv, customerIndex);
         if (match.status !== 'verified' || !match.customer) return null;
 
         const rawPhone = (match.customer.contact_number || '').trim();
-        // Strictly verified only if present in Google Sheet (digits count >= 10)
         const digits = rawPhone.replace(/\D/g, '');
         const hasVerifiedPhone = digits.length >= 10;
 
@@ -125,19 +132,15 @@ const Payments = () => {
         };
       })
       .filter(Boolean);
-  }, [receivableInvoices, customerIndex]);
+  }, [transactionalInvoices, customerIndex]);
 
-  // Multi-dimensional filtering: Status + Phone Verified Status + Search Query
+  // Multi-dimensional filtering: Status + Phone Verification + Search Query
   const filtered = useMemo(() => {
     return enrichedInvoices.filter(inv => {
-      // 1. Status Filter
       if (statusFilter !== 'All' && inv.status !== statusFilter) return false;
-
-      // 2. Phone Verification Filter
       if (phoneFilter === 'verified' && !inv._has_verified_phone) return false;
       if (phoneFilter === 'missing' && inv._has_verified_phone) return false;
 
-      // 3. Search Query Filter
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase().trim();
         const num = (inv.invoice_number || '').toLowerCase();
@@ -148,12 +151,24 @@ const Payments = () => {
           return false;
         }
       }
-
       return true;
     });
   }, [enrichedInvoices, statusFilter, phoneFilter, searchQuery]);
 
-  // Aggregate Metrics
+  // Reset pagination on filter or search changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [statusFilter, phoneFilter, searchQuery, activeCompany, isConsolidated]);
+
+  // Paginated view slice to guarantee 0ms DOM lag
+  const totalPages = pageSize === -1 ? 1 : Math.max(1, Math.ceil(filtered.length / pageSize));
+  const paginatedInvoices = useMemo(() => {
+    if (pageSize === -1) return filtered;
+    const start = (currentPage - 1) * pageSize;
+    return filtered.slice(start, start + pageSize);
+  }, [filtered, currentPage, pageSize]);
+
+  // Metrics
   const totalOverdue = enrichedInvoices.filter(i => i.status === 'Overdue').reduce((s, i) => s + Number(i.amount), 0);
   const totalPending = enrichedInvoices.filter(i => i.status === 'Pending').reduce((s, i) => s + Number(i.amount), 0);
   const totalPaid    = enrichedInvoices.filter(i => i.status === 'Paid').reduce((s, i) => s + Number(i.amount), 0);
@@ -164,15 +179,18 @@ const Payments = () => {
 
   const handleSheetSync = async () => {
     setSyncing(true);
-    setSyncMsg('Fetching latest updates from Google Sheet...');
+    setSyncMsg('Fetching live customer directory from Google Sheet...');
     const { data, error } = await triggerSheetSync();
     if (error || !data?.success) {
-      const masterRes = await getCustomerMaster();
+      // Invalidate cache and reload directly
+      invalidateCustomerMasterCache();
+      const masterRes = await getCustomerMaster({ forceRefresh: true });
       setCustomerMaster(masterRes.data || []);
       setSyncMsg(`Refreshed ${masterRes.data?.length || 0} customers from database`);
     } else {
-      setSyncMsg(`✅ Synced ${data.synced} customers from Google Sheet! Phone numbers updated.`);
-      const masterRes = await getCustomerMaster();
+      setSyncMsg(`✅ Synced ${data.synced} customers live from Google Sheet! Numbers updated.`);
+      invalidateCustomerMasterCache();
+      const masterRes = await getCustomerMaster({ forceRefresh: true });
       setCustomerMaster(masterRes.data || []);
       setLastSynced(new Date().toISOString());
     }
@@ -236,12 +254,18 @@ const Payments = () => {
             className="btn btn-secondary"
             onClick={handleSheetSync}
             disabled={syncing}
-            title="Fetch latest names & phone numbers from live Google Sheet"
+            data-tooltip="Fetch latest names & phone numbers from live Google Sheet"
+            data-tooltip-pos="bottom"
           >
             <RotateCcw size={14} className={syncing ? 'animate-spin' : ''} />
             {syncing ? 'Syncing...' : 'Sync Sheet'}
           </button>
-          <button className="btn btn-secondary" onClick={loadAll} title="Reload invoices from database">
+          <button
+            className="btn btn-secondary"
+            onClick={() => loadAll(true)}
+            data-tooltip="Force reload all invoices from database"
+            data-tooltip-pos="bottom"
+          >
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Refresh
           </button>
         </div>
@@ -272,7 +296,7 @@ const Payments = () => {
             {enrichedInvoices.length} Verified Customer Invoices
           </span>
           <span style={{ color: 'var(--text-muted)' }}>
-            · Matched from {customerMaster.length} Google Sheet Master Contacts
+            · Matched against Google Sheet Master Directory
           </span>
         </div>
         <div style={{ display: 'flex', gap: '0.85rem', alignItems: 'center', fontSize: '0.75rem' }}>
@@ -281,9 +305,14 @@ const Payments = () => {
             {totalWithPhone} Ready for WhatsApp
           </span>
           {totalMissingPhone > 0 && (
-            <span style={{ color: '#d97706', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }} title="Add phone numbers in Google Sheet and click 'Sync Sheet' to enable">
+            <span
+              style={{ color: '#d97706', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer' }}
+              onClick={() => setPhoneFilter('missing')}
+              data-tooltip="Click to view all customers with missing phone numbers in Google Sheet"
+              data-tooltip-pos="bottom"
+            >
               <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#d97706' }} />
-              {totalMissingPhone} Phone Missing in Sheet (Greyed Out)
+              {totalMissingPhone} Phone Missing in Sheet
             </span>
           )}
         </div>
@@ -400,10 +429,10 @@ const Payments = () => {
               </tr>
             </thead>
             <tbody>
-              {filtered.map(inv => {
+              {paginatedInvoices.map(inv => {
                 const isSent = sentIds.includes(inv.id);
                 const isReminding = remindingId === inv.id;
-                const dirInfo = getDirection(inv);
+                const dirInfo = getDirection(inv, customerIndex);
                 const consignmentUrl = inv.pdf_url || inv.metadata?.pdf_url;
                 const hasPhone = inv._has_verified_phone;
 
@@ -411,7 +440,7 @@ const Payments = () => {
                   <tr
                     key={inv.id}
                     style={{
-                      opacity: hasPhone ? 1 : 0.72,
+                      opacity: hasPhone ? 1 : 0.75,
                       background: hasPhone ? 'transparent' : 'rgba(248, 250, 252, 0.45)',
                       transition: 'all 0.15s ease',
                     }}
@@ -438,7 +467,7 @@ const Payments = () => {
                           </span>
                         ) : (
                           <span
-                            data-tooltip="Phone missing in Google Sheet. Add contact number in Google Sheet and click 'Sync Sheet' to enable WhatsApp reminders."
+                            data-tooltip="Phone missing in Google Sheet. Add contact number in Google Sheet & click 'Sync Sheet' to enable WhatsApp reminders."
                             data-tooltip-pos="bottom"
                             style={{
                               fontSize: '0.65rem',
@@ -579,6 +608,66 @@ const Payments = () => {
               )}
             </tbody>
           </table>
+
+          {/* Pagination & Lazy Load Footer */}
+          {filtered.length > 0 && (
+            <div style={{
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              padding: '0.75rem 1.25rem', borderTop: '1px solid var(--border-color)',
+              background: 'var(--bg-tertiary)', flexWrap: 'wrap', gap: '0.75rem', fontSize: '0.78rem'
+            }}>
+              <div style={{ color: 'var(--text-muted)' }}>
+                Showing <strong>{pageSize === -1 ? 1 : Math.min((currentPage - 1) * pageSize + 1, filtered.length)}</strong> to <strong>{pageSize === -1 ? filtered.length : Math.min(currentPage * pageSize, filtered.length)}</strong> of <strong>{filtered.length}</strong> invoices
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                  <span style={{ color: 'var(--text-muted)' }}>Rows:</span>
+                  {[25, 50, 100, -1].map(size => (
+                    <button
+                      key={size}
+                      onClick={() => { setPageSize(size); setCurrentPage(1); }}
+                      style={{
+                        padding: '0.15rem 0.45rem',
+                        fontSize: '0.72rem',
+                        borderRadius: '4px',
+                        border: pageSize === size ? '1px solid var(--accent-primary)' : '1px solid var(--border-color)',
+                        background: pageSize === size ? 'var(--accent-primary)' : 'transparent',
+                        color: pageSize === size ? '#fff' : 'var(--text-secondary)',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      {size === -1 ? 'All' : size}
+                    </button>
+                  ))}
+                </div>
+
+                {pageSize !== -1 && totalPages > 1 && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      disabled={currentPage <= 1}
+                      onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                      style={{ padding: '0.2rem 0.4rem', opacity: currentPage <= 1 ? 0.4 : 1 }}
+                    >
+                      <ChevronLeft size={13} />
+                    </button>
+                    <span style={{ padding: '0 0.4rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                      {currentPage} / {totalPages}
+                    </span>
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      disabled={currentPage >= totalPages}
+                      onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                      style={{ padding: '0.2rem 0.4rem', opacity: currentPage >= totalPages ? 0.4 : 1 }}
+                    >
+                      <ChevronRight size={13} />
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

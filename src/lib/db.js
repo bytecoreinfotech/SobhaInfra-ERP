@@ -475,9 +475,25 @@ export async function sendPaymentReminderWhatsApp(invoiceId) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 // BASE ENTITY SERVICES (CRM, Tasks, Roles, Campaigns)
 // ─────────────────────────────────────────────────────────────────────────────
-export async function getInvoices() {
+let _invoicesCache = null;
+let _invoicesCacheTime = 0;
+const INVOICES_CACHE_TTL = 3 * 60 * 1000; // 3 minutes
+
+export function invalidateInvoicesCache() {
+  _invoicesCache = null;
+  _invoicesCacheTime = 0;
+}
+
+export async function getInvoices(options = {}) {
+  const { forceRefresh = false } = (typeof options === 'object' && options !== null) ? options : {};
+  const now = Date.now();
+  if (!forceRefresh && _invoicesCache && (now - _invoicesCacheTime < INVOICES_CACHE_TTL)) {
+    return { data: _invoicesCache, error: null };
+  }
+
   if (!isSupabaseConfigured) return { data: MOCK_STORE.invoices, error: null };
   try {
     let allData = [];
@@ -505,15 +521,33 @@ export async function getInvoices() {
       invoice_number: inv.invoice_number || inv.tally_voucher_number || `INV-${inv.id?.slice(0, 8)}`,
       tally_voucher_number: inv.tally_voucher_number || inv.invoice_number || '',
     }));
+
+    _invoicesCache = normalized;
+    _invoicesCacheTime = Date.now();
     return { data: normalized, error: null };
   } catch (err) {
     console.warn('[db] getInvoices error:', err.message);
-    return { data: [], error: err };
+    return { data: _invoicesCache || [], error: err };
   }
 }
 
 // ─── Customer Master (Google Sheet verified customer list) ────────────────────
-export async function getCustomerMaster() {
+let _customerMasterCache = null;
+let _customerMasterCacheTime = 0;
+const CUSTOMER_MASTER_CACHE_TTL = 3 * 60 * 1000; // 3 minutes
+
+export function invalidateCustomerMasterCache() {
+  _customerMasterCache = null;
+  _customerMasterCacheTime = 0;
+}
+
+export async function getCustomerMaster(options = {}) {
+  const { forceRefresh = false } = (typeof options === 'object' && options !== null) ? options : {};
+  const now = Date.now();
+  if (!forceRefresh && _customerMasterCache && (now - _customerMasterCacheTime < CUSTOMER_MASTER_CACHE_TTL)) {
+    return { data: _customerMasterCache, error: null };
+  }
+
   if (!isSupabaseConfigured) return { data: [], error: null };
   try {
     const { data, error } = await supabase
@@ -521,10 +555,13 @@ export async function getCustomerMaster() {
       .select('id, company_name, contact_person, contact_number, normalized_key, sheet_row_index, last_synced_at')
       .eq('organization_id', DEFAULT_ORG_ID)
       .order('company_name', { ascending: true });
-    return { data: data || [], error };
+
+    _customerMasterCache = data || [];
+    _customerMasterCacheTime = Date.now();
+    return { data: _customerMasterCache, error };
   } catch (err) {
     console.warn('[db] getCustomerMaster error:', err.message);
-    return { data: [], error: err };
+    return { data: _customerMasterCache || [], error: err };
   }
 }
 
@@ -546,6 +583,8 @@ export async function getSheetSyncLog() {
 
 export async function triggerSheetSync() {
   try {
+    invalidateCustomerMasterCache();
+    invalidateInvoicesCache();
     const res = await fetch('/.netlify/functions/sync-customer-master', { method: 'POST' });
     const json = await res.json();
     return { data: json, error: null };

@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { estimateCampaignAudience, queueCampaign, processCampaignBatch, getLeads, normalizePhone } from '../lib/db';
 import { uploadToWhatsAppMedia, getWhatsAppMediaType } from '../lib/storage';
+import { extractMainName } from '../lib/nameHelper';
 import './Pages.css';
 
 const DEFAULT_PRESETS = [
@@ -392,6 +393,9 @@ const CampaignStudio = () => {
     const bId = (button.id || '').toLowerCase();
     const bTitle = (button.title || '').toLowerCase();
 
+    const isFirstGreeting = simChatHistory.filter(m => m.sender === 'bot').length === 0;
+    const mainName = extractMainName(displayName);
+
     // 2. Brochure / Catalog trigger
     if (bId.includes('catalog') || bId.includes('brochure') || bTitle.includes('brochure') || bTitle.includes('catalog')) {
       nextHistory.push({
@@ -399,7 +403,9 @@ const CampaignStudio = () => {
         sender: 'bot',
         fileName: 'Sobha_Infratech_Product_Catalog.pdf',
         mediaUrl: 'https://sobhainfra-erp.netlify.app/sobha-products.pdf',
-        text: `📄 Namaste ${displayName}!\n\nPlease find our official *Sobhainfra Tech Product Catalog & Technical Specification Guide* attached above in PDF format.\n\nIt covers our complete manufacturing range:\n• Sobha Block Fix (Thin Joint Mortar)\n• Sobha Plast (Ready Mix Plaster)\n• Sobha Tile Adhesives (CE, VT, SA, HF)\n• Super Fine Flyash & GGBS Cement\n\nHow would you like to proceed?`,
+        text: isFirstGreeting
+          ? `📄 Namaste ${mainName}!\n\nPlease find our official *Sobhainfra Tech Product Catalog & Technical Specification Guide* attached above in PDF format.\n\nIt covers our complete manufacturing range:\n• Sobha Block Fix (Thin Joint Mortar)\n• Sobha Plast (Ready Mix Plaster)\n• Sobha Tile Adhesives (CE, VT, SA, HF)\n• Super Fine Flyash & GGBS Cement\n\nHow would you like to proceed?`
+          : `📄 Please find our official *Sobhainfra Tech Product Catalog & Technical Specification Guide* attached above in PDF format.\n\nIt covers our complete manufacturing range:\n• Sobha Block Fix (Thin Joint Mortar)\n• Sobha Plast (Ready Mix Plaster)\n• Sobha Tile Adhesives (CE, VT, SA, HF)\n• Super Fine Flyash & GGBS Cement\n\nHow would you like to proceed?`,
       });
       setSimCurrentButtons([
         { id: 'sim_rate', title: '💰 Rate List', actionType: 'human_handoff' },
@@ -412,7 +418,9 @@ const CampaignStudio = () => {
       nextHistory.push({
         id: `bot-${Date.now()}`,
         sender: 'bot',
-        text: `💰 Namaste ${displayName}!\n\nOur official rate lists and project quotations are provided directly by our sales executive based on your delivery location and order quantity.\n\n🚨 I have transferred your request to our executive who will connect with you shortly! 📞\n\nIn the meantime, feel free to ask about any product specifications, applications, or test certificates right here!`,
+        text: isFirstGreeting
+          ? `💰 Namaste ${mainName}!\n\nOur official rate lists and project quotations are provided directly by our sales executive based on your delivery location and order quantity.\n\n🚨 I have transferred your request to our executive who will connect with you shortly! 📞\n\nIn the meantime, feel free to ask about any product specifications, applications, or test certificates right here!`
+          : `💰 Our official rate lists and project quotations are provided directly by our sales executive based on your delivery location and order quantity.\n\n🚨 I have transferred your request to our executive who will connect with you shortly! 📞\n\nIn the meantime, feel free to ask about any product specifications, applications, or test certificates right here!`,
       });
       setSimTakeoverFlagged(true);
       setSimCurrentButtons([
@@ -426,7 +434,9 @@ const CampaignStudio = () => {
       nextHistory.push({
         id: `bot-${Date.now()}`,
         sender: 'bot',
-        text: `👋 Namaste ${displayName}! I have alerted our senior sales executive to connect with you directly.\n\nWhile our team gets in touch, our AI assistant remains active right here to answer any product specifications, applications, or technical details! 📞`,
+        text: isFirstGreeting
+          ? `👋 Namaste ${mainName}! I have alerted our senior sales executive to connect with you directly.\n\nWhile our team gets in touch, our AI assistant remains active right here to answer any product specifications, applications, or technical details! 📞`
+          : `👋 I have alerted our senior sales executive to connect with you directly.\n\nWhile our team gets in touch, our AI assistant remains active right here to answer any product specifications, applications, or technical details! 📞`,
       });
       setSimTakeoverFlagged(true);
       setSimCurrentButtons([
@@ -481,11 +491,16 @@ const CampaignStudio = () => {
     const nextHistory = [...simChatHistory, userMsg];
     const lower = raw.toLowerCase();
 
+    const isFirstGreeting = simChatHistory.filter(m => m.sender === 'bot').length === 0;
+    const mainName = extractMainName(displayName);
+
     if (lower.includes('rate') || lower.includes('price') || lower.includes('quote') || lower.includes('bhav') || lower.includes('discount')) {
       nextHistory.push({
         id: `bot-${Date.now()}`,
         sender: 'bot',
-        text: `💰 Namaste ${displayName}!\n\nOur official rate lists and customized project quotations are provided directly by our senior sales specialists based on your delivery location and order quantity.\n\n🚨 I have transferred your request to our executive who will connect with you shortly! 📞\n\nIn the meantime, feel free to ask any technical, application, or packing questions about our products right here!`,
+        text: isFirstGreeting
+          ? `💰 Namaste ${mainName}!\n\nOur official rate lists and customized project quotations are provided directly by our senior sales specialists based on your delivery location and order quantity.\n\n🚨 I have transferred your request to our executive who will connect with you shortly! 📞\n\nIn the meantime, feel free to ask any technical, application, or packing questions about our products right here!`
+          : `💰 Our official rate lists and customized project quotations are provided directly by our senior sales specialists based on your delivery location and order quantity.\n\n🚨 I have transferred your request to our executive who will connect with you shortly! 📞\n\nIn the meantime, feel free to ask any technical, application, or packing questions about our products right here!`,
       });
       setSimTakeoverFlagged(true);
       setSimCurrentButtons([
@@ -498,7 +513,9 @@ const CampaignStudio = () => {
         sender: 'bot',
         fileName: 'Sobha_Infratech_Product_Catalog.pdf',
         mediaUrl: 'https://sobhainfra-erp.netlify.app/sobha-products.pdf',
-        text: `📄 Namaste ${displayName}! Please find our official *Sobhainfra Tech Product Catalog & Technical Specification Guide* attached above in PDF format.`,
+        text: isFirstGreeting
+          ? `📄 Namaste ${mainName}! Please find our official *Sobhainfra Tech Product Catalog & Technical Specification Guide* attached above in PDF format.`
+          : `📄 Please find our official *Sobhainfra Tech Product Catalog & Technical Specification Guide* attached above in PDF format.`,
       });
       setSimCurrentButtons([
         { id: 'sim_rate', title: '💰 Rate List', actionType: 'human_handoff' },
