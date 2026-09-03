@@ -512,6 +512,68 @@ export async function getInvoices() {
   }
 }
 
+// ─── Customer Master (Google Sheet verified customer list) ────────────────────
+export async function getCustomerMaster() {
+  if (!isSupabaseConfigured) return { data: [], error: null };
+  try {
+    const { data, error } = await supabase
+      .from('customer_master')
+      .select('id, company_name, contact_person, contact_number, normalized_key, sheet_row_index, last_synced_at')
+      .eq('organization_id', DEFAULT_ORG_ID)
+      .order('company_name', { ascending: true });
+    return { data: data || [], error };
+  } catch (err) {
+    console.warn('[db] getCustomerMaster error:', err.message);
+    return { data: [], error: err };
+  }
+}
+
+export async function getSheetSyncLog() {
+  if (!isSupabaseConfigured) return { data: null, error: null };
+  try {
+    const { data, error } = await supabase
+      .from('sheet_sync_log')
+      .select('*')
+      .eq('organization_id', DEFAULT_ORG_ID)
+      .order('synced_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    return { data, error };
+  } catch (err) {
+    return { data: null, error: err };
+  }
+}
+
+export async function triggerSheetSync() {
+  try {
+    const res = await fetch('/.netlify/functions/sync-customer-master', { method: 'POST' });
+    const json = await res.json();
+    return { data: json, error: null };
+  } catch (err) {
+    console.warn('[db] triggerSheetSync error:', err.message);
+    return { data: null, error: err };
+  }
+}
+
+export async function saveCustomerSheetUrl(url) {
+  return updateOrgSetting('customer_sheet_url', url);
+}
+
+export async function getCustomerSheetUrl() {
+  if (!isSupabaseConfigured) return { data: null, error: null };
+  try {
+    const { data, error } = await supabase
+      .from('org_settings')
+      .select('value')
+      .eq('organization_id', DEFAULT_ORG_ID)
+      .eq('key', 'customer_sheet_url')
+      .maybeSingle();
+    return { data: data?.value || null, error };
+  } catch (err) {
+    return { data: null, error: err };
+  }
+}
+
 export async function logPaymentReminder(invoiceId, message) {
   if (!isSupabaseConfigured) return { error: null };
   const { error } = await supabase.from('payment_reminders').insert([{

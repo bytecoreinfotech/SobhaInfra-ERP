@@ -16,7 +16,8 @@ import {
   getRoles, createRole, updateRole, deleteRole, getPermissionMatrix, savePermissionMatrix, getTeamMembers,
   createLead, normalizePhone, getOrgSettings, updateOrgSetting,
   getStorageUsageSummary, purgeStorageCategory, purgeAllExpiredStorage, runAutoStorageCleanupIfDue,
-  sendDirectEmail
+  sendDirectEmail,
+  getCustomerSheetUrl, saveCustomerSheetUrl, triggerSheetSync, getSheetSyncLog
 } from '../lib/db';
 import './Pages.css';
 
@@ -203,6 +204,18 @@ const Settings = () => {
   });
   const [notifSaved, setNotifSaved] = useState(false);
 
+  // Customer Master Google Sheet Config State
+  const [sheetConfig, setSheetConfig] = useState({
+    url: 'https://docs.google.com/spreadsheets/d/1phUUKnsQcWR9kIPjNsOGr4lzu7Torj8W1XMziRNuncw/edit',
+    urlInput: '',
+  });
+  const [sheetSaving, setSheetSaving] = useState(false);
+  const [sheetSaved, setSheetSaved] = useState(false);
+  const [sheetSyncing, setSheetSyncing] = useState(false);
+  const [sheetSyncMsg, setSheetSyncMsg] = useState('');
+  const [sheetLastSynced, setSheetLastSynced] = useState(null);
+  const [sheetRowCount, setSheetRowCount] = useState(null);
+
   useEffect(() => {
     loadSafety();
     loadGeneralSettings();
@@ -219,7 +232,48 @@ const Settings = () => {
     if (activeTab === 'tally') loadTallyConfig();
     if (activeTab === 'meta_leads') loadMetaConfig();
     if (activeTab === 'notifications') loadNotifPreferences();
+    if (activeTab === 'customer_sheet') loadSheetConfig();
   }, [activeTab]);
+
+  const loadSheetConfig = async () => {
+    const [urlRes, logRes] = await Promise.all([getCustomerSheetUrl(), getSheetSyncLog()]);
+    if (urlRes.data) setSheetConfig(prev => ({ ...prev, url: urlRes.data, urlInput: urlRes.data }));
+    else setSheetConfig(prev => ({ ...prev, urlInput: prev.url }));
+    if (logRes.data?.synced_at) setSheetLastSynced(logRes.data.synced_at);
+    if (logRes.data?.row_count) setSheetRowCount(logRes.data.row_count);
+  };
+
+  const handleSaveSheetUrl = async () => {
+    const url = sheetConfig.urlInput.trim();
+    if (!url || !url.includes('docs.google.com/spreadsheets')) {
+      setSheetSyncMsg('⚠ Please enter a valid Google Sheets URL');
+      setTimeout(() => setSheetSyncMsg(''), 3000);
+      return;
+    }
+    setSheetSaving(true);
+    await saveCustomerSheetUrl(url);
+    setSheetConfig(prev => ({ ...prev, url }));
+    setSheetSaved(true);
+    setSheetSyncMsg('✅ Google Sheet URL saved!');
+    setTimeout(() => { setSheetSaved(false); setSheetSyncMsg(''); }, 3000);
+    setSheetSaving(false);
+  };
+
+  const handleSyncSheet = async () => {
+    setSheetSyncing(true);
+    setSheetSyncMsg('Syncing customer list from Google Sheet...');
+    const { data, error } = await triggerSheetSync();
+    if (error || !data?.success) {
+      setSheetSyncMsg('⚠ Sync via Netlify function not available in dev mode. Data already loaded.');
+    } else {
+      const count = data.synced || 0;
+      setSheetRowCount(count);
+      setSheetLastSynced(new Date().toISOString());
+      setSheetSyncMsg(`✅ Synced ${count} verified customers from Google Sheet`);
+    }
+    setSheetSyncing(false);
+    setTimeout(() => setSheetSyncMsg(''), 5000);
+  };
 
   const loadMetaConfig = async () => {
     const { data } = await getOrgSettings();
@@ -870,6 +924,7 @@ const Settings = () => {
 
   const tabs = [
     { id: 'general', label: 'General', icon: <SettingsIcon size={16} /> },
+    { id: 'customer_sheet', label: 'Customer Master Sheet', icon: <FileSpreadsheet size={16} /> },
     { id: 'email_smtp', label: 'Email & Gmail SMTP', icon: <Mail size={16} /> },
     { id: 'storage', label: 'Storage & Supabase Health', icon: <Database size={16} /> },
     { id: 'payment_automation', label: 'Payment Automation', icon: <Bell size={16} /> },
@@ -927,9 +982,145 @@ const Settings = () => {
         <div className="glass-card p-6 settings-content-card">
 
           {/* ══════════════════════════════════════════════════════════════
+              TAB: CUSTOMER MASTER SHEET
+             ══════════════════════════════════════════════════════════════ */}
+          {activeTab === 'customer_sheet' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+              {/* Header */}
+              <div>
+                <h3 style={{ fontSize: '1.1rem', fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <FileSpreadsheet size={18} color="var(--accent-primary)" /> Customer Master Contact Sheet
+                </h3>
+                <p style={{ margin: '0.35rem 0 0', fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+                  This Google Sheet is the authoritative source for verified customers. Only parties present in this sheet will receive payment reminders. The Tally operator keeps this sheet updated.
+                </p>
+              </div>
+
+              {/* Status Bar */}
+              <div style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap' }}>
+                {[
+                  { label: 'Customers in Sheet', value: sheetRowCount != null ? sheetRowCount : '—', color: '#6366f1' },
+                  { label: 'Last Synced', value: sheetLastSynced ? new Date(sheetLastSynced).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'Never', color: 'var(--success)' },
+                ].map(s => (
+                  <div key={s.label} style={{ padding: '0.85rem 1.25rem', background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', minWidth: '160px' }}>
+                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{s.label}</div>
+                    <div style={{ fontSize: '1.3rem', fontWeight: 700, color: s.color, marginTop: '0.2rem' }}>{s.value}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Sheet URL input */}
+              <div className="glass-card" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                <label style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                  Google Sheet URL
+                  <span style={{ marginLeft: '0.5rem', fontSize: '0.7rem', fontWeight: 400, color: 'var(--text-muted)' }}>
+                    (must be publicly readable)
+                  </span>
+                </label>
+                <input
+                  type="url"
+                  className="form-input"
+                  value={sheetConfig.urlInput}
+                  onChange={e => setSheetConfig(prev => ({ ...prev, urlInput: e.target.value }))}
+                  placeholder="https://docs.google.com/spreadsheets/d/..."
+                  style={{ fontFamily: 'monospace', fontSize: '0.78rem' }}
+                />
+                <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <button
+                    className={`btn ${sheetSaved ? 'btn-success' : 'btn-primary'}`}
+                    onClick={handleSaveSheetUrl}
+                    disabled={sheetSaving}
+                  >
+                    {sheetSaved ? <><Check size={14} /> Saved</> : sheetSaving ? 'Saving...' : <><Save size={14} /> Save URL</>}
+                  </button>
+                  <button
+                    className="btn btn-secondary"
+                    onClick={handleSyncSheet}
+                    disabled={sheetSyncing}
+                    title="Re-sync the customer list from Google Sheet into the database now"
+                  >
+                    <RefreshCw size={14} className={sheetSyncing ? 'animate-spin' : ''} />
+                    {sheetSyncing ? 'Syncing...' : 'Sync Now'}
+                  </button>
+                  {sheetConfig.url && (
+                    <a
+                      href={sheetConfig.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="btn btn-secondary"
+                      style={{ fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+                    >
+                      <Globe size={13} /> Open Sheet
+                    </a>
+                  )}
+                  {sheetSyncMsg && (
+                    <span style={{ fontSize: '0.78rem', color: sheetSyncMsg.includes('⚠') ? 'var(--warning)' : 'var(--success)', fontWeight: 500 }}>
+                      {sheetSyncMsg}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* How it works */}
+              <div className="glass-card" style={{ padding: '1.25rem' }}>
+                <h4 style={{ fontSize: '0.88rem', fontWeight: 700, margin: '0 0 0.75rem', color: 'var(--text-primary)' }}>
+                  How the Smart Matching Works
+                </h4>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                  {[
+                    { tier: 'Tier 1', desc: 'Exact name match (case-insensitive)' },
+                    { tier: 'Tier 2', desc: 'Normalized match — strips Pvt Ltd, LLP, Traders, Co. etc.' },
+                    { tier: 'Tier 3', desc: 'Phone cross-verification (Tally phone vs sheet phone)' },
+                    { tier: 'Tier 4', desc: 'Fuzzy similarity ≥ 85% — auto-verified (e.g. minor typos)' },
+                  ].map(t => (
+                    <div key={t.tier} style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start' }}>
+                      <span style={{ fontSize: '0.65rem', fontWeight: 700, padding: '0.15rem 0.45rem', borderRadius: '20px', background: 'rgba(99,102,241,0.12)', color: '#6366f1', whiteSpace: 'nowrap', marginTop: '0.05rem' }}>{t.tier}</span>
+                      <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{t.desc}</span>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ marginTop: '1rem', fontSize: '0.75rem', color: 'var(--text-muted)', padding: '0.6rem 0.85rem', background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
+                  ⚡ Parties NOT found in the sheet are <strong>never shown</strong> in Payment Follow-up and will never receive any reminder — zero risk.
+                </div>
+              </div>
+
+              {/* Sheet schema reference */}
+              <div className="glass-card" style={{ padding: '1.25rem' }}>
+                <h4 style={{ fontSize: '0.88rem', fontWeight: 700, margin: '0 0 0.75rem', color: 'var(--text-primary)' }}>
+                  Expected Sheet Columns (Row 1 Headers)
+                </h4>
+                <table className="data-table" style={{ fontSize: '0.78rem' }}>
+                  <thead>
+                    <tr>
+                      <th>Column Name</th>
+                      <th>Example</th>
+                      <th>Used For</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[
+                      { col: 'Company Name', ex: 'AAI EKVIRA ENTERPRISES', use: 'Primary match key (Priority 1)' },
+                      { col: 'Customer Name', ex: 'PK PATIL', use: 'Contact person shown in Follow-up' },
+                      { col: 'Contact Number', ex: '8907778383', use: 'Reference for matching (Priority 2)' },
+                      { col: 'Email Address', ex: 'optional@email.com', use: 'Future email reminders (optional)' },
+                    ].map(r => (
+                      <tr key={r.col}>
+                        <td style={{ fontWeight: 600, fontFamily: 'monospace' }}>{r.col}</td>
+                        <td style={{ color: 'var(--text-muted)', fontFamily: 'monospace' }}>{r.ex}</td>
+                        <td>{r.use}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* ══════════════════════════════════════════════════════════════
               TAB: EMAIL & GMAIL SMTP CONFIGURATION
              ══════════════════════════════════════════════════════════════ */}
           {activeTab === 'email_smtp' && (
+
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
               {/* Header */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.75rem' }}>

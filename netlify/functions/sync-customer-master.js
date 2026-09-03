@@ -1,0 +1,129 @@
+﻿/**
+ * sync-customer-master.js — Netlify Function
+ * Fetches live Google Sheet CSV → normalizes → upserts into Supabase customer_master
+ * Triggered: POST /.netlify/functions/sync-customer-master
+ * Also logs result to sheet_sync_log
+ */
+const { createClient } = require('@supabase/supabase-js');
+
+const SUPABASE_URL = process.env.SUPABASE_URL || 'https://mcgmppnvnwnilioapbli.supabase.co';
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1jZ21wcG52bnduaWxpb2FwYmxpIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4NzU3MTk4MiwiZXhwIjoyMTAzMTQ3OTgyfQ.iMVtS3kZ5jkXd7wOsgviN_3Umz0Auw7vBa0NDlD9rKg';
+const ORG_ID = '00000000-0000-0000-0000-000000000001';
+const DEFAULT_SHEET_ID = '1phUUKnsQcWR9kIPjNsOGr4lzu7Torj8W1XMziRNuncw';
+
+const SUFFIX_PATTERN = /\b(private\s+limited|pvt\.?\s*ltd\.?|ltd\.?|llp|inc\.?|corp\.?|corporation|enterprises?|enterprise|traders?|trading\s+co\.?|trading|agency|agencies|associates?|builders?|developers?|infracon|infratech|infra|constructions?|construction|contractors?|suppliers?|store|depot|co\.?|huf|aop|m\/s)\b/gi;
+
+function normalizeName(name) {
+  if (!name) return '';
+  let n = name.toLowerCase().trim();
+  n = n.replace(/\s*&\s*/g, ' and ');
+  n = n.replace(SUFFIX_PATTERN, ' ');
+  n = n.replace(/[^a-z0-9]/g, '');
+  return n;
+}
+
+function normalizePhone(phone) {
+  if (!phone) return '';
+  const digits = String(phone).replace(/\D/g, '');
+  if (digits.length === 10) return `+91${digits}`;
+  if (digits.length === 12 && digits.startsWith('91')) return `+${digits}`;
+  return '';
+}
+
+function parseCSV(text) {
+  const lines = text.split('\n');
+  if (lines.length === 0) return [];
+  const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
+  return lines.slice(1).map(line => {
+    const vals = line.split(',').map(v => v.trim().replace(/^"|"$/g, ''));
+    const obj = {};
+    headers.forEach((h, i) => { obj[h] = vals[i] || ''; });
+    return obj;
+  }).filter(r => Object.values(r).some(v => v));
+}
+
+exports.handler = async (event) => {
+  const cors = { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' };
+  if (event.httpMethod === 'OPTIONS') return { statusCode: 200, headers: cors, body: '' };
+
+  try {
+    const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
+      auth: { autoRefreshToken: false, persistSession: false }
+    });
+
+    // Get sheet URL from org_settings or use default
+    let sheetId = DEFAULT_SHEET_ID;
+    try {
+      const { data: sheetSetting } = await supabase
+        .from('org_settings')
+        .select('value')
+        .eq('organization_id', ORG_ID)
+        .eq('key', 'customer_sheet_url')
+        .maybeSingle();
+      if (sheetSetting?.value) {
+        const match = sheetSetting.value.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
+        if (match) sheetId = match[1];
+      }
+    } catch (_) {}
+
+    // Fetch CSV from Google Sheet (public read)
+    const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=0`;
+    const res = await fetch(csvUrl, { headers: { 'User-Agent': 'SobhaInfra-ERP/1.0' } });
+    if (!res.ok) throw new Error(`Google Sheet fetch failed: HTTP ${res.status}`);
+
+    const csvText = await res.text();
+    const parsed = parseCSV(csvText);
+
+    // Build rows (deduplicate by normalized_key)
+    const seenKeys = new Set();
+    const rows = [];
+    parsed.forEach((row, i) => {
+      const company = (row['Company Name'] || '').trim();
+      if (!company) return;
+      const nk = normalizeName(company);
+      if (!nk || seenKeys.has(nk)) return;
+      seenKeys.add(nk);
+      rows.push({
+        organization_id:  ORG_ID,
+        company_name:     company,
+        contact_person:   (row['Customer Name'] || '').trim() || null,
+        contact_number:   normalizePhone(row['Contact Number']) || null,
+        normalized_key:   nk,
+        sheet_row_index:  i + 2,
+        last_synced_at:   new Date().toISOString(),
+      });
+    });
+
+    // Delete old records and insert fresh
+    await supabase.from('customer_master').delete().eq('organization_id', ORG_ID);
+
+    let pushed = 0;
+    const batchSize = 200;
+    for (let i = 0; i < rows.length; i += batchSize) {
+      const { error } = await supabase.from('customer_master').insert(rows.slice(i, i + batchSize));
+      if (!error) pushed += Math.min(batchSize, rows.length - i);
+      else console.warn('[CustomerMaster] Batch error:', error.message);
+    }
+
+    // Log sync
+    await supabase.from('sheet_sync_log').insert({
+      organization_id: ORG_ID,
+      row_count: pushed,
+      status: pushed > 0 ? 'ok' : 'error',
+      error_msg: pushed === 0 ? 'No rows inserted' : null,
+    });
+
+    return {
+      statusCode: 200,
+      headers: cors,
+      body: JSON.stringify({ success: true, synced: pushed, total: rows.length }),
+    };
+  } catch (err) {
+    console.error('[sync-customer-master] Error:', err.message);
+    return {
+      statusCode: 500,
+      headers: cors,
+      body: JSON.stringify({ success: false, error: err.message }),
+    };
+  }
+};

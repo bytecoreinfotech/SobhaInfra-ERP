@@ -1330,11 +1330,10 @@ const Finance = () => {
                           })()}
 
 
-                          {/* Remind / Settled / Paid Out */}
+                          {/* Remind — managed exclusively in Payment Follow-up page */}
                           {(() => {
                             const dir = getDirection(inv);
                             if (dir.isVendor) {
-                              // Outgoing / vendor payment — no reminder option
                               return (
                                 <span style={{ fontSize: '0.72rem', color: dir.label === 'Paid Out' ? '#f59e0b' : '#ef4444', fontWeight: 600 }}>
                                   {dir.label === 'Paid Out' ? '✓ Paid to Vendor' : 'Vendor Payable'}
@@ -1345,15 +1344,14 @@ const Finance = () => {
                               return <span style={{ fontSize: '0.72rem', color: 'var(--success)', fontWeight: 600 }}>✓ Settled</span>;
                             }
                             return (
-                              <button
-                                className="btn btn-whatsapp btn-sm"
-                                style={{ padding: '0.25rem 0.6rem', fontSize: '0.72rem', opacity: (inv.reminder_paused === true || inv.reminder_paused === 'true') ? 0.75 : 1 }}
-                                onClick={() => handleSendReminder(inv)}
-                                disabled={remindingId === inv.id}
-                                title={(inv.reminder_paused === true || inv.reminder_paused === 'true') ? '⚠️ Auto-reminders paused — click to send manually' : 'Send WhatsApp payment reminder'}
+                              <a
+                                href="/payments"
+                                className="btn btn-secondary btn-sm"
+                                style={{ padding: '0.25rem 0.6rem', fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '0.25rem', textDecoration: 'none' }}
+                                title="Go to Payment Follow-up to send reminders"
                               >
-                                <Send size={12} /> {remindingId === inv.id ? 'Sending...' : (inv.reminder_paused === true || inv.reminder_paused === 'true') ? 'Send Anyway' : 'Remind on WA'}
-                              </button>
+                                <Send size={11} /> Follow-up
+                              </a>
                             );
                           })()}
 
