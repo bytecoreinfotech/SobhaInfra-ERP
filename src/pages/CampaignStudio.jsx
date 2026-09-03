@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   MessageCircle, Send, Users, Filter, CheckCircle2, AlertTriangle,
@@ -8,7 +8,7 @@ import {
   ExternalLink, UserCheck, Bot, CornerDownRight, Smartphone, RotateCcw,
   Check, HelpCircle, Shield, Info
 } from 'lucide-react';
-import { estimateCampaignAudience, queueCampaign, processCampaignBatch, getLeads, normalizePhone } from '../lib/db';
+import { estimateCampaignAudience, queueCampaign, processCampaignBatch, getLeads, getCustomerMaster, normalizePhone } from '../lib/db';
 import { uploadToWhatsAppMedia, getWhatsAppMediaType } from '../lib/storage';
 import { extractMainName } from '../lib/nameHelper';
 import './Pages.css';
@@ -124,10 +124,20 @@ const CampaignStudio = () => {
     mode: 'fallback', // 'fallback' | 'override'
   });
 
-  // Audience State
-  const [targetMode, setTargetMode] = useState('filter'); // 'filter' | 'contacts' | 'paste'
+  // Audience State: 'sheet' | 'filter' | 'contacts' | 'paste'
+  const [targetMode, setTargetMode] = useState('sheet');
   const [filters, setFilters] = useState({ statusFilter: 'All', propertyFilter: 'All', minScore: 0 });
   const [estimation, setEstimation] = useState({ totalRaw: 0, targeted: 0, optedOut: 0, invalidPhone: 0, finalAudienceCount: 0, eligibleLeads: [] });
+
+  // 1. Google Sheet Customer Master state
+  const [customerMaster, setCustomerMaster] = useState([]);
+  const [selectedSheetCustomerIds, setSelectedSheetCustomerIds] = useState(new Set());
+  const [sheetCustomerSearch, setSheetCustomerSearch] = useState('');
+  const [loadingSheetCustomers, setLoadingSheetCustomers] = useState(false);
+  const sheetMasterCheckboxRef = useRef(null);
+  const crmMasterCheckboxRef = useRef(null);
+
+  // 2. CRM Contacts Multi-select state
   const [allCrmLeads, setAllCrmLeads] = useState([]);
   const [selectedLeadIds, setSelectedLeadIds] = useState(new Set());
   const [contactSearch, setContactSearch] = useState('');
@@ -163,7 +173,7 @@ const CampaignStudio = () => {
   const [launchSuccess, setLaunchSuccess] = useState(false);
 
   useEffect(() => {
-    loadCrmLeads();
+    loadInitialData();
     calculateAudience();
   }, []);
 
@@ -185,9 +195,26 @@ const CampaignStudio = () => {
     }
   }, [simChatHistory, simCurrentButtons, simTakeoverFlagged]);
 
-  const loadCrmLeads = async () => {
-    const { data } = await getLeads();
-    setAllCrmLeads(data || []);
+  const loadInitialData = async () => {
+    setLoadingSheetCustomers(true);
+    try {
+      const [leadsRes, masterRes] = await Promise.all([
+        getLeads(),
+        getCustomerMaster()
+      ]);
+      const leads = leadsRes.data || [];
+      const master = masterRes.data || [];
+      setAllCrmLeads(leads);
+      setCustomerMaster(master);
+
+      // Pre-select all valid sheet customers so user can broadcast to all or deselect anyone
+      const valid = master.filter(c => (c.contact_number || '').replace(/\D/g, '').length >= 10);
+      setSelectedSheetCustomerIds(new Set(valid.map(c => c.id)));
+    } catch (err) {
+      console.warn('[CampaignStudio] loadInitialData error:', err);
+    } finally {
+      setLoadingSheetCustomers(false);
+    }
   };
 
   const calculateAudience = async () => {
@@ -195,8 +222,107 @@ const CampaignStudio = () => {
     setEstimation(est);
   };
 
+  // Valid & filtered Sheet Customers
+  const validSheetCustomers = useMemo(() => {
+    return customerMaster.filter(c => {
+      const raw = (c.contact_number || '').trim();
+      const digits = raw.replace(/\D/g, '').slice(-10);
+      return digits.length === 10;
+    });
+  }, [customerMaster]);
+
+  const filteredSheetCustomers = useMemo(() => {
+    if (!sheetCustomerSearch.trim()) return validSheetCustomers;
+    const q = sheetCustomerSearch.toLowerCase().trim();
+    return validSheetCustomers.filter(c => {
+      const co = (c.company_name || '').toLowerCase();
+      const cp = (c.contact_person || '').toLowerCase();
+      const ph = (c.contact_number || '').toLowerCase();
+      return co.includes(q) || cp.includes(q) || ph.includes(q);
+    });
+  }, [validSheetCustomers, sheetCustomerSearch]);
+
+  const allFilteredSheetSelected = filteredSheetCustomers.length > 0 &&
+    filteredSheetCustomers.every(c => selectedSheetCustomerIds.has(c.id));
+  const someFilteredSheetSelected = filteredSheetCustomers.some(c => selectedSheetCustomerIds.has(c.id));
+
+  useEffect(() => {
+    if (sheetMasterCheckboxRef.current) {
+      sheetMasterCheckboxRef.current.indeterminate = !allFilteredSheetSelected && someFilteredSheetSelected;
+    }
+  }, [allFilteredSheetSelected, someFilteredSheetSelected]);
+
+  const toggleSelectAllSheetCustomers = () => {
+    const next = new Set(selectedSheetCustomerIds);
+    if (allFilteredSheetSelected) {
+      filteredSheetCustomers.forEach(c => next.delete(c.id));
+    } else {
+      filteredSheetCustomers.forEach(c => next.add(c.id));
+    }
+    setSelectedSheetCustomerIds(next);
+  };
+
+  const toggleSheetCustomer = (id) => {
+    const next = new Set(selectedSheetCustomerIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelectedSheetCustomerIds(next);
+  };
+
+  // CRM Leads filtered & selection helpers
+  const filteredCrmLeads = useMemo(() => {
+    if (!contactSearch.trim()) return allCrmLeads;
+    const q = contactSearch.toLowerCase().trim();
+    return allCrmLeads.filter(l => (l.name || '').toLowerCase().includes(q) || (l.phone || '').includes(q));
+  }, [allCrmLeads, contactSearch]);
+
+  const allFilteredCrmSelected = filteredCrmLeads.length > 0 &&
+    filteredCrmLeads.every(l => selectedLeadIds.has(l.id));
+  const someFilteredCrmSelected = filteredCrmLeads.some(l => selectedLeadIds.has(l.id));
+
+  useEffect(() => {
+    if (crmMasterCheckboxRef.current) {
+      crmMasterCheckboxRef.current.indeterminate = !allFilteredCrmSelected && someFilteredCrmSelected;
+    }
+  }, [allFilteredCrmSelected, someFilteredCrmSelected]);
+
+  const toggleSelectAllCrmContacts = () => {
+    const next = new Set(selectedLeadIds);
+    if (allFilteredCrmSelected) {
+      filteredCrmLeads.forEach(l => next.delete(l.id));
+    } else {
+      filteredCrmLeads.forEach(l => next.add(l.id));
+    }
+    setSelectedLeadIds(next);
+  };
+
+  const toggleCrmLead = (id) => {
+    const next = new Set(selectedLeadIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelectedLeadIds(next);
+  };
+
   // Compute final effective recipients
   const getEffectiveRecipients = () => {
+    if (targetMode === 'sheet') {
+      return validSheetCustomers
+        .filter(c => selectedSheetCustomerIds.has(c.id))
+        .map(c => {
+          const cleanName = extractMainName(c.contact_person, c.company_name) || c.contact_person || c.company_name || 'Valued Customer';
+          return {
+            id: c.id,
+            name: cleanName,
+            full_name: c.contact_person || c.company_name,
+            company_name: c.company_name || '',
+            phone: normalizePhone(c.contact_number),
+            contact_number: c.contact_number,
+            property_interest: campaignVariables.product || 'our products',
+            budget: campaignVariables.budget || '',
+            source: 'google_sheet',
+          };
+        });
+    }
     if (targetMode === 'filter') {
       return estimation.eligibleLeads || [];
     }
@@ -828,10 +954,11 @@ const CampaignStudio = () => {
                   </div>
 
                   {/* Mode Selector */}
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem', marginBottom: '0.85rem' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.4rem', marginBottom: '0.85rem' }}>
                     {[
-                      { id: 'filter', label: 'Dynamic Lead Filter', icon: <Filter size={13} /> },
+                      { id: 'sheet', label: `Sheet Customers (${validSheetCustomers.length})`, icon: <Users size={13} /> },
                       { id: 'contacts', label: 'CRM Checklist Multi-Select', icon: <CheckSquare size={13} /> },
+                      { id: 'filter', label: 'Dynamic Lead Filter', icon: <Filter size={13} /> },
                       { id: 'paste', label: 'Paste Phone Numbers', icon: <FileText size={13} /> },
                     ].map(m => (
                       <button
@@ -840,15 +967,142 @@ const CampaignStudio = () => {
                         onClick={() => setTargetMode(m.id)}
                         className="btn"
                         style={{
-                          fontSize: '0.75rem', padding: '0.45rem',
+                          fontSize: '0.72rem', padding: '0.45rem 0.35rem',
                           background: targetMode === m.id ? 'var(--accent-primary)' : 'var(--bg-secondary)',
                           color: targetMode === m.id ? 'white' : 'var(--text-secondary)',
+                          fontWeight: targetMode === m.id ? 700 : 500,
                         }}
                       >
                         {m.icon} {m.label}
                       </button>
                     ))}
                   </div>
+
+                  {/* Sub-Panel: Sheet Customers Checklist */}
+                  {targetMode === 'sheet' && (
+                    <div style={{ background: 'var(--bg-secondary)', padding: '0.85rem', borderRadius: 8 }}>
+                      <div style={{ position: 'relative', marginBottom: '0.5rem' }}>
+                        <input
+                          type="text"
+                          className="input-field"
+                          placeholder="Search customer name, company, or phone..."
+                          style={{ fontSize: '0.75rem', padding: '0.35rem 0.5rem 0.35rem 1.8rem' }}
+                          value={sheetCustomerSearch}
+                          onChange={e => setSheetCustomerSearch(e.target.value)}
+                        />
+                        <Search size={13} style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', opacity: 0.5 }} />
+                        {sheetCustomerSearch && (
+                          <button
+                            type="button"
+                            onClick={() => setSheetCustomerSearch('')}
+                            style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '0.75rem' }}
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Master Checkbox Button Bar for Selecting All Sheet Customers */}
+                      <div style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        padding: '0.45rem 0.65rem',
+                        background: 'var(--bg-tertiary)',
+                        borderRadius: 6,
+                        marginBottom: '0.5rem',
+                        border: '1px solid var(--border-color)',
+                      }}>
+                        <label style={{
+                          display: 'flex', alignItems: 'center', gap: '0.5rem',
+                          cursor: 'pointer', fontWeight: 700, fontSize: '0.75rem', userSelect: 'none'
+                        }}>
+                          <input
+                            type="checkbox"
+                            ref={sheetMasterCheckboxRef}
+                            checked={allFilteredSheetSelected}
+                            onChange={toggleSelectAllSheetCustomers}
+                            style={{ cursor: 'pointer', width: 15, height: 15, accentColor: 'var(--accent-primary)' }}
+                          />
+                          <span>Select All Customer Numbers ({filteredSheetCustomers.length})</span>
+                        </label>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                            <strong style={{ color: 'var(--accent-primary)' }}>{selectedSheetCustomerIds.size}</strong> of {validSheetCustomers.length} selected
+                          </span>
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            style={{ fontSize: '0.7rem', padding: '0.15rem 0.5rem' }}
+                            onClick={toggleSelectAllSheetCustomers}
+                          >
+                            {allFilteredSheetSelected ? 'Deselect All' : 'Select All'}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Scrollable Customer List with Individual Checkboxes (Freedom to Deselect) */}
+                      <div style={{ maxHeight: 220, overflowY: 'auto', border: '1px solid var(--border-color)', borderRadius: 6 }}>
+                        {loadingSheetCustomers ? (
+                          <div style={{ textAlign: 'center', padding: '1.25rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                            <RefreshCw size={14} className="animate-spin" /> Loading customer directory...
+                          </div>
+                        ) : filteredSheetCustomers.length === 0 ? (
+                          <div style={{ textAlign: 'center', padding: '1.25rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                            No matching sheet customers found.
+                          </div>
+                        ) : (
+                          filteredSheetCustomers.map(cust => {
+                            const isSelected = selectedSheetCustomerIds.has(cust.id);
+                            const cleanName = extractMainName(cust.contact_person, cust.company_name);
+                            return (
+                              <div
+                                key={cust.id}
+                                onClick={() => toggleSheetCustomer(cust.id)}
+                                style={{
+                                  display: 'flex', alignItems: 'center', gap: '0.55rem',
+                                  padding: '0.45rem 0.65rem',
+                                  borderBottom: '1px solid var(--border-color)',
+                                  cursor: 'pointer',
+                                  background: isSelected ? 'rgba(99,102,241,0.08)' : 'transparent',
+                                  fontSize: '0.75rem',
+                                  transition: 'background 0.15s',
+                                }}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={() => {}}
+                                  style={{ cursor: 'pointer', width: 14, height: 14, accentColor: 'var(--accent-primary)' }}
+                                />
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                    <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>
+                                      {cleanName || cust.contact_person || 'Customer'}
+                                    </span>
+                                    {cust.contact_person && cleanName !== cust.contact_person && (
+                                      <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+                                        ({cust.contact_person})
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    {cust.company_name}
+                                  </div>
+                                </div>
+                                <div style={{ textAlign: 'right' }}>
+                                  <div style={{ fontSize: '0.72rem', fontFamily: 'monospace', fontWeight: 600, color: 'var(--text-primary)' }}>
+                                    {cust.contact_number}
+                                  </div>
+                                  <span className="badge badge-neutral" style={{ fontSize: '0.6rem', padding: '0.1rem 0.35rem' }}>
+                                    Sheet Synced
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Sub-Panel: Dynamic Filter */}
                   {targetMode === 'filter' && (
@@ -885,56 +1139,98 @@ const CampaignStudio = () => {
                   {/* Sub-Panel: CRM Checklist */}
                   {targetMode === 'contacts' && (
                     <div style={{ background: 'var(--bg-secondary)', padding: '0.85rem', borderRadius: 8 }}>
-                      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                        <div style={{ position: 'relative', flex: 1 }}>
-                          <input
-                            type="text"
-                            className="input-field"
-                            placeholder="Search contact name or phone..."
-                            style={{ fontSize: '0.75rem', padding: '0.35rem 0.5rem 0.35rem 1.8rem' }}
-                            value={contactSearch}
-                            onChange={e => setContactSearch(e.target.value)}
-                          />
-                          <Search size={13} style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', opacity: 0.5 }} />
-                        </div>
-                        <button
-                          type="button"
-                          className="btn btn-secondary btn-sm"
-                          onClick={() => {
-                            const filteredList = allCrmLeads.filter(l => (l.name || '').toLowerCase().includes(contactSearch.toLowerCase()) || (l.phone || '').includes(contactSearch));
-                            setSelectedLeadIds(selectedLeadIds.size === filteredList.length ? new Set() : new Set(filteredList.map(l => l.id)));
-                          }}
-                        >
-                          {selectedLeadIds.size > 0 ? 'Deselect' : 'Select All'}
-                        </button>
-                      </div>
-                      <div style={{ maxHeight: 180, overflowY: 'auto', border: '1px solid var(--border-color)', borderRadius: 6 }}>
-                        {allCrmLeads.filter(l => (l.name || '').toLowerCase().includes(contactSearch.toLowerCase()) || (l.phone || '').includes(contactSearch)).map(l => (
-                          <div
-                            key={l.id}
-                            onClick={() => {
-                              const next = new Set(selectedLeadIds);
-                              if (next.has(l.id)) next.delete(l.id);
-                              else next.add(l.id);
-                              setSelectedLeadIds(next);
-                            }}
-                            style={{
-                              display: 'flex', alignItems: 'center', gap: '0.5rem',
-                              padding: '0.4rem 0.6rem',
-                              borderBottom: '1px solid var(--border-color)',
-                              cursor: 'pointer',
-                              background: selectedLeadIds.has(l.id) ? 'rgba(99,102,241,0.08)' : 'transparent',
-                              fontSize: '0.75rem',
-                            }}
+                      <div style={{ position: 'relative', marginBottom: '0.5rem' }}>
+                        <input
+                          type="text"
+                          className="input-field"
+                          placeholder="Search contact name or phone..."
+                          style={{ fontSize: '0.75rem', padding: '0.35rem 0.5rem 0.35rem 1.8rem' }}
+                          value={contactSearch}
+                          onChange={e => setContactSearch(e.target.value)}
+                        />
+                        <Search size={13} style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', opacity: 0.5 }} />
+                        {contactSearch && (
+                          <button
+                            type="button"
+                            onClick={() => setContactSearch('')}
+                            style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '0.75rem' }}
                           >
-                            <input type="checkbox" checked={selectedLeadIds.has(l.id)} onChange={() => {}} />
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{ fontWeight: 600 }}>{l.name}</div>
-                              <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>{l.phone}</div>
-                            </div>
-                            <span className="badge badge-neutral" style={{ fontSize: '0.65rem' }}>{l.status}</span>
+                            ✕
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Master Checkbox Button Bar for CRM Leads */}
+                      <div style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        padding: '0.45rem 0.65rem',
+                        background: 'var(--bg-tertiary)',
+                        borderRadius: 6,
+                        marginBottom: '0.5rem',
+                        border: '1px solid var(--border-color)',
+                      }}>
+                        <label style={{
+                          display: 'flex', alignItems: 'center', gap: '0.5rem',
+                          cursor: 'pointer', fontWeight: 700, fontSize: '0.75rem', userSelect: 'none'
+                        }}>
+                          <input
+                            type="checkbox"
+                            ref={crmMasterCheckboxRef}
+                            checked={allFilteredCrmSelected}
+                            onChange={toggleSelectAllCrmContacts}
+                            style={{ cursor: 'pointer', width: 15, height: 15, accentColor: 'var(--accent-primary)' }}
+                          />
+                          <span>Select All CRM Contacts ({filteredCrmLeads.length})</span>
+                        </label>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                            <strong style={{ color: 'var(--accent-primary)' }}>{selectedLeadIds.size}</strong> of {allCrmLeads.length} selected
+                          </span>
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            style={{ fontSize: '0.7rem', padding: '0.15rem 0.5rem' }}
+                            onClick={toggleSelectAllCrmContacts}
+                          >
+                            {allFilteredCrmSelected ? 'Deselect All' : 'Select All'}
+                          </button>
+                        </div>
+                      </div>
+
+                      <div style={{ maxHeight: 220, overflowY: 'auto', border: '1px solid var(--border-color)', borderRadius: 6 }}>
+                        {filteredCrmLeads.length === 0 ? (
+                          <div style={{ textAlign: 'center', padding: '1.25rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                            No matching CRM contacts found.
                           </div>
-                        ))}
+                        ) : (
+                          filteredCrmLeads.map(l => (
+                            <div
+                              key={l.id}
+                              onClick={() => toggleCrmLead(l.id)}
+                              style={{
+                                display: 'flex', alignItems: 'center', gap: '0.55rem',
+                                padding: '0.45rem 0.65rem',
+                                borderBottom: '1px solid var(--border-color)',
+                                cursor: 'pointer',
+                                background: selectedLeadIds.has(l.id) ? 'rgba(99,102,241,0.08)' : 'transparent',
+                                fontSize: '0.75rem',
+                                transition: 'background 0.15s',
+                              }}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={selectedLeadIds.has(l.id)}
+                                onChange={() => {}}
+                                style={{ cursor: 'pointer', width: 14, height: 14, accentColor: 'var(--accent-primary)' }}
+                              />
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontWeight: 600 }}>{l.name}</div>
+                                <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>{l.phone}</div>
+                              </div>
+                              <span className="badge badge-neutral" style={{ fontSize: '0.65rem' }}>{l.status}</span>
+                            </div>
+                          ))
+                        )}
                       </div>
                     </div>
                   )}
