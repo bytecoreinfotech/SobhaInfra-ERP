@@ -1,18 +1,20 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   MessageCircle, Send, Users, BarChart3, Plus,
   CheckCircle2, Clock, XCircle, FileText, Zap, RefreshCw,
   Search, User, Phone, Shield, Pause, Play, CheckCheck, Eye,
-  UserCheck, ThumbsUp, ThumbsDown, MessageSquare, Award, Sparkles, ExternalLink
+  UserCheck, ThumbsUp, ThumbsDown, MessageSquare, Award, Sparkles, ExternalLink,
+  ShieldCheck, RotateCcw, AlertTriangle, ArrowRight, UserPlus, PhoneCall, Check, X as XIcon, Pencil
 } from 'lucide-react';
 import {
   getCampaigns, getLeads,
   getWhatsAppConversations, getWhatsAppMessages, sendWhatsAppMessage,
   updateConversationMode, toggleLeadOptOut, reassignSalesperson, submitAiFeedback,
-  getTeamMembers, updateConversationContactName
+  getTeamMembers, updateConversationContactName,
+  getCustomerMaster, triggerSheetSync, invalidateCustomerMasterCache
 } from '../lib/db';
-import { Pencil, Check, X as XIcon } from 'lucide-react';
+import { extractMainName } from '../lib/nameHelper';
 import Customer360Modal from '../components/Customer360Modal';
 import CampaignBuilderModal from '../components/CampaignBuilderModal';
 import HumanHandoffModal from '../components/HumanHandoffModal';
@@ -29,15 +31,7 @@ const statusConfig = {
   'Draft':     'badge-neutral',
 };
 
-const templates = [
-  { id: 1, tag: 'Catalog', name: 'Sobha Product Range & Catalog', preview: 'Namaste {name}! 🙏 Welcome to Sobhainfra Tech. Our official product catalog PDF is attached. Would you like product rates or to talk to an executive?' },
-  { id: 2, tag: 'Launch', name: 'Dry Mix Solutions Broadcast', preview: 'Dear {name}, 🚀 Sobhainfra Tech provides direct factory supply of Sobha Block Fix & Tile Adhesives with 20,000+ bags/day capacity from Gujarat.' },
-  { id: 3, tag: 'Payment', name: 'Product Payment Reminder', preview: 'Dear {name}, your payment of {amount} for {product} is due on {date}. Please clear at the earliest.' },
-  { id: 4, tag: 'Offer', name: 'Special Volume Discount', preview: '🎉 {name}, this week get special volume discounts on our {product}! Direct factory supply from Gujarat.' },
-];
-
 const AI_FEEDBACK_TAGS = ['AI Helpful', 'Wrong Information', 'Premature Handoff', 'Late Handoff', 'Customer Annoyed'];
-const TEAM_MEMBERS = ['Rajesh Kumar', 'Priya Sharma', 'Amit Verma', 'Sunita Patel'];
 
 // ── Live polling helpers ────────────────────────────────────────────────────
 async function fetchLiveConversations() {
@@ -66,8 +60,16 @@ async function fetchLiveCampaigns() {
 
 const WhatsApp = () => {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState('inbox'); // 'inbox' | 'campaigns'
+  const [activeTab, setActiveTab] = useState('inbox'); // 'inbox' | 'customers' | 'campaigns'
   
+  // Google Sheet Customer Master State
+  const [customerMaster, setCustomerMaster]   = useState([]);
+  const [syncingSheet, setSyncingSheet]       = useState(false);
+  const [syncMsg, setSyncMsg]                 = useState('');
+  const [sheetSearch, setSheetSearch]         = useState('');
+  const [sheetFilter, setSheetFilter]         = useState('all'); // 'all' | 'with_phone' | 'active_chat' | 'missing_phone'
+  const [customerPage, setCustomerPage]       = useState(1);
+
   // Live Inbox State
   const [conversations, setConversations] = useState([]);
   const [selectedConv, setSelectedConv] = useState(null);
@@ -75,7 +77,7 @@ const WhatsApp = () => {
   const { refresh: refreshLiveCounts } = useLiveCounts();
   const [msgInput, setMsgInput] = useState('');
   const [searchConv, setSearchConv] = useState('');
-  const [chatFilter, setChatFilter] = useState('all'); // 'all' | 'takeover' | 'unread'
+  const [chatFilter, setChatFilter] = useState('all'); // 'all' | 'customers' | 'takeover' | 'unread'
   const [convLoading, setConvLoading] = useState(true);
   const [sendingMsg, setSendingMsg] = useState(false);
   const [selected360LeadId, setSelected360LeadId] = useState(null);
@@ -125,73 +127,75 @@ const WhatsApp = () => {
     setEditingName(false);
   };
 
-  const messagesEndRef = useRef(null);
-
-  // Keep ref in sync with state for use inside interval
-  useEffect(() => { selectedConvRef.current = selectedConv; }, [selectedConv]);
-
+  // Keep selectedConvRef in sync to prevent polling overwrite
   useEffect(() => {
-    loadAllData();
+    selectedConvRef.current = selectedConv;
+  }, [selectedConv]);
 
-    // ── Poll for new conversations & messages every 4 seconds ───────────────
-    const pollInterval = setInterval(async () => {
-      // Refresh conversation list
+  // Polling for live incoming WhatsApp messages every 4 seconds
+  useEffect(() => {
+    const interval = setInterval(async () => {
       const liveConvs = await fetchLiveConversations();
       if (liveConvs.length > 0) {
         setConversations(prev => {
-          // Merge: live data takes priority, keep any that are only in mock
-          const liveIds = new Set(liveConvs.map(c => c.id));
-          const mockOnly = prev.filter(c => !liveIds.has(c.id));
-          return [...liveConvs, ...mockOnly];
-        });
-        // If the selected conversation was updated (new message), sync it
-        const currentConv = selectedConvRef.current;
-        if (currentConv) {
-          const updated = liveConvs.find(c => c.id === currentConv.id);
-          if (updated && updated.last_message_at !== currentConv.last_message_at) {
-            setSelectedConv(updated);
-          }
-        }
-      }
-
-      // Refresh messages for selected conversation
-      const currentConv = selectedConvRef.current;
-      if (currentConv) {
-        const liveMessages = await fetchLiveMessages(currentConv.id);
-        if (liveMessages.length > 0) {
-          setMessages(prev => {
-            if (liveMessages.length !== prev.length) return liveMessages;
-            return prev;
+          return liveConvs.map(nc => {
+            const old = prev.find(o => o.id === nc.id);
+            return old ? { ...old, ...nc } : nc;
           });
-        }
+        });
       }
-
-      // Refresh campaigns data for live read/reply counts
-      const liveCamps = await fetchLiveCampaigns();
-      if (liveCamps.length > 0) {
-        setCampaigns(liveCamps);
+      if (selectedConvRef.current?.id) {
+        const liveMsgs = await fetchLiveMessages(selectedConvRef.current.id);
+        if (liveMsgs.length > 0) {
+          setMessages(liveMsgs);
+        }
       }
     }, 4000);
+    return () => clearInterval(interval);
+  }, []);
 
-    return () => clearInterval(pollInterval);
+  // Supabase Realtime subscription
+  useEffect(() => {
+    if (!supabase) return;
+    const channel = supabase
+      .channel('whatsapp_live_inbox')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'whatsapp_messages' }, payload => {
+        const newMsg = payload.new;
+        if (selectedConvRef.current && newMsg.conversation_id === selectedConvRef.current.id) {
+          setMessages(prev => {
+            if (prev.some(m => m.id === newMsg.id)) return prev;
+            return [...prev, newMsg];
+          });
+        }
+        setConversations(prev => prev.map(c => {
+          if (c.id === newMsg.conversation_id) {
+            return {
+              ...c,
+              last_message_text: newMsg.body,
+              last_message_at: newMsg.created_at,
+              unread_count: selectedConvRef.current?.id === c.id ? 0 : (c.unread_count || 0) + 1,
+            };
+          }
+          return c;
+        }));
+        refreshLiveCounts();
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [refreshLiveCounts]);
+
+  useEffect(() => {
+    loadAllData();
   }, []);
 
   useEffect(() => {
-    if (selectedConv) {
+    if (selectedConv?.id) {
       loadMessages(selectedConv.id);
-      setAttachedFile(null);
-      setAttachedPreview(null);
-
-      // Clear unread count when opening conversation
-      if (selectedConv.unread_count > 0) {
-        supabase.from('whatsapp_conversations').update({ unread_count: 0 }).eq('id', selectedConv.id).then(() => {
-          setConversations(prev => prev.map(c => c.id === selectedConv.id ? { ...c, unread_count: 0 } : c));
-          refreshLiveCounts?.();
-        });
-      }
     }
-  }, [selectedConv]);
+  }, [selectedConv?.id]);
 
+  const messagesEndRef = useRef(null);
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
@@ -220,18 +224,19 @@ const WhatsApp = () => {
     setLoading(true);
     setConvLoading(true);
 
-    const [lRes, uRes] = await Promise.all([
+    const [lRes, uRes, masterRes] = await Promise.all([
       getLeads(),
       getTeamMembers(),
+      getCustomerMaster(),
     ]);
     setLeads(lRes.data || []);
+    setCustomerMaster(masterRes.data || []);
 
     if (uRes?.data && uRes.data.length > 0) {
       const names = uRes.data.map(u => u.full_name || u.name).filter(Boolean);
       if (names.length > 0) setTeamMembers(names);
     }
 
-    // Load campaigns via live Netlify function (bypasses RLS)
     const liveCampaigns = await fetchLiveCampaigns();
     if (liveCampaigns.length > 0) {
       setCampaigns(liveCampaigns);
@@ -240,7 +245,6 @@ const WhatsApp = () => {
       setCampaigns(cRes.data || []);
     }
 
-    // Load conversations via live Netlify proxy (bypasses RLS)
     const liveConvs = await fetchLiveConversations();
     if (liveConvs.length > 0) {
       setConversations(liveConvs);
@@ -256,10 +260,8 @@ const WhatsApp = () => {
     setConvLoading(false);
   };
 
-  // After a broadcast, wait a moment then refresh both campaigns and inbox
   const handleAfterBroadcast = async () => {
     await loadAllData();
-    // Re-fetch again after 3s to catch any async Supabase inserts
     setTimeout(async () => {
       const liveCampaigns = await fetchLiveCampaigns();
       if (liveCampaigns.length > 0) setCampaigns(liveCampaigns);
@@ -272,7 +274,6 @@ const WhatsApp = () => {
   };
 
   const loadMessages = async (convId) => {
-    // Try live proxy first, fallback to db.js
     const liveMessages = await fetchLiveMessages(convId);
     if (liveMessages.length > 0) {
       setMessages(liveMessages);
@@ -283,7 +284,7 @@ const WhatsApp = () => {
   };
 
   const handleSendMessage = async (e) => {
-    e.preventDefault();
+    if (e && e.preventDefault) e.preventDefault();
     if ((!msgInput.trim() && !attachedFile) || !selectedConv) return;
     setSendingMsg(true);
     const textToSend = msgInput.trim();
@@ -349,14 +350,155 @@ const WhatsApp = () => {
   const handleFeedbackSubmit = async (tag) => {
     if (!selectedConv) return;
     setSelectedFeedbackTag(tag);
-    await submitAiFeedback({
-      conversationId: selectedConv.id,
-      rating: tag === 'AI Helpful' ? 5 : 2,
-      feedbackType: tag,
-      comments: `Agent feedback tagged as: ${tag}`,
-    });
+    await submitAiFeedback(selectedConv.id, tag, `Tagged by ${selectedConv.assigned_salesperson || 'Agent'}`);
     setFeedbackSuccess(true);
+    setTimeout(() => {
+      setFeedbackSuccess(false);
+      setSelectedFeedbackTag(null);
+    }, 2500);
   };
+
+  // ── Customer Phone Map (matches 10-digit normalized phone numbers to Google Sheet) ──
+  const customerPhoneMap = useMemo(() => {
+    const map = new Map();
+    for (const c of customerMaster) {
+      if (c.contact_number) {
+        const digits = c.contact_number.replace(/\D/g, '').slice(-10);
+        if (digits.length === 10) map.set(digits, c);
+      }
+    }
+    return map;
+  }, [customerMaster]);
+
+  // Match conversations with Google Sheet Master Directory
+  const enrichedConversations = useMemo(() => {
+    return conversations.map(c => {
+      const cDigits = (c.contact_phone || '').replace(/\D/g, '').slice(-10);
+      const sheetCust = customerPhoneMap.get(cDigits);
+      if (sheetCust) {
+        const exactName = sheetCust.contact_person
+          ? `${sheetCust.contact_person} (${sheetCust.company_name})`
+          : sheetCust.company_name;
+        return {
+          ...c,
+          contact_name: (c.contact_name && !c.contact_name.startsWith('Recipient') && !c.contact_name.startsWith('WhatsApp User'))
+            ? c.contact_name
+            : exactName,
+          _sheet_customer: sheetCust,
+          _is_sheet_customer: true,
+        };
+      }
+      return c;
+    });
+  }, [conversations, customerPhoneMap]);
+
+  const takeoverCount = enrichedConversations.filter(c => c.conversation_mode === 'HUMAN TAKEOVER REQUESTED').length;
+  const unreadCount = enrichedConversations.filter(c => (c.unread_count || 0) > 0).length;
+  const sheetCustomerConvCount = enrichedConversations.filter(c => c._is_sheet_customer).length;
+
+  const filteredConversations = useMemo(() => {
+    return enrichedConversations.filter(c => {
+      if (chatFilter === 'takeover' && c.conversation_mode !== 'HUMAN TAKEOVER REQUESTED') return false;
+      if (chatFilter === 'unread' && !(c.unread_count > 0)) return false;
+      if (chatFilter === 'customers' && !c._is_sheet_customer) return false;
+      if (!searchConv) return true;
+      const s = searchConv.toLowerCase();
+      return (
+        c.contact_name?.toLowerCase().includes(s) ||
+        c.contact_phone?.includes(s) ||
+        c.last_message_text?.toLowerCase().includes(s) ||
+        c._sheet_customer?.company_name?.toLowerCase().includes(s)
+      );
+    });
+  }, [enrichedConversations, chatFilter, searchConv]);
+
+  // Open / Initialize conversation for a customer from the Google Sheet
+  const handleOpenCustomerChat = (cust) => {
+    const custDigits = (cust.contact_number || '').replace(/\D/g, '').slice(-10);
+    const formattedName = cust.contact_person
+      ? `${cust.contact_person} (${cust.company_name})`
+      : cust.company_name;
+
+    const existing = conversations.find(c => {
+      const cDigits = (c.contact_phone || '').replace(/\D/g, '').slice(-10);
+      return cDigits && custDigits && cDigits === custDigits;
+    });
+
+    if (existing) {
+      setSelectedConv(existing);
+      setActiveTab('inbox');
+    } else {
+      const newConv = {
+        id: `conv-sheet-${cust.id || custDigits || Date.now()}`,
+        contact_phone: cust.contact_number ? (cust.contact_number.startsWith('+') ? cust.contact_number : `+91${custDigits}`) : `+91${custDigits}`,
+        contact_name: formattedName,
+        conversation_mode: 'AI ACTIVE',
+        last_message_text: 'Customer selected from Google Sheet Directory',
+        last_message_at: new Date().toISOString(),
+        unread_count: 0,
+        assigned_salesperson: teamMembers[0] || 'Rajesh Kumar',
+        _sheet_customer: cust,
+        _is_sheet_customer: true,
+      };
+      setConversations(prev => [newConv, ...prev]);
+      setSelectedConv(newConv);
+      setActiveTab('inbox');
+    }
+  };
+
+  const handleSheetSync = async () => {
+    setSyncingSheet(true);
+    setSyncMsg('Fetching live customer directory from Google Sheet...');
+    const { data, error } = await triggerSheetSync();
+    if (error || !data?.success) {
+      invalidateCustomerMasterCache();
+      const res = await getCustomerMaster({ forceRefresh: true });
+      setCustomerMaster(res.data || []);
+      setSyncMsg(`Refreshed ${res.data?.length || 0} customers from database`);
+    } else {
+      setSyncMsg(`✅ Synced ${data.synced} customers live from Google Sheet! Numbers updated.`);
+      invalidateCustomerMasterCache();
+      const res = await getCustomerMaster({ forceRefresh: true });
+      setCustomerMaster(res.data || []);
+    }
+    setSyncingSheet(false);
+    setTimeout(() => setSyncMsg(''), 4500);
+  };
+
+  // Filtered customers for the dedicated Sheet Customers directory
+  const filteredSheetCustomers = useMemo(() => {
+    return customerMaster.filter(cust => {
+      const rawPhone = (cust.contact_number || '').trim();
+      const digits = rawPhone.replace(/\D/g, '').slice(-10);
+      const hasPhone = digits.length === 10;
+
+      const hasChat = conversations.some(c => {
+        const cDigits = (c.contact_phone || '').replace(/\D/g, '').slice(-10);
+        return cDigits && digits && cDigits === digits;
+      });
+
+      if (sheetFilter === 'with_phone' && !hasPhone) return false;
+      if (sheetFilter === 'missing_phone' && hasPhone) return false;
+      if (sheetFilter === 'active_chat' && !hasChat) return false;
+
+      if (sheetSearch.trim()) {
+        const q = sheetSearch.toLowerCase().trim();
+        const co = (cust.company_name || '').toLowerCase();
+        const cp = (cust.contact_person || '').toLowerCase();
+        const ph = (cust.contact_number || '').toLowerCase();
+        if (!co.includes(q) && !cp.includes(q) && !ph.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [customerMaster, sheetFilter, sheetSearch, conversations]);
+
+  // Pagination for Sheet Customers Directory
+  const PAGE_SIZE = 50;
+  const totalCustomerPages = Math.max(1, Math.ceil(filteredSheetCustomers.length / PAGE_SIZE));
+  const paginatedCustomers = useMemo(() => {
+    const start = (customerPage - 1) * PAGE_SIZE;
+    return filteredSheetCustomers.slice(start, start + PAGE_SIZE);
+  }, [filteredSheetCustomers, customerPage]);
 
   const totalSent = campaigns.reduce((s, c) => s + (c.total_sent || c.sent || 0), 0);
   const totalDelivered = campaigns.reduce((s, c) => s + (c.delivered || c.total_delivered || c.total_sent || 0), 0);
@@ -364,17 +506,7 @@ const WhatsApp = () => {
   const totalReplied = campaigns.reduce((s, c) => s + (c.total_replied ?? c.replied ?? c.replies ?? 0), 0);
   const readRate = totalSent > 0 ? ((totalRead / totalSent) * 100).toFixed(1) : '0.0';
 
-
-  const takeoverCount = conversations.filter(c => c.conversation_mode === 'HUMAN TAKEOVER REQUESTED').length;
-  const unreadCount = conversations.filter(c => (c.unread_count || 0) > 0).length;
-
-  const filteredConversations = conversations.filter(c => {
-    if (chatFilter === 'takeover' && c.conversation_mode !== 'HUMAN TAKEOVER REQUESTED') return false;
-    if (chatFilter === 'unread' && !(c.unread_count > 0)) return false;
-    if (!searchConv) return true;
-    const s = searchConv.toLowerCase();
-    return c.contact_name?.toLowerCase().includes(s) || c.contact_phone?.includes(s) || c.last_message_text?.toLowerCase().includes(s);
-  });
+  const totalWithPhone = customerMaster.filter(c => (c.contact_number || '').replace(/\D/g, '').length >= 10).length;
 
   return (
     <div className="page-container animate-fade-in">
@@ -385,7 +517,7 @@ const WhatsApp = () => {
           <p className="page-subtitle">Live customer conversations, AI sales assistant takeover, and broadcast campaigns.</p>
         </div>
         <div className="page-actions">
-          {/* Tab navigation */}
+          {/* Main Tab navigation */}
           <div style={{ display: 'flex', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
             <button
               className="btn"
@@ -398,6 +530,7 @@ const WhatsApp = () => {
                 display: 'flex',
                 alignItems: 'center',
                 gap: '0.4rem',
+                fontWeight: activeTab === 'inbox' ? 700 : 500,
               }}
             >
               <MessageCircle size={15} />
@@ -420,6 +553,28 @@ const WhatsApp = () => {
                 </span>
               )}
             </button>
+
+            {/* NEW SECTION: GOOGLE SHEET CUSTOMERS */}
+            <button
+              className="btn"
+              onClick={() => setActiveTab('customers')}
+              style={{
+                borderRadius: 0,
+                background: activeTab === 'customers' ? '#10b981' : 'var(--bg-tertiary)',
+                color: activeTab === 'customers' ? 'white' : 'var(--text-secondary)',
+                padding: '0.45rem 1rem',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.4rem',
+                fontWeight: activeTab === 'customers' ? 700 : 500,
+              }}
+              data-tooltip="View and chat with Google Sheet verified customers"
+              data-tooltip-pos="bottom"
+            >
+              <Users size={15} />
+              <span>Sheet Customers ({customerMaster.length})</span>
+            </button>
+
             <button
               className="btn"
               onClick={() => setActiveTab('campaigns')}
@@ -428,9 +583,13 @@ const WhatsApp = () => {
                 background: activeTab === 'campaigns' ? 'var(--accent-primary)' : 'var(--bg-tertiary)',
                 color: activeTab === 'campaigns' ? 'white' : 'var(--text-secondary)',
                 padding: '0.45rem 1rem',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.4rem',
+                fontWeight: activeTab === 'campaigns' ? 700 : 500,
               }}
             >
-              <Send size={15} /> Broadcast Campaigns
+              <Send size={15} /> <span>Broadcasts</span>
             </button>
           </div>
 
@@ -447,6 +606,17 @@ const WhatsApp = () => {
             <Sparkles size={15} /> Campaign & Flow Studio ↗
           </button>
 
+          <button
+            className="btn btn-secondary"
+            onClick={handleSheetSync}
+            disabled={syncingSheet}
+            data-tooltip="Fetch latest customer names & numbers from live Google Sheet"
+            data-tooltip-pos="bottom"
+          >
+            <RotateCcw size={14} className={syncingSheet ? 'animate-spin' : ''} />
+            {syncingSheet ? 'Syncing...' : 'Sync Sheet'}
+          </button>
+
           <button className="btn btn-secondary" onClick={loadAllData}>
             <RefreshCw size={15} className={loading ? 'animate-spin' : ''} /> Refresh
           </button>
@@ -457,6 +627,18 @@ const WhatsApp = () => {
           )}
         </div>
       </div>
+
+      {/* Sync Notification Banner */}
+      {syncMsg && (
+        <div style={{
+          background: 'var(--bg-card)', border: '1px solid var(--border-color)',
+          borderRadius: 'var(--radius-md)', padding: '0.65rem 1rem',
+          marginBottom: '1rem', fontSize: '0.82rem', color: 'var(--text-primary)',
+          display: 'flex', alignItems: 'center', gap: '0.5rem',
+        }}>
+          <ShieldCheck size={15} color="var(--success)" /> {syncMsg}
+        </div>
+      )}
 
       {/* =========================================================================
           TAB 1: 3-PANE LIVE INBOX
@@ -472,7 +654,7 @@ const WhatsApp = () => {
                 <input
                   type="text"
                   className="input-field"
-                  placeholder="Search chats..."
+                  placeholder="Search chats or customers..."
                   style={{ fontSize: '0.8rem', padding: '0.45rem 0.5rem 0.45rem 2rem' }}
                   value={searchConv}
                   onChange={e => setSearchConv(e.target.value)}
@@ -496,6 +678,24 @@ const WhatsApp = () => {
                   }}
                 >
                   All ({conversations.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setChatFilter('customers')}
+                  style={{
+                    fontSize: '0.68rem',
+                    padding: '0.2rem 0.5rem',
+                    borderRadius: 6,
+                    border: '1px solid var(--border-color)',
+                    background: chatFilter === 'customers' ? '#10b981' : 'var(--bg-tertiary)',
+                    color: chatFilter === 'customers' ? '#ffffff' : 'var(--text-secondary)',
+                    cursor: 'pointer',
+                    fontWeight: chatFilter === 'customers' ? 700 : 500,
+                  }}
+                  data-tooltip="Show verified Google Sheet customer conversations"
+                  data-tooltip-pos="bottom"
+                >
+                  👥 Sheet ({sheetCustomerConvCount})
                 </button>
                 <button
                   type="button"
@@ -538,7 +738,6 @@ const WhatsApp = () => {
 
             <div className="whatsapp-conv-list" style={{ flex: 1 }}>
               {convLoading ? (
-                // Skeleton shimmer cards while loading
                 <div style={{ padding: '0.5rem' }}>
                   {[1,2,3,4].map(i => (
                     <div key={i} style={{ padding: '0.85rem 1rem', borderBottom: '1px solid var(--border-color)' }}>
@@ -552,11 +751,26 @@ const WhatsApp = () => {
                   ))}
                 </div>
               ) : filteredConversations.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)', fontSize: '0.8rem' }}>No conversations found.</div>
+                <div style={{ textAlign: 'center', padding: '2.5rem 1rem', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                  {chatFilter === 'customers' ? (
+                    <div>
+                      <div style={{ fontSize: '1.4rem', marginBottom: '0.4rem' }}>👥</div>
+                      <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.3rem' }}>No Sheet Customer chats yet</div>
+                      <div style={{ fontSize: '0.72rem', marginBottom: '0.75rem' }}>Switch to "Sheet Customers" tab to select and message any customer directly.</div>
+                      <button className="btn btn-whatsapp btn-sm" onClick={() => setActiveTab('customers')}>
+                        Browse Customers
+                      </button>
+                    </div>
+                  ) : (
+                    'No conversations found.'
+                  )}
+                </div>
               ) : (
                 filteredConversations.map(c => {
                   const isSelected = selectedConv?.id === c.id;
                   const isTakeover = c.conversation_mode === 'HUMAN TAKEOVER REQUESTED';
+                  const isSheetCust = c._is_sheet_customer;
+
                   return (
                     <div
                       key={c.id}
@@ -575,11 +789,22 @@ const WhatsApp = () => {
                       }}
                     >
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.15rem' }}>
-                        <div style={{ fontWeight: 700, fontSize: '0.84rem', color: isTakeover ? '#ef4444' : 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '60%' }}>
-                          {c.contact_name || c.contact_phone}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', maxWidth: '70%' }}>
+                          <div style={{ fontWeight: 700, fontSize: '0.84rem', color: isTakeover ? '#ef4444' : 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {c.contact_name || c.contact_phone}
+                          </div>
+                          {isSheetCust && (
+                            <span
+                              data-tooltip="Verified Google Sheet Customer"
+                              data-tooltip-pos="bottom"
+                              style={{ color: '#10b981', display: 'inline-flex', flexShrink: 0 }}
+                            >
+                              <ShieldCheck size={12} />
+                            </span>
+                          )}
                         </div>
                         <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>
-                          {new Date(c.last_message_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          {c.last_message_at ? new Date(c.last_message_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
                         </span>
                       </div>
                       <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginBottom: '0.15rem' }}>{c.contact_phone}</div>
@@ -598,29 +823,18 @@ const WhatsApp = () => {
                               boxShadow: '0 0 8px rgba(239, 68, 68, 0.55)',
                               animation: 'pulse 2s infinite',
                               padding: '0.15rem 0.5rem',
-                              borderRadius: 6,
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '0.25rem',
                             }}
                           >
-                            <span>🚨</span>
-                            <span>TAKEOVER NEEDED</span>
+                            🚨 TAKEOVER NEEDED
                           </span>
                         ) : (
-                          <span
-                            className="badge"
-                            style={{
-                              fontSize: '0.6rem',
-                              background: c.conversation_mode === 'AI ACTIVE' ? 'rgba(16,185,129,0.15)' : c.conversation_mode === 'HUMAN ACTIVE' ? 'rgba(99,102,241,0.15)' : 'rgba(245,158,11,0.15)',
-                              color: c.conversation_mode === 'AI ACTIVE' ? 'var(--success)' : c.conversation_mode === 'HUMAN ACTIVE' ? 'var(--accent-primary)' : 'var(--warning)',
-                            }}
-                          >
-                            {c.conversation_mode === 'AI ACTIVE' ? '🤖 AI Active' : c.conversation_mode === 'HUMAN ACTIVE' ? '👤 Human Active' : '⏸️ AI Paused'}
+                          <span className={`badge ${c.conversation_mode === 'AI ACTIVE' ? 'badge-info' : 'badge-whatsapp'}`} style={{ fontSize: '0.62rem' }}>
+                            {c.conversation_mode}
                           </span>
                         )}
+
                         {c.unread_count > 0 && (
-                          <span className="badge badge-danger" style={{ fontSize: '0.6rem', borderRadius: 99, padding: '0.1rem 0.4rem' }}>
+                          <span style={{ background: '#25D366', color: '#fff', borderRadius: '50%', width: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.65rem', fontWeight: 800 }}>
                             {c.unread_count}
                           </span>
                         )}
@@ -636,7 +850,7 @@ const WhatsApp = () => {
           <div className="whatsapp-chat-pane" style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-primary)' }}>
             {selectedConv ? (
               <>
-                {/* Human Takeover Alert Banner (Active when customer requested human callback/rates) */}
+                {/* Human Takeover Alert Banner */}
                 {selectedConv.conversation_mode === 'HUMAN TAKEOVER REQUESTED' && (
                   <div style={{
                     background: 'linear-gradient(90deg, rgba(239, 68, 68, 0.16), rgba(245, 158, 11, 0.12))',
@@ -719,9 +933,33 @@ const WhatsApp = () => {
                           <Pencil size={12} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
                         </span>
                       )}
+                      
+                      {selectedConv._is_sheet_customer && (
+                        <span
+                          style={{
+                            fontSize: '0.65rem',
+                            fontWeight: 700,
+                            background: 'rgba(16, 185, 129, 0.12)',
+                            color: '#10b981',
+                            border: '1px solid rgba(16, 185, 129, 0.3)',
+                            padding: '0.1rem 0.45rem',
+                            borderRadius: 12,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '0.2rem'
+                          }}
+                          data-tooltip="Verified against Google Sheet Customer Master"
+                          data-tooltip-pos="bottom"
+                        >
+                          <ShieldCheck size={11} /> Sheet Verified
+                        </span>
+                      )}
                       <span className="badge badge-whatsapp" style={{ fontSize: '0.65rem' }}>WhatsApp</span>
                     </div>
-                    <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                    <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.1rem' }}>
+                      {selectedConv._sheet_customer?.company_name && (
+                        <strong style={{ color: 'var(--text-secondary)' }}>{selectedConv._sheet_customer.company_name} · </strong>
+                      )}
                       {selectedConv.contact_phone} · {selectedConv.property_interest || 'General Product Inquiry'}
                     </div>
                   </div>
@@ -736,66 +974,39 @@ const WhatsApp = () => {
                 </div>
 
                 {/* Messages List */}
-                <div className="whatsapp-chat-messages" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                <div className="whatsapp-chat-messages" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem', flex: 1, overflowY: 'auto' }}>
                   {messages.map(m => {
                     const isOutbound = m.direction === 'outbound';
-                    const { text: cleanText, mediaUrl, mediaType, fileName } = parseMessageMedia(m);
+                    const { mediaType, mediaUrl, fileName, cleanText } = parseMessageMedia(m);
+
                     return (
                       <div
                         key={m.id}
+                        className={`whatsapp-bubble ${isOutbound ? 'outbound' : 'inbound'}`}
                         style={{
-                          alignSelf: isOutbound ? 'flex-end' : 'flex-start',
                           maxWidth: '75%',
-                          padding: '0.75rem 1rem',
-                          borderRadius: 12,
-                          background: isOutbound
-                            ? m.sender_type === 'ai' ? 'rgba(16,185,129,0.12)' : 'rgba(99,102,241,0.18)'
-                            : 'var(--bg-tertiary)',
-                          border: `1px solid ${isOutbound ? (m.sender_type === 'ai' ? 'rgba(16,185,129,0.3)' : 'rgba(99,102,241,0.3)') : 'var(--border-color)'}`,
+                          alignSelf: isOutbound ? 'flex-end' : 'flex-start',
+                          padding: '0.65rem 0.95rem',
+                          borderRadius: '10px',
+                          borderTopRightRadius: isOutbound ? '2px' : '10px',
+                          borderTopLeftRadius: isOutbound ? '10px' : '2px',
                           fontSize: '0.82rem',
                           position: 'relative',
                         }}
                       >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', fontSize: '0.65rem', color: 'var(--text-muted)', marginBottom: '0.25rem' }}>
-                          <span>
-                            {m.sender_type === 'customer' ? selectedConv.contact_name : m.sender_type === 'ai' ? '🤖 AI Sales Assistant' : `👤 ${selectedConv.assigned_salesperson || 'Sales Executive'}`}
+                        <div style={{ fontSize: '0.68rem', color: isOutbound ? 'var(--accent-primary)' : 'var(--text-muted)', marginBottom: '0.2rem', fontWeight: 600, display: 'flex', justifyContent: 'space-between', gap: '0.5rem' }}>
+                          <span>{isOutbound ? (m.sender_type === 'human_agent' ? '👤 Sales Executive' : '⚡ AI Assistant') : (selectedConv.contact_name || 'Customer')}</span>
+                          <span style={{ fontSize: '0.62rem', color: 'var(--text-muted)', fontWeight: 400 }}>
+                            {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                           </span>
-                          <span>{new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                         </div>
 
-                        {/* Image Preview */}
                         {mediaUrl && mediaType === 'image' && (
                           <div style={{ marginBottom: cleanText ? '0.45rem' : 0 }}>
-                            <a href={mediaUrl} target="_blank" rel="noopener noreferrer" title="Click to view full image">
-                              <img
-                                src={mediaUrl}
-                                alt="WhatsApp shared image"
-                                style={{
-                                  maxWidth: '100%',
-                                  maxHeight: 260,
-                                  borderRadius: 8,
-                                  display: 'block',
-                                  cursor: 'pointer',
-                                  objectFit: 'contain',
-                                  background: 'rgba(0,0,0,0.15)',
-                                  border: '1px solid rgba(255,255,255,0.08)'
-                                }}
-                                onError={e => { e.target.style.display = 'none'; }}
-                              />
-                            </a>
+                            <img src={mediaUrl} alt="attachment" style={{ maxWidth: '100%', maxHeight: 220, borderRadius: 6, objectFit: 'cover', display: 'block' }} />
                           </div>
                         )}
 
-                        {/* Video Preview */}
-                        {mediaUrl && mediaType === 'video' && (
-                          <div style={{ marginBottom: cleanText ? '0.45rem' : 0 }}>
-                            <video controls style={{ maxWidth: '100%', maxHeight: 240, borderRadius: 8, display: 'block' }}>
-                              <source src={mediaUrl} />
-                            </video>
-                          </div>
-                        )}
-
-                        {/* Audio Preview */}
                         {mediaUrl && mediaType === 'audio' && (
                           <div style={{ marginBottom: cleanText ? '0.45rem' : 0 }}>
                             <audio controls style={{ width: '100%', minWidth: 200 }}>
@@ -804,7 +1015,6 @@ const WhatsApp = () => {
                           </div>
                         )}
 
-                        {/* Document PDF Card Preview */}
                         {mediaUrl && mediaType === 'document' && (
                           <div style={{ marginBottom: cleanText ? '0.55rem' : 0 }}>
                             <a
@@ -837,7 +1047,6 @@ const WhatsApp = () => {
                           </div>
                         )}
 
-                        {/* Clean Text Body - Always Rendered */}
                         {cleanText && (
                           <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.45 }}>{cleanText}</div>
                         )}
@@ -875,6 +1084,38 @@ const WhatsApp = () => {
 
                 <input ref={fileInputRef} type="file" accept="image/*,.pdf,.mp4,.mp3,.ogg,.wav,.doc,.docx" style={{ display: 'none' }} onChange={e => handleFileSelect(e.target.files[0])} />
 
+                {/* Smart Quick Reply Chips (Using main name without surnames) */}
+                <div style={{ padding: '0.4rem 1.25rem', background: 'var(--bg-tertiary)', borderTop: '1px solid var(--border-color)', display: 'flex', gap: '0.4rem', overflowX: 'auto', alignItems: 'center' }}>
+                  <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', flexShrink: 0 }}>
+                    Quick Message:
+                  </span>
+                  {[
+                    { label: `👋 Hello ${extractMainName(selectedConv.contact_name)}`, text: `Hello ${extractMainName(selectedConv.contact_name)}, how can I assist you with your construction material requirements today?` },
+                    { label: '📄 Send Catalog', text: `Please find our official *Sobhainfra Tech Product Catalog & Technical Specification Guide* attached in PDF format. Feel free to reply if you need project rates.` },
+                    { label: '💰 Bulk Quotation', text: `I am preparing our best volume quotation for your project. Could you please confirm the required quantity (bags) and delivery site location?` },
+                    { label: '📞 Executive Callback', text: `Our senior technical sales specialist will connect with you on this number shortly. Please let us know the most convenient time to call!` },
+                  ].map((qr, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => setMsgInput(qr.text)}
+                      style={{
+                        fontSize: '0.7rem',
+                        padding: '0.2rem 0.6rem',
+                        borderRadius: '9999px',
+                        border: '1px solid var(--border-color)',
+                        background: 'var(--bg-card)',
+                        color: 'var(--text-secondary)',
+                        cursor: 'pointer',
+                        whiteSpace: 'nowrap',
+                        transition: 'all 0.15s ease'
+                      }}
+                    >
+                      {qr.label}
+                    </button>
+                  ))}
+                </div>
+
                 {/* Chat Composer */}
                 <form onSubmit={handleSendMessage} style={{ padding: '0.85rem 1.25rem', borderTop: '1px solid var(--border-color)', background: 'var(--bg-secondary)', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                   <button
@@ -894,7 +1135,7 @@ const WhatsApp = () => {
                   <input
                     type="text"
                     className="input-field"
-                    placeholder={attachedFile ? 'Add a caption (optional)...' : `Reply as ${selectedConv.assigned_salesperson || 'Sales Rep'}...`}
+                    placeholder={attachedFile ? 'Add a caption (optional)...' : `Reply to ${extractMainName(selectedConv.contact_name)}...`}
                     value={msgInput}
                     onChange={e => setMsgInput(e.target.value)}
                     disabled={sendingMsg}
@@ -908,12 +1149,12 @@ const WhatsApp = () => {
               </>
             ) : (
               <div style={{ margin: 'auto', textAlign: 'center', color: 'var(--text-muted)' }}>
-                Select a conversation from the left pane.
+                Select a conversation from the left pane, or switch to the <strong>Sheet Customers</strong> tab to start a new chat.
               </div>
             )}
           </div>
 
-          {/* PANE 3: HUMAN TAKEOVER, REASSIGNMENT & AI FEEDBACK LOOP (Section 23, 24) */}
+          {/* PANE 3: HUMAN TAKEOVER, REASSIGNMENT & AI FEEDBACK LOOP */}
           <div className="whatsapp-right-pane" style={{ borderLeft: '1px solid var(--border-color)', background: 'var(--bg-secondary)', padding: '1.25rem', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
             {selectedConv ? (
               <>
@@ -974,8 +1215,8 @@ const WhatsApp = () => {
                   </p>
                   
                   {feedbackSuccess ? (
-                    <div style={{ padding: '0.5rem', background: 'rgba(16,185,129,0.1)', border: '1px solid var(--success)', borderRadius: 6, fontSize: '0.72rem', color: 'var(--success)', textAlign: 'center' }}>
-                      ✅ Feedback submitted!
+                    <div style={{ background: 'var(--success-bg)', color: 'var(--success)', padding: '0.45rem', borderRadius: 6, fontSize: '0.72rem', textAlign: 'center', fontWeight: 600 }}>
+                      ✓ Feedback Logged!
                     </div>
                   ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
@@ -1019,7 +1260,302 @@ const WhatsApp = () => {
       )}
 
       {/* =========================================================================
-          TAB 2: BROADCAST CAMPAIGNS & TEMPLATES
+          TAB 2: DEDICATED GOOGLE SHEET CUSTOMER DIRECTORY (CUSTOMER TYPE SECTION)
+         ========================================================================= */}
+      {activeTab === 'customers' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+          
+          {/* Top KPI & Controls Banner */}
+          <div className="glass-card" style={{ padding: '1.25rem 1.5rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.25rem' }}>
+              <div>
+                <h2 style={{ fontSize: '1.15rem', fontWeight: 800, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <ShieldCheck size={20} color="#10b981" />
+                  Google Sheet Customer Directory
+                </h2>
+                <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
+                  Live verified customer list synced from Google Sheet. Select any customer to chat immediately in the Live Inbox.
+                </p>
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <button
+                  className="btn btn-secondary"
+                  onClick={handleSheetSync}
+                  disabled={syncingSheet}
+                  style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: 600 }}
+                >
+                  <RotateCcw size={14} className={syncingSheet ? 'animate-spin' : ''} />
+                  {syncingSheet ? 'Syncing...' : 'Sync Live Sheet'}
+                </button>
+                <a
+                  href="https://docs.google.com/spreadsheets/d/1phUUKnsQcWR9kIPjNsOGr4lzu7Torj8W1XMziRNuncw/edit?gid=0#gid=0"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="btn btn-secondary"
+                  style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.8rem' }}
+                >
+                  <ExternalLink size={13} /> Open Sheet ↗
+                </a>
+              </div>
+            </div>
+
+            {/* Quick Filter & Search Bar */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+              {/* Filter Pills */}
+              <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                {[
+                  { id: 'all', label: `All Customers (${customerMaster.length})` },
+                  { id: 'with_phone', label: `📱 Verified Phone (${totalWithPhone})`, activeColor: '#10b981' },
+                  { id: 'active_chat', label: `💬 Active in Inbox (${sheetCustomerConvCount})`, activeColor: 'var(--accent-primary)' },
+                  { id: 'missing_phone', label: `⚠️ Phone Missing (${customerMaster.length - totalWithPhone})`, activeColor: '#d97706' },
+                ].map(f => {
+                  const isActive = sheetFilter === f.id;
+                  return (
+                    <button
+                      key={f.id}
+                      onClick={() => { setSheetFilter(f.id); setCustomerPage(1); }}
+                      style={{
+                        fontSize: '0.74rem',
+                        fontWeight: isActive ? 700 : 500,
+                        padding: '0.3rem 0.75rem',
+                        borderRadius: '9999px',
+                        border: isActive ? `1.5px solid ${f.activeColor || 'var(--accent-primary)'}` : '1px solid var(--border-color)',
+                        background: isActive ? (f.activeColor ? `${f.activeColor}18` : 'var(--accent-primary-bg, rgba(99,102,241,0.12))') : 'var(--bg-tertiary)',
+                        color: isActive ? (f.activeColor || 'var(--accent-primary)') : 'var(--text-secondary)',
+                        cursor: 'pointer',
+                        transition: 'all 0.15s ease'
+                      }}
+                    >
+                      {f.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Search Box */}
+              <div style={{ position: 'relative', minWidth: '260px' }}>
+                <Search size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="Search company, person, or phone..."
+                  value={sheetSearch}
+                  onChange={e => { setSheetSearch(e.target.value); setCustomerPage(1); }}
+                  style={{ paddingLeft: '32px', fontSize: '0.8rem', height: '34px', width: '100%' }}
+                />
+                {sheetSearch && (
+                  <button
+                    onClick={() => setSheetSearch('')}
+                    style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}
+                  >
+                    <XIcon size={12} />
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Customers Table */}
+          <div className="glass-card table-container">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Customer / Contact Person</th>
+                  <th>Company / Business Name</th>
+                  <th>Contact Number</th>
+                  <th>Chat in Live Inbox</th>
+                  <th style={{ textAlign: 'right' }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {paginatedCustomers.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>
+                      <Users size={32} style={{ opacity: 0.35, margin: '0 auto 0.5rem auto' }} />
+                      <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>No customers match the current filter</div>
+                      <div style={{ fontSize: '0.75rem' }}>Try clearing the search or switching the filter above.</div>
+                    </td>
+                  </tr>
+                ) : (
+                  paginatedCustomers.map(cust => {
+                    const rawPhone = (cust.contact_number || '').trim();
+                    const digits = rawPhone.replace(/\D/g, '').slice(-10);
+                    const hasPhone = digits.length === 10;
+                    const mainName = extractMainName(cust.contact_person, cust.company_name);
+
+                    // Find if there is an active conversation matching this phone
+                    const existingChat = conversations.find(c => {
+                      const cDigits = (c.contact_phone || '').replace(/\D/g, '').slice(-10);
+                      return cDigits && digits && cDigits === digits;
+                    });
+
+                    return (
+                      <tr key={cust.id || cust.sheet_row_index} style={{ opacity: hasPhone ? 1 : 0.72 }}>
+                        {/* Customer / Person Name */}
+                        <td>
+                          <div style={{ fontWeight: 700, fontSize: '0.88rem', color: 'var(--text-primary)' }}>
+                            {cust.contact_person || '—'}
+                          </div>
+                          {cust.contact_person && (
+                            <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
+                              Primary Name: <strong style={{ color: 'var(--accent-primary)' }}>{mainName}</strong>
+                            </div>
+                          )}
+                        </td>
+
+                        {/* Company Name */}
+                        <td>
+                          <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>
+                            {cust.company_name}
+                          </div>
+                          <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>
+                            Sheet Row #{cust.sheet_row_index}
+                          </span>
+                        </td>
+
+                        {/* Contact Number */}
+                        <td>
+                          {hasPhone ? (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                              <span style={{ fontFamily: 'monospace', fontWeight: 600, color: 'var(--text-primary)' }}>
+                                {cust.contact_number}
+                              </span>
+                              <span
+                                style={{
+                                  fontSize: '0.62rem',
+                                  fontWeight: 700,
+                                  background: 'rgba(16, 185, 129, 0.12)',
+                                  color: '#10b981',
+                                  border: '1px solid rgba(16, 185, 129, 0.3)',
+                                  padding: '0.1rem 0.4rem',
+                                  borderRadius: 10,
+                                }}
+                              >
+                                Verified
+                              </span>
+                            </div>
+                          ) : (
+                            <span
+                              style={{
+                                fontSize: '0.65rem',
+                                fontWeight: 600,
+                                background: 'rgba(245, 158, 11, 0.12)',
+                                color: '#d97706',
+                                border: '1px solid rgba(245, 158, 11, 0.3)',
+                                padding: '0.15rem 0.5rem',
+                                borderRadius: 12,
+                              }}
+                              data-tooltip="Phone missing in Google Sheet column C. Add phone in sheet and click Sync Sheet."
+                              data-tooltip-pos="bottom"
+                            >
+                              ⚠️ No Phone in Sheet
+                            </span>
+                          )}
+                        </td>
+
+                        {/* Chat Status */}
+                        <td>
+                          {existingChat ? (
+                            <div>
+                              <span className="badge badge-success" style={{ fontSize: '0.65rem', marginBottom: '0.2rem' }}>
+                                Active Chat
+                              </span>
+                              <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {existingChat.last_message_text}
+                              </div>
+                            </div>
+                          ) : (
+                            <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                              Ready for outreach
+                            </span>
+                          )}
+                        </td>
+
+                        {/* Actions */}
+                        <td style={{ textAlign: 'right' }}>
+                          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.4rem', alignItems: 'center' }}>
+                            {hasPhone ? (
+                              <>
+                                <button
+                                  className="btn btn-whatsapp btn-sm"
+                                  onClick={() => handleOpenCustomerChat(cust)}
+                                  data-tooltip={`Open live chat with ${mainName} in Inbox`}
+                                  data-tooltip-pos="left"
+                                  style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.72rem', padding: '0.25rem 0.6rem' }}
+                                >
+                                  <MessageCircle size={13} /> Chat Now
+                                </button>
+                                <a
+                                  href={`tel:${cust.contact_number}`}
+                                  className="btn btn-secondary btn-sm"
+                                  data-tooltip={`Call ${cust.contact_number}`}
+                                  data-tooltip-pos="left"
+                                  style={{ padding: '0.25rem 0.45rem', display: 'flex', alignItems: 'center' }}
+                                >
+                                  <Phone size={12} />
+                                </a>
+                              </>
+                            ) : (
+                              <button
+                                className="btn btn-secondary btn-sm"
+                                disabled
+                                style={{ opacity: 0.5, cursor: 'not-allowed', fontSize: '0.7rem', padding: '0.25rem 0.55rem' }}
+                                data-tooltip="Disabled: Add phone number in Google Sheet first"
+                                data-tooltip-pos="left"
+                              >
+                                No Phone
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+
+            {/* Pagination Controls */}
+            {filteredSheetCustomers.length > 0 && (
+              <div style={{
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                padding: '0.75rem 1.25rem', borderTop: '1px solid var(--border-color)',
+                background: 'var(--bg-tertiary)', fontSize: '0.78rem', flexWrap: 'wrap', gap: '0.75rem'
+              }}>
+                <div style={{ color: 'var(--text-muted)' }}>
+                  Showing <strong>{(customerPage - 1) * PAGE_SIZE + 1}</strong> to <strong>{Math.min(customerPage * PAGE_SIZE, filteredSheetCustomers.length)}</strong> of <strong>{filteredSheetCustomers.length}</strong> customers
+                </div>
+                {totalCustomerPages > 1 && (
+                  <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      disabled={customerPage <= 1}
+                      onClick={() => setCustomerPage(p => Math.max(1, p - 1))}
+                      style={{ padding: '0.2rem 0.5rem', opacity: customerPage <= 1 ? 0.4 : 1 }}
+                    >
+                      Prev
+                    </button>
+                    <span style={{ padding: '0 0.5rem', fontWeight: 600 }}>
+                      {customerPage} / {totalCustomerPages}
+                    </span>
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      disabled={customerPage >= totalCustomerPages}
+                      onClick={() => setCustomerPage(p => Math.min(totalCustomerPages, p + 1))}
+                      style={{ padding: '0.2rem 0.5rem', opacity: customerPage >= totalCustomerPages ? 0.4 : 1 }}
+                    >
+                      Next
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* =========================================================================
+          TAB 3: BROADCAST CAMPAIGNS & TEMPLATES
          ========================================================================= */}
       {activeTab === 'campaigns' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
