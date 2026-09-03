@@ -415,7 +415,6 @@ const Payments = () => {
                       background: hasPhone ? 'transparent' : 'rgba(248, 250, 252, 0.45)',
                       transition: 'all 0.15s ease',
                     }}
-                    title={!hasPhone ? "⚠️ Phone number missing in Google Sheet. Add contact number in Google Sheet and click 'Sync Sheet' to enable WhatsApp reminders." : undefined}
                   >
                     {/* Invoice Number */}
                     <td style={{ fontWeight: 700, color: 'var(--accent-primary)', fontFamily: 'monospace', fontSize: '0.78rem' }}>
@@ -439,20 +438,21 @@ const Payments = () => {
                           </span>
                         ) : (
                           <span
+                            data-tooltip="Phone missing in Google Sheet. Add contact number in Google Sheet and click 'Sync Sheet' to enable WhatsApp reminders."
+                            data-tooltip-pos="bottom"
                             style={{
                               fontSize: '0.65rem',
                               fontWeight: 600,
                               background: 'rgba(245, 158, 11, 0.12)',
                               color: '#d97706',
                               border: '1px solid rgba(245, 158, 11, 0.3)',
-                              padding: '0.1rem 0.45rem',
+                              padding: '0.12rem 0.5rem',
                               borderRadius: '12px',
-                              cursor: 'help',
+                              cursor: 'pointer',
                               display: 'inline-flex',
                               alignItems: 'center',
-                              gap: '0.2rem'
+                              gap: '0.25rem'
                             }}
-                            title="Phone number missing in Google Sheet. Update Google Sheet and click 'Sync Sheet' to enable WhatsApp reminders."
                           >
                             ⚠️ No Phone in Sheet
                           </span>
@@ -496,7 +496,8 @@ const Payments = () => {
                               setDetailModalInv(inv);
                             }
                           }}
-                          title="View Invoice / Voucher Details"
+                          data-tooltip="View Invoice / Voucher Details"
+                          data-tooltip-pos="left"
                         >
                           <FileText size={11} /> Bill
                         </button>
@@ -509,24 +510,30 @@ const Payments = () => {
                           <span style={{ fontSize: '0.78rem', color: 'var(--success)', fontWeight: 600 }}>✓ Cleared</span>
                         ) : !hasPhone ? (
                           /* Disabled Remind Button when phone is missing in Google Sheet */
-                          <button
-                            className="btn btn-secondary btn-sm"
-                            disabled
-                            style={{
-                              padding: '0.2rem 0.5rem',
-                              fontSize: '0.7rem',
-                              opacity: 0.5,
-                              cursor: 'not-allowed',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '0.25rem',
-                              color: '#d97706',
-                              borderColor: 'rgba(245, 158, 11, 0.4)'
-                            }}
-                            title="Disabled: Phone number is missing in Google Sheet. Add the contact number in Google Sheet and click 'Sync Sheet' to enable."
+                          <span
+                            data-tooltip="Disabled: Phone number is missing in Google Sheet. Add contact in sheet & click Sync Sheet."
+                            data-tooltip-pos="left"
+                            style={{ display: 'inline-flex' }}
                           >
-                            <AlertTriangle size={11} color="#d97706" /> No Phone
-                          </button>
+                            <button
+                              className="btn btn-secondary btn-sm"
+                              disabled
+                              style={{
+                                padding: '0.2rem 0.5rem',
+                                fontSize: '0.7rem',
+                                opacity: 0.5,
+                                cursor: 'not-allowed',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '0.25rem',
+                                color: '#d97706',
+                                borderColor: 'rgba(245, 158, 11, 0.4)',
+                                pointerEvents: 'none',
+                              }}
+                            >
+                              <AlertTriangle size={11} color="#d97706" /> No Phone
+                            </button>
+                          </span>
                         ) : (
                           /* Active WhatsApp Remind Button */
                           <>
@@ -534,14 +541,16 @@ const Payments = () => {
                               className={`btn btn-sm ${isSent ? 'btn-success' : isReminding ? 'btn-secondary' : 'btn-whatsapp'}`}
                               onClick={() => !isSent && !isReminding && handleRemind(inv)}
                               disabled={isReminding || isSent}
-                              title={`Send payment reminder via WhatsApp to ${inv._verified_phone}`}
+                              data-tooltip={`Send payment reminder via WhatsApp to ${inv._verified_phone}`}
+                              data-tooltip-pos="left"
                             >
                               {isSent ? <><CheckCircle2 size={13} /> Sent</> : isReminding ? 'Sending...' : <><Send size={13} /> Remind</>}
                             </button>
                             <a
                               href={`tel:${inv._verified_phone}`}
                               className="btn btn-secondary btn-sm"
-                              title={`Call ${inv._verified_phone}`}
+                              data-tooltip={`Call ${inv._verified_phone}`}
+                              data-tooltip-pos="left"
                               style={{ display: 'flex', alignItems: 'center', padding: '0.25rem 0.4rem' }}
                             >
                               <Phone size={12} />
