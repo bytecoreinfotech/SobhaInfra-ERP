@@ -227,7 +227,17 @@ exports.handler = async (event) => {
     if (body.invoiceId) {
       // Single invoice reminder (manual trigger from UI)
       const { data } = await supabase.from('invoices').select('*').eq('id', body.invoiceId).maybeSingle();
-      if (data) invoices = [data];
+      if (data) {
+        if (body.pdfUrl) {
+          data.pdf_url = body.pdfUrl;
+          try {
+            await supabase.from('invoices').update({ pdf_url: body.pdfUrl }).eq('id', data.id);
+          } catch (err) {
+            console.warn('[Reminder] Failed to cache pdf_url:', err.message);
+          }
+        }
+        invoices = [data];
+      }
     } else {
       // Auto: find all overdue/pending invoices
       const { data } = await supabase

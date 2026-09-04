@@ -17,6 +17,7 @@ import { buildCustomerIndex, matchCustomer } from '../lib/customerMatcher';
 import { supabase } from '../lib/supabase';
 import { useCompany } from '../context/CompanyContext';
 import LedgerDetailDrawer from '../components/LedgerDetailDrawer';
+import InvoiceDocModal from '../components/InvoiceDocModal';
 import './Pages.css';
 
 
@@ -238,6 +239,7 @@ const Finance = () => {
   const [showTemplatesModal, setShowTemplatesModal] = useState(false);
   const [selectedTemplateTab, setSelectedTemplateTab] = useState('tax_invoice'); // 'tax_invoice' | 'eway_bill' | 'pending_bills' | 'ledger_account'
   const [selectedInvoiceForTemplate, setSelectedInvoiceForTemplate] = useState(null); // invoice row for browser-side PDF generation
+  const [docModalInvoice, setDocModalInvoice] = useState(null); // Pixel-perfect 2-page Invoice + e-Way modal
 
   useEffect(() => {
     loadAllFinanceData();
@@ -1304,16 +1306,12 @@ const Finance = () => {
                         <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flexWrap: 'wrap' }}>
                           {/* All 4 PDF Types — Always show Tax Bill button */}
                         <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap' }}>
-                                {/* Tax Bill — always opens browser-generated PDF (ignores cloud URL) */}
+                                {/* Tax Bill — always opens pixel-perfect 2-page Invoice & e-Way Bill */}
                                 <button
                                   className="btn btn-secondary btn-sm"
                                   style={{ padding: '0.2rem 0.45rem', fontSize: '0.68rem', color: 'var(--accent-primary)', display: 'flex', alignItems: 'center', gap: '0.2rem' }}
-                                  onClick={() => {
-                                    setSelectedInvoiceForTemplate(inv);
-                                    setSelectedTemplateTab('tax_invoice');
-                                    setShowTemplatesModal(true);
-                                  }}
-                                  title="Tax Invoice + e-Way Bill — generated in browser (no cloud storage needed)"
+                                  onClick={() => setDocModalInvoice(inv)}
+                                  title="Tax Invoice + e-Way Bill — pixel-perfect 2-page bill with PDF download & WhatsApp"
                                 >
                                   <FileText size={11} /> Tax Bill
                                 </button>
@@ -1321,12 +1319,8 @@ const Finance = () => {
                                 <button
                                   className="btn btn-secondary btn-sm"
                                   style={{ padding: '0.2rem 0.45rem', fontSize: '0.68rem', color: '#10b981', display: 'flex', alignItems: 'center', gap: '0.2rem' }}
-                                  onClick={() => {
-                                    setSelectedInvoiceForTemplate(inv);
-                                    setSelectedTemplateTab('eway_bill');
-                                    setShowTemplatesModal(true);
-                                  }}
-                                  title="Standalone e-Way Bill / Conveyance Note — generated in browser"
+                                  onClick={() => setDocModalInvoice(inv)}
+                                  title="Standalone e-Way Bill / Conveyance Note — pixel-perfect 2-page bill with PDF download & WhatsApp"
                                 >
                                   <FileText size={11} /> e-Way
                                 </button>
@@ -2526,6 +2520,18 @@ const Finance = () => {
             />
           </div>
         </div>
+      )}
+
+      {/* 2-Page Pixel-Perfect Tax Invoice & e-Way Bill Modal */}
+      {docModalInvoice && (
+        <InvoiceDocModal
+          invoice={docModalInvoice}
+          activeCompany={activeCompany}
+          onClose={() => setDocModalInvoice(null)}
+          onSendSuccess={(invId, pdfUrl) => {
+            setInvoices(prev => prev.map(i => i.id === invId ? { ...i, pdf_url: pdfUrl } : i));
+          }}
+        />
       )}
     </div>
   );

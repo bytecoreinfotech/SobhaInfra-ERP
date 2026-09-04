@@ -8,6 +8,7 @@ import {
 import { getInvoices, getCustomerMaster, triggerSheetSync, getSheetSyncLog, invalidateInvoicesCache, invalidateCustomerMasterCache } from '../lib/db';
 import { buildCustomerIndex, matchCustomer } from '../lib/customerMatcher';
 import { useCompany } from '../context/CompanyContext';
+import InvoiceDocModal from '../components/InvoiceDocModal';
 import './Pages.css';
 
 /**
@@ -66,8 +67,7 @@ const Payments = () => {
   const [statusFilter, setStatusFilter]       = useState('All'); // 'All' | 'Overdue' | 'Pending' | 'Paid'
   const [phoneFilter, setPhoneFilter]         = useState('all'); // 'all' | 'verified' | 'missing'
   const [searchQuery, setSearchQuery]         = useState('');
-  const [previewPdfUrl, setPreviewPdfUrl]     = useState(null);
-  const [detailModalInv, setDetailModalInv]   = useState(null);
+  const [docModalInv, setDocModalInv]         = useState(null);
 
   // Pagination state (prevents DOM lag)
   const [currentPage, setCurrentPage]         = useState(1);
@@ -200,6 +200,11 @@ const Payments = () => {
 
   const handleRemind = async (inv) => {
     if (!inv._has_verified_phone) return;
+    // If invoice does not yet have a generated PDF, open the 2-page modal for preview & 1-click send
+    if (!inv.pdf_url && !inv.metadata?.pdf_url) {
+      setDocModalInv(inv);
+      return;
+    }
     setRemindingId(inv.id);
     try {
       const res = await fetch('/.netlify/functions/send-reminder', {
@@ -514,18 +519,12 @@ const Payments = () => {
                     {/* Actions */}
                     <td>
                       <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
-                        {/* Bill Button — opens PDF modal if attached, else opens in-page Voucher Detail modal (NEVER redirects away) */}
+                        {/* Bill Button — opens 2-page Tax Invoice & e-Way Bill modal with 100% pixel perfection */}
                         <button
                           className="btn btn-secondary btn-sm"
                           style={{ padding: '0.2rem 0.45rem', fontSize: '0.68rem', color: 'var(--accent-primary)', display: 'flex', alignItems: 'center', gap: '0.2rem' }}
-                          onClick={() => {
-                            if (consignmentUrl) {
-                              setPreviewPdfUrl(consignmentUrl);
-                            } else {
-                              setDetailModalInv(inv);
-                            }
-                          }}
-                          data-tooltip="View Invoice / Voucher Details"
+                          onClick={() => setDocModalInv(inv)}
+                          data-tooltip="View Exact 2-Page Tax Invoice & e-Way Bill"
                           data-tooltip-pos="left"
                         >
                           <FileText size={11} /> Bill
@@ -671,92 +670,21 @@ const Payments = () => {
         </div>
       )}
 
-      {/* PDF Preview Modal */}
-      {previewPdfUrl && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', zIndex: 9999, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '1.5rem' }}>
-          <div style={{ background: 'var(--bg-card, #1e293b)', borderRadius: '12px', width: '90vw', maxWidth: '1000px', height: '88vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', border: '1px solid var(--border-color, #334155)' }}>
-            <div style={{ padding: '0.75rem 1.25rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color, #334155)' }}>
-              <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>Tax Invoice & Consignment Bill</span>
-              <div style={{ display: 'flex', gap: '0.5rem' }}>
-                <a href={previewPdfUrl} target="_blank" rel="noreferrer" className="btn btn-secondary btn-sm">
-                  <ExternalLink size={12} /> Open in New Tab
-                </a>
-                <button className="btn btn-danger btn-sm" onClick={() => setPreviewPdfUrl(null)}>Close</button>
-              </div>
-            </div>
-            <iframe src={previewPdfUrl} style={{ width: '100%', height: '100%', border: 'none' }} title="Invoice Preview" />
-          </div>
-        </div>
-      )}
-
-      {/* Voucher Detail Modal (When PDF bill is not attached — prevents unwanted redirect) */}
-      {detailModalInv && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
-          <div style={{ background: 'var(--bg-card, #ffffff)', borderRadius: '14px', width: '100%', maxWidth: '560px', overflow: 'hidden', border: '1px solid var(--border-color)', boxShadow: '0 20px 40px rgba(0,0,0,0.2)' }}>
-            <div style={{ padding: '1rem 1.25rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <FileText size={16} color="var(--accent-primary)" />
-                <span style={{ fontWeight: 700, fontSize: '0.95rem' }}>Voucher {detailModalInv.invoice_number}</span>
-              </div>
-              <button className="btn btn-secondary btn-sm" onClick={() => setDetailModalInv(null)} style={{ padding: '0.2rem 0.4rem' }}>
-                <X size={14} />
-              </button>
-            </div>
-
-            <div style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '1rem', fontSize: '0.85rem' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', background: 'var(--bg-tertiary)', padding: '0.85rem', borderRadius: '8px' }}>
-                <div>
-                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Client Name</div>
-                  <div style={{ fontWeight: 700, marginTop: '0.15rem' }}>{detailModalInv.client_name}</div>
-                </div>
-                <div>
-                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Company / Entity</div>
-                  <div style={{ fontWeight: 600, marginTop: '0.15rem' }}>{detailModalInv.company_name || 'Tally Live'}</div>
-                </div>
-                <div>
-                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Invoice Date</div>
-                  <div style={{ fontWeight: 600, marginTop: '0.15rem' }}>{detailModalInv.invoice_date || '—'}</div>
-                </div>
-                <div>
-                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Due Date</div>
-                  <div style={{ fontWeight: 600, marginTop: '0.15rem' }}>{detailModalInv.due_date || '—'}</div>
-                </div>
-                <div>
-                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Amount</div>
-                  <div style={{ fontWeight: 700, fontSize: '1.1rem', color: 'var(--accent-primary)', marginTop: '0.15rem' }}>
-                    {fmtAmount(detailModalInv.amount)}
-                  </div>
-                </div>
-                <div>
-                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Status</div>
-                  <div style={{ marginTop: '0.2rem' }}>
-                    <span className={`badge ${detailModalInv.status === 'Paid' ? 'badge-success' : detailModalInv.status === 'Overdue' ? 'badge-danger' : 'badge-warning'}`}>
-                      {detailModalInv.status}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Google Sheet Contact Status */}
-              <div style={{ padding: '0.75rem 1rem', borderRadius: '8px', background: detailModalInv._has_verified_phone ? 'rgba(16,185,129,0.08)' : 'rgba(245,158,11,0.08)', border: `1px solid ${detailModalInv._has_verified_phone ? 'rgba(16,185,129,0.25)' : 'rgba(245,158,11,0.25)'}` }}>
-                <div style={{ fontSize: '0.75rem', fontWeight: 700, color: detailModalInv._has_verified_phone ? '#10b981' : '#d97706', marginBottom: '0.25rem' }}>
-                  {detailModalInv._has_verified_phone ? '✅ Google Sheet Contact Verified' : '⚠️ Phone Missing in Google Sheet'}
-                </div>
-                <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
-                  {detailModalInv._has_verified_phone ? (
-                    <>Recipient: <strong>{detailModalInv._contact_person || detailModalInv.client_name}</strong> (<code>{detailModalInv._verified_phone}</code>)</>
-                  ) : (
-                    <>Add phone number for <strong>{detailModalInv.client_name}</strong> in your Google Sheet, then click <strong>Sync Sheet</strong> to enable WhatsApp reminders.</>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <div style={{ padding: '0.75rem 1.25rem', borderTop: '1px solid var(--border-color)', display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
-              <button className="btn btn-secondary btn-sm" onClick={() => setDetailModalInv(null)}>Close</button>
-            </div>
-          </div>
-        </div>
+      {/* 2-Page Pixel-Perfect Tax Invoice & e-Way Bill Modal */}
+      {docModalInv && (
+        <InvoiceDocModal
+          invoice={docModalInv}
+          activeCompany={activeCompany}
+          onClose={() => setDocModalInv(null)}
+          onSendSuccess={(invId, pdfUrl) => {
+            setSentIds(prev => [...prev, invId]);
+            setAllInvoices(prev => prev.map(i => i.id === invId ? {
+              ...i,
+              pdf_url: pdfUrl,
+              reminder_count: (i.reminder_count || 0) + 1,
+            } : i));
+          }}
+        />
       )}
     </div>
   );
