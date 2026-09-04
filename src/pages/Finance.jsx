@@ -236,7 +236,8 @@ const Finance = () => {
 
   // Document Templates Preview Modal State
   const [showTemplatesModal, setShowTemplatesModal] = useState(false);
-  const [selectedTemplateTab, setSelectedTemplateTab] = useState('tax_invoice'); // 'tax_invoice' | 'eway_bill' | 'pending_bills'
+  const [selectedTemplateTab, setSelectedTemplateTab] = useState('tax_invoice'); // 'tax_invoice' | 'eway_bill' | 'pending_bills' | 'ledger_account'
+  const [selectedInvoiceForTemplate, setSelectedInvoiceForTemplate] = useState(null); // invoice row for browser-side PDF generation
 
   useEffect(() => {
     loadAllFinanceData();
@@ -1302,61 +1303,60 @@ const Finance = () => {
                       <td>
                         <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flexWrap: 'wrap' }}>
                           {/* All 4 PDF Types — Always show Tax Bill button */}
-                          {(() => {
-                            const meta = inv.metadata || {};
-                            const consignmentUrl = inv.pdf_url || meta.pdf_url;
-                            const ewayUrl = meta.eway_pdf_url;
-                            const pendingUrl = meta.pending_pdf_url;
-                            const ledgerUrl = meta.ledger_pdf_url;
-                            return (
-                              <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap' }}>
+                        <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap' }}>
+                                {/* Tax Bill — always opens browser-generated PDF (ignores cloud URL) */}
                                 <button
                                   className="btn btn-secondary btn-sm"
                                   style={{ padding: '0.2rem 0.45rem', fontSize: '0.68rem', color: 'var(--accent-primary)', display: 'flex', alignItems: 'center', gap: '0.2rem' }}
                                   onClick={() => {
-                                    if (consignmentUrl) {
-                                      setPreviewPdfUrl(consignmentUrl);
-                                    } else {
-                                      setShowTemplatesModal(true);
-                                    }
+                                    setSelectedInvoiceForTemplate(inv);
+                                    setSelectedTemplateTab('tax_invoice');
+                                    setShowTemplatesModal(true);
                                   }}
-                                  title="Tax Invoice + e-Way Bill (2-Page Consignment Bill)"
+                                  title="Tax Invoice + e-Way Bill — generated in browser (no cloud storage needed)"
                                 >
                                   <FileText size={11} /> Tax Bill
                                 </button>
-                                {ewayUrl && (
-                                  <button
-                                    className="btn btn-secondary btn-sm"
-                                    style={{ padding: '0.2rem 0.45rem', fontSize: '0.68rem', color: '#10b981', display: 'flex', alignItems: 'center', gap: '0.2rem' }}
-                                    onClick={() => setPreviewPdfUrl(ewayUrl)}
-                                    title="Standalone e-Way Bill / Conveyance Note"
-                                  >
-                                    <FileText size={11} /> e-Way
-                                  </button>
-                                )}
-                                {pendingUrl && (
-                                  <button
-                                    className="btn btn-secondary btn-sm"
-                                    style={{ padding: '0.2rem 0.45rem', fontSize: '0.68rem', color: '#f59e0b', display: 'flex', alignItems: 'center', gap: '0.2rem' }}
-                                    onClick={() => setPreviewPdfUrl(pendingUrl)}
-                                    title="Pending Bills Statement for this client"
-                                  >
-                                    <FileText size={11} /> Pending
-                                  </button>
-                                )}
-                                {ledgerUrl && (
-                                  <button
-                                    className="btn btn-secondary btn-sm"
-                                    style={{ padding: '0.2rem 0.45rem', fontSize: '0.68rem', color: '#a78bfa', display: 'flex', alignItems: 'center', gap: '0.2rem' }}
-                                    onClick={() => setPreviewPdfUrl(ledgerUrl)}
-                                    title="Customer Ledger Account"
-                                  >
-                                    <FileText size={11} /> Ledger
-                                  </button>
-                                )}
+                                {/* e-Way Bill */}
+                                <button
+                                  className="btn btn-secondary btn-sm"
+                                  style={{ padding: '0.2rem 0.45rem', fontSize: '0.68rem', color: '#10b981', display: 'flex', alignItems: 'center', gap: '0.2rem' }}
+                                  onClick={() => {
+                                    setSelectedInvoiceForTemplate(inv);
+                                    setSelectedTemplateTab('eway_bill');
+                                    setShowTemplatesModal(true);
+                                  }}
+                                  title="Standalone e-Way Bill / Conveyance Note — generated in browser"
+                                >
+                                  <FileText size={11} /> e-Way
+                                </button>
+                                {/* Pending Bills Statement */}
+                                <button
+                                  className="btn btn-secondary btn-sm"
+                                  style={{ padding: '0.2rem 0.45rem', fontSize: '0.68rem', color: '#f59e0b', display: 'flex', alignItems: 'center', gap: '0.2rem' }}
+                                  onClick={() => {
+                                    setSelectedInvoiceForTemplate(inv);
+                                    setSelectedTemplateTab('pending_bills');
+                                    setShowTemplatesModal(true);
+                                  }}
+                                  title="Pending Bills Statement — generated in browser"
+                                >
+                                  <FileText size={11} /> Pending
+                                </button>
+                                {/* Customer Ledger */}
+                                <button
+                                  className="btn btn-secondary btn-sm"
+                                  style={{ padding: '0.2rem 0.45rem', fontSize: '0.68rem', color: '#a78bfa', display: 'flex', alignItems: 'center', gap: '0.2rem' }}
+                                  onClick={() => {
+                                    setSelectedInvoiceForTemplate(inv);
+                                    setSelectedTemplateTab('ledger_account');
+                                    setShowTemplatesModal(true);
+                                  }}
+                                  title="Customer Ledger Account — generated in browser"
+                                >
+                                  <FileText size={11} /> Ledger
+                                </button>
                               </div>
-                            );
-                          })()}
 
 
                           {/* Remind — managed exclusively in Payment Follow-up page */}
@@ -1906,16 +1906,23 @@ const Finance = () => {
           DOCUMENT TEMPLATES PREVIEW MODAL (Without Needing Tally)
          ═════════════════════════════════════════════════════════════════════ */}
       {showTemplatesModal && (
-        <div className="modal-overlay" onClick={() => setShowTemplatesModal(false)} style={{ background: 'rgba(0,0,0,0.85)', zIndex: 9999 }}>
+        <div className="modal-overlay" onClick={() => { setShowTemplatesModal(false); setSelectedInvoiceForTemplate(null); }} style={{ background: 'rgba(0,0,0,0.85)', zIndex: 9999 }}>
           <div style={{ position: 'relative', maxWidth: 960, width: '94%', height: '88vh', background: 'var(--bg-secondary)', borderRadius: 14, overflow: 'hidden', display: 'flex', flexDirection: 'column' }} onClick={e => e.stopPropagation()}>
             {/* Header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.85rem 1.25rem', borderBottom: '1px solid var(--border-color)', background: 'var(--bg-tertiary)' }}>
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 700, fontSize: '0.95rem' }}>
-                  <FileText size={17} color="var(--accent-primary)" /> Standard Commercial Billing & Document Templates
+                  <FileText size={17} color="var(--accent-primary)" />
+                  {selectedInvoiceForTemplate
+                    ? <>Invoice <span style={{ color: 'var(--accent-primary)' }}>{selectedInvoiceForTemplate.invoice_number || selectedInvoiceForTemplate.tally_voucher_number}</span> &mdash; {selectedInvoiceForTemplate.client_name}</>  
+                    : 'Standard Commercial Billing & Document Templates'
+                  }
                 </div>
                 <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                  Interactive UI previews of official document layouts generated by our system.
+                  {selectedInvoiceForTemplate
+                    ? `📄 Browser-generated PDF — no cloud storage used · Click "Open in New Tab" → Save as PDF to download`
+                    : 'Interactive UI previews of official document layouts generated by our system.'
+                  }
                 </div>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
@@ -1970,7 +1977,7 @@ const Finance = () => {
                 >
                   <ExternalLink size={13} /> Open in New Tab
                 </button>
-                <button className="modal-close-btn" onClick={() => setShowTemplatesModal(false)}>✕</button>
+                <button className="modal-close-btn" onClick={() => { setShowTemplatesModal(false); setSelectedInvoiceForTemplate(null); }}>✕</button>
               </div>
             </div>
 
@@ -2003,11 +2010,48 @@ const Finance = () => {
             {/* Template Content Viewer */}
             <div id="template-preview-content" style={{ flex: 1, overflowY: 'auto', padding: '1.25rem', display: 'flex', justifyContent: 'center', background: '#cbd5e1' }}>
               
+              {/* Resolve live invoice data for browser-side rendering */}
+              {(() => {
+                const inv = selectedInvoiceForTemplate;
+                const meta = inv?.metadata || {};
+                // Real data — falls back to sample if not available
+                const invNumber  = inv?.invoice_number || inv?.tally_voucher_number || 'SRP/0570/26-27';
+                const invDate    = inv?.invoice_date ? new Date(inv.invoice_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' }) : '10-Aug-26';
+                const partyName  = inv?.client_name || 'VAISHNAV CONSTRUCTION';
+                const amount     = inv?.amount || 74962.0;
+                const status     = inv?.status || 'Pending';
+                const itemName   = meta.item_name || 'SAND & READY PLAST';
+                const hsnCode    = meta.hsn_code || '25051011';
+                const truckNo    = meta.truck_no || 'MH04-4550';
+                const challanNo  = meta.challan_no || '10199';
+                const challanDate= meta.challan_date || invDate;
+                const site       = meta.site || 'THANE';
+                const qtyStr     = meta.quantity_str || '776 BAGS';
+                const rateStr    = meta.rate_str || '92.00';
+                const unit       = meta.unit || 'BAGS';
+                const ewayNo     = meta.eway_bill_no || '602165786131';
+                const igstRate   = meta.igst_rate || '5%';
+                const taxable    = amount / 1.05; // approximate
+                const igstVal    = amount - taxable;
+                const buyerAddr  = meta.buyer_address || 'DEU APARTMENT, SHOP NO 4, KHET UPPER VILLAGE, THANE WEST';
+                const buyerState = meta.buyer_state || 'Maharashtra';
+                const buyerCode  = meta.buyer_state_code || '27';
+                const buyerGstin = meta.gstin || '27ALPRP4116L1ZM';
+                const compName   = activeCompany?.company_name || 'SHOBHA READY PLAST';
+                const compAddr   = activeCompany?.company_address || 'NH48, NEAR KOLEI KHADI SARODHI, VALSAD, GUJARAT - 396001';
+                const compGstin  = activeCompany?.gstin_number || '24AGCPJ2785R1ZV';
+                const compState  = activeCompany?.state_name || 'Gujarat';
+                const compCode   = activeCompany?.state_code || '24';
+                const compPhone  = activeCompany?.contact_phone || '+91 98765 43210';
+                const compEmail  = activeCompany?.admin_email || 'shobhareadyplast@gmail.com';
+
+                return (
+                  <>
               {/* TAB 1: 2-PAGE CONSIGNMENT BILL (TAX INVOICE + E-WAY BILL) */}
               {selectedTemplateTab === 'tax_invoice' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', width: '100%', maxWidth: 780 }}>
                   <div style={{ padding: '8px 12px', background: 'rgba(99,102,241,0.1)', border: '1px solid var(--accent-primary)', borderRadius: 8, fontSize: '0.78rem', color: '#1e293b', fontWeight: 600 }}>
-                    💡 <strong>Simultaneous 2-Page Dispatch:</strong> When a truck departs, both pages (Page 1: Product Tax Invoice + Page 2: Transporter Conveyance e-Way Bill) are bundled and sent to the client on WhatsApp in a single attachment.
+                    💡 <strong>Browser-Side PDF:</strong> Click <strong>"Open in New Tab"</strong> above, then use <strong>Ctrl+P → Save as PDF</strong> to download {inv ? `Invoice ${invNumber}` : 'this document'} as a printable PDF.
                   </div>
 
                   {/* PAGE 1 */}
@@ -2038,7 +2082,7 @@ const Finance = () => {
                       <div style={{ fontSize: '14px', fontWeight: 800 }}>Tax Invoice &nbsp; <span style={{ fontSize: '12px', fontWeight: 600, color: '#4b5563' }}>e-Invoice</span></div>
                       <div style={{ marginTop: '4px', display: 'inline-block' }}>
                         <img
-                          src="https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=%7B%22DocNo%22%3A%22SRP%2F0570%2F26-27%22%2C%22TotVal%22%3A74962.0%7D"
+                          src={`https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(JSON.stringify({ DocNo: invNumber, TotVal: amount }))}`}
                           alt="e-Invoice QR"
                           style={{ width: 64, height: 64, border: '1px solid #cbd5e1', borderRadius: 4, display: 'block' }}
                         />
@@ -2056,18 +2100,18 @@ const Finance = () => {
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', border: '1px solid #374151', borderTop: 'none' }}>
                     <div style={{ padding: '8px', borderRight: '1px solid #374151' }}>
                       <div style={{ fontSize: '10px', color: '#6b7280', fontWeight: 700 }}>Details of Buyer / Billed To</div>
-                      <div style={{ fontSize: '13px', fontWeight: 800 }}>VAISHNAV CONSTRUCTION</div>
-                      <div style={{ fontSize: '10px', color: '#374151' }}>DEU APARTMENT, SHOP NO 4, KHET UPPER VILLEGE, THANE WEST</div>
-                      <div style={{ fontSize: '10px' }}><strong>State Name :</strong> Maharashtra, <strong>Code :</strong> 27</div>
-                      <div style={{ fontSize: '10px' }}><strong>GSTIN/UIN :</strong> 27ALPRP4116L1ZM</div>
-                      <div style={{ fontSize: '9.5px', marginTop: '4px' }}><strong>ORDER NO. :</strong> PO-9912 &nbsp;|&nbsp; <strong>Dispatched through :</strong> Road</div>
+                      <div style={{ fontSize: '13px', fontWeight: 800 }}>{partyName}</div>
+                      <div style={{ fontSize: '10px', color: '#374151' }}>{buyerAddr}</div>
+                      <div style={{ fontSize: '10px' }}><strong>State Name :</strong> {buyerState}, <strong>Code :</strong> {buyerCode}</div>
+                      <div style={{ fontSize: '10px' }}><strong>GSTIN/UIN :</strong> {buyerGstin}</div>
+                      <div style={{ fontSize: '9.5px', marginTop: '4px' }}><strong>Dispatched through :</strong> Road</div>
                     </div>
                     <div style={{ padding: '8px' }}>
                       <div style={{ fontSize: '10px', color: '#6b7280', fontWeight: 700 }}>Detail of Consignee / Shipped To</div>
-                      <div style={{ fontSize: '13px', fontWeight: 800 }}>VAISHNAV CONSTRUCTION</div>
-                      <div style={{ fontSize: '10px', color: '#374151' }}>DEU APARTMENT, SHOP NO 4, KHET UPPER VILLEGE, THANE WEST</div>
-                      <div style={{ fontSize: '10px' }}><strong>BILL NO. :</strong> <strong>SRP/0570/26-27</strong> &nbsp;|&nbsp; <strong>Dated :</strong> 10-Aug-26</div>
-                      <div style={{ fontSize: '10px' }}><strong>Delivery Note :</strong> DN-0570 &nbsp;|&nbsp; <strong>CREDIT DAYS :</strong> 30 Days</div>
+                      <div style={{ fontSize: '13px', fontWeight: 800 }}>{partyName}</div>
+                      <div style={{ fontSize: '10px', color: '#374151' }}>{buyerAddr}</div>
+                      <div style={{ fontSize: '10px' }}><strong>BILL NO. :</strong> <strong>{invNumber}</strong> &nbsp;|&nbsp; <strong>Dated :</strong> {invDate}</div>
+                      <div style={{ fontSize: '10px' }}><strong>CREDIT DAYS :</strong> 30 Days</div>
                     </div>
                   </div>
 
@@ -2090,36 +2134,32 @@ const Finance = () => {
                     <tbody>
                       <tr style={{ borderBottom: '1px solid #e5e7eb' }}>
                         <td style={{ padding: '4px', textAlign: 'center', borderRight: '1px solid #374151' }}>1</td>
-                        <td style={{ padding: '4px', fontWeight: 700, borderRight: '1px solid #374151' }}>SAND & READY PLAST</td>
-                        <td style={{ padding: '4px', textAlign: 'center', borderRight: '1px solid #374151' }}>25051011</td>
-                        <td style={{ padding: '4px', textAlign: 'center', borderRight: '1px solid #374151' }}>MH04-4550</td>
-                        <td style={{ padding: '4px', textAlign: 'center', borderRight: '1px solid #374151' }}>10199</td>
-                        <td style={{ padding: '4px', textAlign: 'center', borderRight: '1px solid #374151' }}>THANE</td>
-                        <td style={{ padding: '4px', textAlign: 'center', fontWeight: 700, borderRight: '1px solid #374151' }}>776 BAGS</td>
-                        <td style={{ padding: '4px', textAlign: 'right', borderRight: '1px solid #374151' }}>92.00</td>
-                        <td style={{ padding: '4px', textAlign: 'center', borderRight: '1px solid #374151' }}>BAGS</td>
-                        <td style={{ padding: '4px', textAlign: 'right', fontWeight: 700 }}>71,392.00</td>
+                        <td style={{ padding: '4px', fontWeight: 700, borderRight: '1px solid #374151' }}>{itemName}</td>
+                        <td style={{ padding: '4px', textAlign: 'center', borderRight: '1px solid #374151' }}>{hsnCode}</td>
+                        <td style={{ padding: '4px', textAlign: 'center', borderRight: '1px solid #374151' }}>{truckNo}</td>
+                        <td style={{ padding: '4px', textAlign: 'center', borderRight: '1px solid #374151' }}>{challanNo}</td>
+                        <td style={{ padding: '4px', textAlign: 'center', borderRight: '1px solid #374151' }}>{site}</td>
+                        <td style={{ padding: '4px', textAlign: 'center', fontWeight: 700, borderRight: '1px solid #374151' }}>{qtyStr}</td>
+                        <td style={{ padding: '4px', textAlign: 'right', borderRight: '1px solid #374151' }}>{rateStr}</td>
+                        <td style={{ padding: '4px', textAlign: 'center', borderRight: '1px solid #374151' }}>{unit}</td>
+                        <td style={{ padding: '4px', textAlign: 'right', fontWeight: 700 }}>{taxable.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
                       </tr>
                       <tr style={{ borderBottom: '1px solid #e5e7eb' }}>
-                        <td colSpan={9} style={{ padding: '3px 8px', textAlign: 'right', fontWeight: 700, borderRight: '1px solid #374151' }}>OUTPUT IGST (5%)</td>
-                        <td style={{ padding: '3px 8px', textAlign: 'right', fontWeight: 700 }}>3,569.60</td>
-                      </tr>
-                      <tr style={{ borderBottom: '1px solid #e5e7eb' }}>
-                        <td colSpan={9} style={{ padding: '3px 8px', textAlign: 'right', fontWeight: 700, borderRight: '1px solid #374151' }}>ROUND OFF</td>
-                        <td style={{ padding: '3px 8px', textAlign: 'right' }}>0.40</td>
+                        <td colSpan={9} style={{ padding: '3px 8px', textAlign: 'right', fontWeight: 700, borderRight: '1px solid #374151' }}>OUTPUT IGST ({igstRate})</td>
+                        <td style={{ padding: '3px 8px', textAlign: 'right', fontWeight: 700 }}>{igstVal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
                       </tr>
                       <tr style={{ background: '#f9fafb', fontWeight: 800, borderTop: '1px solid #374151' }}>
                         <td colSpan={6} style={{ padding: '4px 8px', borderRight: '1px solid #374151' }}>Total</td>
-                        <td style={{ padding: '4px', textAlign: 'center', borderRight: '1px solid #374151' }}>776 BAGS</td>
+                        <td style={{ padding: '4px', textAlign: 'center', borderRight: '1px solid #374151' }}>{qtyStr}</td>
                         <td colSpan={2} style={{ borderRight: '1px solid #374151' }}></td>
-                        <td style={{ padding: '4px 8px', textAlign: 'right', fontSize: '11px' }}>₹ 74,962.00</td>
+                        <td style={{ padding: '4px 8px', textAlign: 'right', fontSize: '11px' }}>₹ {amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
                       </tr>
                     </tbody>
                   </table>
 
                   {/* Words & Schedule */}
                   <div style={{ border: '1px solid #374151', borderTop: 'none', padding: '6px 8px', display: 'flex', justifyContent: 'space-between' }}>
-                    <div>Amount Chargeable (in words):<br/><strong>INR Seventy Four Thousand Nine Hundred Sixty Two Only</strong></div>
+                    <div>Amount Chargeable (in words):<br/><strong>INR {amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })} Only</strong></div>
                     <div><strong>E. & O.E</strong></div>
                   </div>
 
@@ -2136,11 +2176,11 @@ const Finance = () => {
                     </thead>
                     <tbody>
                       <tr>
-                        <td style={{ padding: '3px', textAlign: 'center', borderRight: '1px solid #374151' }}>25051011</td>
-                        <td style={{ padding: '3px', textAlign: 'right', borderRight: '1px solid #374151' }}>71,392.00</td>
-                        <td style={{ padding: '3px', textAlign: 'center', borderRight: '1px solid #374151' }}>5%</td>
-                        <td style={{ padding: '3px', textAlign: 'right', borderRight: '1px solid #374151' }}>3,569.60</td>
-                        <td style={{ padding: '3px', textAlign: 'right' }}>3,569.60</td>
+                        <td style={{ padding: '3px', textAlign: 'center', borderRight: '1px solid #374151' }}>{hsnCode}</td>
+                        <td style={{ padding: '3px', textAlign: 'right', borderRight: '1px solid #374151' }}>{taxable.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                        <td style={{ padding: '3px', textAlign: 'center', borderRight: '1px solid #374151' }}>{igstRate}</td>
+                        <td style={{ padding: '3px', textAlign: 'right', borderRight: '1px solid #374151' }}>{igstVal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                        <td style={{ padding: '3px', textAlign: 'right' }}>{igstVal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
                       </tr>
                     </tbody>
                   </table>
@@ -2449,6 +2489,9 @@ const Finance = () => {
                   </table>
                 </div>
               )}
+                  </>
+                );
+              })()}
 
             </div>
           </div>

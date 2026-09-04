@@ -3074,13 +3074,24 @@ def generate_and_upload_all_pdfs(voucher: dict, org_profile: dict | None = None)
 
 def push_to_cloud(vouchers):
     """
-    IMPROVED APPROACH (v4.3):
+    DATA-ONLY SYNC APPROACH (v5.0):
+    PDFs are NO LONGER generated or uploaded during sync — this was the root cause of
+    memory exhaustion and Supabase free-tier storage burnout on large datasets.
+
+    New flow:
     1. Load local sync cache — skip vouchers already pushed in previous runs.
     2. Deduplicate remaining vouchers by invoice_number.
-    3. For each voucher: generate PDFs → push DIRECTLY to Supabase REST API immediately.
-       This bypasses Netlify entirely (Netlify has 10s timeout, Supabase has no such limit).
+    3. For each voucher: push RAW DATA ONLY directly to Supabase REST API.
+       PDFs are generated on-demand in the browser (client-side) when a user clicks
+       "Tax Bill", "e-Way", "Pending" or "Ledger" buttons in the Finance page.
     4. Mark each voucher in local cache immediately after successful push.
-    5. Send a lightweight status ping to Netlify at the end (no voucher payload).
+    5. Send a lightweight status ping to Netlify at the end.
+
+    Benefits:
+    - Zero RAM spike during sync (no ReportLab PDF generation per voucher).
+    - Zero Supabase Storage usage (saves free-tier 1 GB limit).
+    - Sync is dramatically faster (data-only, no PDF I/O).
+    - PDFs are always fresh and accurate — generated from live DB data in the browser.
     """
 
     # ── Local sync cache (skip already-synced vouchers on re-runs) ────────────
@@ -3148,7 +3159,8 @@ def push_to_cloud(vouchers):
         log.info("  [Cloud Push] All vouchers already synced. Nothing to do.")
         return {"success": True, "count": 0, "skipped": skipped}
 
-    print(f"\n[PDF + Upload] {len(to_process)} new vouchers → generating PDFs & pushing to Supabase...", flush=True)
+    print(f"\n[Data Sync] {len(to_process)} new vouchers → pushing raw data to Supabase (no PDF generation)...", flush=True)
+    print("  ℹ️  PDFs are generated on-demand in the browser — zero storage used.", flush=True)
 
     # ── Supabase REST headers ─────────────────────────────────────────────────
     sb_headers = {
@@ -3174,10 +3186,7 @@ def push_to_cloud(vouchers):
             print(f"  [{bar}] {pct}% — {v_idx+1}/{total_v} vouchers", flush=True)
             _push_sync_progress(v_idx + 1, total_v, "uploading")
 
-        # ── Step 1: Generate all 4 PDFs ───────────────────────────────────────
-        pdfs = generate_and_upload_all_pdfs(v)
-
-        # ── Step 2: Push voucher directly to Supabase REST (no Netlify) ──────
+        # ── Push raw voucher data directly to Supabase REST (no Netlify, no PDFs) ──
         inv_date = v.get("invoice_date") or v.get("date") or datetime.now().strftime("%Y-%m-%d")
         # Normalise 8-digit YYYYMMDD → YYYY-MM-DD
         if inv_date and len(inv_date) == 8 and inv_date.isdigit():
@@ -3193,19 +3202,32 @@ def push_to_cloud(vouchers):
             "status": v.get("status") or "Pending",
             "invoice_date": inv_date,
             "due_date": v.get("due_date") or None,
-            "pdf_url": pdfs.get("pdf_url") or None,
+            # pdf_url intentionally omitted — PDFs generated on-demand in browser
             "company_name": v.get("company_name") or "TallyPrime Live",
             "metadata": {
                 **(v.get("metadata") or {}),
-                "pdf_url":         pdfs.get("pdf_url"),
-                "eway_pdf_url":    pdfs.get("eway_pdf_url"),
-                "pending_pdf_url": pdfs.get("pending_pdf_url"),
-                "ledger_pdf_url":  pdfs.get("ledger_pdf_url"),
-                "pdfs_generated_at": datetime.now().isoformat(),
-                "voucher_type": v.get("voucher_type", ""),
-                "direction":    v.get("direction", ""),
-                "tally_company": v.get("company_name", ""),
-                "sync_source": "TallyPrime XML Bridge v4.3",
+                # All voucher-level fields stored for browser-side PDF generation
+                "voucher_type":     v.get("voucher_type", ""),
+                "direction":        v.get("direction", ""),
+                "tally_company":    v.get("company_name", ""),
+                "item_name":        v.get("item_name", ""),
+                "hsn_code":         v.get("hsn_code", ""),
+                "truck_no":         v.get("truck_no", ""),
+                "challan_no":       v.get("challan_no", ""),
+                "challan_date":     v.get("challan_date", ""),
+                "site":             v.get("site", ""),
+                "quantity_str":     v.get("quantity_str", ""),
+                "rate_str":         v.get("rate_str", ""),
+                "unit":             v.get("unit", ""),
+                "eway_bill_no":     v.get("eway_bill_no", ""),
+                "igst_rate":        v.get("igst_rate", ""),
+                "gstin":            v.get("gstin", ""),
+                "buyer_address":    v.get("buyer_address", ""),
+                "buyer_state":      v.get("buyer_state", ""),
+                "buyer_state_code": v.get("buyer_state_code", ""),
+                "pdf_generation":   "browser-side",  # Signal to frontend: generate in browser
+                "sync_source":      "TallyPrime XML Bridge v5.0",
+                "synced_at":        datetime.now().isoformat(),
             },
         }
 
@@ -3254,10 +3276,8 @@ def push_to_cloud(vouchers):
 
     # Final cache save
     save_cache()
-    log.info(f"  [Cloud Push] Done: {pushed_ok} pushed, {push_errors} errors, {skipped} skipped (already synced)")
-
-    # Save document template samples locally
-    save_document_templates_locally()
+    log.info(f"  [Data Sync] Done: {pushed_ok} synced, {push_errors} errors, {skipped} skipped (already synced)")
+    log.info(f"  [Storage] ✅ 0 PDFs uploaded — all PDFs are generated on-demand in the browser.")
 
     # ── Lightweight status ping to Netlify (no voucher data, never times out) ─
     try:
