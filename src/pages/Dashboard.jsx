@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Users, CheckSquare, IndianRupee, TrendingUp, MessageCircle,
@@ -7,7 +7,8 @@ import {
   Phone, Star, Building2, AlertTriangle, Navigation, Camera, MapPin,
   Download, Printer, FileSpreadsheet, FileText, ExternalLink, X
 } from 'lucide-react';
-import { getDashboardStats, getActivityFeed, getTasks, getLeads, getCampaigns, getInvoices, getTeamMembers, getEmployeeLivePings, getSiteVisits } from '../lib/db';
+import { getDashboardStats, getActivityFeed, getTasks, getLeads, getCampaigns, getInvoices, getTeamMembers, getEmployeeLivePings, getSiteVisits, getCustomerMaster } from '../lib/db';
+import { buildCustomerIndex, matchCustomer } from '../lib/customerMatcher';
 import { isSupabaseConfigured } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { useCompany } from '../context/CompanyContext';
@@ -85,6 +86,7 @@ const Dashboard = () => {
   const [leads, setLeads] = useState([]);
   const [campaigns, setCampaigns] = useState([]);
   const [allInvoices, setAllInvoices] = useState([]);
+  const [customerMaster, setCustomerMaster] = useState([]);
   const [teamMembers, setTeamMembers] = useState([]);
   const [livePings, setLivePings] = useState([]);
   const [recentVisits, setRecentVisits] = useState([]);
@@ -104,22 +106,26 @@ const Dashboard = () => {
 
   useEffect(() => { loadData(); }, []);
 
+  // Build memoized customer index for 100% strict Google Sheet customer verification
+  const customerIndex = useMemo(() => buildCustomerIndex(customerMaster), [customerMaster]);
+
   // Filter invoices by active company
-  const invoices = isConsolidated
-    ? allInvoices
-    : allInvoices.filter(inv => {
-        if (!activeCompany) return true;
-        const compName = (activeCompany.company_name || '').toUpperCase();
-        const aliases = Array.isArray(activeCompany.alias_names) ? activeCompany.alias_names.map(a => a.toUpperCase()) : [];
-        const invCompany = (inv.company_name || inv.tally_company || '').toUpperCase();
-        if (!invCompany) return false;
-        return [compName, ...aliases].some(n => n && (invCompany.includes(n) || n.includes(invCompany)));
-      });
+  const invoices = useMemo(() => {
+    if (isConsolidated) return allInvoices;
+    if (!activeCompany) return allInvoices;
+    const compName = (activeCompany.company_name || '').toUpperCase();
+    const aliases = Array.isArray(activeCompany.alias_names) ? activeCompany.alias_names.map(a => a.toUpperCase()) : [];
+    return allInvoices.filter(inv => {
+      const invCompany = (inv.company_name || inv.tally_company || '').toUpperCase();
+      if (!invCompany) return false;
+      return [compName, ...aliases].some(n => n && (invCompany.includes(n) || n.includes(invCompany)));
+    });
+  }, [allInvoices, activeCompany, isConsolidated]);
 
 
   const loadData = async () => {
     setLoading(true);
-    const [statsRes, actRes, taskRes, leadRes, campRes, invRes, membersRes, liveRes, visitsRes] = await Promise.all([
+    const [statsRes, actRes, taskRes, leadRes, campRes, invRes, membersRes, liveRes, visitsRes, masterRes] = await Promise.all([
       getDashboardStats(),
       getActivityFeed(8),
       getTasks(),
@@ -129,6 +135,7 @@ const Dashboard = () => {
       getTeamMembers(),
       getEmployeeLivePings(),
       getSiteVisits(),
+      getCustomerMaster(),
     ]);
     if (statsRes.data) setStats(statsRes.data);
     setActivities(actRes.data || []);
@@ -136,6 +143,7 @@ const Dashboard = () => {
     setLeads(leadRes.data || []);
     setCampaigns(campRes.data || []);
     setAllInvoices(invRes.data || []);
+    setCustomerMaster(masterRes.data || []);
     setTeamMembers(membersRes.data || []);
     setLivePings(liveRes.data || []);
     setRecentVisits(visitsRes.data || []);
@@ -152,17 +160,25 @@ const Dashboard = () => {
     return '₹' + Number(n || 0).toLocaleString('en-IN');
   };
 
-  // ── Computed metrics from live data (strictly Customer Receivables) ──────
+  // ── Computed metrics from live data (strictly Google Sheet Verified Customer Receivables) ──────
   const totalLeads = leads.length;
   const hotLeads = leads.filter(l => l.status === 'Hot').length;
   const convertedLeads = leads.filter(l => l.status === 'Converted').length;
 
-  // Filter invoices to customer receivables only (exclude LEDGER- closing balances and vendor payables)
-  const customerInvoices = invoices.filter(inv => {
-    const num = (inv?.invoice_number || inv?.tally_voucher_number || '').toUpperCase();
-    if (num.startsWith('LEDGER-')) return false;
-    return !getDirection(inv).isVendor;
-  });
+  // Filter invoices strictly to Google Sheet verified customers:
+  // 1. Exclude LEDGER- closing balances
+  // 2. Exclude vendor payables
+  // 3. Strictly require match in customer_master (Google Sheet directory)
+  const customerInvoices = useMemo(() => {
+    if (!customerIndex || !customerIndex.all || customerIndex.all.length === 0) return [];
+    return invoices.filter(inv => {
+      const num = (inv?.invoice_number || inv?.tally_voucher_number || '').toUpperCase();
+      if (num.startsWith('LEDGER-')) return false;
+      if (getDirection(inv).isVendor) return false;
+      const match = matchCustomer(inv, customerIndex);
+      return match.status === 'verified';
+    });
+  }, [invoices, customerIndex]);
 
   const totalInvoiced = customerInvoices.reduce((s, i) => s + Number(i.amount || 0), 0);
   const totalPaid = customerInvoices.filter(i => i.status === 'Paid').reduce((s, i) => s + Number(i.amount || 0), 0);

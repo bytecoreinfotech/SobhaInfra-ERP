@@ -482,9 +482,10 @@ const Finance = () => {
 
   // ══════════════════════════════════════════════════════════════════════════
   // SPLIT: Customer Receivables (incoming) vs Vendor Payables (outgoing)
-  // Uses the getDirection() classifier to cleanly separate the two flows.
+  // Customer Receivables: Must strictly match Google Sheet customer master directory.
+  // Vendor Payables: 100% preserved for vendor bills and purchases.
   // ══════════════════════════════════════════════════════════════════════════
-  const customerInvoices = voucherOnlyInvoices.filter(i => !getDirection(i).isVendor);
+  const customerInvoices = voucherOnlyInvoices.filter(i => !getDirection(i).isVendor && i._is_sheet_customer);
   const vendorInvoices   = voucherOnlyInvoices.filter(i => getDirection(i).isVendor);
 
   // Active view determines which dataset feeds KPI cards and table
@@ -501,7 +502,11 @@ const Finance = () => {
   const filtered = dateFilteredInvoices.filter(inv => {
     // Direction filter: only show invoices matching the active sub-tab
     const dirInfo = getDirection(inv);
-    if (financeView === 'receivables' && dirInfo.isVendor) return false;
+    if (financeView === 'receivables') {
+      if (dirInfo.isVendor) return false;
+      // Strictly exclude any party that is not verified in Google Sheet customer master
+      if (!inv._is_sheet_customer) return false;
+    }
     if (financeView === 'payables' && !dirInfo.isVendor) return false;
 
     // Exclude LEDGER- records from table when in either view

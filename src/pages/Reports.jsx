@@ -4,7 +4,8 @@ import {
   Bot, Zap, RefreshCw, IndianRupee, Target, Phone, CheckCircle2,
   FileSpreadsheet, ExternalLink, Printer, Calendar
 } from 'lucide-react';
-import { getDashboardStats, getLeads, getCampaigns, getInvoices, getAutomationRuns, syncToGoogleSheets, exportLiveTableCsv } from '../lib/db';
+import { getDashboardStats, getLeads, getCampaigns, getInvoices, getAutomationRuns, syncToGoogleSheets, exportLiveTableCsv, getCustomerMaster } from '../lib/db';
+import { buildCustomerIndex, matchCustomer } from '../lib/customerMatcher';
 import { useCompany } from '../context/CompanyContext';
 import './Pages.css';
 
@@ -101,10 +102,14 @@ const Reports = () => {
   const [leads, setLeads] = useState([]);
   const [campaigns, setCampaigns] = useState([]);
   const [allInvoices, setAllInvoices] = useState([]);
+  const [customerMaster, setCustomerMaster] = useState([]);
   const [autoRuns, setAutoRuns] = useState([]);
   const [stats, setStats] = useState(null);
   const [syncingSheets, setSyncingSheets] = useState(false);
   const [sheetSyncResult, setSheetSyncResult] = useState(null);
+
+  // ── Customer index for 100% verified Google Sheet customer directory matching ──
+  const customerIndex = useMemo(() => buildCustomerIndex(customerMaster), [customerMaster]);
 
   // ── Company-filtered invoices (same pattern as Finance/Dashboard/Payments) ──
   const companyFilteredInvoices = isConsolidated
@@ -118,28 +123,35 @@ const Reports = () => {
         return [compName, ...aliases].some(n => n && (invCompany.includes(n) || n.includes(invCompany)));
       });
 
-  // ── Customer-only invoices (exclude vendor payables and LEDGER- closing balances) ──
-  const invoices = companyFilteredInvoices.filter(inv => {
-    const num = (inv?.invoice_number || inv?.tally_voucher_number || '').toUpperCase();
-    if (num.startsWith('LEDGER-')) return false;
-    return !getDirection(inv).isVendor;
-  });
+  // ── Customer-only invoices (strictly verified against Google Sheet customer directory) ──
+  const invoices = useMemo(() => {
+    if (!customerIndex || !customerIndex.all || customerIndex.all.length === 0) return [];
+    return companyFilteredInvoices.filter(inv => {
+      const num = (inv?.invoice_number || inv?.tally_voucher_number || '').toUpperCase();
+      if (num.startsWith('LEDGER-')) return false;
+      if (getDirection(inv).isVendor) return false;
+      const match = matchCustomer(inv, customerIndex);
+      return match.status === 'verified';
+    });
+  }, [companyFilteredInvoices, customerIndex]);
 
   useEffect(() => { loadData(); }, []);
 
   const loadData = async () => {
     setLoading(true);
-    const [sRes, lRes, cRes, iRes, aRes] = await Promise.all([
+    const [sRes, lRes, cRes, iRes, aRes, mRes] = await Promise.all([
       getDashboardStats(),
       getLeads(),
       getCampaigns(),
       getInvoices(),
       getAutomationRuns(),
+      getCustomerMaster(),
     ]);
     setStats(sRes.data || {});
     setLeads(lRes.data || []);
     setCampaigns(cRes.data || []);
     setAllInvoices(iRes.data || []);
+    setCustomerMaster(mRes.data || []);
     setAutoRuns(aRes.data || []);
     setLoading(false);
   };
