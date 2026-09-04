@@ -14,6 +14,7 @@ const GeotaggedCameraModal = ({
   employeeName = 'Field Agent',
   siteName = 'Property Site',
   clientName = '',
+  companyName = 'SOBHAINFRA ERP',
   initialCoords = null,
 }) => {
   const [coords, setCoords] = useState(initialCoords);
@@ -135,7 +136,7 @@ const GeotaggedCameraModal = ({
       // Brand / Badge
       ctx.fillStyle = '#10b981';
       ctx.font = `bold ${Math.round(baseFontSize * 1.15)}px Outfit, sans-serif`;
-      ctx.fillText('🛡️ VERIFIED SITE INSPECTION — ERPPRO REALTY', padX, textY);
+      ctx.fillText(`🛡️ VERIFIED SITE INSPECTION — ${companyName.toUpperCase()}`, padX, textY);
 
       textY += baseFontSize * 1.5;
 

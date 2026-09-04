@@ -6,14 +6,16 @@ import {
   Radio, Power, ToggleLeft, ToggleRight, ArrowRight, X, Image as ImageIcon,
   Activity, Signal
 } from 'lucide-react';
-import { getSiteVisits, createSiteVisit, updateSiteVisit, getLeads, getTeamMembers, updateEmployeeLivePing, getEmployeeLivePings, reverseGeocode } from '../lib/db';
+import { getSiteVisits, createSiteVisit, updateSiteVisit, getLeads, getTeamMembers, updateEmployeeLivePing, getEmployeeLivePings, getAllEmployeeLiveLocations, reverseGeocode } from '../lib/db';
 import { useAuth } from '../context/AuthContext';
+import { useCompany } from '../context/CompanyContext';
 import FieldMap from '../components/FieldMap';
 import GeotaggedCameraModal from '../components/GeotaggedCameraModal';
 import './Pages.css';
 
 const FieldOps = () => {
   const { user, canPerformAction } = useAuth();
+  const { activeCompany } = useCompany();
   const canCheckIn = canPerformAction('field:checkin');
   const canViewAll = canPerformAction('field:view_all');
   const canApprove = canPerformAction('field:approve');
@@ -23,6 +25,7 @@ const FieldOps = () => {
 
   const [visits, setVisits] = useState([]);
   const [liveAgents, setLiveAgents] = useState([]);
+  const [allAgents, setAllAgents] = useState([]);
   const [leads, setLeads] = useState([]);
   const [teamMembers, setTeamMembers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -32,6 +35,7 @@ const FieldOps = () => {
   const [selectedVisit, setSelectedVisit] = useState(null);
   const [selectedAgent, setSelectedAgent] = useState(null);
   const [previewPhotoUrl, setPreviewPhotoUrl] = useState(null);
+  const [fitAllTrigger, setFitAllTrigger] = useState(0);
 
   // Employee Live Location State
   const [liveLocationActive, setLiveLocationActive] = useState(true);
@@ -69,6 +73,16 @@ const FieldOps = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
 
+  const handleSelectAgent = (agent) => {
+    setSelectedVisit(null);
+    setSelectedAgent({ ...agent, _clickTime: Date.now() });
+  };
+
+  const handleSelectVisit = (visit) => {
+    setSelectedAgent(null);
+    setSelectedVisit({ ...visit, _clickTime: Date.now() });
+  };
+
   useEffect(() => {
     loadAllData();
 
@@ -76,43 +90,60 @@ const FieldOps = () => {
     let pollInterval = null;
     if (isSupervisor) {
       pollInterval = setInterval(async () => {
-        const [liveRes, visitsRes] = await Promise.all([
+        const [liveRes, allRes, visitsRes] = await Promise.all([
           getEmployeeLivePings(),
+          getAllEmployeeLiveLocations(),
           getSiteVisits()
         ]);
         if (liveRes.data) setLiveAgents(liveRes.data);
+        if (allRes.data) setAllAgents(allRes.data);
         if (visitsRes.data) setVisits(visitsRes.data);
       }, 10000);
     }
 
     // If field employee, acquire real-time GPS and send live ping
+    let pingTimer = null;
     if (!isSupervisor && navigator.geolocation) {
       fetchCurrentGps();
-      const pingTimer = setInterval(() => {
+      pingTimer = setInterval(() => {
         if (liveLocationActive) fetchCurrentGps();
       }, 15000);
-      return () => {
-        clearInterval(pingTimer);
-        if (pollInterval) clearInterval(pollInterval);
-      };
     }
 
+    // Broadcast offline status if employee leaves or closes browser
+    const handleUnload = () => {
+      if (!isSupervisor && user && liveLocationActive) {
+        updateEmployeeLivePing({
+          employee_id: String(user.id || user.email || 'usr-3'),
+          employee_name: user.name || 'Field Agent',
+          is_live: false,
+        });
+      }
+    };
+    window.addEventListener('beforeunload', handleUnload);
+    window.addEventListener('pagehide', handleUnload);
+
     return () => {
+      if (pingTimer) clearInterval(pingTimer);
       if (pollInterval) clearInterval(pollInterval);
+      window.removeEventListener('beforeunload', handleUnload);
+      window.removeEventListener('pagehide', handleUnload);
     };
   }, [isSupervisor, liveLocationActive]);
 
   const loadAllData = async () => {
     setLoading(true);
-    const [visitsRes, liveRes, leadsRes, usersRes] = await Promise.all([
+    const [visitsRes, liveRes, allRes, leadsRes, usersRes] = await Promise.all([
       getSiteVisits(),
       getEmployeeLivePings(),
+      getAllEmployeeLiveLocations(),
       getLeads(),
       getTeamMembers(),
     ]);
 
     setVisits(visitsRes.data || []);
     setLiveAgents(liveRes.data || []);
+    setAllAgents(allRes.data || []);
     setLeads(leadsRes.data || []);
     setTeamMembers(usersRes.data || []);
     setLoading(false);
@@ -156,7 +187,7 @@ const FieldOps = () => {
         // Broadcast live GPS ping to Supabase
         if (user && liveLocationActive) {
           await updateEmployeeLivePing({
-            employee_id: user.id || user.email || 'usr-3',
+            employee_id: String(user.id || user.email || 'usr-3'),
             employee_name: user.name || 'Field Agent',
             role: user.role || 'Sales Executive',
             lat,
@@ -167,9 +198,27 @@ const FieldOps = () => {
           });
         }
       },
-      (err) => {
-        console.warn('GPS position acquire notice:', err.message);
+      async (err) => {
+        console.warn('GPS position acquire notice / GPS disabled:', err.message);
         setLocatingGps(false);
+        // If device GPS is disabled or permission revoked, automatically update state & server to offline
+        if (liveLocationActive) {
+          setLiveLocationActive(false);
+          setFeedbackMsg({
+            type: 'warning',
+            text: 'Device location / GPS was turned off or unavailable. Live broadcasting paused on Admin dashboard.'
+          });
+          if (user) {
+            await updateEmployeeLivePing({
+              employee_id: String(user.id || user.email || 'usr-3'),
+              employee_name: user.name || 'Field Agent',
+              is_live: false,
+              lat: currentGps.lat,
+              lng: currentGps.lng,
+              address: currentGps.address
+            });
+          }
+        }
       },
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
@@ -185,12 +234,15 @@ const FieldOps = () => {
     } else {
       if (user) {
         await updateEmployeeLivePing({
-          employee_id: user.id || user.email || 'usr-3',
+          employee_id: String(user.id || user.email || 'usr-3'),
           employee_name: user.name || 'Field Agent',
-          is_live: false
+          is_live: false,
+          lat: currentGps.lat,
+          lng: currentGps.lng,
+          address: currentGps.address
         });
       }
-      setFeedbackMsg({ type: 'info', text: 'Live location broadcasting paused.' });
+      setFeedbackMsg({ type: 'info', text: 'Live location broadcasting paused. Status marked as offline on Admin map.' });
     }
     setTimeout(() => setFeedbackMsg(null), 3500);
   };
@@ -566,21 +618,33 @@ const FieldOps = () => {
           {activeTab === 'map' && (
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 360px', gap: '1.25rem', alignItems: 'start' }}>
               <div className="glass-card" style={{ padding: '1rem', minHeight: 520 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
                   <div style={{ fontWeight: 700, fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                     <Navigation size={15} color="#10b981" className="animate-pulse" />
                     Live Employee GPS Pins & Site Inspections
                   </div>
-                  <span style={{ fontSize: '0.7rem', color: '#10b981', fontWeight: 600 }}>● Auto-refreshing every 10s</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => setFitAllTrigger(t => t + 1)}
+                      style={{ fontSize: '0.72rem', padding: '0.2rem 0.55rem', display: 'flex', alignItems: 'center', gap: '0.3rem', fontWeight: 600 }}
+                      title="Fit map view to show all active employees and site inspections"
+                    >
+                      <span>🎯 Fit All</span>
+                    </button>
+                    <span style={{ fontSize: '0.7rem', color: '#10b981', fontWeight: 600 }}>● Auto-refreshing every 10s</span>
+                  </div>
                 </div>
                 <FieldMap
                   visits={visits}
                   liveAgents={liveAgents}
                   selectedVisit={selectedVisit}
                   selectedAgent={selectedAgent}
-                  onSelectVisit={v => setSelectedVisit(v)}
-                  onSelectAgent={a => setSelectedAgent(a)}
+                  onSelectVisit={handleSelectVisit}
+                  onSelectAgent={handleSelectAgent}
                   onViewPhoto={url => setPreviewPhotoUrl(url)}
+                  fitAllTrigger={fitAllTrigger}
                 />
               </div>
 
@@ -590,7 +654,7 @@ const FieldOps = () => {
                   Active Field Agents ({liveAgents.length})
                 </div>
                 <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '0.85rem' }}>
-                  Click to zoom on exact coordinates
+                  Click to zoom closely on exact live coordinates
                 </div>
 
                 {liveAgents.length === 0 ? (
@@ -604,7 +668,7 @@ const FieldOps = () => {
                       return (
                         <div
                           key={a.employee_id}
-                          onClick={() => { setSelectedAgent(a); setSelectedVisit(null); }}
+                          onClick={() => handleSelectAgent(a)}
                           style={{
                             padding: '0.65rem 0.85rem', borderRadius: 8,
                             background: isSelected ? 'rgba(16,185,129,0.15)' : 'rgba(16,185,129,0.05)',
@@ -632,6 +696,49 @@ const FieldOps = () => {
                   </div>
                 )}
 
+                {/* Offline / GPS Inactive Agents */}
+                {(() => {
+                  const inactiveAgents = allAgents.filter(a => !liveAgents.some(la => la.employee_id === a.employee_id));
+                  if (inactiveAgents.length === 0) return null;
+                  return (
+                    <div style={{ marginTop: '0.5rem', marginBottom: '1rem' }}>
+                      <div style={{ fontWeight: 700, fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.4rem' }}>
+                        ⚪ GPS Inactive / Offline Staff ({inactiveAgents.length})
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                        {inactiveAgents.map(a => {
+                          const isSelected = selectedAgent?.employee_id === a.employee_id;
+                          return (
+                            <div
+                              key={a.employee_id}
+                              onClick={() => handleSelectAgent(a)}
+                              style={{
+                                padding: '0.55rem 0.75rem', borderRadius: 8,
+                                background: isSelected ? 'rgba(148,163,184,0.15)' : 'var(--bg-secondary)',
+                                border: `1px solid ${isSelected ? 'var(--text-muted)' : 'var(--border-color)'}`,
+                                cursor: 'pointer', transition: 'all 0.2s ease', opacity: 0.8
+                              }}
+                              title="Click to view last known coordinates"
+                            >
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.15rem' }}>
+                                <span style={{ fontWeight: 600, fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                                  ⚪ {a.employee_name}
+                                </span>
+                                <span style={{ fontSize: '0.62rem', color: 'var(--text-muted)', background: 'rgba(255,255,255,0.06)', padding: '1px 5px', borderRadius: 4 }}>
+                                  GPS Off
+                                </span>
+                              </div>
+                              <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+                                📍 {a.address || `${Number(a.lat || 0).toFixed(4)}°, ${Number(a.lng || 0).toFixed(4)}°`}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 {/* Submitted Inspections List */}
                 <div style={{ fontWeight: 700, fontSize: '0.85rem', marginBottom: '0.4rem', borderTop: '1px solid var(--border-color)', paddingTop: '0.75rem' }}>
                   Latest Inspection Logs ({visits.length})
@@ -645,7 +752,7 @@ const FieldOps = () => {
                     return (
                       <div
                         key={v.id}
-                        onClick={() => { setSelectedVisit(v); setSelectedAgent(null); }}
+                        onClick={() => handleSelectVisit(v)}
                         style={{
                           padding: '0.65rem 0.85rem', borderRadius: 8,
                           background: isSelected ? 'rgba(99,102,241,0.12)' : 'var(--bg-secondary)',
@@ -937,6 +1044,7 @@ const FieldOps = () => {
           employeeName={user?.name || 'Field Agent'}
           siteName={checkInForm.site_name || 'Assigned Site'}
           clientName={checkInForm.client_name}
+          companyName={activeCompany?.company_name || 'Sobhainfra Tech Private Limited'}
           initialCoords={checkInForm.lat ? { lat: checkInForm.lat, lng: checkInForm.lng } : null}
         />
       )}

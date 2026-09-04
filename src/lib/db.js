@@ -3175,6 +3175,7 @@ export async function syncToGoogleSheets(webhookUrl = '') {
 // REAL ESTATE FIELD OPERATIONS, LIVE GPS PINGS & SITE VISITS
 // ─────────────────────────────────────────────────────────────────────────────
 export async function updateEmployeeLivePing(pingData) {
+  const isTurningOff = pingData.is_live === false;
   const payload = {
     employee_id: String(pingData.employee_id || 'usr-1'),
     employee_name: pingData.employee_name || 'Field Agent',
@@ -3183,13 +3184,37 @@ export async function updateEmployeeLivePing(pingData) {
     lng: Number(pingData.lng || 0),
     accuracy: Number(pingData.accuracy || 10),
     address: pingData.address || '',
-    is_live: pingData.is_live !== false,
+    is_live: !isTurningOff,
     last_ping: new Date().toISOString(),
     organization_id: DEFAULT_ORG_ID,
   };
 
   if (isSupabaseConfigured) {
     try {
+      if (isTurningOff) {
+        // If turning off GPS, immediately set is_live = false in Supabase
+        const updateFields = {
+          is_live: false,
+          last_ping: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+        if (pingData.lat && pingData.lng) {
+          updateFields.lat = Number(pingData.lat);
+          updateFields.lng = Number(pingData.lng);
+        }
+        if (pingData.address) updateFields.address = pingData.address;
+
+        const { data, error } = await supabase
+          .from('employee_live_locations')
+          .update(updateFields)
+          .eq('employee_id', payload.employee_id)
+          .select()
+          .maybeSingle();
+
+        if (!error && data) return { data, error: null };
+      }
+
+      // Upsert full ping
       const { data, error } = await supabase
         .from('employee_live_locations')
         .upsert(payload, { onConflict: 'employee_id' })
@@ -3204,7 +3229,16 @@ export async function updateEmployeeLivePing(pingData) {
   if (!MOCK_STORE.employee_live_locations) MOCK_STORE.employee_live_locations = [];
   const idx = MOCK_STORE.employee_live_locations.findIndex(p => p.employee_id === payload.employee_id);
   if (idx !== -1) {
-    MOCK_STORE.employee_live_locations[idx] = { ...MOCK_STORE.employee_live_locations[idx], ...payload };
+    const existing = MOCK_STORE.employee_live_locations[idx];
+    MOCK_STORE.employee_live_locations[idx] = {
+      ...existing,
+      ...payload,
+      lat: payload.lat || existing.lat,
+      lng: payload.lng || existing.lng,
+      address: payload.address || existing.address,
+      is_live: !isTurningOff,
+      last_ping: new Date().toISOString(),
+    };
   } else {
     MOCK_STORE.employee_live_locations.push(payload);
   }
@@ -3212,20 +3246,44 @@ export async function updateEmployeeLivePing(pingData) {
 }
 
 export async function getEmployeeLivePings() {
+  const STALE_THRESHOLD_MS = 90 * 1000; // 90 seconds freshness cutoff
+  const cutoffTime = new Date(Date.now() - STALE_THRESHOLD_MS).toISOString();
+
   if (isSupabaseConfigured) {
     try {
       const { data, error } = await supabase
         .from('employee_live_locations')
         .select('*')
         .eq('is_live', true)
+        .gte('last_ping', cutoffTime)
         .order('last_ping', { ascending: false });
-      if (!error && data && data.length > 0) return { data, error: null };
+      if (!error && data) return { data, error: null };
     } catch (err) {
       console.warn('[db] getEmployeeLivePings fallback:', err.message);
     }
   }
-  const inMemory = (MOCK_STORE.employee_live_locations || []).filter(p => p.is_live);
+  const inMemory = (MOCK_STORE.employee_live_locations || []).filter(p => {
+    if (!p.is_live) return false;
+    if (!p.last_ping) return true;
+    const diff = Date.now() - new Date(p.last_ping).getTime();
+    return diff <= STALE_THRESHOLD_MS;
+  });
   return { data: inMemory, error: null };
+}
+
+export async function getAllEmployeeLiveLocations() {
+  if (isSupabaseConfigured) {
+    try {
+      const { data, error } = await supabase
+        .from('employee_live_locations')
+        .select('*')
+        .order('last_ping', { ascending: false });
+      if (!error && data) return { data, error: null };
+    } catch (err) {
+      console.warn('[db] getAllEmployeeLiveLocations fallback:', err.message);
+    }
+  }
+  return { data: MOCK_STORE.employee_live_locations || [], error: null };
 }
 
 export async function getSiteVisits() {
