@@ -94,6 +94,31 @@ export default function InvoiceDocModal({
 
   const recipientPhone = invoice._verified_phone || invoice.client_phone;
 
+  // ── Dynamic Scannable QR Code Payloads ─────────────────────────────────────
+  const einvoiceQrPayload = JSON.stringify({
+    SellerGSTIN: compGstin,
+    BuyerGSTIN: buyerGstin,
+    DocNo: invNumber,
+    DocTyp: 'INV',
+    DocDt: invDate,
+    TotInvVal: totalAmount,
+    ItemCnt: 1,
+    MainHsnCode: hsnCode,
+    Irn: irn,
+  });
+  const dynamicEinvoiceQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(einvoiceQrPayload)}`;
+
+  const ewayQrPayload = JSON.stringify({
+    ewbNo: ewayBillNo,
+    genDate: ewayDate,
+    validUpto: ewayValidUpto,
+    fromGstin: compGstin,
+    toGstin: buyerGstin,
+    docNo: invNumber,
+    totVal: totalAmount,
+  });
+  const dynamicEwayQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(ewayQrPayload)}`;
+
   // ── Download PDF Handler ───────────────────────────────────────────────────
   const handleDownloadPdf = async () => {
     try {
@@ -498,7 +523,7 @@ export default function InvoiceDocModal({
             <div
               style={{
                 display: 'grid',
-                gridTemplateColumns: '1fr 1fr',
+                gridTemplateColumns: '1fr 115px',
                 alignItems: 'center',
                 marginBottom: '4px',
               }}
@@ -506,7 +531,7 @@ export default function InvoiceDocModal({
               <div style={{ textAlign: 'center', fontWeight: 'bold', fontSize: '15px' }}>
                 Tax Invoice
               </div>
-              <div style={{ textAlign: 'center', fontWeight: 'bold', fontSize: '15px' }}>
+              <div style={{ textAlign: 'center', fontWeight: 'bold', fontSize: '14px' }}>
                 e-Invoice
               </div>
             </div>
@@ -521,7 +546,7 @@ export default function InvoiceDocModal({
                 minHeight: '85px',
               }}
             >
-              <div style={{ fontSize: '10px', paddingTop: '6px' }}>
+              <div style={{ fontSize: '10px', paddingTop: '4px' }}>
                 <div style={{ marginBottom: '3px' }}>
                   <span style={{ fontWeight: 'normal' }}>IRN &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: </span>
                   <span style={{ fontWeight: 'bold', wordBreak: 'break-all' }}>{irn}</span>
@@ -537,7 +562,12 @@ export default function InvoiceDocModal({
               </div>
               <div style={{ textAlign: 'right' }}>
                 <img
-                  src={einvoiceQrImg}
+                  src={dynamicEinvoiceQrUrl}
+                  crossOrigin="anonymous"
+                  onError={(e) => {
+                    e.currentTarget.onerror = null;
+                    e.currentTarget.src = einvoiceQrImg;
+                  }}
                   alt="e-Invoice QR"
                   style={{ width: '85px', height: '85px', display: 'inline-block' }}
                 />
@@ -882,7 +912,7 @@ export default function InvoiceDocModal({
             <div
               style={{
                 display: 'grid',
-                gridTemplateColumns: '1fr 1fr',
+                gridTemplateColumns: '1fr 115px',
                 alignItems: 'center',
                 marginBottom: '10px',
               }}
@@ -928,7 +958,12 @@ export default function InvoiceDocModal({
               </div>
               <div style={{ textAlign: 'right' }}>
                 <img
-                  src={ewayQrImg}
+                  src={dynamicEwayQrUrl}
+                  crossOrigin="anonymous"
+                  onError={(e) => {
+                    e.currentTarget.onerror = null;
+                    e.currentTarget.src = ewayQrImg;
+                  }}
                   alt="e-Way Bill QR"
                   style={{ width: '90px', height: '90px', display: 'inline-block' }}
                 />
