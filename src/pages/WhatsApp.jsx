@@ -850,56 +850,8 @@ const WhatsApp = () => {
           <div className="whatsapp-chat-pane" style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-primary)' }}>
             {selectedConv ? (
               <>
-                {/* Human Takeover Alert Banner */}
-                {selectedConv.conversation_mode === 'HUMAN TAKEOVER REQUESTED' && (
-                  <div style={{
-                    background: 'linear-gradient(90deg, rgba(239, 68, 68, 0.16), rgba(245, 158, 11, 0.12))',
-                    borderBottom: '2px solid #ef4444',
-                    padding: '0.75rem 1.25rem',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    gap: '1rem',
-                  }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.7rem' }}>
-                      <div style={{ width: 34, height: 34, borderRadius: '50%', background: 'rgba(239, 68, 68, 0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.2rem', flexShrink: 0 }}>
-                        🚨
-                      </div>
-                      <div>
-                        <div style={{ fontWeight: 800, fontSize: '0.8rem', color: '#ef4444', letterSpacing: '0.04em' }}>
-                          HUMAN TAKEOVER REQUESTED
-                        </div>
-                        <div style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', marginTop: '0.1rem' }}>
-                          Customer requested official rate list / executive assistance. <strong>AI assistant is actively answering incoming questions</strong> until you take over.
-                        </div>
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => handleModeChange('HUMAN ACTIVE')}
-                      style={{
-                        background: 'linear-gradient(135deg, #ef4444, #dc2626)',
-                        color: '#ffffff',
-                        border: 'none',
-                        borderRadius: 8,
-                        padding: '0.45rem 0.95rem',
-                        fontSize: '0.76rem',
-                        fontWeight: 800,
-                        cursor: 'pointer',
-                        boxShadow: '0 2px 10px rgba(239, 68, 68, 0.45)',
-                        whiteSpace: 'nowrap',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '0.35rem',
-                      }}
-                    >
-                      <User size={13} />
-                      <span>Take Over Now (Mute AI)</span>
-                    </button>
-                  </div>
-                )}
-
                 {/* Chat Top bar */}
-                <div style={{ padding: '0.75rem 1.25rem', borderBottom: '1px solid var(--border-color)', background: 'var(--bg-secondary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ padding: '0.75rem 1.25rem', borderBottom: '1px solid var(--border-color)', background: 'var(--bg-secondary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.6rem' }}>
                   <div>
                     <div style={{ fontWeight: 700, fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                       {editingName ? (
@@ -963,9 +915,79 @@ const WhatsApp = () => {
                       {selectedConv.contact_phone} · {selectedConv.property_interest || 'General Product Inquiry'}
                     </div>
                   </div>
-                  <div style={{ display: 'flex', gap: '0.4rem' }}>
+                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                    {/* Executive Conversation Mode Quick Switch Pill */}
+                    {selectedConv.conversation_mode === 'AI ACTIVE' ? (
+                      <button
+                        onClick={() => handleModeChange('HUMAN ACTIVE')}
+                        className="btn btn-sm"
+                        style={{
+                          background: 'rgba(16, 185, 129, 0.12)',
+                          color: '#059669',
+                          border: '1px solid rgba(16, 185, 129, 0.35)',
+                          borderRadius: 20,
+                          padding: '0.25rem 0.65rem',
+                          fontSize: '0.72rem',
+                          fontWeight: 700,
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.35rem',
+                          cursor: 'pointer',
+                        }}
+                        title="AI Auto-Reply is Live. Click to Mute AI & take over."
+                      >
+                        <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#10b981', boxShadow: '0 0 6px #10b981' }} />
+                        <span>⚡ AI Copilot Active</span>
+                        <span style={{ color: 'var(--text-muted)', fontSize: '0.65rem', marginLeft: '0.15rem' }}>| Mute</span>
+                      </button>
+                    ) : selectedConv.conversation_mode === 'HUMAN TAKEOVER REQUESTED' ? (
+                      <button
+                        onClick={() => handleModeChange('HUMAN ACTIVE')}
+                        className="btn btn-sm"
+                        style={{
+                          background: 'rgba(239, 68, 68, 0.14)',
+                          color: '#dc2626',
+                          border: '1px solid rgba(239, 68, 68, 0.4)',
+                          borderRadius: 20,
+                          padding: '0.25rem 0.65rem',
+                          fontSize: '0.72rem',
+                          fontWeight: 700,
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.35rem',
+                          cursor: 'pointer',
+                        }}
+                        title="Customer requested rates / specialist. Click to take over."
+                      >
+                        <span>🚨 Take Over Chat</span>
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => handleModeChange('AI ACTIVE')}
+                        className="btn btn-sm"
+                        style={{
+                          background: 'rgba(99, 102, 241, 0.12)',
+                          color: 'var(--accent-primary)',
+                          border: '1px solid rgba(99, 102, 241, 0.35)',
+                          borderRadius: 20,
+                          padding: '0.25rem 0.65rem',
+                          fontSize: '0.72rem',
+                          fontWeight: 700,
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.35rem',
+                          cursor: 'pointer',
+                        }}
+                        title="Manual Mode active. Click to resume AI copilot."
+                      >
+                        <User size={12} />
+                        <span>👤 Human Mode</span>
+                        <span style={{ color: 'var(--text-muted)', fontSize: '0.65rem', marginLeft: '0.15rem' }}>| Resume AI</span>
+                      </button>
+                    )}
+
                     <button className="btn btn-secondary btn-sm" onClick={() => setShowHandoffModal(true)}>
-                      <UserCheck size={13} color="var(--accent-primary)" /> Assign & Handoff
+                      <UserCheck size={13} color="var(--accent-primary)" /> Assign
                     </button>
                     <button className="btn btn-secondary btn-sm" onClick={() => setSelected360LeadId(selectedConv.lead_id || selectedConv.contact_phone || selectedConv.id)}>
                       <Eye size={13} /> 360 View
@@ -974,49 +996,133 @@ const WhatsApp = () => {
                 </div>
 
                 {/* Messages List */}
-                <div className="whatsapp-chat-messages" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem', flex: 1, overflowY: 'auto' }}>
+                <div className="whatsapp-chat-messages" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.85rem', flex: 1, overflowY: 'auto', background: 'var(--bg-primary)' }}>
                   {messages.map(m => {
                     const isOutbound = m.direction === 'outbound';
-                    const { mediaType, mediaUrl, fileName, cleanText } = parseMessageMedia(m);
+                    const parsed = parseMessageMedia(m);
+                    let displayText = (parsed.cleanText || parsed.text || m.body || m.text || m.content || '').trim();
+                    
+                    if (!displayText && m.raw_payload) {
+                      if (m.raw_payload.interactive?.button_reply?.title) {
+                        displayText = m.raw_payload.interactive.button_reply.title;
+                      } else if (m.raw_payload.text?.body) {
+                        displayText = m.raw_payload.text.body;
+                      }
+                    }
+
+                    const mediaUrl = parsed.mediaUrl || m.media_url;
+                    const mediaType = parsed.mediaType || m.message_type || 'text';
+                    const fileName = parsed.fileName;
+
+                    // Determine interactive buttons sent with this message (if outbound)
+                    const buttonsSent = m.raw_payload?.buttons || 
+                      (isOutbound && (m.sender_type === 'ai' || m.sender_type === 'system') && (displayText.includes('Namaste') || displayText.includes('assist you') || displayText.includes('options below')) ? [
+                        { id: 'btn_catalog', title: '📄 Get Catalog' },
+                        { id: 'btn_pricing', title: '💰 Get Quote' },
+                        { id: 'btn_human', title: '👤 Talk to Executive' }
+                      ] : null);
+
+                    const isButtonSelection = !isOutbound && (
+                      displayText.startsWith('📄') ||
+                      displayText.startsWith('💰') ||
+                      displayText.startsWith('👤') ||
+                      displayText.startsWith('📦') ||
+                      displayText.includes('[Rate List Requested]') ||
+                      m.raw_payload?.interactive?.type === 'button_reply'
+                    );
 
                     return (
                       <div
                         key={m.id}
                         className={`whatsapp-bubble ${isOutbound ? 'outbound' : 'inbound'}`}
                         style={{
-                          maxWidth: '75%',
+                          maxWidth: '78%',
                           alignSelf: isOutbound ? 'flex-end' : 'flex-start',
-                          padding: '0.65rem 0.95rem',
-                          borderRadius: '10px',
-                          borderTopRightRadius: isOutbound ? '2px' : '10px',
-                          borderTopLeftRadius: isOutbound ? '10px' : '2px',
+                          padding: '0.75rem 1rem',
+                          borderRadius: '12px',
+                          borderTopRightRadius: isOutbound ? '2px' : '12px',
+                          borderTopLeftRadius: isOutbound ? '12px' : '2px',
                           fontSize: '0.82rem',
                           position: 'relative',
+                          background: isOutbound
+                            ? 'linear-gradient(135deg, rgba(16, 185, 129, 0.12) 0%, rgba(5, 150, 105, 0.06) 100%)'
+                            : 'var(--bg-card, #ffffff)',
+                          border: isOutbound
+                            ? '1px solid rgba(16, 185, 129, 0.28)'
+                            : '1px solid var(--border-color, rgba(226, 232, 240, 0.85))',
+                          boxShadow: '0 2px 8px rgba(0, 0, 0, 0.04)',
+                          color: 'var(--text-primary)',
                         }}
                       >
-                        <div style={{ fontSize: '0.68rem', color: isOutbound ? 'var(--accent-primary)' : 'var(--text-muted)', marginBottom: '0.2rem', fontWeight: 600, display: 'flex', justifyContent: 'space-between', gap: '0.5rem' }}>
-                          <span>{isOutbound ? (m.sender_type === 'human_agent' ? '👤 Sales Executive' : '⚡ AI Assistant') : (selectedConv.contact_name || 'Customer')}</span>
-                          <span style={{ fontSize: '0.62rem', color: 'var(--text-muted)', fontWeight: 400 }}>
-                            {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        {/* Bubble Header: Sender & Time */}
+                        <div style={{ fontSize: '0.68rem', marginBottom: '0.35rem', fontWeight: 600, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem' }}>
+                          <span style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '0.3rem',
+                            color: isOutbound
+                              ? (m.sender_type === 'human_agent' ? 'var(--accent-primary)' : '#059669')
+                              : 'var(--text-secondary)'
+                          }}>
+                            {isOutbound ? (
+                              m.sender_type === 'human_agent' ? (
+                                <>
+                                  <User size={11} />
+                                  <span>👤 Sales Executive</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Sparkles size={11} />
+                                  <span>⚡ AI Assistant</span>
+                                </>
+                              )
+                            ) : (
+                              <span>{selectedConv.contact_name || 'Customer'}</span>
+                            )}
+                          </span>
+                          <span style={{ fontSize: '0.64rem', color: 'var(--text-muted)', fontWeight: 400 }}>
+                            {m.created_at ? new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
                           </span>
                         </div>
 
-                        {mediaUrl && mediaType === 'image' && (
-                          <div style={{ marginBottom: cleanText ? '0.45rem' : 0 }}>
-                            <img src={mediaUrl} alt="attachment" style={{ maxWidth: '100%', maxHeight: 220, borderRadius: 6, objectFit: 'cover', display: 'block' }} />
+                        {/* Button Selection Badge for Inbound */}
+                        {isButtonSelection && (
+                          <div style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '0.35rem',
+                            background: 'rgba(99, 102, 241, 0.09)',
+                            border: '1px solid rgba(99, 102, 241, 0.22)',
+                            borderRadius: 6,
+                            padding: '0.15rem 0.45rem',
+                            fontSize: '0.68rem',
+                            fontWeight: 600,
+                            color: 'var(--accent-primary)',
+                            marginBottom: '0.4rem',
+                          }}>
+                            <span>🔘 Button Selected</span>
                           </div>
                         )}
 
+                        {/* Image attachment */}
+                        {mediaUrl && mediaType === 'image' && (
+                          <div style={{ marginBottom: displayText ? '0.45rem' : 0 }}>
+                            <img src={mediaUrl} alt="attachment" style={{ maxWidth: '100%', maxHeight: 240, borderRadius: 8, objectFit: 'cover', display: 'block' }} />
+                          </div>
+                        )}
+
+                        {/* Audio attachment */}
                         {mediaUrl && mediaType === 'audio' && (
-                          <div style={{ marginBottom: cleanText ? '0.45rem' : 0 }}>
-                            <audio controls style={{ width: '100%', minWidth: 200 }}>
+                          <div style={{ marginBottom: displayText ? '0.45rem' : 0 }}>
+                            <audio controls style={{ width: '100%', minWidth: 220 }}>
                               <source src={mediaUrl} />
                             </audio>
                           </div>
                         )}
 
+                        {/* Document / PDF attachment */}
                         {mediaUrl && mediaType === 'document' && (
-                          <div style={{ marginBottom: cleanText ? '0.55rem' : 0 }}>
+                          <div style={{ marginBottom: displayText ? '0.55rem' : 0 }}>
                             <a
                               href={mediaUrl}
                               target="_blank"
@@ -1025,9 +1131,9 @@ const WhatsApp = () => {
                                 display: 'flex',
                                 alignItems: 'center',
                                 gap: '0.65rem',
-                                padding: '0.6rem 0.85rem',
-                                background: 'rgba(239, 68, 68, 0.1)',
-                                border: '1px solid rgba(239, 68, 68, 0.35)',
+                                padding: '0.65rem 0.85rem',
+                                background: 'rgba(239, 68, 68, 0.08)',
+                                border: '1px solid rgba(239, 68, 68, 0.3)',
                                 borderRadius: 8,
                                 color: 'var(--text-primary)',
                                 textDecoration: 'none',
@@ -1036,7 +1142,7 @@ const WhatsApp = () => {
                             >
                               <span style={{ fontSize: '1.4rem', flexShrink: 0 }}>📄</span>
                               <div style={{ flex: 1, minWidth: 0 }}>
-                                <div style={{ fontWeight: 600, fontSize: '0.8rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                <div style={{ fontWeight: 600, fontSize: '0.78rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                   {fileName || (mediaUrl.split('/').pop().split('?')[0]) || 'Sobha_Infratech_Product_Catalog.pdf'}
                                 </div>
                                 <div style={{ fontSize: '0.68rem', color: 'var(--accent-primary)', fontWeight: 500 }}>
@@ -1047,13 +1153,49 @@ const WhatsApp = () => {
                           </div>
                         )}
 
-                        {cleanText && (
-                          <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.45 }}>{cleanText}</div>
+                        {/* Message Text */}
+                        {displayText && (
+                          <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.5, wordBreak: 'break-word', color: 'var(--text-primary)' }}>
+                            {displayText}
+                          </div>
                         )}
 
+                        {/* Interactive Quick Reply Buttons Preview for Outbound */}
+                        {buttonsSent && buttonsSent.length > 0 && (
+                          <div style={{ marginTop: '0.65rem', borderTop: '1px solid rgba(0, 0, 0, 0.06)', paddingTop: '0.5rem' }}>
+                            <div style={{ fontSize: '0.64rem', color: 'var(--text-muted)', marginBottom: '0.35rem', fontWeight: 500 }}>
+                              Interactive options sent to customer:
+                            </div>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem' }}>
+                              {buttonsSent.map((btn, bIdx) => (
+                                <span
+                                  key={bIdx}
+                                  style={{
+                                    fontSize: '0.72rem',
+                                    padding: '0.22rem 0.55rem',
+                                    borderRadius: 16,
+                                    background: 'rgba(16, 185, 129, 0.09)',
+                                    border: '1px solid rgba(16, 185, 129, 0.25)',
+                                    color: 'var(--text-primary)',
+                                    fontWeight: 600,
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                  }}
+                                >
+                                  {btn.title || btn}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Read Status Tick */}
                         {isOutbound && (
-                          <div style={{ textAlign: 'right', marginTop: '0.2rem' }}>
-                            <CheckCheck size={12} color="var(--accent-secondary)" />
+                          <div style={{ textAlign: 'right', marginTop: '0.3rem', display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '0.2rem' }}>
+                            <span style={{ fontSize: '0.62rem', color: 'var(--text-muted)' }}>
+                              {m.status === 'read' ? 'Read' : m.status === 'delivered' ? 'Delivered' : 'Sent'}
+                            </span>
+                            <CheckCheck size={13} color={m.status === 'read' ? '#3b82f6' : 'var(--accent-secondary)'} />
                           </div>
                         )}
                       </div>
@@ -1158,38 +1300,132 @@ const WhatsApp = () => {
           <div className="whatsapp-right-pane" style={{ borderLeft: '1px solid var(--border-color)', background: 'var(--bg-secondary)', padding: '1.25rem', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
             {selectedConv ? (
               <>
-                {/* 1. Mode Toggle */}
-                <div>
-                  <span className="section-title" style={{ fontSize: '0.82rem' }}>Conversation Mode</span>
+                {/* 1. Executive Mode & Copilot Control */}
+                <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '0.9rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                      Conversation Control
+                    </span>
+                    {selectedConv.conversation_mode === 'HUMAN ACTIVE' ? (
+                      <span style={{ fontSize: '0.68rem', padding: '0.18rem 0.5rem', borderRadius: 9999, background: 'rgba(99, 102, 241, 0.12)', color: 'var(--accent-primary)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--accent-primary)' }} />
+                        Manual Mode
+                      </span>
+                    ) : selectedConv.conversation_mode === 'HUMAN TAKEOVER REQUESTED' ? (
+                      <span style={{ fontSize: '0.68rem', padding: '0.18rem 0.5rem', borderRadius: 9999, background: 'rgba(239, 68, 68, 0.12)', color: '#dc2626', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#dc2626' }} />
+                        Takeover Alert
+                      </span>
+                    ) : (
+                      <span style={{ fontSize: '0.68rem', padding: '0.18rem 0.5rem', borderRadius: 9999, background: 'rgba(16, 185, 129, 0.12)', color: '#059669', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#10b981' }} />
+                        AI Copilot Active
+                      </span>
+                    )}
+                  </div>
 
-                  {selectedConv.conversation_mode === 'HUMAN TAKEOVER REQUESTED' && (
-                    <div style={{ background: 'rgba(239, 68, 68, 0.12)', border: '1px solid #ef4444', borderRadius: 8, padding: '0.65rem 0.8rem', marginTop: '0.4rem', marginBottom: '0.4rem' }}>
-                      <div style={{ fontWeight: 800, fontSize: '0.74rem', color: '#ef4444', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                        <span>🚨</span>
-                        <span>Takeover Requested</span>
-                      </div>
-                      <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', marginTop: '0.25rem', lineHeight: 1.3 }}>
-                        Customer requested Rate List or Executive Callback. AI continues holding the chat until you take over.
-                      </div>
-                    </div>
-                  )}
-
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', marginTop: '0.5rem' }}>
+                  {/* Segmented Switcher */}
+                  <div style={{ display: 'flex', background: 'var(--bg-tertiary)', padding: '0.2rem', borderRadius: '10px', gap: '0.25rem' }}>
                     <button
-                      className={`btn btn-sm ${selectedConv.conversation_mode === 'HUMAN ACTIVE' ? 'btn-primary' : (selectedConv.conversation_mode === 'HUMAN TAKEOVER REQUESTED' ? 'btn-danger' : 'btn-secondary')}`}
-                      style={{ width: '100%', justifyContent: 'flex-start', ...(selectedConv.conversation_mode === 'HUMAN TAKEOVER REQUESTED' ? { background: '#ef4444', color: '#ffffff', fontWeight: 700 } : {}) }}
-                      onClick={() => handleModeChange('HUMAN ACTIVE')}
+                      type="button"
+                      onClick={() => handleModeChange('AI ACTIVE')}
+                      style={{
+                        flex: 1,
+                        padding: '0.45rem 0.5rem',
+                        borderRadius: '7px',
+                        border: 'none',
+                        fontSize: '0.74rem',
+                        fontWeight: 600,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '0.35rem',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s',
+                        background: selectedConv.conversation_mode === 'AI ACTIVE' ? 'var(--bg-card)' : 'transparent',
+                        color: selectedConv.conversation_mode === 'AI ACTIVE' ? 'var(--accent-primary)' : 'var(--text-muted)',
+                        boxShadow: selectedConv.conversation_mode === 'AI ACTIVE' ? '0 1px 4px rgba(0,0,0,0.08)' : 'none',
+                      }}
                     >
-                      <User size={13} /> Take Over Now (Mute AI)
+                      <Sparkles size={12} color={selectedConv.conversation_mode === 'AI ACTIVE' ? 'var(--accent-primary)' : 'var(--text-muted)'} />
+                      <span>AI Copilot</span>
                     </button>
                     <button
-                      className={`btn btn-sm ${selectedConv.conversation_mode === 'AI ACTIVE' ? 'btn-success' : 'btn-secondary'}`}
-                      style={{ width: '100%', justifyContent: 'flex-start' }}
-                      onClick={() => handleModeChange('AI ACTIVE')}
+                      type="button"
+                      onClick={() => handleModeChange('HUMAN ACTIVE')}
+                      style={{
+                        flex: 1,
+                        padding: '0.45rem 0.5rem',
+                        borderRadius: '7px',
+                        border: 'none',
+                        fontSize: '0.74rem',
+                        fontWeight: 600,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '0.35rem',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s',
+                        background: (selectedConv.conversation_mode === 'HUMAN ACTIVE' || selectedConv.conversation_mode === 'HUMAN TAKEOVER REQUESTED') ? 'var(--bg-card)' : 'transparent',
+                        color: (selectedConv.conversation_mode === 'HUMAN ACTIVE' || selectedConv.conversation_mode === 'HUMAN TAKEOVER REQUESTED') ? 'var(--accent-primary)' : 'var(--text-muted)',
+                        boxShadow: (selectedConv.conversation_mode === 'HUMAN ACTIVE' || selectedConv.conversation_mode === 'HUMAN TAKEOVER REQUESTED') ? '0 1px 4px rgba(0,0,0,0.08)' : 'none',
+                      }}
                     >
-                      <Play size={13} /> Resume AI Assistant
+                      <User size={12} color={(selectedConv.conversation_mode === 'HUMAN ACTIVE' || selectedConv.conversation_mode === 'HUMAN TAKEOVER REQUESTED') ? 'var(--accent-primary)' : 'var(--text-muted)'} />
+                      <span>Human Agent</span>
                     </button>
                   </div>
+
+                  {/* Contextual Action & Guidance Card */}
+                  {selectedConv.conversation_mode === 'HUMAN TAKEOVER REQUESTED' ? (
+                    <div style={{ background: 'rgba(239, 68, 68, 0.07)', border: '1px solid rgba(239, 68, 68, 0.25)', borderRadius: '8px', padding: '0.65rem 0.75rem', fontSize: '0.72rem' }}>
+                      <div style={{ color: '#dc2626', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                        <span>🚨 Customer Escalation</span>
+                      </div>
+                      <div style={{ color: 'var(--text-secondary)', marginTop: '0.25rem', lineHeight: 1.4 }}>
+                        Customer requested Rate List or Specialist Callback. AI is holding the chat safely until you take over.
+                      </div>
+                      <button
+                        onClick={() => handleModeChange('HUMAN ACTIVE')}
+                        className="btn btn-sm btn-primary"
+                        style={{ width: '100%', marginTop: '0.5rem', fontSize: '0.74rem', fontWeight: 600, justifyContent: 'center', background: '#dc2626', borderColor: '#dc2626' }}
+                      >
+                        <User size={12} /> Take Over Chat Now
+                      </button>
+                    </div>
+                  ) : selectedConv.conversation_mode === 'HUMAN ACTIVE' ? (
+                    <div style={{ background: 'rgba(99, 102, 241, 0.06)', border: '1px solid rgba(99, 102, 241, 0.2)', borderRadius: '8px', padding: '0.65rem 0.75rem', fontSize: '0.72rem' }}>
+                      <div style={{ color: 'var(--accent-primary)', fontWeight: 600 }}>
+                        👤 Human Mode Active
+                      </div>
+                      <div style={{ color: 'var(--text-secondary)', marginTop: '0.25rem', lineHeight: 1.4 }}>
+                        AI auto-reply is muted. Reply manually using the chat composer.
+                      </div>
+                      <button
+                        onClick={() => handleModeChange('AI ACTIVE')}
+                        className="btn btn-sm btn-secondary"
+                        style={{ width: '100%', marginTop: '0.5rem', fontSize: '0.74rem', justifyContent: 'center' }}
+                      >
+                        <Sparkles size={12} color="var(--accent-primary)" /> Resume AI Copilot
+                      </button>
+                    </div>
+                  ) : (
+                    <div style={{ background: 'rgba(16, 185, 129, 0.06)', border: '1px solid rgba(16, 185, 129, 0.2)', borderRadius: '8px', padding: '0.65rem 0.75rem', fontSize: '0.72rem' }}>
+                      <div style={{ color: '#059669', fontWeight: 600 }}>
+                        ⚡ AI Copilot Autopilot
+                      </div>
+                      <div style={{ color: 'var(--text-secondary)', marginTop: '0.25rem', lineHeight: 1.4 }}>
+                        AI answers product, specification, and company queries automatically 24/7.
+                      </div>
+                      <button
+                        onClick={() => handleModeChange('HUMAN ACTIVE')}
+                        className="btn btn-sm btn-secondary"
+                        style={{ width: '100%', marginTop: '0.5rem', fontSize: '0.74rem', justifyContent: 'center' }}
+                      >
+                        <User size={12} /> Mute AI & Take Over
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 {/* 2. Salesperson Assignment */}

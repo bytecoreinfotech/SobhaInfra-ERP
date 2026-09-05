@@ -9,8 +9,8 @@
 
 import { createClient } from '@supabase/supabase-js';
 
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const SUPABASE_URL = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_URL) || 'https://mcgmppnvnwnilioapbli.supabase.co';
+const SUPABASE_KEY = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_ANON_KEY) || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1jZ21wcG52bnduaWxpb2FwYmxpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc1NzE5ODIsImV4cCI6MjEwMzE0Nzk4Mn0.27BrkeNVxcEfG0R1W2gzlV2ueuK6NBS7MuD98Y5iDME';
 const BUCKET = 'whatsapp-media';
 
 function getClient() {
@@ -128,7 +128,7 @@ export async function deleteFromStorage(publicUrl) {
  * from native columns (media_url, message_type) and embedded tags.
  */
 export function parseMessageMedia(m) {
-  if (!m) return { text: '', mediaUrl: null, mediaType: 'text', fileName: null };
+  if (!m) return { text: '', cleanText: '', mediaUrl: null, mediaType: 'text', fileName: null };
 
   let text = m.body || '';
   let mediaUrl = m.media_url || null;
@@ -188,8 +188,16 @@ export function parseMessageMedia(m) {
     mediaType = mediaUrl.endsWith('.pdf') ? 'document' : 'image';
   }
 
+  // If document attachment and body is just the filename, keep cleanText empty so only document card renders
+  const isPureDocName = mediaType === 'document' && (
+    text === fileName || 
+    text.endsWith('.pdf') || 
+    text === 'Sobha_Infratech_Product_Catalog.pdf'
+  );
+
   return {
     text,
+    cleanText: isPureDocName ? '' : text,
     mediaUrl,
     mediaType: mediaType || 'text',
     fileName,

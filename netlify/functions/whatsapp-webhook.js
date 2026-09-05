@@ -1280,9 +1280,11 @@ exports.handler = async (event) => {
     // 2. Check for Brochure / Catalog Request -> STRICTLY DISPATCH PDF DOCUMENT ATTACHMENT
     const isBrochureTrigger = buttonId.includes('brochure') ||
       buttonId.includes('catalog') ||
+      buttonId.includes('catelog') ||
       buttonTitle.toLowerCase().includes('catalog') ||
+      buttonTitle.toLowerCase().includes('catelog') ||
       buttonTitle.toLowerCase().includes('brochure') ||
-      ['brochure', 'catalog', 'catalogue', 'catelog', 'pdf', 'product detail', 'product details', 'products detail', 'all products', 'pamphlet', 'bhejo catalog', 'bhejo brochure', 'catalog bhejo', 'brochure bhejo', 'details bhejo'].some(t => lowerMsg.includes(t));
+      ['brochure', 'catalog', 'catalogue', 'catelog', 'get catalog', 'get catelog', 'product catalog', 'pdf', 'product detail', 'product details', 'products detail', 'all products', 'pamphlet', 'bhejo catalog', 'bhejo brochure', 'catalog bhejo', 'brochure bhejo', 'details bhejo'].some(t => lowerMsg.includes(t));
 
     if (isBrochureTrigger) {
       console.log(JSON.stringify({ step: 'brochure_dispatch', to: fromPhone, name: contactName }));
@@ -1377,8 +1379,9 @@ exports.handler = async (event) => {
         ? `💰 Namaste ${mainName}!\n\nOur official rate lists and customized project quotations are provided directly by our senior sales specialists based on your delivery location and order quantity.\n\nI have transferred your request to our executive who will share the latest rate chart and connect with you shortly! 📞\n\nIn the meantime, feel free to ask any technical, application, or packing questions about our products right here!`
         : `💰 Our official rate lists and customized project quotations are provided directly by our senior sales specialists based on your delivery location and order quantity.\n\nI have transferred your request to our executive who will share the latest rate chart and connect with you shortly! 📞\n\nIn the meantime, feel free to ask any technical, application, or packing questions about our products right here!`;
       const rateButtons = [
-        { id: 'btn_catalog', title: '📄 Product Catalog' },
-        { id: 'btn_human', title: '👤 Talk to Executive' }
+        { id: 'btn_catalog', title: '📄 Get Catalog' },
+        { id: 'btn_human', title: '👤 Talk to Executive' },
+        { id: 'btn_specs', title: '📦 Product Specs' }
       ];
 
       await sendWhatsAppInteractive(fromPhone, rateReply, rateButtons);
@@ -1449,14 +1452,15 @@ exports.handler = async (event) => {
     if (isFallbackMode) {
       // Mandatory Interactive Guided Quick Reply Buttons
       const guidedButtons = [
-        { id: 'btn_catalog', title: '📄 Product Catalog' },
-        { id: 'btn_pricing', title: '💰 Request Quote' },
+        { id: 'btn_catalog', title: '📄 Get Catalog' },
+        { id: 'btn_pricing', title: '💰 Get Quote' },
         { id: 'btn_human', title: '👤 Talk to Executive' }
       ];
       sendResult = await sendWhatsAppInteractive(fromPhone, aiResult.reply, guidedButtons);
     } else {
-      // Standard AI response (with optional quick replies attached if configured)
+      // Standard AI response: ALWAYS include all 3 interactive buttons (Catalog, Quote, Executive)
       const aiModeButtons = [
+        { id: 'btn_catalog', title: '📄 Get Catalog' },
         { id: 'btn_pricing', title: '💰 Get Quote' },
         { id: 'btn_human', title: '👤 Talk to Executive' }
       ];
