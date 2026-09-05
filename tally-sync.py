@@ -454,20 +454,26 @@ SALES_VOUCHER_OBJECT_XML = """<?xml version="1.0" encoding="utf-8"?>
 # HELPERS
 # ==============================================================================
 
-def query_tally(xml_payload, label=""):
+def query_tally(xml_payload, label="", timeout=12):
     """Send XML request to Tally and return raw response text."""
     try:
         resp = requests.post(
             TALLY_HOST,
             data=xml_payload.encode('utf-8'),
-            headers={"Content-Type": "text/xml; charset=utf-8"},
-            timeout=30
+            headers={
+                "Content-Type": "text/xml; charset=utf-8",
+                "Connection": "close",
+            },
+            timeout=timeout
         )
         text = resp.text
         log.info(f"  [{label}] HTTP {resp.status_code}, response size: {len(text)} bytes")
         return text
     except requests.exceptions.ConnectionError:
         log.error(f"  [{label}] Connection refused. Tally is not running or HTTP server is off.")
+        return ""
+    except requests.exceptions.Timeout:
+        log.warning(f"  [{label}] Request timed out after {timeout}s (query too heavy for Tally)")
         return ""
     except Exception as e:
         log.warning(f"  [{label}] Error: {e}")
@@ -1398,39 +1404,34 @@ def fetch_from_tally():
             print(f"  📞 Master Ledger Phone Registry: {len(ledger_phone_map)} party contact(s) loaded", flush=True)
 
         strategies = [
-            # --- PRIMARY (TDL Collection — session-period-independent, most reliable) ---
-            # Strategy 1: ALL vouchers, no date filter — most comprehensive
-            (f"1_AllVouchersUnfiltered_{comp}" if comp else "1_AllVouchersUnfiltered",
-             inject_company_into_xml(ALL_VOUCHERS_UNFILTERED_XML, comp)),
-            # Strategy 2: Date-range filtered vouchers (current 3 FYs)
-            (f"2_AllVouchersTDL_{comp}" if comp else "2_AllVouchersTDL",
-             inject_company_into_xml(ALL_VOUCHERS_TDL_XML, comp)),
-            # Strategy 3: Sundry Debtors ledger closing balances
-            (f"3_SundryDebtors_{comp}" if comp else "3_SundryDebtors",
+            # Strategy 1 (Fastest & Proven): Sundry Debtors ledger closing balances & master records
+            (f"1_SundryDebtors_{comp}" if comp else "1_SundryDebtors",
              inject_company_into_xml(SUNDRY_DEBTORS_XML, comp)),
-            # Strategy 4: All party ledgers (Sundry Debtors + Creditors)
-            (f"4_AllPartyLedgers_{comp}" if comp else "4_AllPartyLedgers",
+            # Strategy 2: All party ledgers (Sundry Debtors + Creditors)
+            (f"2_AllPartyLedgers_{comp}" if comp else "2_AllPartyLedgers",
              inject_company_into_xml(ACCOUNTS_XML, comp)),
-            # Strategy 5: Sales + Receipt vouchers only (type-filtered TDL)
-            (f"5_SalesVouchers_{comp}" if comp else "5_SalesVouchers",
+            # Strategy 3: Sales + Receipt DayBook vouchers
+            (f"3_SalesVouchers_{comp}" if comp else "3_SalesVouchers",
              inject_company_into_xml(DAYBOOK_XML, comp)),
+            # Strategy 4: Receipt+Payment vouchers (TDL type-filtered)
+            (f"4_ReceiptPayment_{comp}" if comp else "4_ReceiptPayment",
+             inject_company_into_xml(VOUCHERS_XML, comp)),
+            # Strategy 5: Date-range filtered vouchers (current FYs)
+            (f"5_AllVouchersTDL_{comp}" if comp else "5_AllVouchersTDL",
+             inject_company_into_xml(ALL_VOUCHERS_TDL_XML, comp)),
             # Strategy 6: Bills Outstanding (TDL BillOutstanding Collection)
             (f"6_BillsOutstanding_{comp}" if comp else "6_BillsOutstanding",
              inject_company_into_xml(OUTSTANDING_XML, comp)),
-            # Strategy 7: Receipt+Payment vouchers (TDL type-filtered)
-            (f"7_ReceiptPayment_{comp}" if comp else "7_ReceiptPayment",
-             inject_company_into_xml(VOUCHERS_XML, comp)),
-            # Strategy 8: Ledger vouchers with date range (TDL)
+            # Strategy 7: Comprehensive All Vouchers
+            (f"7_AllVouchersUnfiltered_{comp}" if comp else "7_AllVouchersUnfiltered",
+             inject_company_into_xml(ALL_VOUCHERS_UNFILTERED_XML, comp)),
+            # --- Fallback strategies (Only reached if needed) ---
             (f"8_LedgerVouchers_{comp}" if comp else "8_LedgerVouchers",
              inject_company_into_xml(LEDGER_VOUCHERS_XML, comp)),
-            # Strategy 9: Sundry Debtor Balance (TDL Ledger)
             (f"9_DebtorBalance_{comp}" if comp else "9_DebtorBalance",
              inject_company_into_xml(COLLECTION_XML, comp)),
-            # --- FALLBACK (ExportAll — object dump, no TDL needed) ---
-            # Strategy 10: EXPORTALL=Yes — entire voucher object database dump
             (f"10_ExportAllVouchers_{comp}" if comp else "10_ExportAllVouchers",
              inject_company_into_xml(EXPORT_OBJECT_XML, comp)),
-            # Strategy 11: Sales Register with EXPORTALL + max date range
             (f"11_SalesRegisterFull_{comp}" if comp else "11_SalesRegisterFull",
              inject_company_into_xml(SALES_VOUCHER_OBJECT_XML, comp)),
         ]
@@ -1440,16 +1441,28 @@ def fetch_from_tally():
         comp_seen_keys = set()   # Per-company dedup set
         comp_records = []
         total_strategies = len(strategies)
+        consecutive_timeouts = 0
 
         for strat_idx, (label, xml_payload) in enumerate(strategies):
+            # Circuit breaker: If 2 consecutive queries timed out or if we already have records and hit a timeout,
+            # stop hammering Tally to prevent single-threaded gateway exhaustion
+            if consecutive_timeouts >= 2:
+                log.warning(f"  [Circuit Breaker] Skipping remaining fallback strategies to protect Tally from overload.")
+                print(f"       ↳ Circuit breaker: Stopping further queries to prevent Tally lockup ({len(comp_records)} records collected so far)", flush=True)
+                break
+
             log.info(f"  Strategy [{strat_idx+1}/{total_strategies}] {label}...")
             print(f"  [{strat_idx+1}/{total_strategies}] Trying strategy: {label}", flush=True)
 
-            xml_data = query_tally(xml_payload, label)
+            xml_data = query_tally(xml_payload, label, timeout=12)
 
             if not xml_data or len(xml_data) < 50:
-                print(f"       ↳ No response", flush=True)
+                consecutive_timeouts += 1
+                time.sleep(0.5)  # Grace period for Tally queue
+                print(f"       ↳ No response / skipped", flush=True)
                 continue
+
+            consecutive_timeouts = 0
 
             if not combined_xml:
                 combined_xml = xml_data
