@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import { estimateCampaignAudience, queueCampaign, processCampaignBatch, getLeads, getCustomerMaster, normalizePhone } from '../lib/db';
 import { uploadToWhatsAppMedia, getWhatsAppMediaType } from '../lib/storage';
-import { extractMainName } from '../lib/nameHelper';
+import { extractMainName, isGenericName, formatPhoneNumber } from '../lib/nameHelper';
 import './Pages.css';
 
 const DEFAULT_PRESETS = [
@@ -337,13 +337,20 @@ const CampaignStudio = () => {
         const norm = normalizePhone(str);
         if (norm.length >= 10 && !seen.has(norm)) {
           seen.add(norm);
+          const digits10 = norm.replace(/\D/g, '').slice(-10);
+          const matchedCust = customerMaster.find(c => (c.contact_number || '').replace(/\D/g, '').slice(-10) === digits10);
+          const matchedLead = allCrmLeads.find(l => (l.phone || '').replace(/\D/g, '').slice(-10) === digits10);
+          const matchedName = matchedCust
+            ? (matchedCust.contact_person || matchedCust.company_name)
+            : (matchedLead?.name && !isGenericName(matchedLead.name) ? matchedLead.name : '');
+
           list.push({
             id: `pasted-${idx}`,
-            name: `Recipient ${idx + 1}`,
+            name: matchedName || formatPhoneNumber(norm),
             phone: norm,
             property_interest: campaignVariables.product || 'our products',
             budget: campaignVariables.budget || '',
-            company_name: campaignVariables.company || '',
+            company_name: matchedCust?.company_name || campaignVariables.company || '',
           });
         }
       });
@@ -1076,7 +1083,7 @@ const CampaignStudio = () => {
                                 <div style={{ flex: 1, minWidth: 0 }}>
                                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                                     <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>
-                                      {cleanName || cust.contact_person || 'Customer'}
+                                      {cleanName || cust.contact_person || cust.company_name || formatPhoneNumber(cust.contact_number) || 'Client'}
                                     </span>
                                     {cust.contact_person && cleanName !== cust.contact_person && (
                                       <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>

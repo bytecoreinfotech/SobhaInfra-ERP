@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { estimateCampaignAudience, queueCampaign, processCampaignBatch, getLeads, getCustomerMaster, normalizePhone } from '../lib/db';
 import { uploadToWhatsAppMedia, getWhatsAppMediaType } from '../lib/storage';
-import { extractMainName } from '../lib/nameHelper';
+import { extractMainName, isGenericName, formatPhoneNumber } from '../lib/nameHelper';
 
 const STANDARD_TEMPLATES = [
   { id: 1, tag: 'Catalog', name: 'Sobha Product Range & Catalog', text: 'Namaste {name}! 🙏\n\nWelcome to *Sobhainfra Tech Private Limited* ("Har Nirman Ki Jaan").\n\nWe manufacture advanced dry mix building materials:\n• Sobha Block Fix (Thin Joint Mortar)\n• Sobha Plast (Ready Mix Plaster - IS 16777)\n• Tile Adhesives (Type 1 to 4)\n• Super Fine Flyash & GGBS Cement\n\n📄 Official product catalog PDF is attached. Would you like a callback or quotation?' },
@@ -213,7 +213,7 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued, initialRecipi
       return validSheetCustomers
         .filter(c => selectedSheetCustomerIds.has(c.id))
         .map(c => {
-          const cleanName = extractMainName(c.contact_person, c.company_name) || c.contact_person || c.company_name || 'Customer';
+          const cleanName = extractMainName(c.contact_person, c.company_name) || c.contact_person || c.company_name || 'Valued Client';
           return {
             id: c.id,
             name: cleanName,
@@ -241,17 +241,27 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued, initialRecipi
       const rawTokens = pastedNumbers.split(/[\n,;\t]+/).map(s => s.trim()).filter(Boolean);
       const seen = new Set();
       const list = [];
+      const resolveNameForPhone = (normPhone) => {
+        const digits10 = normPhone.replace(/\D/g, '').slice(-10);
+        const matchedCust = validSheetCustomers.find(c => (c.contact_number || '').replace(/\D/g, '').slice(-10) === digits10);
+        const matchedLead = allCrmLeads.find(l => (l.phone || '').replace(/\D/g, '').slice(-10) === digits10);
+        if (matchedCust) return { name: matchedCust.contact_person || matchedCust.company_name, company: matchedCust.company_name };
+        if (matchedLead && !isGenericName(matchedLead.name)) return { name: matchedLead.name, company: '' };
+        return { name: formatPhoneNumber(normPhone), company: '' };
+      };
+
       rawTokens.forEach((str, idx) => {
         const norm = normalizePhone(str);
         if (norm && norm.replace(/\D/g, '').length >= 10 && !seen.has(norm)) {
           seen.add(norm);
+          const meta = resolveNameForPhone(norm);
           list.push({
             id: `pasted-${idx}`,
-            name: `Recipient ${list.length + 1}`,
+            name: meta.name,
             phone: norm,
             property_interest: campaignVariables.product || 'Products & Services',
             budget: campaignVariables.budget || '₹1,50,000',
-            company_name: campaignVariables.company || 'Sobha Infratech Pvt. Ltd.',
+            company_name: meta.company || campaignVariables.company || 'Sobha Infratech Pvt. Ltd.',
           });
         }
       });
@@ -263,13 +273,14 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued, initialRecipi
           const norm = normalizePhone(str);
           if (norm && norm.replace(/\D/g, '').length >= 10 && !seen.has(norm)) {
             seen.add(norm);
+            const meta = resolveNameForPhone(norm);
             list.push({
               id: `pasted-space-${idx}`,
-              name: `Recipient ${list.length + 1}`,
+              name: meta.name,
               phone: norm,
               property_interest: campaignVariables.product || 'Products & Services',
               budget: campaignVariables.budget || '₹1,50,000',
-              company_name: campaignVariables.company || 'Sobha Infratech Pvt. Ltd.',
+              company_name: meta.company || campaignVariables.company || 'Sobha Infratech Pvt. Ltd.',
             });
           }
         });

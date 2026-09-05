@@ -144,14 +144,30 @@ exports.handler = async (event) => {
           if (existingConv) {
             effectiveConvId = existingConv.id;
           } else {
-            // Check if matching lead name exists (just for display)
+            // Check if matching lead name or customer_master name exists
+            let discoveredName = null;
+            const isGenericName = (n) => !n || typeof n !== 'string' || !n.trim() || /^(customer(\s*\d+)?|recipient(\s*\d+)?|whatsapp\s*user|user\s*\d*)$/i.test(n.trim());
+            const tenDigits = digitsOnly.slice(-10);
+
             const { data: leadMatch } = await supabase.from('leads')
               .select('id, name')
-              .or(`phone.eq.${cleanPhone},phone.eq.${digitsOnly},phone.eq.+${digitsOnly}`)
+              .or(`phone.eq.${cleanPhone},phone.eq.${digitsOnly},phone.eq.+${digitsOnly},phone.ilike.%${tenDigits}`)
               .maybeSingle();
+            if (leadMatch?.name && !isGenericName(leadMatch.name)) {
+              discoveredName = leadMatch.name.trim();
+            } else {
+              const { data: sheetCust } = await supabase.from('customer_master')
+                .select('customer_name, contact_person, company_name')
+                .or(`contact_number.eq.${cleanPhone},contact_number.eq.${digitsOnly},contact_number.ilike.%${tenDigits}`)
+                .maybeSingle();
+              if (sheetCust) {
+                const candidate = sheetCust.customer_name || sheetCust.contact_person || sheetCust.company_name;
+                if (candidate && !isGenericName(candidate)) discoveredName = candidate.trim();
+              }
+            }
 
             const newConvPayload = {
-              contact_name: leadMatch?.name || 'Customer',
+              contact_name: discoveredName || null,
               contact_phone: cleanPhone.startsWith('+') ? cleanPhone : '+' + cleanPhone,
               conversation_mode: 'HUMAN ACTIVE',
               last_message_text: text || (mediaType === 'document' ? `📄 ${mediaFileName || 'PDF Document'}` : `[${mediaType}]`),

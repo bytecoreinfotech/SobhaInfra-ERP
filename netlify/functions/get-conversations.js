@@ -122,7 +122,31 @@ exports.handler = async (event) => {
       return { statusCode: 200, headers: cors, body: JSON.stringify({ conversations: [] }) };
     }
 
-    return { statusCode: 200, headers: cors, body: JSON.stringify({ conversations: conversations || [] }) };
+    const seen = new Map();
+    const deduped = [];
+    for (const c of (conversations || [])) {
+      const isGeneric = !c.contact_name || /^(customer(\s*\d+)?|recipient(\s*\d+)?|whatsapp\s*user(\s*\(.*\))?|user\s*\d*)$/i.test(c.contact_name.trim());
+      const item = isGeneric ? { ...c, contact_name: null } : c;
+      const digits = (c.contact_phone || '').replace(/\D/g, '').slice(-10);
+
+      if (!digits) {
+        deduped.push(item);
+      } else if (!seen.has(digits)) {
+        seen.set(digits, item);
+        deduped.push(item);
+      } else {
+        // Merge duplicate conversation for this phone
+        const existing = seen.get(digits);
+        if (item.contact_name && !existing.contact_name) {
+          existing.contact_name = item.contact_name;
+        }
+        if ((item.unread_count || 0) > (existing.unread_count || 0)) {
+          existing.unread_count = item.unread_count;
+        }
+      }
+    }
+
+    return { statusCode: 200, headers: cors, body: JSON.stringify({ conversations: deduped }) };
 
   } catch (err) {
     console.error('[get-conversations] Fatal error:', err.message);

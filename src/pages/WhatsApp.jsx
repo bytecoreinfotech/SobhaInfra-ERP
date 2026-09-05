@@ -14,7 +14,9 @@ import {
   getTeamMembers, updateConversationContactName,
   getCustomerMaster, triggerSheetSync, invalidateCustomerMasterCache
 } from '../lib/db';
-import { extractMainName } from '../lib/nameHelper';
+import {
+  extractMainName, isGenericName, formatPhoneNumber, getDisplayName, getGreeting
+} from '../lib/nameHelper';
 import Customer360Modal from '../components/Customer360Modal';
 import CampaignBuilderModal from '../components/CampaignBuilderModal';
 import HumanHandoffModal from '../components/HumanHandoffModal';
@@ -192,6 +194,12 @@ const WhatsApp = () => {
   useEffect(() => {
     if (selectedConv?.id) {
       loadMessages(selectedConv.id);
+      setConversations(prev => prev.map(c => c.id === selectedConv.id ? { ...c, unread_count: 0 } : c));
+      if (supabase) {
+        supabase.from('whatsapp_conversations').update({ unread_count: 0 }).eq('id', selectedConv.id).then(() => {
+          refreshLiveCounts();
+        }).catch(() => {});
+      }
     }
   }, [selectedConv?.id]);
 
@@ -246,18 +254,33 @@ const WhatsApp = () => {
     }
 
     const liveConvs = await fetchLiveConversations();
+    const activeId = selectedConvRef.current?.id;
     if (liveConvs.length > 0) {
-      setConversations(liveConvs);
-      if (!selectedConvRef.current) setSelectedConv(liveConvs[0]);
+      setConversations(liveConvs.map(c => c.id === activeId ? { ...c, unread_count: 0 } : c));
+      if (!selectedConvRef.current) handleSelectConversation(liveConvs[0]);
     } else {
       const convRes = await getWhatsAppConversations();
       const convData = convRes.data || [];
-      setConversations(convData);
-      if (convData.length > 0 && !selectedConvRef.current) setSelectedConv(convData[0]);
+      setConversations(convData.map(c => c.id === activeId ? { ...c, unread_count: 0 } : c));
+      if (convData.length > 0 && !selectedConvRef.current) handleSelectConversation(convData[0]);
     }
 
     setLoading(false);
     setConvLoading(false);
+  };
+
+  const handleSelectConversation = (conv) => {
+    if (!conv) return;
+    setSelectedConv(conv);
+    selectedConvRef.current = conv;
+    // Clear unread badge in local state immediately
+    setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, unread_count: 0 } : c));
+    // Persist unread_count = 0 in database
+    if (conv.unread_count > 0 && supabase) {
+      supabase.from('whatsapp_conversations').update({ unread_count: 0 }).eq('id', conv.id)
+        .then(() => refreshLiveCounts())
+        .catch(err => console.warn('[WhatsApp] Error updating unread_count:', err));
+    }
   };
 
   const handleAfterBroadcast = async () => {
@@ -266,9 +289,10 @@ const WhatsApp = () => {
       const liveCampaigns = await fetchLiveCampaigns();
       if (liveCampaigns.length > 0) setCampaigns(liveCampaigns);
       const liveConvs = await fetchLiveConversations();
+      const activeId = selectedConvRef.current?.id;
       if (liveConvs.length > 0) {
-        setConversations(liveConvs);
-        if (!selectedConvRef.current && liveConvs.length > 0) setSelectedConv(liveConvs[0]);
+        setConversations(liveConvs.map(c => c.id === activeId ? { ...c, unread_count: 0 } : c));
+        if (!selectedConvRef.current && liveConvs.length > 0) handleSelectConversation(liveConvs[0]);
       }
     }, 3000);
   };
@@ -280,6 +304,13 @@ const WhatsApp = () => {
     } else {
       const res = await getWhatsAppMessages(convId);
       setMessages(res.data || []);
+    }
+    // Also clear unread_count for the loaded conversation
+    setConversations(prev => prev.map(c => c.id === convId ? { ...c, unread_count: 0 } : c));
+    if (supabase) {
+      supabase.from('whatsapp_conversations').update({ unread_count: 0 }).eq('id', convId)
+        .then(() => refreshLiveCounts())
+        .catch(() => {});
     }
   };
 
@@ -370,27 +401,79 @@ const WhatsApp = () => {
     return map;
   }, [customerMaster]);
 
-  // Match conversations with Google Sheet Master Directory
+  // ── CRM Leads Phone Map ──
+  const leadsPhoneMap = useMemo(() => {
+    const map = new Map();
+    for (const l of leads) {
+      if (l.phone) {
+        const digits = l.phone.replace(/\D/g, '').slice(-10);
+        if (digits.length === 10 && l.name && !isGenericName(l.name)) {
+          map.set(digits, l.name);
+        }
+      }
+    }
+    return map;
+  }, [leads]);
+
+  // Match conversations with Google Sheet Master Directory & CRM Leads, with automatic phone deduplication
   const enrichedConversations = useMemo(() => {
-    return conversations.map(c => {
+    const seen = new Map();
+    const result = [];
+
+    for (const c of conversations) {
       const cDigits = (c.contact_phone || '').replace(/\D/g, '').slice(-10);
       const sheetCust = customerPhoneMap.get(cDigits);
-      if (sheetCust) {
-        const exactName = sheetCust.contact_person
-          ? `${sheetCust.contact_person} (${sheetCust.company_name})`
-          : sheetCust.company_name;
-        return {
-          ...c,
-          contact_name: (c.contact_name && !c.contact_name.startsWith('Recipient') && !c.contact_name.startsWith('WhatsApp User'))
-            ? c.contact_name
-            : exactName,
-          _sheet_customer: sheetCust,
-          _is_sheet_customer: true,
-        };
+      const leadName = leadsPhoneMap.get(cDigits);
+
+      let resolvedName = c.contact_name;
+      // If contact_name is generic ("Recipient 1", "Customer", "WhatsApp User", phone digits)
+      if (isGenericName(resolvedName)) {
+        if (sheetCust) {
+          resolvedName = sheetCust.contact_person
+            ? `${sheetCust.contact_person} (${sheetCust.company_name})`
+            : sheetCust.company_name;
+        } else if (leadName) {
+          resolvedName = leadName;
+        } else {
+          resolvedName = formatPhoneNumber(c.contact_phone);
+        }
       }
-      return c;
-    });
-  }, [conversations, customerPhoneMap]);
+
+      const isSelected = selectedConv?.id === c.id || selectedConvRef.current?.id === c.id;
+      const item = {
+        ...c,
+        unread_count: isSelected ? 0 : (c.unread_count || 0),
+        contact_name: resolvedName,
+        _sheet_customer: sheetCust || null,
+        _is_sheet_customer: !!sheetCust,
+      };
+
+      if (!cDigits) {
+        result.push(item);
+        continue;
+      }
+
+      if (!seen.has(cDigits)) {
+        seen.set(cDigits, item);
+        result.push(item);
+      } else {
+        // Merge duplicate conversation for this phone
+        const existing = seen.get(cDigits);
+        if (!isGenericName(item.contact_name) && isGenericName(existing.contact_name)) {
+          existing.contact_name = item.contact_name;
+        }
+        if ((item.unread_count || 0) > (existing.unread_count || 0)) {
+          existing.unread_count = item.unread_count;
+        }
+        if (new Date(item.last_message_at || 0) > new Date(existing.last_message_at || 0)) {
+          existing.last_message_at = item.last_message_at;
+          existing.last_message_text = item.last_message_text;
+        }
+      }
+    }
+
+    return result;
+  }, [conversations, customerPhoneMap, leadsPhoneMap]);
 
   const takeoverCount = enrichedConversations.filter(c => c.conversation_mode === 'HUMAN TAKEOVER REQUESTED').length;
   const unreadCount = enrichedConversations.filter(c => (c.unread_count || 0) > 0).length;
@@ -425,7 +508,7 @@ const WhatsApp = () => {
     });
 
     if (existing) {
-      setSelectedConv(existing);
+      handleSelectConversation(existing);
       setActiveTab('inbox');
     } else {
       const newConv = {
@@ -441,7 +524,7 @@ const WhatsApp = () => {
         _is_sheet_customer: true,
       };
       setConversations(prev => [newConv, ...prev]);
-      setSelectedConv(newConv);
+      handleSelectConversation(newConv);
       setActiveTab('inbox');
     }
   };
@@ -774,7 +857,7 @@ const WhatsApp = () => {
                   return (
                     <div
                       key={c.id}
-                      onClick={() => setSelectedConv(c)}
+                      onClick={() => handleSelectConversation(c)}
                       style={{
                         padding: '0.85rem 1rem',
                         borderBottom: '1px solid var(--border-color)',
@@ -791,7 +874,7 @@ const WhatsApp = () => {
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.15rem' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', maxWidth: '70%' }}>
                           <div style={{ fontWeight: 700, fontSize: '0.84rem', color: isTakeover ? '#ef4444' : 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {c.contact_name || c.contact_phone}
+                            {getDisplayName(c.contact_name, c.contact_phone)}
                           </div>
                           {isSheetCust && (
                             <span
@@ -833,7 +916,7 @@ const WhatsApp = () => {
                           </span>
                         )}
 
-                        {c.unread_count > 0 && (
+                        {c.unread_count > 0 && !isSelected && (
                           <span style={{ background: '#25D366', color: '#fff', borderRadius: '50%', width: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.65rem', fontWeight: 800 }}>
                             {c.unread_count}
                           </span>
@@ -881,7 +964,7 @@ const WhatsApp = () => {
                           title="Click to edit contact name"
                           onClick={startEditName}
                         >
-                          {selectedConv.contact_name || selectedConv.contact_phone}
+                          {getDisplayName(selectedConv.contact_name, selectedConv.contact_phone)}
                           <Pencil size={12} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
                         </span>
                       )}
@@ -1077,7 +1160,7 @@ const WhatsApp = () => {
                                 </>
                               )
                             ) : (
-                              <span>{selectedConv.contact_name || 'Customer'}</span>
+                              <span>{getDisplayName(selectedConv.contact_name, selectedConv.contact_phone)}</span>
                             )}
                           </span>
                           <span style={{ fontSize: '0.64rem', color: 'var(--text-muted)', fontWeight: 400 }}>
@@ -1231,12 +1314,19 @@ const WhatsApp = () => {
                   <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', flexShrink: 0 }}>
                     Quick Message:
                   </span>
-                  {[
-                    { label: `👋 Hello ${extractMainName(selectedConv.contact_name)}`, text: `Hello ${extractMainName(selectedConv.contact_name)}, how can I assist you with your construction material requirements today?` },
-                    { label: '📄 Send Catalog', text: `Please find our official *Sobhainfra Tech Product Catalog & Technical Specification Guide* attached in PDF format. Feel free to reply if you need project rates.` },
-                    { label: '💰 Bulk Quotation', text: `I am preparing our best volume quotation for your project. Could you please confirm the required quantity (bags) and delivery site location?` },
-                    { label: '📞 Executive Callback', text: `Our senior technical sales specialist will connect with you on this number shortly. Please let us know the most convenient time to call!` },
-                  ].map((qr, idx) => (
+                  {(() => {
+                    const cleanMain = extractMainName(selectedConv.contact_name);
+                    const helloLabel = cleanMain ? `👋 Hello ${cleanMain}` : '👋 Hello';
+                    const helloText = cleanMain
+                      ? `Hello ${cleanMain}, how can I assist you with your construction material requirements today?`
+                      : `Hello, how can I assist you with your construction material requirements today?`;
+                    return [
+                      { label: helloLabel, text: helloText },
+                      { label: '📄 Send Catalog', text: `Please find our official *Sobhainfra Tech Product Catalog & Technical Specification Guide* attached in PDF format. Feel free to reply if you need project rates.` },
+                      { label: '💰 Bulk Quotation', text: `I am preparing our best volume quotation for your project. Could you please confirm the required quantity (bags) and delivery site location?` },
+                      { label: '📞 Executive Callback', text: `Our senior technical sales specialist will connect with you on this number shortly. Please let us know the most convenient time to call!` },
+                    ];
+                  })().map((qr, idx) => (
                     <button
                       key={idx}
                       type="button"
@@ -1277,7 +1367,7 @@ const WhatsApp = () => {
                   <input
                     type="text"
                     className="input-field"
-                    placeholder={attachedFile ? 'Add a caption (optional)...' : `Reply to ${extractMainName(selectedConv.contact_name)}...`}
+                    placeholder={attachedFile ? 'Add a caption (optional)...' : (extractMainName(selectedConv.contact_name) ? `Reply to ${extractMainName(selectedConv.contact_name)}...` : `Reply to ${getDisplayName(selectedConv.contact_name, selectedConv.contact_phone)}...`)}
                     value={msgInput}
                     onChange={e => setMsgInput(e.target.value)}
                     disabled={sendingMsg}

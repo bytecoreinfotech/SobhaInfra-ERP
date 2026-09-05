@@ -248,8 +248,11 @@ function detectInvoiceIntent(text) {
 
 // ─── 3d. Fetch & Send Customer Invoice(s) by Phone ───────────────────────────
 async function handleInvoiceRequest(supabase, fromPhone, contactName, conversationId) {
+  const mainName = extractMainName(contactName);
+  const salutation = mainName ? `Hello ${mainName}!` : 'Hello!';
+
   if (!supabase) {
-    await sendWhatsAppMessage(fromPhone, `Hello ${contactName}! 📄 I'm fetching your invoice records. Please hold on...`);
+    await sendWhatsAppMessage(fromPhone, `${salutation} 📄 I'm fetching your invoice records. Please hold on...`);
     return false;
   }
 
@@ -270,7 +273,7 @@ async function handleInvoiceRequest(supabase, fromPhone, contactName, conversati
 
     if (!invoices || invoices.length === 0) {
       // No invoices found — soft response, don't alarm
-      const noInvReply = `Hello ${contactName}! 📋 I couldn't find any invoice records linked to your number.\n\nThis might be because:\n• Your number may not be registered with us\n• Bills may be under a different contact\n\nPlease contact our team and we'll assist you right away! 📞`;
+      const noInvReply = `${salutation} 📋 I couldn't find any invoice records linked to your number.\n\nThis might be because:\n• Your number may not be registered with us\n• Bills may be under a different contact\n\nPlease contact our team and we'll assist you right away! 📞`;
       await sendWhatsAppMessage(fromPhone, noInvReply);
       return true;
     }
@@ -294,7 +297,7 @@ async function handleInvoiceRequest(supabase, fromPhone, contactName, conversati
     }).join('\n\n');
 
     const summaryMsg = [
-      `Hello ${contactName}! 📄 Here are your invoice records:\n`,
+      `${salutation} 📄 Here are your invoice records:\n`,
       invLines,
       `\n📊 *Summary:*`,
       `• Total Outstanding: *${fmtAmount(totalDue)}*`,
@@ -503,7 +506,7 @@ ${sections}
 ## STRICT RULES
 1. Be friendly and concise (under 3 sentences). Use relevant emojis.
 2. CRITICAL GREETING RULE: Do NOT say "Namaste" or "Hello" in every message! Only use a greeting on the FIRST message of a conversation. If this is an ongoing chat or follow-up question, answer directly without repeating greetings or welcomes.
-3. NAME RULE: When addressing the customer, use ONLY their given/main first name (e.g. "Ajit"), never full name with surname, honorifics, or company names (do NOT say "Ajit Kumar", say "Ajit").
+3. NAME RULE: When addressing the customer, use ONLY their given/main first name (e.g. "Ajit"), never full name with surname, honorifics, or company names (do NOT say "Ajit Kumar", say "Ajit"). NEVER address the customer as "Customer", "Customer 1", "Recipient", or "User". If their personal name is not known, simply say "Namaste!" or "Hello!" without any placeholder name.
 4. For pricing: Always quote only from the knowledge base above. Never invent a price.
 5. For negotiation ("rate kam hoga?", "discount milega?", "any offer?"): Record their interest and connect them to the sales team. Do NOT promise a discount.
 6. For complaints or urgent issues: Connect to sales team immediately.
@@ -514,9 +517,11 @@ ${sections}
 
 // ─── 6. Multi-Model AI Fallback Chain (OpenRouter + Multi-LLM) ──────────────
 async function generateAIResponse(messageText, contactName, systemPrompt, isHandoffPending = false, assignedRep = 'Pooja Kumari') {
-  let userPrompt = `Customer (${contactName}) says: "${messageText}"\n\nReply directly as the AI Sales Assistant for Sobhainfra Tech:`;
+  const cleanFirst = extractMainName(contactName);
+  const userLabel = cleanFirst ? cleanFirst : 'Client';
+  let userPrompt = `${userLabel} says: "${messageText}"\n\nReply directly as the AI Sales Assistant for Sobhainfra Tech:`;
   if (isHandoffPending) {
-    userPrompt = `Customer (${contactName}) says: "${messageText}"
+    userPrompt = `${userLabel} says: "${messageText}"
 [EXECUTIVE COPILOT CONTEXT: The chat is currently assigned to Senior Sales Executive (${assignedRep}). The executive will connect with the customer shortly for custom rate lists, project quotations, or commercial negotiation.
 YOUR ROLE: If the customer asks ANY product, technical, application, specification, coverage, curing, or company question, answer it thoroughly and helpfully from the knowledge base, and mention that ${assignedRep} has also been alerted and will connect with them shortly for custom quotes or bulk booking.
 If the customer asks for custom discounts, credit terms, or human negotiation, politely clarify that ${assignedRep} has been notified and will discuss that directly.]
@@ -626,7 +631,7 @@ Reply directly as the Sobhainfra Tech AI Sales & Technical Specialist Copilot:`;
   return { reply, modelUsed: 'deterministic_kb', promptTokensEst: 0, completionTokensEst: 0 };
 }
 
-// ─── 7. Grounded Deterministic Master KB Engine (Sobhainfra Tech Grounded) ─────
+// ─── 7. Grounded Deterministic Master KB Engine & Name Intelligence ─────
 const SURNAME_SET = new Set([
   'kumar', 'kumari', 'singh', 'sharma', 'patel', 'patil', 'shah', 'jain', 'gupta', 'verma', 
   'mehta', 'yadav', 'mishra', 'tiwari', 'pandey', 'jha', 'das', 'ali', 'khan', 'narigra', 
@@ -634,10 +639,49 @@ const SURNAME_SET = new Set([
   'shri', 'mr', 'mrs', 'dr', 'er', 'pvt', 'ltd', 'enterprises', 'enterprise', 'traders'
 ]);
 
+function isGenericName(name) {
+  if (!name || typeof name !== 'string') return true;
+  const trimmed = name.trim();
+  if (!trimmed) return true;
+  if (/^customer(\s*\d+)?$/i.test(trimmed)) return true;
+  if (/^recipient(\s*\d+)?$/i.test(trimmed)) return true;
+  if (/^whatsapp\s*user(\s*\(.*\))?$/i.test(trimmed)) return true;
+  if (/^user(\s*\d+)?$/i.test(trimmed)) return true;
+  if (/^client(\s*\d+)?$/i.test(trimmed)) return true;
+  if (/^valued\s*(customer|client)$/i.test(trimmed)) return true;
+  if (/^sir\s*\/?\s*ma'?am$/i.test(trimmed)) return true;
+  if (/^new\s*(lead|contact|inquiry)$/i.test(trimmed)) return true;
+  const digitsOnly = trimmed.replace(/\D/g, '');
+  if (digitsOnly.length >= 7 && trimmed.replace(/[\d\s+\-()]/g, '').length === 0) return true;
+  return false;
+}
+
+function formatPhoneNumber(phone) {
+  if (!phone) return '';
+  const digits = String(phone).replace(/\D/g, '');
+  if (digits.length === 12 && digits.startsWith('91')) {
+    return `+91 ${digits.slice(2, 7)} ${digits.slice(7)}`;
+  }
+  if (digits.length === 10) {
+    return `+91 ${digits.slice(0, 5)} ${digits.slice(5)}`;
+  }
+  if (String(phone).startsWith('+')) return String(phone);
+  return `+${phone}`;
+}
+
+function getDisplayName(contactName, contactPhone) {
+  if (contactName && !isGenericName(contactName)) {
+    return contactName.trim();
+  }
+  return formatPhoneNumber(contactPhone) || 'New Inquiry';
+}
+
 function extractMainName(fullName, companyName = '') {
   let name = (fullName || '').trim();
-  if (!name && companyName) name = companyName.trim();
-  if (!name) return 'Sir/Ma\'am';
+  if (isGenericName(name)) {
+    name = (companyName || '').trim();
+  }
+  if (isGenericName(name)) return '';
 
   if (name.includes('-')) {
     const parts = name.split('-');
@@ -651,15 +695,15 @@ function extractMainName(fullName, companyName = '') {
   }
 
   let words = name.split(/\s+/).filter(Boolean);
-  if (words.length === 0) return 'Sir/Ma\'am';
+  if (words.length === 0) return '';
 
-  const firstWordLower = words[0].toLowerCase().replace(/[^a-z]/g, '');
+  const firstWordLower = words[0].toLowerCase().replace(/[^\p{L}]/gu, '');
   if (['mr', 'shri', 'dr', 'er', 'kumar'].includes(firstWordLower) && words.length > 1) {
     words = words.slice(1);
   }
 
   while (words.length > 1) {
-    const lastWordLower = words[words.length - 1].toLowerCase().replace(/[^a-z]/g, '');
+    const lastWordLower = words[words.length - 1].toLowerCase().replace(/[^\p{L}]/gu, '');
     if (SURNAME_SET.has(lastWordLower)) {
       words.pop();
     } else {
@@ -668,18 +712,18 @@ function extractMainName(fullName, companyName = '') {
   }
 
   let main = words[0] || name;
-  main = main.replace(/[^a-zA-Z0-9.]/g, '');
-  if (!main) return 'Sir/Ma\'am';
+  main = main.replace(/[^\p{L}\p{N}]/gu, '');
+  if (!main || isGenericName(main)) return '';
 
   if (main.length <= 3 && main.toUpperCase() === main) {
     return main;
   }
-  return main.charAt(0).toUpperCase() + main.slice(1).toLowerCase();
+  return main.charAt(0).toUpperCase() + main.slice(1);
 }
 
 function deterministicReply(text, fullName, isFirstGreeting = false, isHandoffPending = false, assignedRep = 'Pooja Kumari') {
   const name = extractMainName(fullName);
-  const greetingPrefix = isFirstGreeting ? `Namaste ${name}! ` : '';
+  const greetingPrefix = isFirstGreeting ? (name ? `Namaste ${name}! ` : 'Namaste! ') : '';
   const lower = (text || '').toLowerCase();
   const handoffFooter = isHandoffPending
     ? `\n\n📞 Note: Humare senior sales executive (*${assignedRep}*) bhi aapse customized quotes aur bulk delivery schedule ke liye jald hi connect karenge!`
@@ -754,9 +798,11 @@ function deterministicReply(text, fullName, isFirstGreeting = false, isHandoffPe
 
   // Default Greeting / Welcome (only on first greeting, otherwise direct helpful response)
   if (isFirstGreeting) {
-    return `Namaste ${name}! 👋 Welcome to *Sobhainfra Tech Private Limited* (Har Nirman Ki Jaan).\n\nHum high-quality dry mix building materials manufacture karte hain:\n• Sobha Block Fix (AAC Mortar)\n• Sobha Plast (Ready Mix Plaster)\n• Tile Adhesives (Type 1 to 4)\n• Super Fine Flyash & GGBS\n\nAapko kis product ki jankari chahiye?`;
+    const welcomeSalutation = name ? `Namaste ${name}! 👋` : 'Namaste! 👋';
+    return `${welcomeSalutation} Welcome to *Sobhainfra Tech Private Limited* (Har Nirman Ki Jaan).\n\nHum high-quality dry mix building materials manufacture karte hain:\n• Sobha Block Fix (AAC Mortar)\n• Sobha Plast (Ready Mix Plaster)\n• Tile Adhesives (Type 1 to 4)\n• Super Fine Flyash & GGBS\n\nAapko kis product ki jankari chahiye?`;
   }
-  return `Ji ${name}, aapko kis product ki jankari ya rate chahiye? Humare products: Sobha Block Fix, Ready Mix Plaster, Tile Adhesives, ya Flyash & GGBS.`;
+  const followUpSalutation = name ? `Ji ${name},` : 'Ji,';
+  return `${followUpSalutation} aapko kis product ki jankari ya rate chahiye? Humare products: Sobha Block Fix, Ready Mix Plaster, Tile Adhesives, ya Flyash & GGBS.`;
 }
 
 // ─── 8. Delivery & Read Receipt Handler (Spec §11, §15) ─────────────────────
@@ -985,7 +1031,8 @@ exports.handler = async (event) => {
     const msg = value.messages[0];
     const providerEventId = msg.id;
     const fromPhone = msg.from;
-    const contactName = value.contacts?.[0]?.profile?.name || 'Customer';
+    const rawProfileName = value.contacts?.[0]?.profile?.name?.trim();
+    const cleanFromDigits = fromPhone.replace(/[^\d]/g, '').slice(-10);
 
     // Parse message text across all message types
     let messageText = msg.text?.body || msg.interactive?.button_reply?.title || msg.interactive?.list_reply?.title || msg.button?.text || '';
@@ -993,7 +1040,11 @@ exports.handler = async (event) => {
     if (!messageText && msg.type === 'document') messageText = 'Document received';
     if (!messageText) messageText = 'Hi';
 
-    console.log(JSON.stringify({ step: 'incoming', wamid: providerEventId, from: fromPhone, name: contactName, text: messageText }));
+    // Smart real name discovery: prioritize WhatsApp profile name sent by Meta
+    let resolvedRealName = (!isGenericName(rawProfileName)) ? rawProfileName : null;
+    let contactName = resolvedRealName || '';
+
+    console.log(JSON.stringify({ step: 'incoming', wamid: providerEventId, from: fromPhone, profileName: rawProfileName, text: messageText }));
 
     // Check for opt-out
     const upperMsg = messageText.trim().toUpperCase();
@@ -1018,6 +1069,8 @@ exports.handler = async (event) => {
     let conversationMode = 'AI ACTIVE';
     let conversationId = null;
     let leadId = null;
+    let activeConv = null;
+    let assignedRep = 'Pooja Kumari';
 
     if (supabase) {
       try {
@@ -1036,19 +1089,46 @@ exports.handler = async (event) => {
           payload: body, processed: true,
         }], { onConflict: 'provider_event_id' });
 
+        // Check if customer exists in Google Sheet master directory (customer_master)
+        let sheetCustomerName = null;
+        if (!resolvedRealName && cleanFromDigits.length === 10) {
+          try {
+            const { data: sheetCust } = await supabase
+              .from('customer_master')
+              .select('company_name, contact_person')
+              .ilike('contact_number', `%${cleanFromDigits}%`)
+              .limit(1)
+              .maybeSingle();
+            if (sheetCust) {
+              sheetCustomerName = sheetCust.contact_person
+                ? `${sheetCust.contact_person} (${sheetCust.company_name})`
+                : sheetCust.company_name;
+              resolvedRealName = sheetCustomerName;
+            }
+          } catch {}
+        }
+
         // Lead lookup with multi-format phone search (use limit(1) to avoid PGRST116 multi-row error)
-        const cleanFromDigits = fromPhone.replace(/[^\d]/g, '');
         const { data: existingLeads } = await supabase.from('leads')
-          .select('id')
+          .select('id, name')
           .or(`phone.eq.${fromPhone},phone.eq.+${fromPhone},phone.eq.${cleanFromDigits},phone.eq.+${cleanFromDigits}`)
           .limit(1);
 
         if (existingLeads && existingLeads.length > 0) {
           leadId = existingLeads[0].id;
+          if (!resolvedRealName && existingLeads[0].name && !isGenericName(existingLeads[0].name)) {
+            resolvedRealName = existingLeads[0].name;
+          }
+          // If lead name was generic (e.g. 'Customer' or 'WhatsApp User') and we now have a real profile name, update lead
+          if (resolvedRealName && isGenericName(existingLeads[0].name)) {
+            try {
+              await supabase.from('leads').update({ name: resolvedRealName }).eq('id', leadId);
+            } catch {}
+          }
         } else {
           const newLeadPayload = {
             organization_id: DEFAULT_ORG_ID,
-            name: contactName || `WhatsApp User (${fromPhone})`,
+            name: resolvedRealName || formatPhoneNumber(fromPhone),
             phone: fromPhone.startsWith('+') ? fromPhone : '+' + fromPhone,
             source: 'WhatsApp',
             status: 'New',
@@ -1059,21 +1139,60 @@ exports.handler = async (event) => {
           leadId = newLead?.id;
         }
 
-        // Conversation upsert with multi-format phone matching (no lead_id filter - int/UUID type mismatch)
-        const { data: conv } = await supabase.from('whatsapp_conversations')
-          .select('id, conversation_mode, unread_count')
+        contactName = resolvedRealName || '';
+
+        // Conversation lookup with multi-format phone matching & automatic deduplication
+        const { data: existingConvs } = await supabase.from('whatsapp_conversations')
+          .select('id, conversation_mode, unread_count, contact_name, assigned_salesperson_id, created_at')
           .or(`contact_phone.eq.${fromPhone},contact_phone.eq.+${fromPhone},contact_phone.eq.${cleanFromDigits},contact_phone.eq.+${cleanFromDigits}`)
-          .maybeSingle();
+          .order('created_at', { ascending: true }); // Oldest / primary conversation first
+
+        let conv = null;
+        if (existingConvs && existingConvs.length > 0) {
+          // Prefer conversation with custom/human name (e.g. 'Test1'), or oldest one with history
+          conv = existingConvs.find(c => c.contact_name && !isGenericName(c.contact_name)) || existingConvs[0];
+
+          // If duplicate conversations exist for this phone, merge them into the primary conversation
+          if (existingConvs.length > 1) {
+            const duplicateIds = existingConvs.filter(c => c.id !== conv.id).map(c => c.id);
+            for (const dupId of duplicateIds) {
+              try {
+                await supabase.from('whatsapp_messages').update({ conversation_id: conv.id }).eq('conversation_id', dupId);
+                await supabase.from('whatsapp_conversations').delete().eq('id', dupId);
+                console.log(`[webhook] Merged duplicate conversation ${dupId} into primary ${conv.id}`);
+              } catch (cleanErr) {
+                console.warn('[webhook] duplicate conversation cleanup warning:', cleanErr.message);
+              }
+            }
+          }
+        }
+
+        activeConv = conv;
 
         let isFirstGreeting = true;
         if (conv) {
           conversationId = conv.id;
           conversationMode = conv.conversation_mode || 'AI ACTIVE';
-          await supabase.from('whatsapp_conversations').update({
+
+          // If conversation already had a custom real name (e.g. user renamed it to 'Test1'), preserve it!
+          if (conv.contact_name && !isGenericName(conv.contact_name)) {
+            contactName = conv.contact_name;
+          }
+
+          const convUpdate = {
             last_message_text: messageText,
             last_message_at: new Date().toISOString(),
             unread_count: (conv.unread_count || 0) + 1,
-          }).eq('id', conv.id);
+          };
+
+          // If the conversation name in DB is currently generic (e.g. 'Customer' or 'Recipient 5'),
+          // and we now have a real name (from profile or sheet), update it immediately!
+          if (isGenericName(conv.contact_name) && resolvedRealName) {
+            convUpdate.contact_name = resolvedRealName;
+            contactName = resolvedRealName;
+          }
+
+          await supabase.from('whatsapp_conversations').update(convUpdate).eq('id', conv.id);
 
           // Check if outbound messages were already sent in this conversation
           try {
@@ -1089,7 +1208,7 @@ exports.handler = async (event) => {
         } else {
           const newConvPayload = {
             contact_phone: fromPhone.startsWith('+') ? fromPhone : '+' + fromPhone,
-            contact_name: contactName,
+            contact_name: resolvedRealName || null,
             conversation_mode: 'AI ACTIVE',
             last_message_text: messageText,
             last_message_at: new Date().toISOString(),
@@ -1240,7 +1359,6 @@ exports.handler = async (event) => {
       ['talk to human', 'talk to agent', 'speak to human', 'connect to human', 'human takeover', 'call me', 'talk to sales', 'salesperson', 'executive'].some(t => lowerMsg.includes(t));
 
     if (isHumanTrigger) {
-      const assignedRep = conv?.assigned_salesperson || 'Pooja Kumari';
       if (supabase && conversationId) {
         await supabase.from('whatsapp_conversations').update({
           conversation_mode: 'HUMAN TAKEOVER REQUESTED',
@@ -1263,9 +1381,10 @@ exports.handler = async (event) => {
       }
 
       const mainName = extractMainName(contactName);
+      const salutation = mainName ? `Namaste ${mainName}!` : 'Namaste!';
       const handoffReply = isFirstGreeting
-        ? `👋 Namaste ${mainName}!\n\nI have assigned your request to our Senior Sales Executive (*${assignedRep}*).\n\n📞 They have been notified and will connect with you directly on this number shortly!\n\n💡 *In the meantime, our AI Assistant is right here 24/7:* feel free to ask about product technical specifications, AAC block mortar coverage, plaster mixing ratios, or packing sizes.\n\nWhat can I help you check right now?`
-        : `👋 Namaste ${mainName}!\n\nI have alerted our Senior Sales Executive (*${assignedRep}*) regarding your inquiry.\n\n📞 They are reviewing your requirement and will connect with you on WhatsApp / call shortly!\n\n💡 *In the meantime, I am right here to help you:* feel free to ask any technical, application, or packing questions about our products right here!`;
+        ? `👋 ${salutation}\n\nI have assigned your request to our Senior Sales Executive (*${assignedRep}*).\n\n📞 They have been notified and will connect with you directly on this number shortly!\n\n💡 *In the meantime, our AI Assistant is right here 24/7:* feel free to ask about product technical specifications, AAC block mortar coverage, plaster mixing ratios, or packing sizes.\n\nWhat can I help you check right now?`
+        : `👋 ${salutation}\n\nI have alerted our Senior Sales Executive (*${assignedRep}*) regarding your inquiry.\n\n📞 They are reviewing your requirement and will connect with you on WhatsApp / call shortly!\n\n💡 *In the meantime, I am right here to help you:* feel free to ask any technical, application, or packing questions about our products right here!`;
       const handoffButtons = [
         { id: 'btn_catalog', title: '📄 Get Catalog' },
         { id: 'btn_pricing', title: '💰 Get Quote' },
@@ -1311,8 +1430,9 @@ exports.handler = async (event) => {
       );
 
       const mainName = extractMainName(contactName);
+      const salutation = mainName ? `Namaste ${mainName}!` : 'Namaste!';
       const accompanyingText = isFirstGreeting
-        ? `📄 Namaste ${mainName}!\n\nPlease find our official *Sobhainfra Tech Product Catalog & Technical Specification Guide* attached above in PDF format.\n\nIt covers our complete manufacturing range:\n• Sobha Block Fix (Thin Joint Mortar)\n• Sobha Plast (Ready Mix Plaster)\n• Sobha Tile Adhesives (CE, VT, SA, HF)\n• Super Fine Flyash & GGBS Cement\n\nHow would you like to proceed?`
+        ? `📄 ${salutation}\n\nPlease find our official *Sobhainfra Tech Product Catalog & Technical Specification Guide* attached above in PDF format.\n\nIt covers our complete manufacturing range:\n• Sobha Block Fix (Thin Joint Mortar)\n• Sobha Plast (Ready Mix Plaster)\n• Sobha Tile Adhesives (CE, VT, SA, HF)\n• Super Fine Flyash & GGBS Cement\n\nHow would you like to proceed?`
         : `📄 Please find our official *Sobhainfra Tech Product Catalog & Technical Specification Guide* attached above in PDF format.\n\nIt covers our complete manufacturing range:\n• Sobha Block Fix (Thin Joint Mortar)\n• Sobha Plast (Ready Mix Plaster)\n• Sobha Tile Adhesives (CE, VT, SA, HF)\n• Super Fine Flyash & GGBS Cement\n\nHow would you like to proceed?`;
       const brochureButtons = [
         { id: 'btn_rate_list', title: '💰 Rate List' },
@@ -1388,8 +1508,9 @@ exports.handler = async (event) => {
       }
 
       const mainName = extractMainName(contactName);
+      const salutation = mainName ? `Namaste ${mainName}!` : 'Namaste!';
       const rateReply = isFirstGreeting
-        ? `💰 Namaste ${mainName}!\n\nOur official rate lists and customized project quotations are provided directly by our senior sales specialists based on your delivery location and order quantity.\n\nI have transferred your request to our executive who will share the latest rate chart and connect with you shortly! 📞\n\nIn the meantime, feel free to ask any technical, application, or packing questions about our products right here!`
+        ? `💰 ${salutation}\n\nOur official rate lists and customized project quotations are provided directly by our senior sales specialists based on your delivery location and order quantity.\n\nI have transferred your request to our executive who will share the latest rate chart and connect with you shortly! 📞\n\nIn the meantime, feel free to ask any technical, application, or packing questions about our products right here!`
         : `💰 Our official rate lists and customized project quotations are provided directly by our senior sales specialists based on your delivery location and order quantity.\n\nI have transferred your request to our executive who will share the latest rate chart and connect with you shortly! 📞\n\nIn the meantime, feel free to ask any technical, application, or packing questions about our products right here!`;
       const rateButtons = [
         { id: 'btn_catalog', title: '📄 Get Catalog' },
@@ -1432,7 +1553,6 @@ exports.handler = async (event) => {
     // ── Smart Hybrid Copilot Engine (Intercom / Agentforce Style) ──
     // In HUMAN ACTIVE mode, silence AI ONLY if a human agent is actively in a live chat (< 15 mins)
     const isHandoffPending = (conversationMode === 'HUMAN ACTIVE' || conversationMode === 'HUMAN TAKEOVER REQUESTED');
-    const assignedRep = conv?.assigned_salesperson || 'Pooja Kumari';
 
     if (conversationMode === 'HUMAN ACTIVE' && supabase && conversationId) {
       try {
@@ -1479,8 +1599,11 @@ exports.handler = async (event) => {
       aiResult = await generateAIResponse(messageText, contactName, systemPrompt, isHandoffPending, assignedRep);
     } catch (aiErr) {
       console.warn('[AI Model Execution Error] Triggering mandatory guided interactive fallback:', aiErr.message);
+      const mainName = extractMainName(contactName);
       aiResult = {
-        reply: `Hello ${contactName}! 👋 How can we assist you with our product range today? Please select one of our quick options below or request a sales specialist:`,
+        reply: mainName
+          ? `Namaste ${mainName}! 👋 How can we assist you with our product range today? Please select one of our quick options below or request a sales specialist:`
+          : `Namaste! 👋 Welcome to *Sobhainfra Tech*. How can we assist you with our product range today? Please select one of our quick options below or request a sales specialist:`,
         modelUsed: 'mandatory_interactive_fallback',
         promptTokensEst: 0,
         completionTokensEst: 0,

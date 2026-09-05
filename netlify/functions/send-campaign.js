@@ -248,6 +248,22 @@ async function sendMetaWhatsAppMediaOrText(to, text, mediaType = 'text', mediaUr
 }
 
 // ─── 4. Personalization helper ────────────────────────────────────────────────
+function isGenericName(name) {
+  if (!name || typeof name !== 'string') return true;
+  const trimmed = name.trim();
+  if (!trimmed) return true;
+  if (/^customer(\s*\d+)?$/i.test(trimmed)) return true;
+  if (/^recipient(\s*\d+)?$/i.test(trimmed)) return true;
+  if (/^whatsapp\s*user(\s*\(.*\))?$/i.test(trimmed)) return true;
+  if (/^user(\s*\d+)?$/i.test(trimmed)) return true;
+  if (/^client(\s*\d+)?$/i.test(trimmed)) return true;
+  if (/^valued\s*(customer|client)$/i.test(trimmed)) return true;
+  if (/^sir\s*\/?\s*ma'?am$/i.test(trimmed)) return true;
+  const digitsOnly = trimmed.replace(/\D/g, '');
+  if (digitsOnly.length >= 7 && trimmed.replace(/[\d\s+\-()]/g, '').length === 0) return true;
+  return false;
+}
+
 function personalize(template, recipient, campaignDefaults = {}) {
   if (!template) return '';
   const lead = recipient.lead || recipient || {};
@@ -258,7 +274,8 @@ function personalize(template, recipient, campaignDefaults = {}) {
   const defaultCompany = campaignDefaults.company || 'our company';
   const defaultPhone = campaignDefaults.phone || '';
 
-  const name = lead.name || campaignDefaults.name || 'Valued Customer';
+  const rawName = lead.name || campaignDefaults.name || '';
+  const name = isGenericName(rawName) ? (campaignDefaults.name || 'Valued Client') : rawName;
   const product = isOverride ? defaultProduct : (lead.property_interest || lead.product || defaultProduct);
   const budget = isOverride ? defaultBudget : (lead.budget || defaultBudget);
   const company = isOverride ? defaultCompany : (lead.company_name || defaultCompany);
@@ -414,8 +431,9 @@ exports.handler = async (event) => {
             if (conv?.id) {
               convId = conv.id;
             } else {
+              const safeName = (recipientLead.name && !isGenericName(recipientLead.name)) ? recipientLead.name.trim() : null;
               const { data: newConv } = await supabase.from('whatsapp_conversations').insert([{
-                contact_name: recipientLead.name || 'Customer',
+                contact_name: safeName,
                 contact_phone: cleanPhone,
                 conversation_mode: 'AI ACTIVE',
                 last_message_text: personalizedMsg || (effectiveMediaUrl ? `[${effectiveMediaType}]` : 'Campaign broadcast'),
