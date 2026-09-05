@@ -1380,10 +1380,10 @@ const WhatsApp = () => {
                   {selectedConv.conversation_mode === 'HUMAN TAKEOVER REQUESTED' ? (
                     <div style={{ background: 'rgba(239, 68, 68, 0.07)', border: '1px solid rgba(239, 68, 68, 0.25)', borderRadius: '8px', padding: '0.65rem 0.75rem', fontSize: '0.72rem' }}>
                       <div style={{ color: '#dc2626', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                        <span>🚨 Customer Escalation</span>
+                        <span>🚨 Executive Escalation Requested</span>
                       </div>
                       <div style={{ color: 'var(--text-secondary)', marginTop: '0.25rem', lineHeight: 1.4 }}>
-                        Customer requested Rate List or Specialist Callback. AI is holding the chat safely until you take over.
+                        Customer requested quotation or executive callback. Smart Copilot continues answering product & technical questions until you send a manual reply.
                       </div>
                       <button
                         onClick={() => handleModeChange('HUMAN ACTIVE')}
@@ -1395,24 +1395,24 @@ const WhatsApp = () => {
                     </div>
                   ) : selectedConv.conversation_mode === 'HUMAN ACTIVE' ? (
                     <div style={{ background: 'rgba(99, 102, 241, 0.06)', border: '1px solid rgba(99, 102, 241, 0.2)', borderRadius: '8px', padding: '0.65rem 0.75rem', fontSize: '0.72rem' }}>
-                      <div style={{ color: 'var(--accent-primary)', fontWeight: 600 }}>
-                        👤 Human Mode Active
+                      <div style={{ color: 'var(--accent-primary)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                        <span>👤 Hybrid Executive Mode</span>
                       </div>
                       <div style={{ color: 'var(--text-secondary)', marginTop: '0.25rem', lineHeight: 1.4 }}>
-                        AI auto-reply is muted. Reply manually using the chat composer.
+                        You are in manual control. When you are away or idle for &gt; 15 mins, Smart Copilot safely answers product and technical questions so the customer is never left waiting!
                       </div>
                       <button
                         onClick={() => handleModeChange('AI ACTIVE')}
                         className="btn btn-sm btn-secondary"
                         style={{ width: '100%', marginTop: '0.5rem', fontSize: '0.74rem', justifyContent: 'center' }}
                       >
-                        <Sparkles size={12} color="var(--accent-primary)" /> Resume AI Copilot
+                        <Sparkles size={12} color="var(--accent-primary)" /> Set to 100% AI Autopilot
                       </button>
                     </div>
                   ) : (
                     <div style={{ background: 'rgba(16, 185, 129, 0.06)', border: '1px solid rgba(16, 185, 129, 0.2)', borderRadius: '8px', padding: '0.65rem 0.75rem', fontSize: '0.72rem' }}>
                       <div style={{ color: '#059669', fontWeight: 600 }}>
-                        ⚡ AI Copilot Autopilot
+                        ⚡ 100% AI Autopilot
                       </div>
                       <div style={{ color: 'var(--text-secondary)', marginTop: '0.25rem', lineHeight: 1.4 }}>
                         AI answers product, specification, and company queries automatically 24/7.
@@ -1422,7 +1422,7 @@ const WhatsApp = () => {
                         className="btn btn-sm btn-secondary"
                         style={{ width: '100%', marginTop: '0.5rem', fontSize: '0.74rem', justifyContent: 'center' }}
                       >
-                        <User size={12} /> Mute AI & Take Over
+                        <User size={12} /> Mute AI & Switch to Manual
                       </button>
                     </div>
                   )}

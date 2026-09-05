@@ -513,8 +513,15 @@ ${sections}
 }
 
 // ─── 6. Multi-Model AI Fallback Chain (OpenRouter + Multi-LLM) ──────────────
-async function generateAIResponse(messageText, contactName, systemPrompt) {
-  const userPrompt = `Customer (${contactName}) says: "${messageText}"\n\nReply directly as the AI Sales Assistant for Sobhainfra Tech:`;
+async function generateAIResponse(messageText, contactName, systemPrompt, isHandoffPending = false, assignedRep = 'Pooja Kumari') {
+  let userPrompt = `Customer (${contactName}) says: "${messageText}"\n\nReply directly as the AI Sales Assistant for Sobhainfra Tech:`;
+  if (isHandoffPending) {
+    userPrompt = `Customer (${contactName}) says: "${messageText}"
+[EXECUTIVE COPILOT CONTEXT: The chat is currently assigned to Senior Sales Executive (${assignedRep}). The executive will connect with the customer shortly for custom rate lists, project quotations, or commercial negotiation.
+YOUR ROLE: If the customer asks ANY product, technical, application, specification, coverage, curing, or company question, answer it thoroughly and helpfully from the knowledge base, and mention that ${assignedRep} has also been alerted and will connect with them shortly for custom quotes or bulk booking.
+If the customer asks for custom discounts, credit terms, or human negotiation, politely clarify that ${assignedRep} has been notified and will discuss that directly.]
+Reply directly as the Sobhainfra Tech AI Sales & Technical Specialist Copilot:`;
+  }
   let promptTokensEst = Math.ceil((systemPrompt.length + userPrompt.length) / 4);
   let completionTokensEst = 0;
 
@@ -614,8 +621,8 @@ async function generateAIResponse(messageText, contactName, systemPrompt) {
   }
 
   // Level 4: Grounded Deterministic Master KB Engine (Guaranteed 100% Uptime & Strict Factual Accuracy)
-  console.log(JSON.stringify({ step: 'ai', model: 'deterministic_kb', status: 'active' }));
-  const reply = deterministicReply(messageText, contactName);
+  console.log(JSON.stringify({ step: 'ai', model: 'deterministic_kb', status: 'active', isHandoffPending }));
+  const reply = deterministicReply(messageText, contactName, false, isHandoffPending, assignedRep);
   return { reply, modelUsed: 'deterministic_kb', promptTokensEst: 0, completionTokensEst: 0 };
 }
 
@@ -670,15 +677,18 @@ function extractMainName(fullName, companyName = '') {
   return main.charAt(0).toUpperCase() + main.slice(1).toLowerCase();
 }
 
-function deterministicReply(text, fullName, isFirstGreeting = false) {
+function deterministicReply(text, fullName, isFirstGreeting = false, isHandoffPending = false, assignedRep = 'Pooja Kumari') {
   const name = extractMainName(fullName);
   const greetingPrefix = isFirstGreeting ? `Namaste ${name}! ` : '';
   const lower = (text || '').toLowerCase();
+  const handoffFooter = isHandoffPending
+    ? `\n\n📞 Note: Humare senior sales executive (*${assignedRep}*) bhi aapse customized quotes aur bulk delivery schedule ke liye jald hi connect karenge!`
+    : '';
 
   // 1. Human handoff & negotiation triggers
   const handoffTriggers = ['discount', 'kam hoga', 'negotiat', 'complaint', 'salesperson', 'agent', 'manager', 'price kam', 'offer', 'best rate'];
   if (handoffTriggers.some(t => lower.includes(t))) {
-    return `${greetingPrefix}💬 Bulk orders, special project discounts aur customized pricing humari sales team directly handle karti hai. Maine aapki enquiry senior executive ko forward kar di hai, wo aapse jald hi contact karenge! 📞`;
+    return `${greetingPrefix}💬 Bulk project discounts, commercial credit, aur custom rates humare senior sales executive (*${assignedRep}*) directly finalize karte hain. Maine aapki enquiry unhe forward kar di hai, wo aapse jald hi WhatsApp/call par connect karenge! 📞\n\nIs dauran aap kisi bhi product ke technical specs ya application details right here puch sakte hain!`;
   }
 
   // 2. Invoice / Bill requests
@@ -688,48 +698,48 @@ function deterministicReply(text, fullName, isFirstGreeting = false) {
 
   // 3. Price / Rate List inquiries
   if (lower.includes('price') || lower.includes('rate') || lower.includes('kitna') || lower.includes('how much') || lower.includes('cost') || lower.includes('bhav')) {
-    return `${greetingPrefix}💰 Current official rate list aur customized volume quotations delivery location aur quantity par depend karte hain. Humare sales executive aapse latest rate chart ke sath jald hi connect karenge! 📞`;
+    return `${greetingPrefix}💰 Official rate lists aur customized project quotations humare sales executive (*${assignedRep}*) delivery location aur order quantity ke hisab se directly share karte hain. Wo aapse latest rate chart ke sath jald hi connect karenge! 📞\n\nIs dauran aap kisi bhi product ke technical specifications ya packaging details right here puch sakte hain!`;
   }
 
   // 4. Product Specific Queries:
   // Tile Adhesive Type 1 (CE)
   if (lower.includes('type 1') || lower.includes(' ce') || (lower.includes('ceramic') && lower.includes('adhesive'))) {
-    return `*Sobha Tile Adhesive Type 1 (CE)* ceramic tiles ke liye internal floors aur walls par dry conditions mein use hota hai. Ye polymer-modified cement-based adhesive hai jo 40 KG bag packaging mein aata hai.`;
+    return `*Sobha Tile Adhesive Type 1 (CE)* ceramic tiles ke liye internal floors aur walls par dry conditions mein use hota hai. Ye polymer-modified cement-based adhesive hai jo 40 KG bag packaging mein aata hai.${handoffFooter}`;
   }
   // Tile Adhesive Type 2 (VT)
   if (lower.includes('type 2') || lower.includes(' vt') || lower.includes('vitrified') || (lower.includes('tile adhesive') && !lower.includes('type 3') && !lower.includes('type 4'))) {
-    return `*Sobha Tile Adhesive Type 2 (VT)* vitrified tiles aur natural stones ke liye internal aur external applications dono mein suitable hai (up to 600x600mm). Ye high polymer flexible adhesive hai (40 KG & 20 KG bags).`;
+    return `*Sobha Tile Adhesive Type 2 (VT)* vitrified tiles aur natural stones ke liye internal aur external applications dono mein suitable hai (up to 600x600mm). Ye high polymer flexible adhesive hai (40 KG & 20 KG bags).${handoffFooter}`;
   }
   // Tile Adhesive Type 3 (SA)
   if (lower.includes('type 3') || lower.includes(' sa') || lower.includes('stone') || lower.includes('vertical')) {
-    return `*Sobha Tile Adhesive Type 3 (SA)* heavy-duty natural stone adhesive hai jo specially external vertical surfaces aur large format tiles (up to 1200x1200mm) ke liye design kiya gaya hai. Isme zero vertical slip aur high bond strength hoti hai (40 KG & 20 KG).`;
+    return `*Sobha Tile Adhesive Type 3 (SA)* heavy-duty natural stone adhesive hai jo specially external vertical surfaces aur large format tiles (up to 1200x1200mm) ke liye design kiya gaya hai. Isme zero vertical slip aur high bond strength hoti hai (40 KG & 20 KG).${handoffFooter}`;
   }
   // Tile Adhesive Type 4 (HF)
   if (lower.includes('type 4') || lower.includes(' hf') || lower.includes('mosaic') || lower.includes('pool') || lower.includes('swimming') || lower.includes('plywood') || lower.includes('metal')) {
-    return `*Sobha Tile Adhesive Type 4 (HF/HA)* highly deformable flexible adhesive hai jo glass mosaics, swimming pools, large format tiles (>1200x1200mm) aur demanding substrates (metal/wood/gypsum board) ke liye engineered hai.`;
+    return `*Sobha Tile Adhesive Type 4 (HF/HA)* highly deformable flexible adhesive hai jo glass mosaics, swimming pools, large format tiles (>1200x1200mm) aur demanding substrates (metal/wood/gypsum board) ke liye engineered hai.${handoffFooter}`;
   }
   // Sobha Block Fix
   if (lower.includes('block fix') || lower.includes('aac block') || lower.includes('block joint') || lower.includes('thin joint')) {
-    return `*Sobha Block Fix* AAC aur concrete blocks ki thin jointing (3mm–4mm) ke liye high-strength mortar hai. Isme high bond strength hoti hai aur kisi water curing ki zaroorat nahi hoti. 40 KG bag pack.`;
+    return `*Sobha Block Fix* AAC aur concrete blocks ki thin jointing (3mm–4mm) ke liye high-strength mortar hai. Isme high bond strength hoti hai aur kisi water curing ki zaroorat nahi hoti. 40 KG bag pack.${handoffFooter}`;
   }
   // Sobha Plast (Ready mix plaster)
   if (lower.includes('plast') || lower.includes('plaster') || lower.includes('ready mix')) {
-    return `*Sobha Plast* ready-mix dry plaster mortar hai jo internal aur external walls par crack-resistant aur self-curing finish deta hai. Iska coverage 16–18 sq.ft per 40 KG bag (10-12mm coat) hai. Certified IS 16777.`;
+    return `*Sobha Plast* ready-mix dry plaster mortar hai jo internal aur external walls par crack-resistant aur self-curing finish deta hai. Iska coverage 16–18 sq.ft per 40 KG bag (10-12mm coat) hai. Certified IS 16777.${handoffFooter}`;
   }
   // Flyash & GGBS
   if (lower.includes('flyash') || lower.includes('fly ash') || lower.includes('ggbs') || lower.includes('shakti')) {
-    return `Hum *Sobha Super Fine Flyash* (IS 3812 / ASTM C-618, 50 KG), *Sobha Ultra Fine Flyash Grade 1* (Micro-silica grade, IS 8812, 50 KG), aur *Sobha Shakti Micro Fine GGBS Cement* manufacture karte hain jo RMC aur high-performance concrete (M60+) ke liye ideal hain.`;
+    return `Hum *Sobha Super Fine Flyash* (IS 3812 / ASTM C-618, 50 KG), *Sobha Ultra Fine Flyash Grade 1* (Micro-silica grade, IS 8812, 50 KG), aur *Sobha Shakti Micro Fine GGBS Cement* manufacture karte hain jo RMC aur high-performance concrete (M60+) ke liye ideal hain.${handoffFooter}`;
   }
 
   // 5. Factories, Company, Leadership, Certifications
   if (lower.includes('factory') || lower.includes('plant') || lower.includes('kahan') || lower.includes('location') || lower.includes('where')) {
-    return `Humari modern manufacturing facilities Gujarat mein hain:\n1. Factory 1: Navsari (Survey No. 123, Village Amarpore – 396445)\n2. Factory 2: Valsad (NH 48, Near Kolei Khadi Sarodhi – 396001)\nHead Office: Mira Road (E), Thane, Maharashtra. Daily Capacity: 20,000+ bags/day.`;
+    return `Humari modern manufacturing facilities Gujarat mein hain:\n1. Factory 1: Navsari (Survey No. 123, Village Amarpore – 396445)\n2. Factory 2: Valsad (NH 48, Near Kolei Khadi Sarodhi – 396001)\nHead Office: Mira Road (E), Thane, Maharashtra. Daily Capacity: 20,000+ bags/day.${handoffFooter}`;
   }
   if (lower.includes('director') || lower.includes('owner') || lower.includes('founder') || lower.includes('jha') || lower.includes('company')) {
-    return `*Sobhainfra Tech Private Limited* ("Har Nirman Ki Jaan") Shobha Group ka hissa hai jo 2003 se high quality building materials manufacture kar raha hai. Leadership: Mr. Dhirendra S. Jha aur Mr. Nripendra S. Jha (Directors).`;
+    return `*Sobhainfra Tech Private Limited* ("Har Nirman Ki Jaan") Shobha Group ka hissa hai jo 2003 se high quality building materials manufacture kar raha hai. Leadership: Mr. Dhirendra S. Jha aur Mr. Nripendra S. Jha (Directors).${handoffFooter}`;
   }
   if (lower.includes('iso') || lower.includes('certificate') || lower.includes('quality') || lower.includes('standard')) {
-    return `Sobhainfra Tech *ISO 9001:2015* certified company hai (QRO Certificate No. 385Q060314300). Humare products IS 16777, IS 3812 (Part 1), aur IS 8812 standard approved hain.`;
+    return `Sobhainfra Tech *ISO 9001:2015* certified company hai (QRO Certificate No. 385Q060314300). Humare products IS 16777, IS 3812 (Part 1), aur IS 8812 standard approved hain.${handoffFooter}`;
   }
 
   // 6. Brochure / catalog queries
@@ -1230,6 +1240,7 @@ exports.handler = async (event) => {
       ['talk to human', 'talk to agent', 'speak to human', 'connect to human', 'human takeover', 'call me', 'talk to sales', 'salesperson', 'executive'].some(t => lowerMsg.includes(t));
 
     if (isHumanTrigger) {
+      const assignedRep = conv?.assigned_salesperson || 'Pooja Kumari';
       if (supabase && conversationId) {
         await supabase.from('whatsapp_conversations').update({
           conversation_mode: 'HUMAN TAKEOVER REQUESTED',
@@ -1241,8 +1252,8 @@ exports.handler = async (event) => {
           await supabase.from('tasks').insert([{
             organization_id: DEFAULT_ORG_ID,
             title: `⚡ Executive WhatsApp Callback: ${contactName}`,
-            description: `Customer ${contactName} (${fromPhone}) requested executive callback on WhatsApp: "${messageText}".`,
-            assigned_to: 'Rajesh Kumar',
+            description: `Customer ${contactName} (${fromPhone}) requested executive callback on WhatsApp: "${messageText}". Assigned to ${assignedRep}.`,
+            assigned_to: assignedRep,
             priority: 'High',
             due_date: new Date(Date.now() + 3600000).toISOString(),
             status: 'Pending',
@@ -1253,10 +1264,11 @@ exports.handler = async (event) => {
 
       const mainName = extractMainName(contactName);
       const handoffReply = isFirstGreeting
-        ? `👋 Namaste ${mainName}, I have alerted our senior sales executive to connect with you directly.\n\nWhile our team gets in touch, our AI assistant remains active right here to answer any product specifications, applications, or technical details! 📞`
-        : `👋 I have alerted our senior sales executive to connect with you directly.\n\nWhile our team gets in touch, our AI assistant remains active right here to answer any product specifications, applications, or technical details! 📞`;
+        ? `👋 Namaste ${mainName}!\n\nI have assigned your request to our Senior Sales Executive (*${assignedRep}*).\n\n📞 They have been notified and will connect with you directly on this number shortly!\n\n💡 *In the meantime, our AI Assistant is right here 24/7:* feel free to ask about product technical specifications, AAC block mortar coverage, plaster mixing ratios, or packing sizes.\n\nWhat can I help you check right now?`
+        : `👋 Namaste ${mainName}!\n\nI have alerted our Senior Sales Executive (*${assignedRep}*) regarding your inquiry.\n\n📞 They are reviewing your requirement and will connect with you on WhatsApp / call shortly!\n\n💡 *In the meantime, I am right here to help you:* feel free to ask any technical, application, or packing questions about our products right here!`;
       const handoffButtons = [
-        { id: 'btn_catalog', title: '📄 Product Catalog' },
+        { id: 'btn_catalog', title: '📄 Get Catalog' },
+        { id: 'btn_pricing', title: '💰 Get Quote' },
         { id: 'btn_specs', title: '📦 Product Specs' }
       ];
       await sendWhatsAppInteractive(fromPhone, handoffReply, handoffButtons);
@@ -1270,6 +1282,7 @@ exports.handler = async (event) => {
             sender_type: 'system',
             body: handoffReply,
             status: 'sent',
+            raw_payload: { buttons: handoffButtons },
           }]);
         } catch {}
       }
@@ -1416,22 +1429,54 @@ exports.handler = async (event) => {
       return { statusCode: 200, headers, body: JSON.stringify({ status: 'suppressed', reason: conversationMode }) };
     }
 
-    // Human mode: ONLY silence AI if an actual human agent has taken over (HUMAN ACTIVE)
-    // If conversationMode === 'HUMAN TAKEOVER REQUESTED', AI CONTINUES ANSWERING until human operator connects!
-    if (conversationMode === 'HUMAN ACTIVE') {
-      console.log(JSON.stringify({ step: 'ai_reply', status: 'human_mode', note: 'no_ai_reply_sent' }));
-      return { statusCode: 200, headers, body: JSON.stringify({ status: 'human_active' }) };
+    // ── Smart Hybrid Copilot Engine (Intercom / Agentforce Style) ──
+    // In HUMAN ACTIVE mode, silence AI ONLY if a human agent is actively in a live chat (< 15 mins)
+    const isHandoffPending = (conversationMode === 'HUMAN ACTIVE' || conversationMode === 'HUMAN TAKEOVER REQUESTED');
+    const assignedRep = conv?.assigned_salesperson || 'Pooja Kumari';
+
+    if (conversationMode === 'HUMAN ACTIVE' && supabase && conversationId) {
+      try {
+        const { data: recentHumanMsg } = await supabase
+          .from('whatsapp_messages')
+          .select('created_at')
+          .eq('conversation_id', conversationId)
+          .eq('direction', 'outbound')
+          .eq('sender_type', 'human_agent')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (recentHumanMsg?.created_at) {
+          const msSinceHuman = Date.now() - new Date(recentHumanMsg.created_at).getTime();
+          const isExplicitProductQuery = [
+            'block fix', 'plast', 'plaster', 'adhesive', 'tile', 'flyash', 'ggbs',
+            'cement', 'specs', 'specification', 'coverage', 'ratio', 'curing', 'mixing',
+            'water', 'kg', 'bag', 'thickness', 'iso', 'factory', 'navsari', 'valsad', 'amarpore'
+          ].some(w => lowerMsg.includes(w));
+
+          // Human agent sent a message recently:
+          // If customer asked a specific technical query, allow 3 min window before copilot assists.
+          // Otherwise give human agent a 15 min quiet live chat window.
+          const quietWindowMs = isExplicitProductQuery ? (3 * 60 * 1000) : (15 * 60 * 1000);
+          if (msSinceHuman < quietWindowMs) {
+            console.log(JSON.stringify({ step: 'ai_reply', status: 'human_live_session', note: 'agent_messaged_recently', msSinceHuman }));
+            return { statusCode: 200, headers, body: JSON.stringify({ status: 'human_live_session' }) };
+          }
+        }
+      } catch (err) {
+        console.warn('[Hybrid Copilot Activity Check]', err.message);
+      }
     }
 
     // Load KB and build prompt
     const kb = await loadKnowledgeBase(supabase);
     const systemPrompt = buildSystemPrompt(kb);
 
-    // Generate AI reply with Mandatory Guided Menu Fallback
+    // Generate AI reply with Smart Hybrid Copilot context
     const aiStartTime = Date.now();
     let aiResult;
     try {
-      aiResult = await generateAIResponse(messageText, contactName, systemPrompt);
+      aiResult = await generateAIResponse(messageText, contactName, systemPrompt, isHandoffPending, assignedRep);
     } catch (aiErr) {
       console.warn('[AI Model Execution Error] Triggering mandatory guided interactive fallback:', aiErr.message);
       aiResult = {
@@ -1443,29 +1488,15 @@ exports.handler = async (event) => {
     }
     const aiLatencyMs = Date.now() - aiStartTime;
 
-    console.log(JSON.stringify({ step: 'ai_reply', model: aiResult.modelUsed, replyLength: aiResult.reply?.length, latencyMs: aiLatencyMs }));
+    console.log(JSON.stringify({ step: 'ai_reply', model: aiResult.modelUsed, replyLength: aiResult.reply?.length, latencyMs: aiLatencyMs, isHandoffPending }));
 
-    // Send AI reply or Mandatory Interactive Guided Menu
-    const isFallbackMode = aiResult.modelUsed === 'mandatory_interactive_fallback' || aiResult.modelUsed === 'Deterministic KB Engine' || aiResult.modelUsed === 'Safe Fallback Engine';
-    
-    let sendResult;
-    if (isFallbackMode) {
-      // Mandatory Interactive Guided Quick Reply Buttons
-      const guidedButtons = [
-        { id: 'btn_catalog', title: '📄 Get Catalog' },
-        { id: 'btn_pricing', title: '💰 Get Quote' },
-        { id: 'btn_human', title: '👤 Talk to Executive' }
-      ];
-      sendResult = await sendWhatsAppInteractive(fromPhone, aiResult.reply, guidedButtons);
-    } else {
-      // Standard AI response: ALWAYS include all 3 interactive buttons (Catalog, Quote, Executive)
-      const aiModeButtons = [
-        { id: 'btn_catalog', title: '📄 Get Catalog' },
-        { id: 'btn_pricing', title: '💰 Get Quote' },
-        { id: 'btn_human', title: '👤 Talk to Executive' }
-      ];
-      sendResult = await sendWhatsAppInteractive(fromPhone, aiResult.reply, aiModeButtons);
-    }
+    // Send AI reply with standard 3 quick reply options (Catalog, Quote, Executive)
+    const copilotButtons = [
+      { id: 'btn_catalog', title: '📄 Get Catalog' },
+      { id: 'btn_pricing', title: '💰 Get Quote' },
+      { id: 'btn_human', title: '👤 Talk to Executive' }
+    ];
+    const sendResult = await sendWhatsAppInteractive(fromPhone, aiResult.reply, copilotButtons);
 
     // Log outbound AI message + AI Run
     if (supabase && sendResult.success) {
@@ -1474,6 +1505,7 @@ exports.handler = async (event) => {
           organization_id: DEFAULT_ORG_ID, conversation_id: conversationId,
           direction: 'outbound', sender_type: 'ai', body: aiResult.reply, status: 'sent',
           provider_message_id: sendResult.messages?.[0]?.id,
+          raw_payload: { buttons: copilotButtons, isHandoffPending },
         }]);
 
         // Log AI run for observability
