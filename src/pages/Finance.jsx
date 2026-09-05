@@ -209,6 +209,14 @@ const Finance = () => {
   const [remindingId, setRemindingId] = useState(null);
   const [reminderToast, setReminderToast] = useState(null);
 
+  // Pagination State for Invoices Table
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filter, search, dateFrom, dateTo, sortBy, financeView, activeTab, dateFilterField, activeCompanyId]);
+
   // Tally Connector State
   const [tallyStatus, setTallyStatus] = useState(null);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -738,7 +746,7 @@ const Finance = () => {
           TAB 1: INVOICES & AGING OUTSTANDINGS
          ========================================================================= */}
       {activeTab === 'invoices' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
 
           {/* ══ RECEIVABLES / PAYABLES SUB-TAB TOGGLE ═══════════════════════ */}
           <div style={{
@@ -963,451 +971,534 @@ const Finance = () => {
               .filter(Boolean).map(d => new Date(d)).filter(d => !isNaN(d));
             const earliestDbDate = dbDates.length ? new Date(Math.min(...dbDates)) : null;
             const latestDbDate   = dbDates.length ? new Date(Math.max(...dbDates)) : null;
+            const today = new Date();
+            const fmt = d => d.toISOString().slice(0, 10);
+
+            const handleDatePreset = (presetKey) => {
+              if (activeDatePreset === presetKey) {
+                setActiveDatePreset(''); setDateFrom(''); setDateTo('');
+                return;
+              }
+              setActiveDatePreset(presetKey);
+              if (presetKey === 'all_db' && earliestDbDate && latestDbDate) {
+                setDateFrom(fmt(earliestDbDate)); setDateTo(fmt(latestDbDate));
+              } else if (presetKey === 'today') {
+                setDateFrom(fmt(today)); setDateTo(fmt(today));
+              } else if (presetKey === 'week') {
+                const start = new Date(today); start.setDate(today.getDate() - today.getDay());
+                setDateFrom(fmt(start)); setDateTo(fmt(today));
+              } else if (presetKey === 'month') {
+                setDateFrom(fmt(new Date(today.getFullYear(), today.getMonth(), 1)));
+                setDateTo(fmt(today));
+              } else if (presetKey === '3m') {
+                const d = new Date(today); d.setMonth(d.getMonth() - 3);
+                setDateFrom(fmt(d)); setDateTo(fmt(today));
+              } else if (presetKey === '6m') {
+                const d = new Date(today); d.setMonth(d.getMonth() - 6);
+                setDateFrom(fmt(d)); setDateTo(fmt(today));
+              } else if (presetKey === 'fy') {
+                const fyStart = today.getMonth() >= 3
+                  ? new Date(today.getFullYear(), 3, 1)
+                  : new Date(today.getFullYear() - 1, 3, 1);
+                const fyEnd = new Date(fyStart.getFullYear() + 1, 2, 31);
+                setDateFrom(fmt(fyStart)); setDateTo(fmt(fyEnd > today ? today : fyEnd));
+              } else if (presetKey === 'last_fy') {
+                const fyStart = today.getMonth() >= 3
+                  ? new Date(today.getFullYear() - 1, 3, 1)
+                  : new Date(today.getFullYear() - 2, 3, 1);
+                const fyEnd = new Date(fyStart.getFullYear() + 1, 2, 31);
+                setDateFrom(fmt(fyStart)); setDateTo(fmt(fyEnd));
+              }
+            };
 
             return (
               <div style={{
-                display: 'flex', gap: '0.45rem', flexWrap: 'wrap', alignItems: 'center',
-                padding: '0.55rem 0.85rem',
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem',
+                padding: '0.45rem 0.75rem',
                 background: 'var(--bg-secondary)',
                 border: '1px solid var(--border-color)',
                 borderRadius: 'var(--radius-md)',
               }}>
-                {/* Date Target Mode Selector */}
-                <div style={{ display: 'inline-flex', background: 'var(--bg-tertiary)', padding: 2, borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', marginRight: '0.2rem' }}>
-                  <button
-                    type="button"
-                    onClick={() => setDateFilterField('invoice_date')}
-                    title="Filter by Invoice Billed Date"
-                    style={{
-                      padding: '0.22rem 0.55rem', borderRadius: 4, border: 'none',
-                      fontSize: '0.7rem', fontWeight: dateFilterField === 'invoice_date' ? 700 : 500,
-                      background: dateFilterField === 'invoice_date' ? 'var(--accent-primary)' : 'transparent',
-                      color: dateFilterField === 'invoice_date' ? 'white' : 'var(--text-secondary)',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    📅 Bill Date
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setDateFilterField('due_date')}
-                    title="Filter by Payment Due Date"
-                    style={{
-                      padding: '0.22rem 0.55rem', borderRadius: 4, border: 'none',
-                      fontSize: '0.7rem', fontWeight: dateFilterField === 'due_date' ? 700 : 500,
-                      background: dateFilterField === 'due_date' ? 'var(--accent-primary)' : 'transparent',
-                      color: dateFilterField === 'due_date' ? 'white' : 'var(--text-secondary)',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    ⏰ Due Date
-                  </button>
-                </div>
-
-                <div style={{ width: 1, height: 16, background: 'var(--border-color)', flexShrink: 0 }} />
-
-                {/* Quick preset chips */}
-                {[
-                  { label: '📦 All DB Data', key: 'all_db' },
-                  { label: 'Today', key: 'today' },
-                  { label: 'This Week', key: 'week' },
-                  { label: 'This Month', key: 'month' },
-                  { label: 'Last 3 Months', key: '3m' },
-                  { label: 'Last 6 Months', key: '6m' },
-                  { label: 'This FY', key: 'fy' },
-                  { label: 'Last FY', key: 'last_fy' },
-                ].map(preset => {
-                  const isActive = activeDatePreset === preset.key;
-                  return (
+                {/* Left: Target Toggle & Quick Presets */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
+                  {/* Date Target Mode Selector */}
+                  <div style={{ display: 'inline-flex', background: 'var(--bg-tertiary)', padding: 2, borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
                     <button
-                      key={preset.key}
-                      onClick={() => {
-                        const today = new Date();
-                        const fmt = d => d.toISOString().slice(0, 10);
-                        if (isActive) {
-                          setActiveDatePreset(''); setDateFrom(''); setDateTo('');
-                          return;
-                        }
-                        setActiveDatePreset(preset.key);
-                        if (preset.key === 'all_db' && earliestDbDate && latestDbDate) {
-                          setDateFrom(fmt(earliestDbDate)); setDateTo(fmt(latestDbDate));
-                        } else if (preset.key === 'today') {
-                          setDateFrom(fmt(today)); setDateTo(fmt(today));
-                        } else if (preset.key === 'week') {
-                          const start = new Date(today); start.setDate(today.getDate() - today.getDay());
-                          setDateFrom(fmt(start)); setDateTo(fmt(today));
-                        } else if (preset.key === 'month') {
-                          setDateFrom(fmt(new Date(today.getFullYear(), today.getMonth(), 1)));
-                          setDateTo(fmt(today));
-                        } else if (preset.key === '3m') {
-                          const d = new Date(today); d.setMonth(d.getMonth() - 3);
-                          setDateFrom(fmt(d)); setDateTo(fmt(today));
-                        } else if (preset.key === '6m') {
-                          const d = new Date(today); d.setMonth(d.getMonth() - 6);
-                          setDateFrom(fmt(d)); setDateTo(fmt(today));
-                        } else if (preset.key === 'fy') {
-                          const fyStart = today.getMonth() >= 3
-                            ? new Date(today.getFullYear(), 3, 1)
-                            : new Date(today.getFullYear() - 1, 3, 1);
-                          const fyEnd = new Date(fyStart.getFullYear() + 1, 2, 31);
-                          setDateFrom(fmt(fyStart)); setDateTo(fmt(fyEnd > today ? today : fyEnd));
-                        } else if (preset.key === 'last_fy') {
-                          const fyStart = today.getMonth() >= 3
-                            ? new Date(today.getFullYear() - 1, 3, 1)
-                            : new Date(today.getFullYear() - 2, 3, 1);
-                          const fyEnd = new Date(fyStart.getFullYear() + 1, 2, 31);
-                          setDateFrom(fmt(fyStart)); setDateTo(fmt(fyEnd));
-                        }
-                      }}
+                      type="button"
+                      onClick={() => setDateFilterField('invoice_date')}
+                      title="Filter by Invoice Billed Date"
                       style={{
-                        padding: '0.24rem 0.6rem', borderRadius: 20,
-                        border: isActive ? '2px solid var(--accent-primary)' : '1px solid var(--border-color)',
-                        fontSize: '0.71rem', fontWeight: 600, cursor: 'pointer',
-                        background: isActive ? 'var(--accent-primary)' : 'var(--bg-tertiary)',
-                        color: isActive ? 'white' : 'var(--text-secondary)',
-                        transition: 'all 0.15s',
-                        whiteSpace: 'nowrap',
+                        padding: '0.2rem 0.5rem', borderRadius: 4, border: 'none',
+                        fontSize: '0.7rem', fontWeight: dateFilterField === 'invoice_date' ? 700 : 500,
+                        background: dateFilterField === 'invoice_date' ? 'var(--accent-primary)' : 'transparent',
+                        color: dateFilterField === 'invoice_date' ? 'white' : 'var(--text-secondary)',
+                        cursor: 'pointer',
                       }}
                     >
-                      {preset.label}
+                      📅 Bill Date
                     </button>
-                  );
-                })}
+                    <button
+                      type="button"
+                      onClick={() => setDateFilterField('due_date')}
+                      title="Filter by Payment Due Date"
+                      style={{
+                        padding: '0.2rem 0.5rem', borderRadius: 4, border: 'none',
+                        fontSize: '0.7rem', fontWeight: dateFilterField === 'due_date' ? 700 : 500,
+                        background: dateFilterField === 'due_date' ? 'var(--accent-primary)' : 'transparent',
+                        color: dateFilterField === 'due_date' ? 'white' : 'var(--text-secondary)',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      ⏰ Due Date
+                    </button>
+                  </div>
 
-                {/* Divider */}
-                <div style={{ width: 1, height: 16, background: 'var(--border-color)', flexShrink: 0, margin: '0 0.1rem' }} />
+                  <div style={{ width: 1, height: 16, background: 'var(--border-color)', flexShrink: 0 }} />
 
-                {/* From / To inputs */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                  <label style={{ fontSize: '0.7rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>From</label>
+                  {/* Primary quick chips */}
+                  {[
+                    { label: '📦 All DB Data', key: 'all_db' },
+                    { label: 'This Month', key: 'month' },
+                    { label: 'This FY', key: 'fy' },
+                  ].map(preset => {
+                    const isActive = activeDatePreset === preset.key;
+                    return (
+                      <button
+                        key={preset.key}
+                        onClick={() => handleDatePreset(preset.key)}
+                        style={{
+                          padding: '0.2rem 0.55rem', borderRadius: 16,
+                          border: isActive ? '1px solid var(--accent-primary)' : '1px solid var(--border-color)',
+                          fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer',
+                          background: isActive ? 'var(--accent-primary)' : 'var(--bg-tertiary)',
+                          color: isActive ? 'white' : 'var(--text-secondary)',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {preset.label}
+                      </button>
+                    );
+                  })}
+
+                  {/* Extended presets dropdown */}
+                  <select
+                    value={['today', 'week', '3m', '6m', 'last_fy'].includes(activeDatePreset) ? activeDatePreset : ''}
+                    onChange={e => handleDatePreset(e.target.value)}
+                    className="input-field"
+                    style={{
+                      padding: '0.2rem 0.45rem', fontSize: '0.7rem', width: 125, height: 26,
+                      borderRadius: 14, cursor: 'pointer',
+                      border: ['today', 'week', '3m', '6m', 'last_fy'].includes(activeDatePreset)
+                        ? '1px solid var(--accent-primary)' : '1px solid var(--border-color)',
+                    }}
+                  >
+                    <option value="">More Periods ▾</option>
+                    <option value="today">Today</option>
+                    <option value="week">This Week</option>
+                    <option value="3m">Last 3 Months</option>
+                    <option value="6m">Last 6 Months</option>
+                    <option value="last_fy">Last FY (2025-26)</option>
+                  </select>
+                </div>
+
+                {/* Right: Unbreakable From → To Range Input Group */}
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                  <label style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>From</label>
                   <input
                     type="date"
                     className="input-field"
-                    style={{ padding: '0.22rem 0.4rem', fontSize: '0.72rem', width: 125 }}
+                    style={{ padding: '0.18rem 0.35rem', fontSize: '0.72rem', width: 115, height: 26 }}
                     value={dateFrom}
                     onChange={e => { setDateFrom(e.target.value); setActiveDatePreset('custom'); }}
                   />
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                  <label style={{ fontSize: '0.7rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>To</label>
+                  <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>→</span>
+                  <label style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>To</label>
                   <input
                     type="date"
                     className="input-field"
-                    style={{ padding: '0.22rem 0.4rem', fontSize: '0.72rem', width: 125 }}
+                    style={{ padding: '0.18rem 0.35rem', fontSize: '0.72rem', width: 115, height: 26 }}
                     value={dateTo}
                     onChange={e => { setDateTo(e.target.value); setActiveDatePreset('custom'); }}
                   />
+                  {(dateFrom || dateTo) && (
+                    <button
+                      onClick={() => { setDateFrom(''); setDateTo(''); setActiveDatePreset(''); }}
+                      style={{
+                        fontSize: '0.66rem', padding: '0.18rem 0.45rem',
+                        color: 'white', background: 'var(--danger)', border: 'none',
+                        borderRadius: 10, cursor: 'pointer', whiteSpace: 'nowrap', fontWeight: 600,
+                      }}
+                      title="Clear custom dates"
+                    >
+                      ✕ Clear
+                    </button>
+                  )}
+                  {(dateFrom || dateTo) && (
+                    <span style={{
+                      fontSize: '0.68rem', color: 'var(--accent-primary)',
+                      fontWeight: 700, whiteSpace: 'nowrap', background: 'var(--accent-glow)',
+                      padding: '0.15rem 0.5rem', borderRadius: 8,
+                    }}>
+                      {filtered.length} vouchers
+                    </span>
+                  )}
                 </div>
-
-                {/* Clear button */}
-                {(dateFrom || dateTo) && (
-                  <button
-                    onClick={() => { setDateFrom(''); setDateTo(''); setActiveDatePreset(''); }}
-                    style={{
-                      fontSize: '0.68rem', padding: '0.22rem 0.55rem',
-                      color: 'white', background: 'var(--danger)', border: 'none',
-                      borderRadius: 12, cursor: 'pointer', whiteSpace: 'nowrap', fontWeight: 600,
-                    }}
-                  >
-                    ✕ Clear
-                  </button>
-                )}
-
-                {/* Active range summary badge */}
-                {(dateFrom || dateTo) && (
-                  <span style={{
-                    marginLeft: 'auto', fontSize: '0.7rem', color: 'var(--accent-primary)',
-                    fontWeight: 700, whiteSpace: 'nowrap', background: 'var(--accent-glow)',
-                    padding: '0.15rem 0.55rem', borderRadius: 10,
-                  }}>
-                    {dateFrom ? new Date(dateFrom).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Start'}
-                    {' → '}
-                    {dateTo ? new Date(dateTo).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Today'}
-                    {' '}({filtered.length} vouchers)
-                  </span>
-                )}
               </div>
             );
           })()}
 
 
           {/* Invoices Data Table */}
+          {(() => {
+            const totalInvoicesCount = filtered.length;
+            const totalPages = Math.max(1, Math.ceil(totalInvoicesCount / pageSize));
+            const pageStartIndex = (currentPage - 1) * pageSize;
+            const pageEndIndex = Math.min(pageStartIndex + pageSize, totalInvoicesCount);
+            const paginatedInvoices = filtered.slice(pageStartIndex, pageEndIndex);
 
-          <div className="glass-card table-container">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Invoice No.</th>
-                  <th>Client / Tally Ledger</th>
-                  <th>Contact Phone</th>
-                  <th>Date / Due</th>
-                  <th>Amount</th>
-                  <th>Status</th>
-                  <th>Reminder Automation</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {loading ? (
-                  <tr><td colSpan={8} style={{ textAlign: 'center', padding: '3rem' }}><RefreshCw size={24} className="animate-spin" style={{ color: 'var(--text-muted)' }} /></td></tr>
-                ) : filtered.length === 0 ? (
-                  <tr><td colSpan={8} style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>No invoices found matching criteria.</td></tr>
-                ) : (
-                  filtered.map(inv => (
-                    <tr
-                      key={inv.id}
-                      style={{
-                        background: (inv.reminder_paused === true || inv.reminder_paused === 'true')
-                          ? 'rgba(255,165,0,0.04)'
-                          : undefined
-                      }}
-                    >
-                      <td style={{ fontWeight: 700, fontFamily: 'monospace', color: 'var(--accent-secondary)' }}>
-                        {inv.invoice_number}
-                        {inv.reminder_count > 0 && (
-                          <div style={{ fontSize: '0.62rem', color: 'var(--text-muted)', fontWeight: 400 }}>#{inv.reminder_count} reminder{inv.reminder_count !== 1 ? 's' : ''} sent</div>
-                        )}
-                        {/* Show company badge only in All Companies view */}
-                        {isConsolidated && inv.company_name && (
-                          <div style={{
-                            fontSize: '0.58rem', fontWeight: 700, marginTop: '0.15rem',
-                            display: 'inline-flex', alignItems: 'center', gap: '0.2rem',
-                            padding: '0.1rem 0.4rem', borderRadius: '10px',
-                            background: 'rgba(99,102,241,0.12)', color: 'var(--accent-primary)',
-                            border: '1px solid rgba(99,102,241,0.2)', fontFamily: 'sans-serif'
-                          }}>
-                            <Building2 size={8} /> {inv.company_name.length > 20 ? inv.company_name.slice(0, 20) + '…' : inv.company_name}
-                          </div>
-                        )}
-                      </td>
-                      <td style={{ fontWeight: 600 }}>
-                        {(() => {
+            return (
+              <div className="glass-card table-container" style={{ padding: 0, overflow: 'hidden' }}>
+                <div style={{ overflowX: 'auto', width: '100%' }}>
+                  <table className="data-table" style={{ margin: 0 }}>
+                    <thead>
+                      <tr>
+                        <th style={{ whiteSpace: 'nowrap' }}>Invoice No.</th>
+                        <th style={{ whiteSpace: 'nowrap' }}>Client / Tally Ledger</th>
+                        <th style={{ whiteSpace: 'nowrap' }}>Contact Phone</th>
+                        <th style={{ whiteSpace: 'nowrap' }}>Date / Due</th>
+                        <th style={{ whiteSpace: 'nowrap' }}>Amount</th>
+                        <th style={{ whiteSpace: 'nowrap' }}>Status</th>
+                        <th style={{ whiteSpace: 'nowrap' }}>Reminder Automation</th>
+                        <th style={{ whiteSpace: 'nowrap', textAlign: 'center' }}>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {loading ? (
+                        <tr><td colSpan={8} style={{ textAlign: 'center', padding: '3rem' }}><RefreshCw size={24} className="animate-spin" style={{ color: 'var(--text-muted)' }} /></td></tr>
+                      ) : totalInvoicesCount === 0 ? (
+                        <tr><td colSpan={8} style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>No invoices found matching criteria.</td></tr>
+                      ) : (
+                        paginatedInvoices.map(inv => {
                           const dir = getDirection(inv);
                           const cleanName = decodeHtml(inv.client_name || inv.tally_ledger || 'Client');
-                          return (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
-                              <span style={{ color: 'var(--text-primary)' }}>{cleanName}</span>
-                              <span style={{
-                                fontSize: '0.62rem',
-                                fontWeight: 700,
-                                color: dir.isVendor ? '#d97706' : 'var(--text-muted)',
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '0.2rem',
-                              }}>
-                                {dir.isVendor ? '🏢 Vendor / Payee' : '👤 Customer'}
-                              </span>
-                            </div>
-                          );
-                        })()}
-                      </td>
-                      <td style={{ fontFamily: 'monospace', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-                        {normalizePhone(inv.client_phone)}
-                      </td>
-                      <td style={{ fontSize: '0.78rem' }}>
-                        {(() => {
-                          const dir = getDirection(inv);
                           const isSettled = inv.status === 'Paid' || dir.label === 'Paid Out' || dir.label === 'Received' || dir.label === 'Collected';
+                          const isPaused = inv.reminder_paused === true || inv.reminder_paused === 'true';
+
                           return (
-                            <div>
-                              <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
-                                {inv.invoice_date ? new Date(inv.invoice_date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
-                              </div>
-                              {!isSettled && inv.due_date && (
-                                <div style={{ fontSize: '0.67rem', color: 'var(--text-muted)' }}>
-                                  Due: {new Date(inv.due_date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' })}
+                            <tr
+                              key={inv.id}
+                              style={{
+                                background: isPaused ? 'rgba(255,165,0,0.04)' : undefined
+                              }}
+                            >
+                              {/* 1. Invoice No. */}
+                              <td style={{ fontWeight: 700, fontFamily: 'monospace', color: 'var(--accent-secondary)', whiteSpace: 'nowrap', verticalAlign: 'middle', padding: '0.5rem 0.75rem' }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.1rem' }}>
+                                  <span>{inv.invoice_number}</span>
+                                  {inv.reminder_count > 0 && (
+                                    <span style={{ fontSize: '0.62rem', color: 'var(--text-muted)', fontWeight: 400 }}>#{inv.reminder_count} reminder{inv.reminder_count !== 1 ? 's' : ''} sent</span>
+                                  )}
+                                  {isConsolidated && inv.company_name && (
+                                    <span style={{
+                                      fontSize: '0.58rem', fontWeight: 700,
+                                      display: 'inline-flex', alignItems: 'center', gap: '0.2rem',
+                                      padding: '0.08rem 0.35rem', borderRadius: '8px',
+                                      background: 'rgba(99,102,241,0.12)', color: 'var(--accent-primary)',
+                                      border: '1px solid rgba(99,102,241,0.2)', fontFamily: 'sans-serif',
+                                      width: 'fit-content'
+                                    }}>
+                                      <Building2 size={8} /> {inv.company_name.length > 18 ? inv.company_name.slice(0, 18) + '…' : inv.company_name}
+                                    </span>
+                                  )}
                                 </div>
-                              )}
-                            </div>
-                          );
-                        })()}
-                      </td>
-                      <td style={{ fontWeight: 700, fontSize: '0.88rem' }}>
-                        {/* Direction badge + amount */}
-                        {(() => {
-                          const dir = getDirection(inv);
-                          return (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-                              <span style={{ fontWeight: 700, fontSize: '0.88rem', color: inv.status === 'Overdue' ? 'var(--danger)' : 'var(--text-primary)' }}>
-                                {fmtCurrency(inv.amount)}
-                              </span>
-                              <span title={dir.title} style={{
-                                display: 'inline-flex', alignItems: 'center', gap: '0.25rem',
-                                fontSize: '0.62rem', fontWeight: 700, padding: '0.12rem 0.45rem',
-                                borderRadius: '10px', background: dir.bg, color: dir.color,
-                                border: `1px solid ${dir.color}44`, whiteSpace: 'nowrap', cursor: 'help',
-                              }}>
-                                <dir.ArrowIcon size={10} strokeWidth={2.5} /> {dir.label}
-                              </span>
-                            </div>
-                          );
-                        })()}
-                      </td>
-                      <td>
-                        <span className={`badge ${statusConfig[inv.status]?.badge || 'badge-neutral'}`} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
-                          {statusConfig[inv.status]?.icon} {inv.status}
-                        </span>
-                      </td>
+                              </td>
 
-
-                      {/* Reminder Automation Status */}
-                      <td>
-                        {(() => {
-                          const dir = getDirection(inv);
-                          if (dir.isVendor) {
-                            return (
-                              <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
-                                N/A (Vendor)
-                              </span>
-                            );
-                          }
-                          if (inv.status === 'Paid') {
-                            return (
-                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.7rem', color: 'var(--success)', fontWeight: 600 }}>
-                                <CheckCircle2 size={12} /> Settled
-                              </span>
-                            );
-                          }
-                          if (inv.reminder_paused === true || inv.reminder_paused === 'true') {
-                            return (
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.7rem', fontWeight: 700, color: 'var(--warning)' }}>
-                                  <PauseCircle size={12} /> Paused
-                                </span>
-                                {inv.payment_promised_date && (
-                                  <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
-                                    <CalendarClock size={10} />
-                                    Until {new Date(inv.payment_promised_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
+                              {/* 2. Client / Tally Ledger */}
+                              <td style={{ fontWeight: 600, verticalAlign: 'middle', padding: '0.5rem 0.75rem', maxWidth: 220 }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.1rem' }}>
+                                  <span style={{ color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={cleanName}>
+                                    {cleanName}
                                   </span>
-                                )}
-                                {inv.promise_committed_by && (
-                                  <span style={{ fontSize: '0.6rem', color: 'var(--text-muted)' }}>
-                                    via {
-                                      inv.promise_committed_by === 'whatsapp_auto' ? '🤖 WhatsApp AI' :
-                                      inv.promise_committed_by === 'admin_phone_call' ? '📞 Phone Call' :
-                                      inv.promise_committed_by === 'admin_in_person' ? '🤝 In-Person' :
-                                      inv.promise_committed_by === 'admin_email' ? '📧 Email' :
-                                      inv.promise_committed_by === 'admin_whatsapp_manual' ? '💬 WhatsApp (Manual)' :
-                                      '👤 Admin'
-                                    }
+                                  <span style={{
+                                    fontSize: '0.62rem',
+                                    fontWeight: 700,
+                                    color: dir.isVendor ? '#d97706' : 'var(--text-muted)',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '0.2rem',
+                                  }}>
+                                    {dir.isVendor ? '🏢 Vendor' : '👤 Customer'}
                                   </span>
-                                )}
-                              </div>
-                            );
-                          }
-                          return (
-                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.7rem', color: 'var(--success)', fontWeight: 600 }}>
-                              <PlayCircle size={12} /> Active
-                            </span>
-                          );
-                        })()}
-                      </td>
-                      <td>
-                        <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                          {/* All 4 PDF Types — Always show Tax Bill button */}
-                        <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap' }}>
-                                {/* Tax Bill — always opens pixel-perfect 2-page Invoice & e-Way Bill */}
-                                <button
-                                  className="btn btn-secondary btn-sm"
-                                  style={{ padding: '0.2rem 0.45rem', fontSize: '0.68rem', color: 'var(--accent-primary)', display: 'flex', alignItems: 'center', gap: '0.2rem' }}
-                                  onClick={() => setDocModalInvoice(inv)}
-                                  title="Tax Invoice + e-Way Bill — pixel-perfect 2-page bill with PDF download & WhatsApp"
-                                >
-                                  <FileText size={11} /> Tax Bill
-                                </button>
-                                {/* e-Way Bill */}
-                                <button
-                                  className="btn btn-secondary btn-sm"
-                                  style={{ padding: '0.2rem 0.45rem', fontSize: '0.68rem', color: '#10b981', display: 'flex', alignItems: 'center', gap: '0.2rem' }}
-                                  onClick={() => setDocModalInvoice(inv)}
-                                  title="Standalone e-Way Bill / Conveyance Note — pixel-perfect 2-page bill with PDF download & WhatsApp"
-                                >
-                                  <FileText size={11} /> e-Way
-                                </button>
-                                {/* Pending Bills Statement */}
-                                <button
-                                  className="btn btn-secondary btn-sm"
-                                  style={{ padding: '0.2rem 0.45rem', fontSize: '0.68rem', color: '#f59e0b', display: 'flex', alignItems: 'center', gap: '0.2rem' }}
-                                  onClick={() => {
-                                    setSelectedInvoiceForTemplate(inv);
-                                    setSelectedTemplateTab('pending_bills');
-                                    setShowTemplatesModal(true);
-                                  }}
-                                  title="Pending Bills Statement — generated in browser"
-                                >
-                                  <FileText size={11} /> Pending
-                                </button>
-                                {/* Customer Ledger */}
-                                <button
-                                  className="btn btn-secondary btn-sm"
-                                  style={{ padding: '0.2rem 0.45rem', fontSize: '0.68rem', color: '#a78bfa', display: 'flex', alignItems: 'center', gap: '0.2rem' }}
-                                  onClick={() => {
-                                    setSelectedInvoiceForTemplate(inv);
-                                    setSelectedTemplateTab('ledger_account');
-                                    setShowTemplatesModal(true);
-                                  }}
-                                  title="Customer Ledger Account — generated in browser"
-                                >
-                                  <FileText size={11} /> Ledger
-                                </button>
-                              </div>
+                                </div>
+                              </td>
 
+                              {/* 3. Contact Phone */}
+                              <td style={{ fontFamily: 'monospace', fontSize: '0.78rem', color: 'var(--text-muted)', verticalAlign: 'middle', padding: '0.5rem 0.75rem', whiteSpace: 'nowrap' }}>
+                                {normalizePhone(inv.client_phone) || <span style={{ color: 'var(--text-muted)', opacity: 0.4 }}>—</span>}
+                              </td>
 
-                          {/* Remind — managed exclusively in Payment Follow-up page */}
-                          {(() => {
-                            const dir = getDirection(inv);
-                            if (dir.isVendor) {
-                              return (
-                                <span style={{ fontSize: '0.72rem', color: dir.label === 'Paid Out' ? '#f59e0b' : '#ef4444', fontWeight: 600 }}>
-                                  {dir.label === 'Paid Out' ? '✓ Paid to Vendor' : 'Vendor Payable'}
+                              {/* 4. Date / Due */}
+                              <td style={{ fontSize: '0.78rem', verticalAlign: 'middle', padding: '0.5rem 0.75rem', whiteSpace: 'nowrap' }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.1rem' }}>
+                                  <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                                    {inv.invoice_date ? new Date(inv.invoice_date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
+                                  </div>
+                                  {!isSettled && inv.due_date && (
+                                    <div style={{ fontSize: '0.67rem', color: 'var(--text-muted)' }}>
+                                      Due: {new Date(inv.due_date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' })}
+                                    </div>
+                                  )}
+                                </div>
+                              </td>
+
+                              {/* 5. Amount */}
+                              <td style={{ fontWeight: 700, fontSize: '0.88rem', verticalAlign: 'middle', padding: '0.5rem 0.75rem', whiteSpace: 'nowrap' }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
+                                  <span style={{ fontWeight: 700, fontSize: '0.86rem', color: inv.status === 'Overdue' ? 'var(--danger)' : 'var(--text-primary)' }}>
+                                    {fmtCurrency(inv.amount)}
+                                  </span>
+                                  <span title={dir.title} style={{
+                                    display: 'inline-flex', alignItems: 'center', gap: '0.2rem',
+                                    fontSize: '0.6rem', fontWeight: 700, padding: '0.08rem 0.35rem',
+                                    borderRadius: '8px', background: dir.bg, color: dir.color,
+                                    border: `1px solid ${dir.color}44`, whiteSpace: 'nowrap', cursor: 'help', width: 'fit-content'
+                                  }}>
+                                    <dir.ArrowIcon size={9} strokeWidth={2.5} /> {dir.label}
+                                  </span>
+                                </div>
+                              </td>
+
+                              {/* 6. Status */}
+                              <td style={{ verticalAlign: 'middle', padding: '0.5rem 0.75rem', whiteSpace: 'nowrap' }}>
+                                <span className={`badge ${statusConfig[inv.status]?.badge || 'badge-neutral'}`} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.72rem', padding: '0.2rem 0.5rem' }}>
+                                  {statusConfig[inv.status]?.icon} {inv.status}
                                 </span>
-                              );
-                            }
-                            if (inv.status === 'Paid') {
-                              return <span style={{ fontSize: '0.72rem', color: 'var(--success)', fontWeight: 600 }}>✓ Settled</span>;
-                            }
-                            return (
-                              <a
-                                href="/payments"
-                                className="btn btn-secondary btn-sm"
-                                style={{ padding: '0.25rem 0.6rem', fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '0.25rem', textDecoration: 'none' }}
-                                title="Go to Payment Follow-up to send reminders"
-                              >
-                                <Send size={11} /> Follow-up
-                              </a>
-                            );
-                          })()}
+                              </td>
 
-                          {/* Pause / Resume Toggle — only for receivable items */}
-                          {inv.status !== 'Paid' && getDirection(inv).canRemind && (
-                            (inv.reminder_paused === true || inv.reminder_paused === 'true') ? (
-                              <button
-                                className="btn btn-secondary btn-sm"
-                                style={{ padding: '0.25rem 0.55rem', fontSize: '0.7rem', color: 'var(--success)', borderColor: 'var(--success)', display: 'flex', alignItems: 'center', gap: '0.2rem' }}
-                                onClick={() => handleResumeReminder(inv)}
-                                title="Resume automatic reminders"
-                              >
-                                <PlayCircle size={12} /> Resume
-                              </button>
-                            ) : (
-                              <button
-                                className="btn btn-secondary btn-sm"
-                                style={{ padding: '0.25rem 0.55rem', fontSize: '0.7rem', color: 'var(--warning)', borderColor: 'var(--warning)', display: 'flex', alignItems: 'center', gap: '0.2rem' }}
-                                onClick={() => { setPauseModal({ invoice: inv }); setPausePromisedDate(''); setPauseReason(''); setPauseNotes(''); }}
-                                title="Pause automatic reminders for this client"
-                              >
-                                <PauseCircle size={12} /> Pause
-                              </button>
-                            )
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+                              {/* 7. Reminder Automation Status + Pause/Resume */}
+                              <td style={{ verticalAlign: 'middle', padding: '0.5rem 0.75rem', whiteSpace: 'nowrap' }}>
+                                {dir.isVendor ? (
+                                  <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                                    N/A (Vendor)
+                                  </span>
+                                ) : inv.status === 'Paid' ? (
+                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.7rem', color: 'var(--success)', fontWeight: 600 }}>
+                                    <CheckCircle2 size={12} /> Settled
+                                  </span>
+                                ) : isPaused ? (
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.7rem', fontWeight: 700, color: 'var(--warning)' }}>
+                                        <PauseCircle size={12} /> Paused
+                                      </span>
+                                      <button
+                                        className="btn btn-secondary btn-sm"
+                                        style={{ padding: '0.1rem 0.35rem', fontSize: '0.62rem', color: 'var(--success)', borderColor: 'var(--success)', display: 'inline-flex', alignItems: 'center', gap: '0.15rem' }}
+                                        onClick={() => handleResumeReminder(inv)}
+                                        title="Resume automatic reminders"
+                                      >
+                                        <PlayCircle size={10} /> Resume
+                                      </button>
+                                    </div>
+                                    {inv.payment_promised_date && (
+                                      <span style={{ fontSize: '0.62rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
+                                        <CalendarClock size={9} /> Until {new Date(inv.payment_promised_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
+                                      </span>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.7rem', color: 'var(--success)', fontWeight: 600 }}>
+                                      <PlayCircle size={12} /> Active
+                                    </span>
+                                    {dir.canRemind && (
+                                      <button
+                                        className="btn btn-secondary btn-sm"
+                                        style={{ padding: '0.1rem 0.35rem', fontSize: '0.62rem', color: 'var(--text-muted)', display: 'inline-flex', alignItems: 'center', gap: '0.15rem' }}
+                                        onClick={() => { setPauseModal({ invoice: inv }); setPausePromisedDate(''); setPauseReason(''); setPauseNotes(''); }}
+                                        title="Pause automatic reminders for this client"
+                                      >
+                                        <PauseCircle size={10} /> Pause
+                                      </button>
+                                    )}
+                                  </div>
+                                )}
+                              </td>
+
+                              {/* 8. Actions — Single Clean Horizontal Row */}
+                              <td style={{ verticalAlign: 'middle', padding: '0.5rem 0.75rem', whiteSpace: 'nowrap' }}>
+                                <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', whiteSpace: 'nowrap' }}>
+                                  {/* Tax Bill */}
+                                  <button
+                                    className="btn btn-secondary btn-sm"
+                                    style={{ padding: '0.2rem 0.45rem', fontSize: '0.68rem', color: 'var(--accent-primary)', display: 'inline-flex', alignItems: 'center', gap: '0.2rem', whiteSpace: 'nowrap' }}
+                                    onClick={() => setDocModalInvoice(inv)}
+                                    title="Tax Invoice + e-Way Bill — pixel-perfect 2-page bill with PDF download & WhatsApp"
+                                  >
+                                    <FileText size={11} /> Tax Bill
+                                  </button>
+
+                                  {/* e-Way */}
+                                  <button
+                                    className="btn btn-secondary btn-sm"
+                                    style={{ padding: '0.2rem 0.45rem', fontSize: '0.68rem', color: '#10b981', display: 'inline-flex', alignItems: 'center', gap: '0.2rem', whiteSpace: 'nowrap' }}
+                                    onClick={() => setDocModalInvoice(inv)}
+                                    title="Standalone e-Way Bill / Conveyance Note"
+                                  >
+                                    <FileText size={11} /> e-Way
+                                  </button>
+
+                                  {/* Pending */}
+                                  <button
+                                    className="btn btn-secondary btn-sm"
+                                    style={{ padding: '0.2rem 0.45rem', fontSize: '0.68rem', color: '#f59e0b', display: 'inline-flex', alignItems: 'center', gap: '0.2rem', whiteSpace: 'nowrap' }}
+                                    onClick={() => {
+                                      setSelectedInvoiceForTemplate(inv);
+                                      setSelectedTemplateTab('pending_bills');
+                                      setShowTemplatesModal(true);
+                                    }}
+                                    title="Pending Bills Statement"
+                                  >
+                                    <FileText size={11} /> Pending
+                                  </button>
+
+                                  {/* Ledger */}
+                                  <button
+                                    className="btn btn-secondary btn-sm"
+                                    style={{ padding: '0.2rem 0.45rem', fontSize: '0.68rem', color: '#a78bfa', display: 'inline-flex', alignItems: 'center', gap: '0.2rem', whiteSpace: 'nowrap' }}
+                                    onClick={() => {
+                                      setSelectedInvoiceForTemplate(inv);
+                                      setSelectedTemplateTab('ledger_account');
+                                      setShowTemplatesModal(true);
+                                    }}
+                                    title="Customer Ledger Account"
+                                  >
+                                    <FileText size={11} /> Ledger
+                                  </button>
+
+                                  {/* Follow-up link for unpaid receivables */}
+                                  {inv.status !== 'Paid' && !dir.isVendor && (
+                                    <a
+                                      href="/payments"
+                                      className="btn btn-secondary btn-sm"
+                                      style={{ padding: '0.2rem 0.45rem', fontSize: '0.68rem', display: 'inline-flex', alignItems: 'center', gap: '0.2rem', textDecoration: 'none', color: 'var(--accent-primary)', whiteSpace: 'nowrap' }}
+                                      title="Go to Payment Follow-up to send reminders"
+                                    >
+                                      <Send size={10} /> Follow-up
+                                    </a>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Pagination Controls */}
+                <div style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem',
+                  padding: '0.55rem 0.85rem', background: 'var(--bg-secondary)', borderTop: '1px solid var(--border-color)',
+                  fontSize: '0.75rem'
+                }}>
+                  {/* Left: Range Summary & Page Size */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem', flexWrap: 'wrap' }}>
+                    <span style={{ color: 'var(--text-muted)' }}>
+                      Showing <strong style={{ color: 'var(--text-primary)' }}>{totalInvoicesCount === 0 ? 0 : pageStartIndex + 1}</strong> to <strong style={{ color: 'var(--text-primary)' }}>{pageEndIndex}</strong> of <strong style={{ color: 'var(--accent-primary)' }}>{totalInvoicesCount}</strong> vouchers
+                    </span>
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', color: 'var(--text-muted)' }}>
+                      <span>Rows:</span>
+                      <select
+                        value={pageSize}
+                        onChange={e => { setPageSize(Number(e.target.value)); setCurrentPage(1); }}
+                        className="input-field"
+                        style={{ padding: '0.15rem 0.4rem', fontSize: '0.72rem', width: 'auto', cursor: 'pointer', height: 24 }}
+                      >
+                        <option value={25}>25</option>
+                        <option value={50}>50</option>
+                        <option value={100}>100</option>
+                        <option value={250}>250</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Right: Page Navigation */}
+                  {totalPages > 1 && (
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        disabled={currentPage === 1}
+                        onClick={() => setCurrentPage(1)}
+                        style={{ padding: '0.15rem 0.45rem', fontSize: '0.72rem', opacity: currentPage === 1 ? 0.35 : 1, cursor: currentPage === 1 ? 'not-allowed' : 'pointer' }}
+                        title="First Page"
+                      >
+                        «
+                      </button>
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        disabled={currentPage === 1}
+                        onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                        style={{ padding: '0.15rem 0.45rem', fontSize: '0.72rem', opacity: currentPage === 1 ? 0.35 : 1, cursor: currentPage === 1 ? 'not-allowed' : 'pointer' }}
+                        title="Previous Page"
+                      >
+                        ‹ Prev
+                      </button>
+
+                      {/* Window of page numbers */}
+                      {(() => {
+                        const pages = [];
+                        let start = Math.max(1, currentPage - 2);
+                        let end = Math.min(totalPages, start + 4);
+                        if (end - start < 4) {
+                          start = Math.max(1, end - 4);
+                        }
+                        for (let p = start; p <= end; p++) {
+                          pages.push(
+                            <button
+                              key={p}
+                              onClick={() => setCurrentPage(p)}
+                              style={{
+                                padding: '0.15rem 0.45rem', minWidth: 26, height: 24, borderRadius: 4,
+                                border: p === currentPage ? '1px solid var(--accent-primary)' : '1px solid var(--border-color)',
+                                background: p === currentPage ? 'var(--accent-primary)' : 'var(--bg-tertiary)',
+                                color: p === currentPage ? 'white' : 'var(--text-primary)',
+                                fontSize: '0.72rem', fontWeight: p === currentPage ? 700 : 500,
+                                cursor: 'pointer',
+                              }}
+                            >
+                              {p}
+                            </button>
+                          );
+                        }
+                        return pages;
+                      })()}
+
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        disabled={currentPage === totalPages}
+                        onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                        style={{ padding: '0.15rem 0.45rem', fontSize: '0.72rem', opacity: currentPage === totalPages ? 0.35 : 1, cursor: currentPage === totalPages ? 'not-allowed' : 'pointer' }}
+                        title="Next Page"
+                      >
+                        Next ›
+                      </button>
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        disabled={currentPage === totalPages}
+                        onClick={() => setCurrentPage(totalPages)}
+                        style={{ padding: '0.15rem 0.45rem', fontSize: '0.72rem', opacity: currentPage === totalPages ? 0.35 : 1, cursor: currentPage === totalPages ? 'not-allowed' : 'pointer' }}
+                        title="Last Page"
+                      >
+                        »
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
         </div>
       )}
 
