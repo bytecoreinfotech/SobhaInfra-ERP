@@ -3193,8 +3193,18 @@ def push_to_cloud(vouchers):
                                 sv["_force_status_update"] = True
                                 reconciled_paid_updates += 1
 
-        # 2. Apply total receipts in FIFO order
-        rem_rcpts = total_rcpts
+        # 2. Apply total receipts in FIFO order accounting for prior opening balance
+        prior_op = 0.0
+        if ledger_marker:
+            prior_op = float((ledger_marker.get("metadata") or {}).get("opening_balance") or 0.0)
+            if prior_op <= 0:
+                tally_cl = float(ledger_marker.get("amount") or 0.0)
+                tot_s = sum(float(s.get("amount") or 0) for s in sales_vchs)
+                if tally_cl > (tot_s - total_rcpts):
+                    prior_op = tally_cl - (tot_s - total_rcpts)
+
+        # Unallocated receipts settle prior opening balance FIRST!
+        rem_rcpts = max(0.0, total_rcpts - prior_op)
         for sv in sales_vchs:
             amt = float(sv.get("amount") or 0)
             if rem_rcpts >= amt and amt > 0:
@@ -3236,7 +3246,14 @@ def push_to_cloud(vouchers):
     new_count = 0
 
     for v in all_unique:
-        inv_num = v.get("invoice_number", "")
+        inv_num = str(v.get("invoice_number", "")).strip()
+
+        # CRITICAL: Always push LEDGER-* markers so Tally master balances are 100% up-to-date
+        if inv_num.upper().startswith("LEDGER-"):
+            to_process.append(v)
+            altered_count += 1
+            continue
+
         curr_hash = compute_voucher_hash(v)
         v["_voucher_hash"] = curr_hash
         cached = sync_cache.get(inv_num)
@@ -3263,6 +3280,10 @@ def push_to_cloud(vouchers):
                 if abs(cached_amt - new_amt) > 0.01 or (new_phone and cached_phone != new_phone) or (cached_status != new_status):
                     to_process.append(v)
                     altered_count += 1
+        elif isinstance(cached, (str, int, float)):
+            # Legacy cache entry from older versions (e.g. timestamp string) -> process & upgrade
+            to_process.append(v)
+            altered_count += 1
         elif v.get("_force_status_update"):
             to_process.append(v)
 
@@ -3321,7 +3342,9 @@ def push_to_cloud(vouchers):
                 "company_name": v.get("company_name") or "TallyPrime Live",
                 "metadata": {
                     **(v.get("metadata") or {}),
-                    "voucher_type":     v.get("voucher_type", ""),
+                    "voucher_type":     v.get("voucher_type") or (v.get("metadata") or {}).get("voucher_type", ""),
+                    "opening_balance":  float((v.get("metadata") or {}).get("opening_balance") or 0.0),
+                    "closing_balance":  float((v.get("metadata") or {}).get("closing_balance") or v.get("amount") or 0.0),
                     "direction":        v.get("direction", ""),
                     "tally_company":    v.get("company_name", ""),
                     "item_name":        v.get("item_name", ""),

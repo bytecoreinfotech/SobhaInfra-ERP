@@ -251,17 +251,12 @@ export function reconcileCustomerInvoices(rawInvoices = []) {
     let priorOpening = 0;
 
     if (tallyClosingBalance !== null) {
-      const dUpTo = salesInvoices
-        .filter(s => !markerDate || (s.invoice_date || '').slice(0, 10) <= markerDate)
-        .reduce((sum, s) => sum + Number(s.amount || 0), 0);
-      const cUpTo = receipts
-        .filter(r => !markerDate || (r.invoice_date || '').slice(0, 10) <= markerDate)
-        .reduce((sum, r) => sum + Number(r.amount || 0), 0);
-      const netUpTo = dUpTo - cUpTo;
-
-      if (explicitOpening > 0) {
+      if (explicitOpening !== 0 && explicitOpening !== null && !isNaN(explicitOpening)) {
         priorOpening = explicitOpening;
-      } else if (tallyClosingBalance > netUpTo) {
+      } else {
+        const totalSalesAmt = salesInvoices.reduce((sum, s) => sum + Number(s.amount || 0), 0);
+        const totalReceiptsAmt = receipts.reduce((sum, r) => sum + Number(r.amount || 0), 0);
+        const netUpTo = totalSalesAmt - totalReceiptsAmt;
         priorOpening = Math.round((tallyClosingBalance - netUpTo) * 100) / 100;
       }
 
@@ -470,25 +465,17 @@ export function getCustomerLedgerStatement(partyName, allInvoices = []) {
   // In standard accounting: Closing Balance = Opening Balance + totalDebits - totalCredits
   // So as of marker date: Opening Balance = Marker Closing - (Debits up to marker - Credits up to marker)
   let openingBalance = 0;
-  if (explicitOpening > 0) {
+  if (explicitOpening !== 0 && explicitOpening !== null && !isNaN(explicitOpening)) {
     openingBalance = explicitOpening;
   } else if (markerClosing !== null) {
-    const dUpTo = rawSales
-      .filter(s => !markerDate || (s.invoice_date || '').slice(0, 10) <= markerDate)
-      .reduce((sum, s) => sum + Number(s.amount || 0), 0);
-    const cUpTo = cleanReceipts
-      .filter(r => !markerDate || (r.invoice_date || '').slice(0, 10) <= markerDate)
-      .reduce((sum, r) => sum + Number(r.amount || 0), 0);
-    const netUpTo = dUpTo - cUpTo;
-
-    if (markerClosing > netUpTo) {
-      openingBalance = Math.round((markerClosing - netUpTo) * 100) / 100;
-    }
+    const netUpTo = totalDebits - totalCredits;
+    openingBalance = Math.round((markerClosing - netUpTo) * 100) / 100;
   }
 
   // Derive live authoritative closing balance: Opening Balance + Total Debits - Total Credits
   const netCurrent = totalDebits - totalCredits;
-  const closingBalance = Math.max(0, Math.round((openingBalance + netCurrent) * 100) / 100);
+  const netClosing = openingBalance + netCurrent;
+  const closingBalance = Math.max(0, Math.round(netClosing * 100) / 100);
 
   if (openingBalance > 0.5) {
     entries.unshift({
@@ -501,6 +488,18 @@ export function getCustomerLedgerStatement(partyName, allInvoices = []) {
       credit: null,
     });
     totalDebits += openingBalance;
+  } else if (openingBalance < -0.5) {
+    const creditOp = Math.abs(openingBalance);
+    entries.unshift({
+      rawDate: new Date('2026-04-01T00:00:00Z'),
+      date: '01 Apr 26',
+      particulars: 'By Opening Balance (Advance)',
+      vchType: 'Opening Balance',
+      vchNo: 'OP-BAL',
+      debit: null,
+      credit: creditOp,
+    });
+    totalCredits += creditOp;
   }
 
   return {
