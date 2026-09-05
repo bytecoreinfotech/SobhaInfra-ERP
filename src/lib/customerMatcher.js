@@ -91,15 +91,22 @@ export function matchCustomer(inv, index) {
     return res;
   }
 
-  // Tier 4: Fuzzy Levenshtein >= 85%
+  // Tier 4: Fuzzy Levenshtein >= 85% (Optimized with length pruning for large customer scale)
   if (normKey && normKey.length >= 4) {
     let bestScore = 0, bestCustomer = null;
+    const keyLen = normKey.length;
     for (const c of all) {
       const cNorm = c.normalized_key || normalizeName(c.company_name);
       if (!cNorm || cNorm.length < 4) continue;
+      // Mathematical prune: if length difference > 3, similarity cannot be >= 85%
+      if (Math.abs(keyLen - cNorm.length) > 3) continue;
+
       const score = levenshteinSimilarity(normKey, cNorm);
-      if (score > bestScore) { bestScore = score; bestCustomer = c; }
-      if (score === 1) break;
+      if (score > bestScore) {
+        bestScore = score;
+        bestCustomer = c;
+      }
+      if (score >= 0.95) break; // Near-perfect match, exit early
     }
     if (bestScore >= 0.85 && bestCustomer) {
       const res = { status: 'verified', customer: bestCustomer };

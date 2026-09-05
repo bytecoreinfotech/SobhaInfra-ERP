@@ -263,7 +263,7 @@ const Payments = () => {
             data-tooltip-pos="bottom"
           >
             <RotateCcw size={14} className={syncing ? 'animate-spin' : ''} />
-            {syncing ? 'Syncing...' : 'Sync Sheet'}
+            {syncing ? 'Syncing...' : `Sync Sheet (${customerMaster.length})`}
           </button>
           <button
             className="btn btn-secondary"
@@ -301,7 +301,7 @@ const Payments = () => {
             {enrichedInvoices.length} Verified Customer Invoices
           </span>
           <span style={{ color: 'var(--text-muted)' }}>
-            · Matched against Google Sheet Master Directory
+            · Matched against Google Sheet Master Directory ({customerMaster.length} Companies)
           </span>
         </div>
         <div style={{ display: 'flex', gap: '0.85rem', alignItems: 'center', fontSize: '0.75rem' }}>

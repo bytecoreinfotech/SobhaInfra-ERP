@@ -550,15 +550,30 @@ export async function getCustomerMaster(options = {}) {
 
   if (!isSupabaseConfigured) return { data: [], error: null };
   try {
-    const { data, error } = await supabase
-      .from('customer_master')
-      .select('id, company_name, contact_person, contact_number, normalized_key, sheet_row_index, last_synced_at')
-      .eq('organization_id', DEFAULT_ORG_ID)
-      .order('company_name', { ascending: true });
+    let allData = [];
+    let offset = 0;
+    const batchSize = 1000;
+    while (true) {
+      const { data, error } = await supabase
+        .from('customer_master')
+        .select('id, company_name, contact_person, contact_number, normalized_key, sheet_row_index, last_synced_at')
+        .eq('organization_id', DEFAULT_ORG_ID)
+        .range(offset, offset + batchSize - 1)
+        .order('company_name', { ascending: true });
 
-    _customerMasterCache = data || [];
+      if (error) {
+        console.warn('[db] getCustomerMaster batch error:', error.message);
+        break;
+      }
+      if (!data || data.length === 0) break;
+      allData.push(...data);
+      if (data.length < batchSize) break;
+      offset += batchSize;
+    }
+
+    _customerMasterCache = allData;
     _customerMasterCacheTime = Date.now();
-    return { data: _customerMasterCache, error };
+    return { data: allData, error: null };
   } catch (err) {
     console.warn('[db] getCustomerMaster error:', err.message);
     return { data: _customerMasterCache || [], error: err };

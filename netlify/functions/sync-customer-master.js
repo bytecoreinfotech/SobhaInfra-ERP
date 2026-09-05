@@ -1,4 +1,4 @@
-﻿/**
+/**
  * sync-customer-master.js — Netlify Function
  * Fetches live Google Sheet CSV → normalizes → upserts into Supabase customer_master
  * Triggered: POST /.netlify/functions/sync-customer-master
@@ -31,15 +31,62 @@ function normalizePhone(phone) {
 }
 
 function parseCSV(text) {
-  const lines = text.split('\n');
-  if (lines.length === 0) return [];
-  const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
-  return lines.slice(1).map(line => {
-    const vals = line.split(',').map(v => v.trim().replace(/^"|"$/g, ''));
-    const obj = {};
-    headers.forEach((h, i) => { obj[h] = vals[i] || ''; });
-    return obj;
-  }).filter(r => Object.values(r).some(v => v));
+  if (!text || typeof text !== 'string') return [];
+  const rows = [];
+  let currentRow = [];
+  let currentVal = '';
+  let insideQuotes = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    const nextChar = text[i + 1];
+
+    if (char === '"') {
+      if (insideQuotes && nextChar === '"') {
+        currentVal += '"';
+        i++;
+      } else {
+        insideQuotes = !insideQuotes;
+      }
+    } else if (char === ',' && !insideQuotes) {
+      currentRow.push(currentVal.trim());
+      currentVal = '';
+    } else if ((char === '\r' || char === '\n') && !insideQuotes) {
+      if (char === '\r' && nextChar === '\n') i++;
+      currentRow.push(currentVal.trim());
+      if (currentRow.length > 1 || (currentRow.length === 1 && currentRow[0] !== '')) {
+        rows.push(currentRow);
+      }
+      currentRow = [];
+      currentVal = '';
+    } else {
+      currentVal += char;
+    }
+  }
+
+  if (currentRow.length > 0 || currentVal !== '') {
+    currentRow.push(currentVal.trim());
+    if (currentRow.length > 1 || (currentRow.length === 1 && currentRow[0] !== '')) {
+      rows.push(currentRow);
+    }
+  }
+
+  if (rows.length === 0) return [];
+
+  const rawHeaders = rows[0];
+  const headers = rawHeaders.map(h => h.trim().toLowerCase().replace(/^"|"$/g, ''));
+
+  const compIdx = headers.findIndex(h => h.includes('company'));
+  const custIdx = headers.findIndex(h => h.includes('customer') || h.includes('person') || h.includes('contact name'));
+  const phoneIdx = headers.findIndex(h => h.includes('phone') || h.includes('mobile') || h.includes('contact number') || h.includes('number'));
+
+  return rows.slice(1).map(cols => {
+    return {
+      'Company Name': (compIdx >= 0 ? cols[compIdx] : cols[0]) || '',
+      'Customer Name': (custIdx >= 0 ? cols[custIdx] : cols[1]) || '',
+      'Contact Number': (phoneIdx >= 0 ? cols[phoneIdx] : cols[2]) || '',
+    };
+  }).filter(r => (r['Company Name'] || '').trim().length > 0);
 }
 
 exports.handler = async (event) => {
@@ -74,21 +121,23 @@ exports.handler = async (event) => {
     const csvText = await res.text();
     const parsed = parseCSV(csvText);
 
-    // Build rows (deduplicate by normalized_key)
-    const seenKeys = new Set();
+    // Build rows (deduplicate strictly by exact alphanumeric company name)
+    const seenNames = new Set();
     const rows = [];
     parsed.forEach((row, i) => {
       const company = (row['Company Name'] || '').trim();
       if (!company) return;
+      const identityKey = company.toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (!identityKey || seenNames.has(identityKey)) return;
+      seenNames.add(identityKey);
+
       const nk = normalizeName(company);
-      if (!nk || seenKeys.has(nk)) return;
-      seenKeys.add(nk);
       rows.push({
         organization_id:  ORG_ID,
         company_name:     company,
         contact_person:   (row['Customer Name'] || '').trim() || null,
         contact_number:   normalizePhone(row['Contact Number']) || null,
-        normalized_key:   nk,
+        normalized_key:   nk || identityKey,
         sheet_row_index:  i + 2,
         last_synced_at:   new Date().toISOString(),
       });

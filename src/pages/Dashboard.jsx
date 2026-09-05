@@ -5,9 +5,10 @@ import {
   ArrowUpRight, ArrowDownRight, Bot, CreditCard, BarChart3,
   Clock, AlertCircle, CheckCircle2, RefreshCw, Zap, Send,
   Phone, Star, Building2, AlertTriangle, Navigation, Camera, MapPin,
-  Download, Printer, FileSpreadsheet, FileText, ExternalLink, X
+  Download, Printer, FileSpreadsheet, FileText, ExternalLink, X,
+  RotateCcw, ShieldCheck
 } from 'lucide-react';
-import { getDashboardStats, getActivityFeed, getTasks, getLeads, getCampaigns, getInvoices, getTeamMembers, getEmployeeLivePings, getSiteVisits, getCustomerMaster } from '../lib/db';
+import { getDashboardStats, getActivityFeed, getTasks, getLeads, getCampaigns, getInvoices, getTeamMembers, getEmployeeLivePings, getSiteVisits, getCustomerMaster, triggerSheetSync, invalidateCustomerMasterCache } from '../lib/db';
 import { buildCustomerIndex, matchCustomer } from '../lib/customerMatcher';
 import { isSupabaseConfigured } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
@@ -92,6 +93,24 @@ const Dashboard = () => {
   const [recentVisits, setRecentVisits] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showReportModal, setShowReportModal] = useState(false);
+  const [syncingSheet, setSyncingSheet] = useState(false);
+  const [sheetSyncToast, setSheetSyncToast] = useState('');
+
+  const handleSyncSheet = async () => {
+    setSyncingSheet(true);
+    setSheetSyncToast('Syncing customer directory live from Google Sheet...');
+    const { data, error } = await triggerSheetSync();
+    invalidateCustomerMasterCache();
+    const masterRes = await getCustomerMaster({ forceRefresh: true });
+    setCustomerMaster(masterRes.data || []);
+    if (error || !data?.success) {
+      setSheetSyncToast(`Refreshed ${masterRes.data?.length || 0} customers from database`);
+    } else {
+      setSheetSyncToast(`✅ Synced ${data.synced} customer companies live from Google Sheet!`);
+    }
+    setSyncingSheet(false);
+    setTimeout(() => setSheetSyncToast(''), 4500);
+  };
 
   // ── Financial Year selector ───────────────────────────────────────────────
   // Indian FY runs Apr 1 – Mar 31. Derive current FY start year.
@@ -334,10 +353,36 @@ const Dashboard = () => {
           </p>
         </div>
         <div className="page-actions">
-          <button className="btn btn-secondary" onClick={loadData}><RefreshCw size={15} className={loading ? 'animate-spin' : ''} /> Refresh</button>
-          <button className="btn btn-primary" onClick={() => setShowReportModal(true)}><BarChart3 size={15} /> Generate Report</button>
+          <button
+            className="btn btn-secondary"
+            onClick={handleSyncSheet}
+            disabled={syncingSheet}
+            data-tooltip="Sync live customer directory & phone numbers from Google Sheet"
+            data-tooltip-pos="bottom"
+          >
+            <RotateCcw size={14} className={syncingSheet ? 'animate-spin' : ''} />
+            {syncingSheet ? 'Syncing...' : `Sheet: ${customerMaster.length} Companies`}
+          </button>
+          <button className="btn btn-secondary" onClick={loadData}>
+            <RefreshCw size={15} className={loading ? 'animate-spin' : ''} /> Refresh
+          </button>
+          <button className="btn btn-primary" onClick={() => setShowReportModal(true)}>
+            <BarChart3 size={15} /> Generate Report
+          </button>
         </div>
       </div>
+
+      {/* Sync Notification Toast */}
+      {sheetSyncToast && (
+        <div style={{
+          background: 'var(--bg-card)', border: '1px solid var(--border-color)',
+          borderRadius: 'var(--radius-md)', padding: '0.65rem 1rem',
+          marginBottom: '1rem', fontSize: '0.82rem', color: 'var(--text-primary)',
+          display: 'flex', alignItems: 'center', gap: '0.5rem',
+        }}>
+          <ShieldCheck size={15} color="var(--success)" /> {sheetSyncToast}
+        </div>
+      )}
 
       {/* ── Live KPI Stat Cards ─────────────── */}
       <div className="stats-grid">
