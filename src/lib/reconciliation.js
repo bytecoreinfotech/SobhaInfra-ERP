@@ -243,19 +243,46 @@ export function reconcileCustomerInvoices(rawInvoices = []) {
     }
 
     // 5. Align with Tally Closing Balance:
+    // Determine effective closing balance accounting for transactions occurring after marker snapshot
+    const markerDate = ledgerMarker ? (ledgerMarker.invoice_date || '') : '';
+    const explicitOpening = Number(ledgerMarker?.metadata?.opening_balance || 0);
+
+    let effectiveClosingBalance = tallyClosingBalance;
+    let priorOpening = 0;
+
+    if (tallyClosingBalance !== null) {
+      const dUpTo = salesInvoices
+        .filter(s => !markerDate || (s.invoice_date || '').slice(0, 10) <= markerDate)
+        .reduce((sum, s) => sum + Number(s.amount || 0), 0);
+      const cUpTo = receipts
+        .filter(r => !markerDate || (r.invoice_date || '').slice(0, 10) <= markerDate)
+        .reduce((sum, r) => sum + Number(r.amount || 0), 0);
+      const netUpTo = dUpTo - cUpTo;
+
+      if (explicitOpening > 0) {
+        priorOpening = explicitOpening;
+      } else if (tallyClosingBalance > netUpTo) {
+        priorOpening = Math.round((tallyClosingBalance - netUpTo) * 100) / 100;
+      }
+
+      const totalSalesAmt = salesInvoices.reduce((sum, s) => sum + Number(s.amount || 0), 0);
+      const totalReceiptsAmt = receipts.reduce((sum, r) => sum + Number(r.amount || 0), 0);
+      effectiveClosingBalance = Math.max(0, Math.round((priorOpening + totalSalesAmt - totalReceiptsAmt) * 100) / 100);
+    }
+
     const currentPendingSum = salesInvoices.reduce((sum, inv) => sum + (inv.status !== 'Paid' ? Number(inv.pending_amount || 0) : 0), 0);
 
-    if (tallyClosingBalance !== null && tallyClosingBalance >= 0) {
-      if (tallyClosingBalance === 0) {
+    if (effectiveClosingBalance !== null && effectiveClosingBalance >= 0) {
+      if (effectiveClosingBalance === 0) {
         // Tally confirmed zero outstanding balance
         for (const s of salesInvoices) {
           s.status = 'Paid';
           s.pending_amount = 0;
           s.paid_amount = Number(s.amount || 0);
         }
-      } else if (tallyClosingBalance < currentPendingSum) {
-        // Tally reflects lower pending amount than current bills (e.g. advance receipts or credit notes in Tally)
-        let allowedPending = tallyClosingBalance;
+      } else if (effectiveClosingBalance < currentPendingSum) {
+        // Tally reflects lower pending amount than current bills
+        let allowedPending = effectiveClosingBalance;
         for (let i = salesInvoices.length - 1; i >= 0; i--) {
           const inv = salesInvoices[i];
           const curPending = Number(inv.pending_amount || 0);
@@ -273,35 +300,54 @@ export function reconcileCustomerInvoices(rawInvoices = []) {
             inv.paid_amount = Number(inv.amount || 0);
           }
         }
-      } else if (tallyClosingBalance > currentPendingSum) {
-        // Tally reflects higher closing balance: customer has an Opening Balance brought forward from prior FYs
-        const priorOpening = Math.round((tallyClosingBalance - currentPendingSum) * 100) / 100;
-        if (priorOpening > 0.5) {
-          const cleanPartyCode = party.slice(0, 12).replace(/[^A-Z0-9]/gi, '').toUpperCase();
-          const opInvoice = {
-            id: `op-${party.replace(/\s+/g, '-').toLowerCase()}`,
-            invoice_number: `OP-${cleanPartyCode}`,
-            tally_voucher_number: `OP-${cleanPartyCode}`,
-            client_name: records[0]?.client_name || party,
-            amount: priorOpening,
-            status: 'Overdue',
-            due_date: '2026-04-01',
-            invoice_date: '2026-04-01',
-            pending_amount: priorOpening,
-            paid_amount: 0,
+      } else if (priorOpening > 0.5) {
+        // Prepend opening balance invoice so pending sum equals effective closing balance
+        const cleanPartyCode = party.slice(0, 12).replace(/[^A-Z0-9]/gi, '').toUpperCase();
+        const opInvoice = {
+          id: `op-${party.replace(/\s+/g, '-').toLowerCase()}`,
+          invoice_number: `OP-${cleanPartyCode}`,
+          tally_voucher_number: `OP-${cleanPartyCode}`,
+          client_name: records[0]?.client_name || party,
+          amount: priorOpening,
+          status: 'Overdue',
+          due_date: '2026-04-01',
+          invoice_date: '2026-04-01',
+          pending_amount: priorOpening,
+          paid_amount: 0,
+          voucher_type: 'Opening Balance',
+          direction: 'receivable',
+          company_name: records[0]?.company_name || 'SHOBHA READY PLAST',
+          metadata: {
             voucher_type: 'Opening Balance',
             direction: 'receivable',
-            company_name: records[0]?.company_name || 'SHOBHA READY PLAST',
-            metadata: {
-              voucher_type: 'Opening Balance',
-              direction: 'receivable',
-              pending_amount: priorOpening,
-              is_opening_balance: true,
-              description: 'Opening Balance brought forward from prior financial years'
-            },
-            _reconciled: true,
-          };
-          salesInvoices.unshift(opInvoice);
+            pending_amount: priorOpening,
+            is_opening_balance: true,
+            description: 'Opening Balance brought forward from prior financial years'
+          },
+          _reconciled: true,
+        };
+        salesInvoices.unshift(opInvoice);
+
+        // Re-align if total pending exceeds effective closing balance
+        const updatedPendingSum = salesInvoices.reduce((sum, inv) => sum + (inv.status !== 'Paid' ? Number(inv.pending_amount || 0) : 0), 0);
+        if (updatedPendingSum > effectiveClosingBalance) {
+          let allowed = effectiveClosingBalance;
+          for (let i = salesInvoices.length - 1; i >= 0; i--) {
+            const inv = salesInvoices[i];
+            const curP = Number(inv.pending_amount || 0);
+            if (curP <= 0) continue;
+            if (allowed >= curP) {
+              allowed -= curP;
+            } else if (allowed > 0) {
+              inv.pending_amount = Math.round(allowed * 100) / 100;
+              inv.paid_amount = Math.round((Number(inv.amount || 0) - allowed) * 100) / 100;
+              allowed = 0;
+            } else {
+              inv.status = 'Paid';
+              inv.pending_amount = 0;
+              inv.paid_amount = Number(inv.amount || 0);
+            }
+          }
         }
       }
     }
@@ -417,23 +463,32 @@ export function getCustomerLedgerStatement(partyName, allInvoices = []) {
   );
 
   const markerClosing = ledgerMarker ? Number(ledgerMarker.amount || 0) : null;
+  const markerDate = ledgerMarker ? (ledgerMarker.invoice_date || '') : '';
   const explicitOpening = Number(ledgerMarker?.metadata?.opening_balance || 0);
 
-  // Compute prior period opening balance:
+  // Compute prior period opening balance as of 01-Apr-2026:
   // In standard accounting: Closing Balance = Opening Balance + totalDebits - totalCredits
-  // So: Opening Balance = Closing Balance - (totalDebits - totalCredits)
-  const netCurrent = totalDebits - totalCredits;
+  // So as of marker date: Opening Balance = Marker Closing - (Debits up to marker - Credits up to marker)
   let openingBalance = 0;
   if (explicitOpening > 0) {
     openingBalance = explicitOpening;
-  } else if (markerClosing !== null && markerClosing > netCurrent) {
-    openingBalance = Math.round((markerClosing - netCurrent) * 100) / 100;
+  } else if (markerClosing !== null) {
+    const dUpTo = rawSales
+      .filter(s => !markerDate || (s.invoice_date || '').slice(0, 10) <= markerDate)
+      .reduce((sum, s) => sum + Number(s.amount || 0), 0);
+    const cUpTo = cleanReceipts
+      .filter(r => !markerDate || (r.invoice_date || '').slice(0, 10) <= markerDate)
+      .reduce((sum, r) => sum + Number(r.amount || 0), 0);
+    const netUpTo = dUpTo - cUpTo;
+
+    if (markerClosing > netUpTo) {
+      openingBalance = Math.round((markerClosing - netUpTo) * 100) / 100;
+    }
   }
 
-  // Derive authoritative closing balance (accounting for live transactions beyond snapshot)
-  const closingBalance = markerClosing !== null
-    ? Math.max(markerClosing, Math.round((openingBalance + netCurrent) * 100) / 100)
-    : Math.max(0, Math.round((openingBalance + netCurrent) * 100) / 100);
+  // Derive live authoritative closing balance: Opening Balance + Total Debits - Total Credits
+  const netCurrent = totalDebits - totalCredits;
+  const closingBalance = Math.max(0, Math.round((openingBalance + netCurrent) * 100) / 100);
 
   if (openingBalance > 0.5) {
     entries.unshift({
