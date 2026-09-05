@@ -1005,12 +1005,13 @@ def parse_ledger_block(block, fallback_company: str = "", ledger_phone_map: dict
     name = (extract_tag_value(block, "NAME") or
             extract_tag_value(block, "LEDGERNAME"))
     parent = extract_tag_value(block, "PARENT")
-    closing = (extract_tag_value(block, "CLOSINGBALANCE") or
-               extract_tag_value(block, "OPENINGBALANCE") or "0")
+    closing_raw = (extract_tag_value(block, "CLOSINGBALANCE") or "0")
+    opening_raw = (extract_tag_value(block, "OPENINGBALANCE") or "0")
 
-    amount = parse_number(closing)
+    amount = parse_number(closing_raw)
+    opening_amt = parse_number(opening_raw)
 
-    if not name or amount == 0:
+    if not name or (amount == 0 and opening_amt == 0):
         return None
 
     # Only skip pure system/group accounts (capital, banks, tax accounts, etc.)
@@ -1057,6 +1058,12 @@ def parse_ledger_block(block, fallback_company: str = "", ledger_phone_map: dict
         "amount": amount,
         "status": "Pending",
         "due_date": datetime.now().strftime("%Y-%m-%d"),
+        "metadata": {
+            "voucher_type": "Ledger Balance",
+            "opening_balance": opening_amt,
+            "closing_balance": amount,
+            "tally_company": fallback_company or "Tally Company",
+        }
     }
 
 
@@ -3194,38 +3201,57 @@ def push_to_cloud(vouchers):
     if reconciled_paid_updates > 0:
         log.info(f"  [Reconciliation] ✅ Marked {reconciled_paid_updates} sales voucher(s) as Settled/Paid via incoming receipts!")
 
-    # Phone-aware deduplication:
-    # Skip vouchers already synced AND whose phone/status hasn't changed.
-    # If the phone or status was updated in Tally, force a re-push to update the record.
+    # Phone, Amount & Status aware deduplication:
+    # Skip vouchers already synced AND whose phone, amount, and status haven't changed.
+    # If the amount, phone, or status changed in Tally, force a re-push to update Supabase.
     to_process = []
     phone_updates = 0
+    amount_updates = 0
+    status_updates = 0
     for v in all_unique:
         inv_num = v.get("invoice_number", "")
         new_phone = (v.get("phone") or v.get("client_phone") or "").strip()
+        new_amt = float(v.get("amount") or 0)
+        new_status = v.get("status") or "Pending"
         cached = sync_cache.get(inv_num)
+
         if cached is None:
             # Never synced before — always include
             to_process.append(v)
-        elif v.get("_force_status_update"):
-            # Status updated from Pending to Paid via reconciliation — force push!
-            to_process.append(v)
         elif isinstance(cached, dict):
-            # New-format cache entry with phone tracking
             cached_phone = (cached.get("phone") or "").strip()
-            if new_phone and cached_phone != new_phone:
-                # Phone changed in Tally — force re-push
+            cached_amt = float(cached.get("amount") or 0)
+            cached_status = cached.get("status")
+
+            # 1. Did amount change in Tally? (ledger closing balance changed, or bill edited)
+            if "amount" in cached and abs(cached_amt - new_amt) > 0.01:
+                v["_force_amount_update"] = True
+                to_process.append(v)
+                amount_updates += 1
+            # 2. Did phone change in Tally?
+            elif new_phone and cached_phone != new_phone:
                 v["_force_phone_update"] = True
                 to_process.append(v)
                 phone_updates += 1
+            # 3. Did status change from Pending to Paid? Only re-push if NOT already pushed as Paid!
+            elif v.get("_force_status_update") and (cached_status is None or cached_status != new_status):
+                to_process.append(v)
+                status_updates += 1
+        elif v.get("_force_status_update"):
+            to_process.append(v)
 
     skipped = len(all_unique) - len(to_process)
     log.info(
         f"  [Dedup] {len(vouchers)} raw → {len(all_unique)} unique → "
         f"{len(to_process)} to process "
-        f"({phone_updates} phone updates, {skipped} already synced)"
+        f"({phone_updates} phone updates, {amount_updates} amount updates, {status_updates} status updates, {skipped} already synced)"
     )
     if phone_updates > 0:
         log.info(f"  [Phone Sync] ✅ {phone_updates} voucher(s) have updated phone numbers — will re-push!")
+    if amount_updates > 0:
+        log.info(f"  [Amount Sync] 💰 {amount_updates} voucher(s) / ledger closing balances updated — will re-push!")
+    if status_updates > 0:
+        log.info(f"  [Status Sync] 🔄 {status_updates} voucher(s) status updated — will re-push!")
 
     if not to_process:
         log.info("  [Cloud Push] All vouchers already synced. Nothing to do.")
@@ -3315,10 +3341,12 @@ def push_to_cloud(vouchers):
             )
             if resp.status_code in (200, 201, 204, 409):
                 pushed_ok += 1
-                # Store phone in cache so future syncs detect phone changes
+                # Store phone, amount, and status in cache so future syncs detect changes
                 sync_cache[inv_num] = {
                     "ts": datetime.now().isoformat(),
-                    "phone": (v.get("phone") or v.get("client_phone") or "").strip()
+                    "phone": (v.get("phone") or v.get("client_phone") or "").strip(),
+                    "amount": float(v.get("amount") or 0),
+                    "status": v.get("status") or "Pending",
                 }
                 if pushed_ok % 25 == 0:
                     save_cache()  # Save cache every 25 records

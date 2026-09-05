@@ -60,6 +60,57 @@ export function getDaysOverdue(dueDateStr) {
 }
 
 /**
+ * Deduplicates receipts by canonical voucher number and/or date + amount.
+ * Handles legacy duplicate generations:
+ * - Bare REC-155 vs canonical SRP-REC-155 or SB-REC-155
+ * - Old SBR-REC-120 vs canonical SB-REC-120
+ */
+export function deduplicateReceipts(rawReceipts = []) {
+  if (!Array.isArray(rawReceipts) || rawReceipts.length <= 1) return rawReceipts || [];
+
+  // Sort so authoritative company-prefixed vouchers come first
+  const sorted = [...rawReceipts].sort((a, b) => {
+    const numA = (a.invoice_number || a.tally_voucher_number || '').toUpperCase();
+    const numB = (b.invoice_number || b.tally_voucher_number || '').toUpperCase();
+    const getScore = (n) => {
+      if (/^(SRP|SB)-REC-/i.test(n)) return 3;
+      if (/^SBR-REC-/i.test(n)) return 2;
+      return 1;
+    };
+    return getScore(numB) - getScore(numA);
+  });
+
+  const seenKeys = new Set();
+  const unique = [];
+
+  for (const r of sorted) {
+    const num = (r.invoice_number || r.tally_voucher_number || '').toUpperCase().trim();
+    const amt = Math.round(Number(r.amount || 0) * 100) / 100;
+    const dt = (r.invoice_date || r.created_at || '').slice(0, 10);
+    
+    // Extract voucher digits if available (e.g. REC-155 -> 155, SRP-REC-155 -> 155)
+    const digitsMatch = num.match(/REC-(\d+)/i);
+    const digits = digitsMatch ? digitsMatch[1] : null;
+
+    const keyByDigits = digits ? `digit_${digits}` : null;
+    const keyByDateAmt = `${dt}_${amt}`;
+
+    if (keyByDigits && seenKeys.has(keyByDigits)) {
+      continue;
+    }
+    if (seenKeys.has(keyByDateAmt)) {
+      continue;
+    }
+
+    if (keyByDigits) seenKeys.add(keyByDigits);
+    seenKeys.add(keyByDateAmt);
+    unique.push(r);
+  }
+
+  return unique;
+}
+
+/**
  * Reconcile invoices across all parties:
  * - Group vouchers by party.
  * - Match receipts to sales bills via explicit Agst Ref or FIFO.
@@ -91,7 +142,7 @@ export function reconcileCustomerInvoices(rawInvoices = []) {
 
     // 2. Identify Sales invoices and Receipts (excluding LEDGER-* markers)
     const salesInvoices = [];
-    const receipts = [];
+    const rawReceipts = [];
     const otherVouchers = [];
 
     for (const r of records) {
@@ -119,11 +170,14 @@ export function reconcileCustomerInvoices(rawInvoices = []) {
       if (isSales && !isReceipt) {
         salesInvoices.push({ ...r });
       } else if (isReceipt) {
-        receipts.push({ ...r });
+        rawReceipts.push({ ...r });
       } else {
         otherVouchers.push({ ...r });
       }
     }
+
+    // Deduplicate receipts to eliminate legacy bare REC-* duplicates
+    const receipts = deduplicateReceipts(rawReceipts);
 
     // Sort sales invoices chronologically (oldest first for FIFO)
     salesInvoices.sort((a, b) => {
@@ -283,19 +337,14 @@ export function getCustomerLedgerStatement(partyName, allInvoices = []) {
     return normalizePartyName(inv.client_name) === normParty;
   });
 
-  const entries = [];
-  let totalDebits = 0;
-  let totalCredits = 0;
-
+  // Separate vouchers to deduplicate legacy receipt duplicates
+  const rawSales = [];
+  const rawReceipts = [];
   for (const v of partyVouchers) {
     const meta = v.metadata || {};
     const vtype = (meta.voucher_type || v.voucher_type || '').toLowerCase();
     const dir = (meta.direction || v.direction || '').toLowerCase();
-    const amt = Number(v.amount || 0);
     const num = v.invoice_number || v.tally_voucher_number || '';
-    const dateStr = v.invoice_date 
-      ? new Date(v.invoice_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' })
-      : '—';
 
     const isSales = vtype.includes('sales') || vtype.includes('tax invoice') || dir === 'receivable' || /^(srp|sb)\//i.test(num);
     const isReceipt = vtype.includes('receipt') || dir === 'received' || /^(rec|rcpt)-/i.test(num);
@@ -303,29 +352,59 @@ export function getCustomerLedgerStatement(partyName, allInvoices = []) {
     const isDebitNote = vtype.includes('debit note');
 
     if (isSales || isDebitNote) {
-      totalDebits += amt;
-      entries.push({
-        rawDate: parseDate(v.invoice_date || v.created_at),
-        date: dateStr,
-        particulars: isDebitNote ? 'To Debit Note' : 'To Sales',
-        vchType: isDebitNote ? 'Debit Note' : 'Sales',
-        vchNo: num,
-        debit: amt,
-        credit: null,
-      });
+      rawSales.push({ ...v, _isDebit: true });
     } else if (isReceipt || isCreditNote) {
-      totalCredits += amt;
-      const bankName = meta.bank_name || meta.bank_ledger || 'ICICI BANK / Bank';
-      entries.push({
-        rawDate: parseDate(v.invoice_date || v.created_at),
-        date: dateStr,
-        particulars: isCreditNote ? 'By Credit Note' : `By ${bankName}`,
-        vchType: isCreditNote ? 'Credit Note' : 'Receipt',
-        vchNo: num,
-        debit: null,
-        credit: amt,
-      });
+      rawReceipts.push({ ...v, _isCredit: true });
     }
+  }
+
+  // Deduplicate receipts to eliminate legacy bare REC-* duplicates
+  const cleanReceipts = deduplicateReceipts(rawReceipts);
+
+  const entries = [];
+  let totalDebits = 0;
+  let totalCredits = 0;
+
+  for (const v of rawSales) {
+    const amt = Number(v.amount || 0);
+    const num = v.invoice_number || v.tally_voucher_number || '';
+    const dateStr = v.invoice_date 
+      ? new Date(v.invoice_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' })
+      : '—';
+    const isDebitNote = (v.metadata?.voucher_type || v.voucher_type || '').toLowerCase().includes('debit note');
+
+    totalDebits += amt;
+    entries.push({
+      rawDate: parseDate(v.invoice_date || v.created_at),
+      date: dateStr,
+      particulars: isDebitNote ? 'To Debit Note' : 'To Sales',
+      vchType: isDebitNote ? 'Debit Note' : 'Sales',
+      vchNo: num,
+      debit: amt,
+      credit: null,
+    });
+  }
+
+  for (const v of cleanReceipts) {
+    const amt = Number(v.amount || 0);
+    const num = v.invoice_number || v.tally_voucher_number || '';
+    const dateStr = v.invoice_date 
+      ? new Date(v.invoice_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' })
+      : '—';
+    const meta = v.metadata || {};
+    const isCreditNote = (meta.voucher_type || v.voucher_type || '').toLowerCase().includes('credit note');
+    const bankName = meta.bank_name || meta.bank_ledger || 'ICICI BANK / Bank';
+
+    totalCredits += amt;
+    entries.push({
+      rawDate: parseDate(v.invoice_date || v.created_at),
+      date: dateStr,
+      particulars: isCreditNote ? 'By Credit Note' : `By ${bankName}`,
+      vchType: isCreditNote ? 'Credit Note' : 'Receipt',
+      vchNo: num,
+      debit: null,
+      credit: amt,
+    });
   }
 
   // Sort chronological
@@ -337,13 +416,24 @@ export function getCustomerLedgerStatement(partyName, allInvoices = []) {
     normalizePartyName(inv.client_name) === normParty
   );
 
-  const closingBalance = ledgerMarker ? Number(ledgerMarker.amount || 0) : Math.max(0, totalDebits - totalCredits);
+  const markerClosing = ledgerMarker ? Number(ledgerMarker.amount || 0) : null;
+  const explicitOpening = Number(ledgerMarker?.metadata?.opening_balance || 0);
 
-  // Compute prior period opening balance (if closing balance exceeds current net)
+  // Compute prior period opening balance:
+  // In standard accounting: Closing Balance = Opening Balance + totalDebits - totalCredits
+  // So: Opening Balance = Closing Balance - (totalDebits - totalCredits)
   const netCurrent = totalDebits - totalCredits;
-  const openingBalance = (closingBalance > netCurrent)
-    ? Math.round((closingBalance - netCurrent) * 100) / 100
-    : 0;
+  let openingBalance = 0;
+  if (explicitOpening > 0) {
+    openingBalance = explicitOpening;
+  } else if (markerClosing !== null && markerClosing > netCurrent) {
+    openingBalance = Math.round((markerClosing - netCurrent) * 100) / 100;
+  }
+
+  // Derive authoritative closing balance (accounting for live transactions beyond snapshot)
+  const closingBalance = markerClosing !== null
+    ? Math.max(markerClosing, Math.round((openingBalance + netCurrent) * 100) / 100)
+    : Math.max(0, Math.round((openingBalance + netCurrent) * 100) / 100);
 
   if (openingBalance > 0.5) {
     entries.unshift({
