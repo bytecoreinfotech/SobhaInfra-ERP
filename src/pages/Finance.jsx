@@ -14,6 +14,7 @@ import {
   getCustomerMaster
 } from '../lib/db';
 import { buildCustomerIndex, matchCustomer } from '../lib/customerMatcher';
+import { reconcileCustomerInvoices, getCustomerLedgerStatement, getCustomerPendingBills } from '../lib/reconciliation';
 import { supabase } from '../lib/supabase';
 import { useCompany } from '../context/CompanyContext';
 import LedgerDetailDrawer from '../components/LedgerDetailDrawer';
@@ -291,9 +292,11 @@ const Finance = () => {
 
   // Re-filter when company switcher changes + tag verified sheet customers
   const invoices = useMemo(() => {
+    // Authoritatively reconcile vouchers: apply customer receipts & closing balance
+    const reconciled = reconcileCustomerInvoices(allInvoices);
     const base = isConsolidated
-      ? allInvoices
-      : allInvoices.filter(inv => {
+      ? reconciled
+      : reconciled.filter(inv => {
           if (!activeCompany) return true;
           const compName = (activeCompany.company_name || '').toUpperCase();
           const aliases = Array.isArray(activeCompany.alias_names)
@@ -505,8 +508,8 @@ const Finance = () => {
   // KPI metrics for the active view
   const totalInvoiced = activeViewInvoices.reduce((s, i) => s + Number(i.amount || 0), 0);
   const totalPaid     = activeViewInvoices.filter(i => i.status === 'Paid').reduce((s, i) => s + Number(i.amount || 0), 0);
-  const totalOverdue  = activeViewInvoices.filter(i => i.status === 'Overdue').reduce((s, i) => s + Number(i.amount || 0), 0);
-  const totalPending  = activeViewInvoices.filter(i => i.status === 'Pending').reduce((s, i) => s + Number(i.amount || 0), 0);
+  const totalOverdue  = activeViewInvoices.filter(i => i.status === 'Overdue').reduce((s, i) => s + Number(i.pending_amount ?? i.amount ?? 0), 0);
+  const totalPending  = activeViewInvoices.filter(i => i.status === 'Pending').reduce((s, i) => s + Number(i.pending_amount ?? i.amount ?? 0), 0);
 
 
   // 3. Search & Status Filter — also filtered by active financeView (receivables vs payables)
@@ -2099,29 +2102,29 @@ const Finance = () => {
               {(() => {
                 const inv = selectedInvoiceForTemplate;
                 const meta = inv?.metadata || {};
-                // Real data — falls back to sample if not available
+                // Real data — falls back to clean party values if not available
                 const invNumber  = inv?.invoice_number || inv?.tally_voucher_number || 'SRP/0570/26-27';
                 const invDate    = inv?.invoice_date ? new Date(inv.invoice_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' }) : '10-Aug-26';
-                const partyName  = inv?.client_name || 'VAISHNAV CONSTRUCTION';
-                const amount     = inv?.amount || 74962.0;
+                const partyName  = inv?.client_name || 'Customer';
+                const amount     = Number(inv?.amount || 0);
                 const status     = inv?.status || 'Pending';
                 const itemName   = meta.item_name || 'SAND & READY PLAST';
                 const hsnCode    = meta.hsn_code || '25051011';
                 const truckNo    = meta.truck_no || 'MH04-4550';
                 const challanNo  = meta.challan_no || '10199';
                 const challanDate= meta.challan_date || invDate;
-                const site       = meta.site || 'THANE';
-                const qtyStr     = meta.quantity_str || '776 BAGS';
-                const rateStr    = meta.rate_str || '92.00';
+                const site       = meta.site || 'SITE';
+                const qtyStr     = meta.quantity_str || '1 LOT';
+                const rateStr    = meta.rate_str || (amount ? amount.toFixed(2) : '0.00');
                 const unit       = meta.unit || 'BAGS';
                 const ewayNo     = meta.eway_bill_no || '602165786131';
                 const igstRate   = meta.igst_rate || '5%';
-                const taxable    = amount / 1.05; // approximate
-                const igstVal    = amount - taxable;
-                const buyerAddr  = meta.buyer_address || 'DEU APARTMENT, SHOP NO 4, KHET UPPER VILLAGE, THANE WEST';
+                const taxable    = meta.taxable_amount ? Number(meta.taxable_amount) : (amount / 1.05);
+                const igstVal    = meta.igst_amount ? Number(meta.igst_amount) : (amount - taxable);
+                const buyerAddr  = meta.buyer_address || inv?.buyer_address || (customerMaster.find(c => c.company_name?.toUpperCase() === partyName.toUpperCase())?.address) || 'Client Delivery Address';
                 const buyerState = meta.buyer_state || 'Maharashtra';
                 const buyerCode  = meta.buyer_state_code || '27';
-                const buyerGstin = meta.gstin || '27ALPRP4116L1ZM';
+                const buyerGstin = meta.gstin || inv?.gstin || (customerMaster.find(c => c.company_name?.toUpperCase() === partyName.toUpperCase())?.gstin) || '';
                 const compName   = activeCompany?.company_name || 'SHOBHA READY PLAST';
                 const compAddr   = activeCompany?.company_address || 'NH48, NEAR KOLEI KHADI SARODHI, VALSAD, GUJARAT - 396001';
                 const compGstin  = activeCompany?.gstin_number || '24AGCPJ2785R1ZV';
@@ -2325,8 +2328,8 @@ const Finance = () => {
                       <strong>Dispatch From:</strong> NH48, NEAR KOLEI KHADI SARODHI, City/Village:Sarodhi, Valsad, Gujarat, 396001, UDYAM REG.:- UDYAM-GJ-01-0012345
                     </div>
                     <div>
-                      <strong>To:</strong> VAISHNAV CONSTRUCTION (GSTIN: 27ALPRP4116L1ZM, Maharashtra)<br/>
-                      <strong>Ship To:</strong> DEU APARTMENT, SHOP NO 4, KOLShet UPPER VILLEGE, THANE WEST, Maharashtra 400607
+                      <strong>To:</strong> {partyName} {buyerGstin ? `(GSTIN: ${buyerGstin})` : ''}<br/>
+                      <strong>Ship To:</strong> {buyerAddr}
                     </div>
                   </div>
 
@@ -2413,8 +2416,8 @@ const Finance = () => {
                       <strong>Dispatch From:</strong> NH48, NEAR KOLEI KHADI SARODHI, Valsad, Gujarat, 396001
                     </div>
                     <div>
-                      <strong>To:</strong> VAISHNAV CONSTRUCTION (GSTIN: 27ALPRP4116L1ZM, Maharashtra)<br/>
-                      <strong>Ship To:</strong> DEU APARTMENT, SHOP NO 4, KHET UPPER VILLEGE, THANE WEST, 400607
+                      <strong>To:</strong> {partyName} {buyerGstin ? `(GSTIN: ${buyerGstin})` : ''}<br/>
+                      <strong>Ship To:</strong> {buyerAddr}
                     </div>
                   </div>
 
@@ -2450,130 +2453,151 @@ const Finance = () => {
               )}
 
               {/* TAB 3: PENDING BILLS STATEMENT */}
-              {selectedTemplateTab === 'pending_bills' && (
-                <div style={{ width: '100%', maxWidth: 780, background: 'white', color: '#111', padding: '24px', borderRadius: 6, boxShadow: '0 4px 20px rgba(0,0,0,0.15)', fontFamily: 'sans-serif', fontSize: '10.5px', lineHeight: 1.4 }}>
-                  <div style={{ textAlign: 'center', borderBottom: '1px solid #e2e8f0', paddingBottom: '12px', marginBottom: '12px' }}>
-                    <div style={{ fontSize: '16px', fontWeight: 800 }}>SHOBHA READY PLAST</div>
-                    <div style={{ fontSize: '9.5px', color: '#4b5563' }}>NH48, NEAR KOLEI KHADI SARODHI, VALSAD, GUJARAT - 396001</div>
-                    <div style={{ fontSize: '9.5px', color: '#4b5563' }}>UDYAM REG.:- UDYAM-GJ-01-0012345 | E-Mail : shobhareadyplast@gmail.com</div>
-                    <div style={{ fontSize: '14px', fontWeight: 800, marginTop: '8px' }}>VAISHNAV CONSTRUCTION</div>
-                    <div style={{ fontSize: '10px' }}>Bill-wise Details · 1-Apr-26 to 22-Aug-26 · <strong>Pending Bills</strong></div>
-                  </div>
+              {selectedTemplateTab === 'pending_bills' && (() => {
+                const statement = getCustomerPendingBills(partyName, allInvoices);
+                return (
+                  <div style={{ width: '100%', maxWidth: 780, background: 'white', color: '#111', padding: '24px', borderRadius: 6, boxShadow: '0 4px 20px rgba(0,0,0,0.15)', fontFamily: 'sans-serif', fontSize: '10.5px', lineHeight: 1.4 }}>
+                    <div style={{ textAlign: 'center', borderBottom: '1px solid #e2e8f0', paddingBottom: '12px', marginBottom: '12px' }}>
+                      <div style={{ fontSize: '16px', fontWeight: 800 }}>{compName.toUpperCase()}</div>
+                      <div style={{ fontSize: '9.5px', color: '#4b5563' }}>{compAddr}</div>
+                      <div style={{ fontSize: '9.5px', color: '#4b5563' }}>E-Mail : {compEmail} {compPhone ? `| Phone: ${compPhone}` : ''}</div>
+                      <div style={{ fontSize: '14px', fontWeight: 800, marginTop: '8px', color: 'var(--text-primary)' }}>{partyName.toUpperCase()}</div>
+                      <div style={{ fontSize: '10px' }}>Bill-wise Details · As on {new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' })} · <strong>Pending Bills Statement</strong></div>
+                    </div>
 
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '10px' }}>
-                    <thead>
-                      <tr style={{ borderTop: '1px solid #111', borderBottom: '1px solid #111', background: '#f8fafc' }}>
-                        <th style={{ textAlign: 'left', padding: '4px' }}>Date</th>
-                        <th style={{ textAlign: 'left', padding: '4px' }}>Ref. No.</th>
-                        <th style={{ textAlign: 'right', padding: '4px' }}>Opening Amount</th>
-                        <th style={{ textAlign: 'right', padding: '4px' }}>Pending Amount</th>
-                        <th style={{ textAlign: 'center', padding: '4px' }}>Due on</th>
-                        <th style={{ textAlign: 'right', padding: '4px' }}>Overdue by days</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {[
-                        { date: '20-Mar-26', ref: 'SRP/01957/25-26', op: '86,373.00 Dr', pe: '86,373.00 Dr', due: '20-Mar-26', days: 154 },
-                        { date: '26-Mar-26', ref: 'SRP/01995/25-26', op: '84,861.00 Dr', pe: '84,861.00 Dr', due: '26-Mar-26', days: 148 },
-                        { date: '11-Apr-26', ref: 'SRP/062/26-27', op: '88,196.00 Dr', pe: '48,158.00 Dr', due: '11-Apr-26', days: 132 },
-                        { date: '24-Jun-26', ref: 'SRP/0366/26-27', op: '87,326.00 Dr', pe: '87,326.00 Dr', due: '24-Jun-26', days: 58 },
-                        { date: '15-Jul-26', ref: 'SRP/0455/26-27', op: '58,733.00 Dr', pe: '58,733.00 Dr', due: '15-Jul-26', days: 37 },
-                        { date: '20-Jul-26', ref: 'SRP/0478/26-27', op: '87,326.00 Dr', pe: '87,326.00 Dr', due: '20-Jul-26', days: 32 },
-                        { date: '10-Aug-26', ref: 'SRP/0570/26-27', op: '74,962.00 Dr', pe: '74,962.00 Dr', due: '10-Aug-26', days: 11 },
-                      ].map((row, i) => (
-                        <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                          <td style={{ padding: '4px' }}>{row.date}</td>
-                          <td style={{ padding: '4px' }}>{row.ref}</td>
-                          <td style={{ padding: '4px', textAlign: 'right' }}>{row.op}</td>
-                          <td style={{ padding: '4px', textAlign: 'right', fontWeight: 700 }}>{row.pe}</td>
-                          <td style={{ padding: '4px', textAlign: 'center' }}>{row.due}</td>
-                          <td style={{ padding: '4px', textAlign: 'right', fontStyle: 'italic' }}>{row.days}</td>
-                        </tr>
-                      ))}
-                      <tr style={{ borderTop: '1px solid #111', borderBottom: '1px solid #111', fontWeight: 800, background: '#f8fafc' }}>
-                        <td colSpan={2} style={{ padding: '5px' }}>Total Outstanding</td>
-                        <td style={{ padding: '5px', textAlign: 'right' }}>5,67,777.00 Dr</td>
-                        <td style={{ padding: '5px', textAlign: 'right', color: 'var(--danger, #dc2626)' }}>5,27,739.00 Dr</td>
-                        <td colSpan={2}></td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              )}
+                    {statement.bills.length === 0 ? (
+                      <div style={{ textAlign: 'center', padding: '2.5rem 1rem', background: '#f8fafc', borderRadius: 8, border: '1px dashed #cbd5e1' }}>
+                        <div style={{ fontSize: '24px', marginBottom: '0.5rem' }}>✅</div>
+                        <div style={{ fontWeight: 700, fontSize: '13px', color: '#10b981' }}>All Bills Settled & Fully Paid in Tally</div>
+                        <div style={{ fontSize: '11px', color: '#64748b', marginTop: '4px' }}>There are no outstanding or overdue invoices for {partyName}.</div>
+                        <div style={{ marginTop: '12px', display: 'inline-block', padding: '6px 16px', background: 'rgba(16,185,129,0.1)', color: '#10b981', fontWeight: 700, borderRadius: 20 }}>
+                          Total Outstanding: ₹ 0.00 Dr
+                        </div>
+                      </div>
+                    ) : (
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '10px' }}>
+                        <thead>
+                          <tr style={{ borderTop: '1px solid #111', borderBottom: '1px solid #111', background: '#f8fafc' }}>
+                            <th style={{ textAlign: 'left', padding: '5px' }}>Date</th>
+                            <th style={{ textAlign: 'left', padding: '5px' }}>Ref. No.</th>
+                            <th style={{ textAlign: 'right', padding: '5px' }}>Opening Amount</th>
+                            <th style={{ textAlign: 'right', padding: '5px' }}>Pending Amount</th>
+                            <th style={{ textAlign: 'center', padding: '5px' }}>Due on</th>
+                            <th style={{ textAlign: 'right', padding: '5px' }}>Overdue by days</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {statement.bills.map((row, i) => (
+                            <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                              <td style={{ padding: '5px' }}>{row.date}</td>
+                              <td style={{ padding: '5px', fontWeight: 600 }}>{row.ref}</td>
+                              <td style={{ padding: '5px', textAlign: 'right' }}>₹ {row.opening.toLocaleString('en-IN', { minimumFractionDigits: 2 })} Dr</td>
+                              <td style={{ padding: '5px', textAlign: 'right', fontWeight: 700, color: row.overdue > 0 ? '#dc2626' : '#d97706' }}>
+                                ₹ {row.pending.toLocaleString('en-IN', { minimumFractionDigits: 2 })} Dr
+                              </td>
+                              <td style={{ padding: '5px', textAlign: 'center' }}>{row.due}</td>
+                              <td style={{ padding: '5px', textAlign: 'right', fontWeight: row.overdue > 0 ? 700 : 400, color: row.overdue > 0 ? '#dc2626' : '#64748b' }}>
+                                {row.overdue > 0 ? `${row.overdue} days` : 'Not Due'}
+                              </td>
+                            </tr>
+                          ))}
+                          <tr style={{ borderTop: '1px solid #111', borderBottom: '2px solid #111', fontWeight: 800, background: '#f8fafc' }}>
+                            <td colSpan={2} style={{ padding: '6px' }}>Total Outstanding</td>
+                            <td style={{ padding: '6px', textAlign: 'right' }}>₹ {statement.totalOpening.toLocaleString('en-IN', { minimumFractionDigits: 2 })} Dr</td>
+                            <td style={{ padding: '6px', textAlign: 'right', color: '#dc2626', fontSize: '11px' }}>
+                              ₹ {statement.totalPending.toLocaleString('en-IN', { minimumFractionDigits: 2 })} Dr
+                            </td>
+                            <td colSpan={2}></td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* TAB 4: CUSTOMER LEDGER ACCOUNT */}
-              {selectedTemplateTab === 'ledger_account' && (
-                <div style={{ width: '100%', maxWidth: 780, background: 'white', color: '#111', padding: '24px', borderRadius: 6, boxShadow: '0 4px 20px rgba(0,0,0,0.15)', fontFamily: 'sans-serif', fontSize: '10.5px', lineHeight: 1.4 }}>
-                  <div style={{ textAlign: 'center', marginBottom: '8px' }}>
-                    <div style={{ fontSize: '16px', fontWeight: 800 }}>SHOBHA READY PLAST</div>
-                    <div style={{ fontSize: '9.5px', color: '#4b5563' }}>NH48, NEAR KOLEI KHADI SARODHI, VALSAD, GUJARAT - 396001</div>
-                    <div style={{ fontSize: '9.5px', color: '#4b5563' }}>UDYAM REG.:- UDYAM-GJ-01-0012345 | E-Mail : shobhareadyplast@gmail.com</div>
-                    <div style={{ fontSize: '14px', fontWeight: 800, marginTop: '8px' }}>VAISHNAV CONSTRUCTION</div>
-                    <div style={{ fontSize: '11px', fontWeight: 700 }}>Ledger Account</div>
-                    <div style={{ fontSize: '9.5px', color: '#4b5563' }}>DEU APARTMENT , SHOP NO 4, KOLShet UPPER VILLEGE, THANE WEST</div>
-                    <div style={{ fontSize: '9.5px' }}>1-Apr-26 to 22-Aug-26</div>
-                  </div>
-                  <div style={{ textAlign: 'right', fontSize: '9px', color: '#6b7280', marginBottom: '4px' }}>Page 1</div>
+              {selectedTemplateTab === 'ledger_account' && (() => {
+                const ledger = getCustomerLedgerStatement(partyName, allInvoices);
+                const totalDebit = ledger.totalDebits;
+                const totalCredit = ledger.totalCredits;
+                const closingBalance = ledger.closingBalance;
+                const grandTotal = Math.max(totalDebit, totalCredit + closingBalance);
 
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '9.5px' }}>
-                    <thead>
-                      <tr style={{ borderTop: '1px solid #111', borderBottom: '1px solid #111', background: '#f8fafc' }}>
-                        <th style={{ textAlign: 'left', padding: '4px' }}>Date</th>
-                        <th style={{ textAlign: 'left', padding: '4px' }}>Particulars</th>
-                        <th style={{ textAlign: 'center', padding: '4px' }}>Vch Type</th>
-                        <th style={{ textAlign: 'center', padding: '4px' }}>Vch No.</th>
-                        <th style={{ textAlign: 'right', padding: '4px' }}>Debit</th>
-                        <th style={{ textAlign: 'right', padding: '4px' }}>Credit</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {[
-                        { date: '1-Apr-26', part: 'To Opening Balance', type: '', no: '', db: '6,05,935.00', cr: '' },
-                        { date: '10-Apr-26', part: 'To Sales', type: 'Sales', no: 'SRP/053/26-27', db: '82,690.00', cr: '' },
-                        { date: '', part: 'To Sales', type: 'Sales', no: 'SRP/055/26-27', db: '77,377.00', cr: '' },
-                        { date: '11-Apr-26', part: 'To Sales', type: 'Sales', no: 'SRP/062/26-27', db: '88,196.00', cr: '' },
-                        { date: '2-May-26', part: 'By ICICI BANK 3,78,674.11/-', type: 'Receipt', no: '122', db: '', cr: '74,466.00' },
-                        { date: '12-May-26', part: 'By ICICI BANK 3,78,674.11/-', type: 'Receipt', no: '149', db: '', cr: '86,279.00' },
-                        { date: '21-May-26', part: 'By ICICI BANK 3,78,674.11/-', type: 'Receipt', no: '186', db: '', cr: '1,01,304.00' },
-                        { date: '30-May-26', part: 'By ICICI BANK 3,78,674.11/-', type: 'Receipt', no: '220', db: '', cr: '75,124.00' },
-                        { date: '11-Jun-26', part: 'By ICICI BANK 3,78,674.11/-', type: 'Receipt', no: '264', db: '', cr: '97,524.00' },
-                        { date: '24-Jun-26', part: 'To Sales', type: 'Sales', no: 'SRP/0366/26-27', db: '87,326.00', cr: '' },
-                        { date: '9-Jul-26', part: 'By ICICI BANK 3,78,674.11/-', type: 'Receipt', no: '362', db: '', cr: '77,377.00' },
-                        { date: '15-Jul-26', part: 'By ICICI BANK 3,78,674.11/-', type: 'Receipt', no: '378', db: '', cr: '82,690.00' },
-                        { date: '', part: 'To Sales', type: 'Sales', no: 'SRP/0455/26-27', db: '58,733.00', cr: '' },
-                        { date: '18-Jul-26', part: 'By ICICI BANK 3,78,674.11/-', type: 'Receipt', no: '395', db: '', cr: '40,038.00' },
-                        { date: '20-Jul-26', part: 'To Sales', type: 'Sales', no: 'SRP/0478/26-27', db: '87,326.00', cr: '' },
-                        { date: '10-Aug-26', part: 'To Sales', type: 'Sales', no: 'SRP/0570/26-27', db: '74,962.00', cr: '' },
-                      ].map((row, i) => (
-                        <tr key={i} style={{ borderBottom: '1px solid #f8fafc' }}>
-                          <td style={{ padding: '3px 4px' }}>{row.date}</td>
-                          <td style={{ padding: '3px 4px' }}>{row.part}</td>
-                          <td style={{ padding: '3px 4px', textAlign: 'center' }}>{row.type}</td>
-                          <td style={{ padding: '3px 4px', textAlign: 'center' }}>{row.no}</td>
-                          <td style={{ padding: '3px 4px', textAlign: 'right', fontWeight: row.part.includes('Opening') ? 700 : 400 }}>{row.db}</td>
-                          <td style={{ padding: '3px 4px', textAlign: 'right' }}>{row.cr}</td>
+                return (
+                  <div style={{ width: '100%', maxWidth: 780, background: 'white', color: '#111', padding: '24px', borderRadius: 6, boxShadow: '0 4px 20px rgba(0,0,0,0.15)', fontFamily: 'sans-serif', fontSize: '10.5px', lineHeight: 1.4 }}>
+                    <div style={{ textAlign: 'center', marginBottom: '10px' }}>
+                      <div style={{ fontSize: '16px', fontWeight: 800 }}>{compName.toUpperCase()}</div>
+                      <div style={{ fontSize: '9.5px', color: '#4b5563' }}>{compAddr}</div>
+                      <div style={{ fontSize: '9.5px', color: '#4b5563' }}>E-Mail : {compEmail} {compPhone ? `| Phone: ${compPhone}` : ''}</div>
+                      <div style={{ fontSize: '14px', fontWeight: 800, marginTop: '8px' }}>{partyName.toUpperCase()}</div>
+                      <div style={{ fontSize: '11px', fontWeight: 700 }}>Ledger Account</div>
+                      <div style={{ fontSize: '9.5px', color: '#4b5563' }}>{buyerAddr}</div>
+                      <div style={{ fontSize: '9.5px' }}>1-Apr-26 to {new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' })}</div>
+                    </div>
+                    <div style={{ textAlign: 'right', fontSize: '9px', color: '#6b7280', marginBottom: '4px' }}>Page 1</div>
+
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '9.5px' }}>
+                      <thead>
+                        <tr style={{ borderTop: '1px solid #111', borderBottom: '1px solid #111', background: '#f8fafc' }}>
+                          <th style={{ textAlign: 'left', padding: '4px' }}>Date</th>
+                          <th style={{ textAlign: 'left', padding: '4px' }}>Particulars</th>
+                          <th style={{ textAlign: 'center', padding: '4px' }}>Vch Type</th>
+                          <th style={{ textAlign: 'center', padding: '4px' }}>Vch No.</th>
+                          <th style={{ textAlign: 'right', padding: '4px' }}>Debit</th>
+                          <th style={{ textAlign: 'right', padding: '4px' }}>Credit</th>
                         </tr>
-                      ))}
-                      <tr>
-                        <td></td>
-                        <td style={{ padding: '4px' }}>By &nbsp;&nbsp;&nbsp;&nbsp; <strong>Closing Balance</strong></td>
-                        <td colSpan={3}></td>
-                        <td style={{ padding: '4px', textAlign: 'right', fontWeight: 700 }}>5,27,743.00</td>
-                      </tr>
-                      <tr style={{ borderTop: '1px solid #cbd5e1' }}>
-                        <td colSpan={4}></td>
-                        <td style={{ padding: '4px', textAlign: 'right' }}>11,62,545.00</td>
-                        <td style={{ padding: '4px', textAlign: 'right' }}>11,62,545.00</td>
-                      </tr>
-                      <tr style={{ borderTop: '1px solid #111', borderBottom: '2px solid #111', fontWeight: 800 }}>
-                        <td colSpan={4}></td>
-                        <td style={{ padding: '4px', textAlign: 'right' }}>11,62,545.00</td>
-                        <td style={{ padding: '4px', textAlign: 'right' }}>11,62,545.00</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              )}
+                      </thead>
+                      <tbody>
+                        {ledger.entries.length === 0 ? (
+                          <tr>
+                            <td colSpan={6} style={{ textAlign: 'center', padding: '2rem', color: '#64748b' }}>
+                              No ledger transactions recorded in Tally for {partyName}.
+                            </td>
+                          </tr>
+                        ) : (
+                          ledger.entries.map((row, i) => (
+                            <tr key={i} style={{ borderBottom: '1px solid #f8fafc' }}>
+                              <td style={{ padding: '3px 4px' }}>{row.date}</td>
+                              <td style={{ padding: '3px 4px', fontWeight: row.particulars.includes('Sales') ? 600 : 400 }}>{row.particulars}</td>
+                              <td style={{ padding: '3px 4px', textAlign: 'center' }}>{row.vchType}</td>
+                              <td style={{ padding: '3px 4px', textAlign: 'center' }}>{row.vchNo}</td>
+                              <td style={{ padding: '3px 4px', textAlign: 'right' }}>
+                                {row.debit ? Number(row.debit).toLocaleString('en-IN', { minimumFractionDigits: 2 }) : ''}
+                              </td>
+                              <td style={{ padding: '3px 4px', textAlign: 'right' }}>
+                                {row.credit ? Number(row.credit).toLocaleString('en-IN', { minimumFractionDigits: 2 }) : ''}
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                        {ledger.entries.length > 0 && (
+                          <>
+                            <tr style={{ borderTop: '1px solid #cbd5e1' }}>
+                              <td></td>
+                              <td style={{ padding: '4px' }}>By &nbsp;&nbsp;&nbsp;&nbsp; <strong>Closing Balance</strong></td>
+                              <td colSpan={3}></td>
+                              <td style={{ padding: '4px', textAlign: 'right', fontWeight: 700, color: closingBalance > 0 ? '#dc2626' : '#10b981' }}>
+                                {closingBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                              </td>
+                            </tr>
+                            <tr style={{ borderTop: '1px solid #cbd5e1' }}>
+                              <td colSpan={4}></td>
+                              <td style={{ padding: '4px', textAlign: 'right', fontWeight: 600 }}>{totalDebit.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                              <td style={{ padding: '4px', textAlign: 'right', fontWeight: 600 }}>{(totalCredit + closingBalance).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                            </tr>
+                            <tr style={{ borderTop: '1px solid #111', borderBottom: '2px solid #111', fontWeight: 800 }}>
+                              <td colSpan={4}></td>
+                              <td style={{ padding: '4px', textAlign: 'right' }}>{grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                              <td style={{ padding: '4px', textAlign: 'right' }}>{grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                            </tr>
+                          </>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })()}
                   </>
                 );
               })()}

@@ -262,7 +262,7 @@ DAYBOOK_XML = f"""<?xml version="1.0" encoding="utf-8"?>
             <TYPE>Voucher</TYPE>
             <FETCH>DATE, VOUCHERNUMBER, VOUCHERTYPENAME, PARTYLEDGERNAME, BASICBUYERNAME,
                    AMOUNT, NARRATION, PARTYGSTIN, BASICBUYERADDRESS,
-                   ALLLEDGERENTRIES, INVENTORYENTRIES.LIST</FETCH>
+                   ALLLEDGERENTRIES, ALLLEDGERENTRIES.BILLALLOCATIONS.LIST, INVENTORYENTRIES.LIST</FETCH>
             <FILTER>AllDayBookFilter</FILTER>
           </COLLECTION>
           <SYSTEM TYPE="Formulae" NAME="AllDayBookFilter">
@@ -328,7 +328,7 @@ VOUCHERS_XML = f"""<?xml version="1.0" encoding="utf-8"?>
             <TYPE>Voucher</TYPE>
             <FETCH>DATE, VOUCHERNUMBER, VOUCHERTYPENAME, PARTYLEDGERNAME, BASICBUYERNAME,
                    AMOUNT, NARRATION, PARTYGSTIN, BASICBUYERADDRESS,
-                   ALLLEDGERENTRIES</FETCH>
+                   ALLLEDGERENTRIES, ALLLEDGERENTRIES.BILLALLOCATIONS.LIST</FETCH>
             <FILTER>ReceiptPaymentFilter</FILTER>
           </COLLECTION>
           <SYSTEM TYPE="Formulae" NAME="ReceiptPaymentFilter">
@@ -938,6 +938,19 @@ def parse_voucher_block(block, fallback_company: str = "", ledger_phone_map: dic
             "hsn": hsn,
         })
 
+    # Extract bill allocations (Agst Ref, New Ref)
+    bill_allocations = []
+    for ablock in re.findall(r'<BILLALLOCATIONS\.LIST[^>]*>([\s\S]*?)</BILLALLOCATIONS\.LIST>', block, re.IGNORECASE):
+        b_name = extract_tag_value(ablock, "NAME") or extract_tag_value(ablock, "BILLNAME")
+        b_type = extract_tag_value(ablock, "BILLTYPE") or ""
+        b_amt  = parse_number(extract_tag_value(ablock, "AMOUNT") or "0")
+        if b_name:
+            bill_allocations.append({
+                "name": b_name,
+                "type": b_type,
+                "amount": b_amt
+            })
+
     # Smart unique invoice numbering with company scoping to prevent cross-company overwrite
     comp_prefix = ""
     if comp_name:
@@ -1003,6 +1016,7 @@ def parse_voucher_block(block, fallback_company: str = "", ledger_phone_map: dic
         "cgst_amount": cgst_amount,
         "sgst_amount": sgst_amount,
         "line_items": line_items,
+        "bill_allocations": bill_allocations,
     }
 
 
@@ -1948,7 +1962,7 @@ def generate_invoice_pdf(voucher: dict, org_profile: dict | None = None, single_
 
     inv_number   = voucher.get("invoice_number", "SRP/0570/26-27")
     inv_date     = voucher.get("invoice_date") or voucher.get("date") or "10-Aug-26"
-    party        = voucher.get("ledger_name", "VAISHNAV CONSTRUCTION")
+    party        = voucher.get("ledger_name", "Customer")
     amount       = float(voucher.get("amount", 74962.0))
     buyer_gstin  = voucher.get("gstin", "27ALPRP4116L1ZM")
     hsn_code     = voucher.get("hsn_code", "25051011")
@@ -2557,40 +2571,38 @@ def generate_pending_bills_pdf(party_name: str, bills: list, org_profile: dict |
         Paragraph('<b>Overdue by days</b>', ParagraphStyle("th", alignment=TA_RIGHT, fontSize=7.5)),
     ]
 
-    sample_bills = bills if bills else [
-        {"date": "20-Mar-26", "ref": "SRP/01957/25-26", "opening": 86373.0, "pending": 86373.0, "due": "20-Mar-26", "overdue": 154},
-        {"date": "26-Mar-26", "ref": "SRP/01995/25-26", "opening": 84861.0, "pending": 84861.0, "due": "26-Mar-26", "overdue": 148},
-        {"date": "11-Apr-26", "ref": "SRP/062/26-27",   "opening": 88196.0, "pending": 48158.0, "due": "11-Apr-26", "overdue": 132},
-        {"date": "24-Jun-26", "ref": "SRP/0366/26-27",  "opening": 87326.0, "pending": 87326.0, "due": "24-Jun-26", "overdue": 58},
-        {"date": "15-Jul-26", "ref": "SRP/0455/26-27",  "opening": 58733.0, "pending": 58733.0, "due": "15-Jul-26", "overdue": 37},
-        {"date": "20-Jul-26", "ref": "SRP/0478/26-27",  "opening": 87326.0, "pending": 87326.0, "due": "20-Jul-26", "overdue": 32},
-        {"date": "10-Aug-26", "ref": "SRP/0570/26-27",  "opening": 74962.0, "pending": 74962.0, "due": "10-Aug-26", "overdue": 11},
-    ]
+    sample_bills = bills if bills else []
 
     rows = [tbl_headers]
     tot_opening = 0.0
     tot_pending = 0.0
 
-    for b in sample_bills:
-        op = float(b.get("opening", 0))
-        pe = float(b.get("pending", 0))
-        tot_opening += op
-        tot_pending += pe
+    if not sample_bills:
         rows.append([
-            Paragraph(b.get("date", ""), ParagraphStyle("td", fontSize=7.5)),
-            Paragraph(b.get("ref", ""), ParagraphStyle("td", fontSize=7.5)),
-            Paragraph(f"{op:,.2f} Dr", ParagraphStyle("td", alignment=TA_RIGHT, fontSize=7.5)),
-            Paragraph(f"<b>{pe:,.2f} Dr</b>", ParagraphStyle("td", alignment=TA_RIGHT, fontSize=7.5)),
-            Paragraph(b.get("due", ""), ParagraphStyle("td", alignment=TA_CENTER, fontSize=7.5)),
-            Paragraph(f"<i>{b.get('overdue', 0)}</i>", ParagraphStyle("td", alignment=TA_RIGHT, fontSize=7.5)),
+            Paragraph("No pending bills. All invoices settled in Tally.", ParagraphStyle("td", fontSize=7.5)),
+            "", "", "", "", ""
         ])
+    else:
+        for b in sample_bills:
+            op = float(b.get("opening", 0))
+            pe = float(b.get("pending", 0))
+            tot_opening += op
+            tot_pending += pe
+            rows.append([
+                Paragraph(b.get("date", ""), ParagraphStyle("td", fontSize=7.5)),
+                Paragraph(b.get("ref", ""), ParagraphStyle("td", fontSize=7.5)),
+                Paragraph(f"{op:,.2f} Dr", ParagraphStyle("td", alignment=TA_RIGHT, fontSize=7.5)),
+                Paragraph(f"<b>{pe:,.2f} Dr</b>", ParagraphStyle("td", alignment=TA_RIGHT, fontSize=7.5)),
+                Paragraph(b.get("due", ""), ParagraphStyle("td", alignment=TA_CENTER, fontSize=7.5)),
+                Paragraph(f"<i>{b.get('overdue', 0)}</i>", ParagraphStyle("td", alignment=TA_RIGHT, fontSize=7.5)),
+            ])
 
-    rows.append([
-        "", "",
-        Paragraph(f"<b>{tot_opening:,.2f} Dr</b>", ParagraphStyle("td", alignment=TA_RIGHT, fontSize=8)),
-        Paragraph(f"<b>{tot_pending:,.2f} Dr</b>", ParagraphStyle("td", alignment=TA_RIGHT, fontSize=8)),
-        "", ""
-    ])
+        rows.append([
+            "", "",
+            Paragraph(f"<b>{tot_opening:,.2f} Dr</b>", ParagraphStyle("td", alignment=TA_RIGHT, fontSize=8)),
+            Paragraph(f"<b>{tot_pending:,.2f} Dr</b>", ParagraphStyle("td", alignment=TA_RIGHT, fontSize=8)),
+            "", ""
+        ])
 
     tbl = Table(rows, colWidths=[W * 0.15, W * 0.25, W * 0.18, W * 0.18, W * 0.14, W * 0.10])
     tbl.setStyle(TableStyle([
@@ -2619,7 +2631,7 @@ def generate_eway_bill_pdf(voucher: dict, org_profile: dict | None = None) -> by
         org_profile = fetch_org_profile()
 
     inv_number   = voucher.get("invoice_number", "SRP/0570/26-27")
-    party        = voucher.get("ledger_name", "VAISHNAV CONSTRUCTION")
+    party        = voucher.get("ledger_name", "Customer")
     amount       = float(voucher.get("amount", 74962.0))
     buyer_gstin  = voucher.get("gstin", "27ALPRP4116L1ZM")
     phone        = voucher.get("phone", "+91 98765 00000")
@@ -2821,24 +2833,34 @@ def generate_ledger_account_pdf(party_name: str, ledger_entries: list | None = N
         Paragraph('<b>Credit</b>', st("th", alignment=TA_RIGHT, fontSize=8)),
     ]
 
-    sample_entries = ledger_entries if ledger_entries else [
-        {"date": "1-Apr-26",  "part": "To &nbsp; Opening Balance", "type": "", "no": "", "debit": 605935.0, "credit": None},
-        {"date": "10-Apr-26", "part": "To Sales", "type": "Sales", "no": "SRP/053/26-27", "debit": 82690.0, "credit": None},
-        {"date": "",          "part": "To Sales", "type": "Sales", "no": "SRP/055/26-27", "debit": 77377.0, "credit": None},
-        {"date": "11-Apr-26", "part": "To Sales", "type": "Sales", "no": "SRP/062/26-27", "debit": 88196.0, "credit": None},
-        {"date": "2-May-26",  "part": "By ICICI BANK 3,78,674.11/-", "type": "Receipt", "no": "122", "debit": None, "credit": 74466.0},
-        {"date": "12-May-26", "part": "By ICICI BANK 3,78,674.11/-", "type": "Receipt", "no": "149", "debit": None, "credit": 86279.0},
-        {"date": "21-May-26", "part": "By ICICI BANK 3,78,674.11/-", "type": "Receipt", "no": "186", "debit": None, "credit": 101304.0},
-        {"date": "30-May-26", "part": "By ICICI BANK 3,78,674.11/-", "type": "Receipt", "no": "220", "debit": None, "credit": 75124.0},
-        {"date": "11-Jun-26", "part": "By ICICI BANK 3,78,674.11/-", "type": "Receipt", "no": "264", "debit": None, "credit": 97524.0},
-        {"date": "24-Jun-26", "part": "To Sales", "type": "Sales", "no": "SRP/0366/26-27", "debit": 87326.0, "credit": None},
-        {"date": "9-Jul-26",  "part": "By ICICI BANK 3,78,674.11/-", "type": "Receipt", "no": "362", "debit": None, "credit": 77377.0},
-        {"date": "15-Jul-26", "part": "By ICICI BANK 3,78,674.11/-", "type": "Receipt", "no": "378", "debit": None, "credit": 82690.0},
-        {"date": "",          "part": "To Sales", "type": "Sales", "no": "SRP/0455/26-27", "debit": 58733.0, "credit": None},
-        {"date": "18-Jul-26", "part": "By ICICI BANK 3,78,674.11/-", "type": "Receipt", "no": "395", "debit": None, "credit": 40038.0},
-        {"date": "20-Jul-26", "part": "To Sales", "type": "Sales", "no": "SRP/0478/26-27", "debit": 87326.0, "credit": None},
-        {"date": "10-Aug-26", "part": "To Sales", "type": "Sales", "no": "SRP/0570/26-27", "debit": 74962.0, "credit": None},
-    ]
+    sample_entries = ledger_entries if ledger_entries else []
+
+    rows = [tbl_headers]
+    tot_debit = 0.0
+    tot_credit = 0.0
+
+    if not sample_entries:
+        rows.append([
+            Paragraph("No ledger transactions recorded for this party.", st("td", fontSize=7.5)),
+            "", "", "", "", ""
+        ])
+    else:
+        for e in sample_entries:
+            db = float(e.get("debit", 0)) if e.get("debit") is not None else None
+            cr = float(e.get("credit", 0)) if e.get("credit") is not None else None
+            if db:
+                tot_debit += db
+            if cr:
+                tot_credit += cr
+
+            rows.append([
+                Paragraph(e.get("date", ""), st("td", fontSize=7.5)),
+                Paragraph(e.get("part", ""), st("td", fontSize=7.5)),
+                Paragraph(e.get("type", ""), st("td", alignment=TA_CENTER, fontSize=7.5)),
+                Paragraph(e.get("no", ""), st("td", alignment=TA_CENTER, fontSize=7.5)),
+                Paragraph(f"{db:,.2f}" if db else "", st("td", alignment=TA_RIGHT, fontSize=7.5, fontName="Helvetica-Bold" if "Opening" in e.get("part", "") else "Helvetica")),
+                Paragraph(f"{cr:,.2f}" if cr else "", st("td", alignment=TA_RIGHT, fontSize=7.5)),
+            ])
 
     rows = [tbl_headers]
     tot_debit = 0.0
@@ -2955,7 +2977,7 @@ def save_document_templates_locally():
             "invoice_date": "10-Aug-26",
             "ack_date": "19-Aug-26",
             "amount": 74962.0,
-            "ledger_name": "VAISHNAV CONSTRUCTION",
+            "ledger_name": "Sample Customer",
             "company_name": "SHOBHA READY PLAST",
             "item_name": "SAND",
             "hsn_code": "25051011",
@@ -2982,13 +3004,13 @@ def save_document_templates_locally():
                 f.write(p2)
 
         # 3. Pending Bills Statement
-        p3 = generate_pending_bills_pdf("VAISHNAV CONSTRUCTION", None)
+        p3 = generate_pending_bills_pdf("Sample Customer", None)
         if p3:
             with open(os.path.join(tmpl_dir, "3_Pending_Bills_Statement.pdf"), "wb") as f:
                 f.write(p3)
 
         # 4. Customer Ledger Account
-        p4 = generate_ledger_account_pdf("VAISHNAV CONSTRUCTION", None)
+        p4 = generate_ledger_account_pdf("Sample Customer", None)
         if p4:
             with open(os.path.join(tmpl_dir, "4_Customer_Ledger_Account.pdf"), "wb") as f:
                 f.write(p4)
@@ -3136,9 +3158,86 @@ def push_to_cloud(vouchers):
                 dedup_map[key] = v
     all_unique = list(dedup_map.values())
 
+    # ── Party Reconciliation ──────────────────────────────────────────────────
+    # Reconcile customer sales invoices against receipts and closing balance
+    party_vouchers = {}
+    for v in all_unique:
+        p_name = (v.get("ledger_name") or v.get("client_name") or "").strip().upper()
+        if p_name:
+            party_vouchers.setdefault(p_name, []).append(v)
+
+    reconciled_paid_updates = 0
+    for p_name, p_vchs in party_vouchers.items():
+        sales_vchs = [
+            v for v in p_vchs 
+            if not str(v.get("invoice_number", "")).upper().startswith("LEDGER-")
+            and ("sales" in str(v.get("voucher_type", "")).lower() or "receivable" in str(v.get("direction", "")).lower())
+        ]
+        rcpt_vchs = [
+            v for v in p_vchs 
+            if "receipt" in str(v.get("voucher_type", "")).lower() or "received" in str(v.get("direction", "")).lower()
+        ]
+        ledger_marker = next(
+            (v for v in p_vchs if str(v.get("invoice_number", "")).upper().startswith("LEDGER-")),
+            None
+        )
+
+        total_rcpts = sum(float(v.get("amount") or 0) for v in rcpt_vchs)
+        sales_vchs.sort(key=lambda x: str(x.get("invoice_date") or x.get("date") or ""))
+
+        # 1. Match explicit Agst Ref bill allocations
+        for rv in rcpt_vchs:
+            for alloc in rv.get("bill_allocations", []):
+                ref_name = str(alloc.get("name", "")).strip()
+                ref_type = str(alloc.get("type", "")).strip().lower()
+                if "agst" in ref_type or not ref_type:
+                    for sv in sales_vchs:
+                        sv_num = str(sv.get("invoice_number", "")).strip()
+                        if sv_num and (ref_name in sv_num or sv_num in ref_name):
+                            if sv.get("status") != "Paid":
+                                sv["status"] = "Paid"
+                                sv["pending_amount"] = 0.0
+                                sv["paid_amount"] = float(sv.get("amount") or 0)
+                                sv["_force_status_update"] = True
+                                reconciled_paid_updates += 1
+
+        # 2. Apply total receipts in FIFO order
+        rem_rcpts = total_rcpts
+        for sv in sales_vchs:
+            amt = float(sv.get("amount") or 0)
+            if rem_rcpts >= amt and amt > 0:
+                if sv.get("status") != "Paid":
+                    sv["status"] = "Paid"
+                    sv["pending_amount"] = 0.0
+                    sv["paid_amount"] = amt
+                    sv["_force_status_update"] = True
+                    reconciled_paid_updates += 1
+                rem_rcpts -= amt
+            elif rem_rcpts > 0:
+                sv["pending_amount"] = max(0.0, amt - rem_rcpts)
+                sv["paid_amount"] = rem_rcpts
+                rem_rcpts = 0.0
+            else:
+                sv["pending_amount"] = amt
+
+        # 3. If Tally ledger closing balance is 0: ALL sales bills are Paid!
+        if ledger_marker:
+            tally_cl = float(ledger_marker.get("amount") or 0)
+            if tally_cl == 0:
+                for sv in sales_vchs:
+                    if sv.get("status") != "Paid":
+                        sv["status"] = "Paid"
+                        sv["pending_amount"] = 0.0
+                        sv["paid_amount"] = float(sv.get("amount") or 0)
+                        sv["_force_status_update"] = True
+                        reconciled_paid_updates += 1
+
+    if reconciled_paid_updates > 0:
+        log.info(f"  [Reconciliation] ✅ Marked {reconciled_paid_updates} sales voucher(s) as Settled/Paid via incoming receipts!")
+
     # Phone-aware deduplication:
-    # Skip vouchers already synced AND whose phone number hasn't changed.
-    # If the phone was updated in Tally, force a re-push to update the record.
+    # Skip vouchers already synced AND whose phone/status hasn't changed.
+    # If the phone or status was updated in Tally, force a re-push to update the record.
     to_process = []
     phone_updates = 0
     for v in all_unique:
@@ -3148,6 +3247,9 @@ def push_to_cloud(vouchers):
         if cached is None:
             # Never synced before — always include
             to_process.append(v)
+        elif v.get("_force_status_update"):
+            # Status updated from Pending to Paid via reconciliation — force push!
+            to_process.append(v)
         elif isinstance(cached, dict):
             # New-format cache entry with phone tracking
             cached_phone = (cached.get("phone") or "").strip()
@@ -3156,8 +3258,6 @@ def push_to_cloud(vouchers):
                 v["_force_phone_update"] = True
                 to_process.append(v)
                 phone_updates += 1
-            # else: already synced, phone unchanged — skip
-        # else: old string-format cache entry — skip (already synced)
 
     skipped = len(all_unique) - len(to_process)
     log.info(
@@ -3238,6 +3338,9 @@ def push_to_cloud(vouchers):
                 "buyer_address":    v.get("buyer_address", ""),
                 "buyer_state":      v.get("buyer_state", ""),
                 "buyer_state_code": v.get("buyer_state_code", ""),
+                "pending_amount":   v.get("pending_amount"),
+                "paid_amount":      v.get("paid_amount"),
+                "bill_allocations": v.get("bill_allocations", []),
                 "pdf_generation":   "browser-side",  # Signal to frontend: generate in browser
                 "sync_source":      "TallyPrime XML Bridge v5.0",
                 "synced_at":        datetime.now().isoformat(),

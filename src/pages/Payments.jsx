@@ -6,6 +6,7 @@ import {
   RotateCcw, Search, AlertCircle, X, ExternalLink, ChevronLeft, ChevronRight
 } from 'lucide-react';
 import { getInvoices, getCustomerMaster, triggerSheetSync, getSheetSyncLog, invalidateInvoicesCache, invalidateCustomerMasterCache } from '../lib/db';
+import { reconcileCustomerInvoices } from '../lib/reconciliation';
 import { buildCustomerIndex, matchCustomer } from '../lib/customerMatcher';
 import { useCompany } from '../context/CompanyContext';
 import InvoiceDocModal from '../components/InvoiceDocModal';
@@ -93,11 +94,12 @@ const Payments = () => {
 
   // Company filtering across active workspace
   const invoices = useMemo(() => {
-    if (isConsolidated) return allInvoices;
-    if (!activeCompany) return allInvoices;
+    const reconciled = reconcileCustomerInvoices(allInvoices);
+    if (isConsolidated) return reconciled;
+    if (!activeCompany) return reconciled;
     const compName = (activeCompany.company_name || '').toUpperCase();
     const aliases = Array.isArray(activeCompany.alias_names) ? activeCompany.alias_names.map(a => a.toUpperCase()) : [];
-    return allInvoices.filter(inv => {
+    return reconciled.filter(inv => {
       const invCompany = (inv.company_name || inv.tally_company || '').toUpperCase();
       if (!invCompany) return false;
       return [compName, ...aliases].some(n => n && (invCompany.includes(n) || n.includes(invCompany)));
@@ -169,8 +171,8 @@ const Payments = () => {
   }, [filtered, currentPage, pageSize]);
 
   // Metrics
-  const totalOverdue = enrichedInvoices.filter(i => i.status === 'Overdue').reduce((s, i) => s + Number(i.amount), 0);
-  const totalPending = enrichedInvoices.filter(i => i.status === 'Pending').reduce((s, i) => s + Number(i.amount), 0);
+  const totalOverdue = enrichedInvoices.filter(i => i.status === 'Overdue').reduce((s, i) => s + Number(i.pending_amount ?? i.amount), 0);
+  const totalPending = enrichedInvoices.filter(i => i.status === 'Pending').reduce((s, i) => s + Number(i.pending_amount ?? i.amount), 0);
   const totalPaid    = enrichedInvoices.filter(i => i.status === 'Paid').reduce((s, i) => s + Number(i.amount), 0);
   const totalWithPhone = enrichedInvoices.filter(i => i._has_verified_phone).length;
   const totalMissingPhone = enrichedInvoices.filter(i => !i._has_verified_phone).length;
@@ -496,7 +498,12 @@ const Payments = () => {
 
                     {/* Amount */}
                     <td style={{ fontWeight: 700, fontSize: '0.9rem', color: inv.status === 'Paid' ? 'var(--success)' : inv.status === 'Overdue' ? 'var(--danger)' : 'var(--text-primary)' }}>
-                      {fmtAmount(inv.amount)}
+                      <div>{fmtAmount(inv.pending_amount !== undefined && inv.status !== 'Paid' ? inv.pending_amount : inv.amount)}</div>
+                      {inv.pending_amount !== undefined && inv.status !== 'Paid' && inv.pending_amount < inv.amount && (
+                        <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', fontWeight: 400 }}>
+                          of {fmtAmount(inv.amount)} (₹{(inv.paid_amount || 0).toLocaleString('en-IN')} paid)
+                        </div>
+                      )}
                     </td>
 
                     {/* Status */}
