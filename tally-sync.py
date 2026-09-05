@@ -1035,7 +1035,22 @@ def parse_ledger_block(block, fallback_company: str = "", ledger_phone_map: dict
     opening_raw = (extract_tag_value(block, "OPENINGBALANCE") or "0")
 
     amount = parse_number(closing_raw)
-    opening_amt = parse_number(opening_raw)
+
+    # In Tally XML for Sundry Debtors:
+    # Negative value (e.g. '-168584.00' or '... Dr') = DEBIT balance (Customer owes us, positive in ERP)
+    # Positive value without minus (e.g. '6449.00' or '... Cr') = CREDIT balance (Advance from customer, negative in ERP)
+    op_clean = parse_number(opening_raw)
+    if op_clean != 0:
+        raw_str = str(opening_raw).strip()
+        is_cr = 'cr' in raw_str.lower()
+        is_dr = 'dr' in raw_str.lower()
+        is_neg = raw_str.startswith('-')
+        if is_dr or (is_neg and not is_cr):
+            opening_amt = op_clean   # Debit (positive Dr)
+        else:
+            opening_amt = -op_clean  # Credit (Advance / Cr)
+    else:
+        opening_amt = 0.0
 
     if not name or (amount == 0 and opening_amt == 0):
         return None
