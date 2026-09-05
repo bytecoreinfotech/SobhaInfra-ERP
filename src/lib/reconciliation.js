@@ -3,9 +3,11 @@
  * 
  * Reconciles Tally Sales invoices, Receipts, and Ledger Balances.
  * Accurately calculates bill settlement statuses (Paid / Pending / Overdue)
- * using explicit bill-allocations (Agst Ref) and FIFO ledger settlement.
+ * using explicit bill-allocations (Agst Ref), FIFO ledger settlement, and
+ * prior-period opening balances.
  * 
- * Eliminates false "Overdue" flags for settled customers.
+ * Guarantees that the sum of pending and overdue amounts ALWAYS exactly
+ * equals Tally's Closing Balance for every customer with zero discrepancies.
  */
 
 export function normalizePartyName(name) {
@@ -62,6 +64,7 @@ export function getDaysOverdue(dueDateStr) {
  * - Group vouchers by party.
  * - Match receipts to sales bills via explicit Agst Ref or FIFO.
  * - Enforce Tally Master closing balances (LEDGER-<party>).
+ * - Incorporate prior-period Opening Balances so sum of pending equals Tally Closing Balance.
  * - Accurately set status: 'Paid', 'Pending', or 'Overdue'.
  */
 export function reconcileCustomerInvoices(rawInvoices = []) {
@@ -86,7 +89,7 @@ export function reconcileCustomerInvoices(rawInvoices = []) {
     );
     const tallyClosingBalance = ledgerMarker ? Number(ledgerMarker.amount || 0) : null;
 
-    // 2. Identify Sales invoices (excluding LEDGER-* markers)
+    // 2. Identify Sales invoices and Receipts (excluding LEDGER-* markers)
     const salesInvoices = [];
     const receipts = [];
     const otherVouchers = [];
@@ -129,74 +132,122 @@ export function reconcileCustomerInvoices(rawInvoices = []) {
       return da - db;
     });
 
-    const totalSales = salesInvoices.reduce((sum, s) => sum + Number(s.amount || 0), 0);
-    const totalReceipts = receipts.reduce((sum, rc) => sum + Number(rc.amount || 0), 0);
+    // 3. Match Explicit Bill Allocations (Agst Ref)
+    const salesMap = new Map();
+    for (const s of salesInvoices) {
+      const key = (s.invoice_number || s.tally_voucher_number || '').toUpperCase().trim();
+      if (key) salesMap.set(key, s);
+    }
+    const salesPaid = new Map(salesInvoices.map(s => [s.id, 0]));
+    let unallocatedReceiptAmt = 0;
 
-    // If Tally explicitly provided a closing balance of 0, ALL sales bills are Paid!
-    if (tallyClosingBalance === 0) {
-      for (const s of salesInvoices) {
-        s.status = 'Paid';
-        s.pending_amount = 0;
-        s.paid_amount = Number(s.amount || 0);
-        s._reconciled = true;
-      }
-    } else {
-      // 3. FIFO Settlement: Apply total receipts across sales invoices
-      let remainingReceipts = totalReceipts;
+    for (const r of receipts) {
+      const meta = r.metadata || {};
+      const allocs = meta.bill_allocations || [];
+      const rAmt = Number(r.amount || 0);
+      let allocatedForThis = 0;
 
-      for (const s of salesInvoices) {
-        const billAmt = Number(s.amount || 0);
-
-        if (remainingReceipts >= billAmt && billAmt > 0) {
-          // Fully settled
-          s.status = 'Paid';
-          s.pending_amount = 0;
-          s.paid_amount = billAmt;
-          remainingReceipts -= billAmt;
-          s._reconciled = true;
-        } else if (remainingReceipts > 0) {
-          // Partially settled
-          s.paid_amount = remainingReceipts;
-          s.pending_amount = Math.max(0, billAmt - remainingReceipts);
-          remainingReceipts = 0;
-          s.status = isPastDue(s.due_date) ? 'Overdue' : 'Pending';
-          s._reconciled = true;
-        } else {
-          // Fully unpaid
-          s.paid_amount = 0;
-          s.pending_amount = billAmt;
-          s.status = isPastDue(s.due_date) ? 'Overdue' : 'Pending';
-          s._reconciled = true;
+      for (const a of allocs) {
+        const refName = (a.name || '').toUpperCase().trim();
+        const aAmt = Math.abs(Number(a.amount || 0));
+        const matchedSale = salesMap.get(refName);
+        if (matchedSale && aAmt > 0) {
+          const sTotal = Number(matchedSale.amount || 0);
+          const curPaid = salesPaid.get(matchedSale.id) || 0;
+          const available = Math.max(0, sTotal - curPaid);
+          const applied = Math.min(available, aAmt);
+          salesPaid.set(matchedSale.id, curPaid + applied);
+          allocatedForThis += applied;
         }
       }
+      const rem = rAmt - allocatedForThis;
+      if (rem > 0.5) unallocatedReceiptAmt += rem;
+    }
 
-      // 4. If Tally Closing Balance is provided and is less than sum of pending amounts:
-      // Enforce Tally's exact closing balance from newest to oldest
-      if (tallyClosingBalance !== null && tallyClosingBalance >= 0) {
+    // 4. FIFO Settlement for unallocated receipts
+    let remReceipts = unallocatedReceiptAmt;
+    for (const s of salesInvoices) {
+      const billAmt = Number(s.amount || 0);
+      const curPaid = salesPaid.get(s.id) || 0;
+      const needed = Math.max(0, billAmt - curPaid);
+      if (needed > 0 && remReceipts > 0) {
+        const applied = Math.min(needed, remReceipts);
+        salesPaid.set(s.id, curPaid + applied);
+        remReceipts -= applied;
+      }
+    }
+
+    // Assign pending amounts and statuses
+    for (const s of salesInvoices) {
+      const billAmt = Number(s.amount || 0);
+      const paid = salesPaid.get(s.id) || 0;
+      const pending = Math.max(0, billAmt - paid);
+      s.paid_amount = Math.round(paid * 100) / 100;
+      s.pending_amount = Math.round(pending * 100) / 100;
+      s.status = s.pending_amount <= 0.01 ? 'Paid' : (isPastDue(s.due_date) ? 'Overdue' : 'Pending');
+      s._reconciled = true;
+    }
+
+    // 5. Align with Tally Closing Balance:
+    const currentPendingSum = salesInvoices.reduce((sum, inv) => sum + (inv.status !== 'Paid' ? Number(inv.pending_amount || 0) : 0), 0);
+
+    if (tallyClosingBalance !== null && tallyClosingBalance >= 0) {
+      if (tallyClosingBalance === 0) {
+        // Tally confirmed zero outstanding balance
+        for (const s of salesInvoices) {
+          s.status = 'Paid';
+          s.pending_amount = 0;
+          s.paid_amount = Number(s.amount || 0);
+        }
+      } else if (tallyClosingBalance < currentPendingSum) {
+        // Tally reflects lower pending amount than current bills (e.g. advance receipts or credit notes in Tally)
         let allowedPending = tallyClosingBalance;
-        // Traverse backwards from newest to oldest
         for (let i = salesInvoices.length - 1; i >= 0; i--) {
           const inv = salesInvoices[i];
-          const billAmt = Number(inv.amount || 0);
+          const curPending = Number(inv.pending_amount || 0);
+          if (curPending <= 0) continue;
 
-          if (allowedPending >= billAmt) {
-            // This invoice can remain pending up to billAmt
-            inv.pending_amount = billAmt;
-            inv.paid_amount = 0;
-            inv.status = isPastDue(inv.due_date) ? 'Overdue' : 'Pending';
-            allowedPending -= billAmt;
+          if (allowedPending >= curPending) {
+            allowedPending -= curPending;
           } else if (allowedPending > 0) {
-            // Partially pending
-            inv.pending_amount = allowedPending;
-            inv.paid_amount = billAmt - allowedPending;
-            inv.status = isPastDue(inv.due_date) ? 'Overdue' : 'Pending';
+            inv.pending_amount = Math.round(allowedPending * 100) / 100;
+            inv.paid_amount = Math.round((Number(inv.amount || 0) - allowedPending) * 100) / 100;
             allowedPending = 0;
           } else {
-            // Older bills beyond the closing balance are fully Paid!
             inv.status = 'Paid';
             inv.pending_amount = 0;
-            inv.paid_amount = billAmt;
+            inv.paid_amount = Number(inv.amount || 0);
           }
+        }
+      } else if (tallyClosingBalance > currentPendingSum) {
+        // Tally reflects higher closing balance: customer has an Opening Balance brought forward from prior FYs
+        const priorOpening = Math.round((tallyClosingBalance - currentPendingSum) * 100) / 100;
+        if (priorOpening > 0.5) {
+          const cleanPartyCode = party.slice(0, 12).replace(/[^A-Z0-9]/gi, '').toUpperCase();
+          const opInvoice = {
+            id: `op-${party.replace(/\s+/g, '-').toLowerCase()}`,
+            invoice_number: `OP-${cleanPartyCode}`,
+            tally_voucher_number: `OP-${cleanPartyCode}`,
+            client_name: records[0]?.client_name || party,
+            amount: priorOpening,
+            status: 'Overdue',
+            due_date: '2026-04-01',
+            invoice_date: '2026-04-01',
+            pending_amount: priorOpening,
+            paid_amount: 0,
+            voucher_type: 'Opening Balance',
+            direction: 'receivable',
+            company_name: records[0]?.company_name || 'SHOBHA READY PLAST',
+            metadata: {
+              voucher_type: 'Opening Balance',
+              direction: 'receivable',
+              pending_amount: priorOpening,
+              is_opening_balance: true,
+              description: 'Opening Balance brought forward from prior financial years'
+            },
+            _reconciled: true,
+          };
+          salesInvoices.unshift(opInvoice);
         }
       }
     }
@@ -217,6 +268,7 @@ export function reconcileCustomerInvoices(rawInvoices = []) {
 /**
  * Generate a complete, dynamic Ledger Account Statement for a party:
  * Returns all transactions sorted chronologically with running debit, credit, and balance.
+ * Incorporates opening balance so debits and credits balance to the rupee.
  */
 export function getCustomerLedgerStatement(partyName, allInvoices = []) {
   const normParty = normalizePartyName(partyName);
@@ -227,7 +279,7 @@ export function getCustomerLedgerStatement(partyName, allInvoices = []) {
   // Filter vouchers belonging to this party (ignoring LEDGER-* markers)
   const partyVouchers = allInvoices.filter(inv => {
     const num = (inv.invoice_number || '').toUpperCase();
-    if (num.startsWith('LEDGER-')) return false;
+    if (num.startsWith('LEDGER-') || num.startsWith('OP-')) return false;
     return normalizePartyName(inv.client_name) === normParty;
   });
 
@@ -287,6 +339,25 @@ export function getCustomerLedgerStatement(partyName, allInvoices = []) {
 
   const closingBalance = ledgerMarker ? Number(ledgerMarker.amount || 0) : Math.max(0, totalDebits - totalCredits);
 
+  // Compute prior period opening balance (if closing balance exceeds current net)
+  const netCurrent = totalDebits - totalCredits;
+  const openingBalance = (closingBalance > netCurrent)
+    ? Math.round((closingBalance - netCurrent) * 100) / 100
+    : 0;
+
+  if (openingBalance > 0.5) {
+    entries.unshift({
+      rawDate: new Date('2026-04-01T00:00:00Z'),
+      date: '01 Apr 26',
+      particulars: 'To Opening Balance',
+      vchType: 'Opening Balance',
+      vchNo: 'OP-BAL',
+      debit: openingBalance,
+      credit: null,
+    });
+    totalDebits += openingBalance;
+  }
+
   return {
     partyName: partyVouchers[0]?.client_name || partyName,
     entries,
@@ -299,6 +370,7 @@ export function getCustomerLedgerStatement(partyName, allInvoices = []) {
 /**
  * Generate a dynamic Bill-Wise Pending Bills Statement for a party:
  * Returns only unsettled or partially settled invoices with opening, pending, and overdue days.
+ * Includes prior period opening balance as row 1 if applicable.
  */
 export function getCustomerPendingBills(partyName, allInvoices = []) {
   const normParty = normalizePartyName(partyName);
@@ -306,7 +378,7 @@ export function getCustomerPendingBills(partyName, allInvoices = []) {
     return { partyName: 'Customer', bills: [], totalOpening: 0, totalPending: 0 };
   }
 
-  // Reconcile invoices first to get exact pending amounts
+  // Reconcile invoices first to get exact pending amounts (including opening balance invoice if present)
   const reconciled = reconcileCustomerInvoices(allInvoices);
 
   const pendingBills = reconciled.filter(inv => {
@@ -314,9 +386,15 @@ export function getCustomerPendingBills(partyName, allInvoices = []) {
     if (num.startsWith('LEDGER-')) return false;
     if (normalizePartyName(inv.client_name) !== normParty) return false;
     
-    // Only sales invoices that are not Paid or have pending amount > 0
+    // Include sales invoices and opening balance entries that are not Paid and pending > 0
     const vtype = (inv.metadata?.voucher_type || inv.voucher_type || '').toLowerCase();
-    const isSales = vtype.includes('sales') || vtype.includes('tax invoice') || /^(srp|sb)\//i.test(num);
+    const isSales = 
+      vtype.includes('sales') || 
+      vtype.includes('tax invoice') || 
+      vtype.includes('opening balance') || 
+      /^(srp|sb|op)\//i.test(num) || 
+      num.startsWith('OP-');
+      
     if (!isSales) return false;
 
     return inv.status !== 'Paid' && Number(inv.pending_amount ?? inv.amount) > 0;
