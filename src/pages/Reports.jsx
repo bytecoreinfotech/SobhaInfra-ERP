@@ -7,6 +7,7 @@ import {
 import { getDashboardStats, getLeads, getCampaigns, getInvoices, getAutomationRuns, syncToGoogleSheets, exportLiveTableCsv, getCustomerMaster } from '../lib/db';
 import { buildCustomerIndex, matchCustomer } from '../lib/customerMatcher';
 import { useCompany } from '../context/CompanyContext';
+import { Skeleton, SkeletonStats } from '../components/Skeleton';
 import './Pages.css';
 
 // Pure Logical Accounting Flow Classifier (Zero Hardcoding)
@@ -341,9 +342,18 @@ const Reports = () => {
       )}
 
       {loading ? (
-        <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>
-          <RefreshCw size={28} className="animate-spin" style={{ marginBottom: '0.75rem' }} />
-          <div style={{ fontSize: '0.85rem' }}>Loading live data from Supabase…</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+          <SkeletonStats count={4} />
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1.25rem' }}>
+            <div className="glass-card" style={{ padding: '1.5rem', minHeight: '260px' }}>
+              <Skeleton width="160px" height="18px" borderRadius="4px" style={{ marginBottom: '1rem' }} />
+              <Skeleton width="100%" height="180px" borderRadius="8px" />
+            </div>
+            <div className="glass-card" style={{ padding: '1.5rem', minHeight: '260px' }}>
+              <Skeleton width="160px" height="18px" borderRadius="4px" style={{ marginBottom: '1rem' }} />
+              <Skeleton width="100%" height="180px" borderRadius="8px" />
+            </div>
+          </div>
         </div>
       ) : (
         <>

@@ -13,6 +13,7 @@ import { buildCustomerIndex, matchCustomer } from '../lib/customerMatcher';
 import { isSupabaseConfigured } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { useCompany } from '../context/CompanyContext';
+import { Skeleton, SkeletonStats } from '../components/Skeleton';
 import './Pages.css';
 
 // Pure Logical Accounting Flow Classifier (Zero Hardcoding)
@@ -385,96 +386,99 @@ const Dashboard = () => {
       )}
 
       {/* ── Live KPI Stat Cards ─────────────── */}
-      <div className="stats-grid">
-        <div className="stat-card animate-slide-up" style={{ '--card-accent': 'var(--accent-primary)' }}>
-          <div className="stat-header">
-            <div>
-              <div className="stat-label">Active CRM Leads</div>
-              <div className="stat-value">{totalLeads.toLocaleString()}</div>
+      {loading ? (
+        <SkeletonStats count={4} />
+      ) : (
+        <div className="stats-grid">
+          <div className="stat-card animate-slide-up" style={{ '--card-accent': 'var(--accent-primary)' }}>
+            <div className="stat-header">
+              <div>
+                <div className="stat-label">Active CRM Leads</div>
+                <div className="stat-value">{totalLeads.toLocaleString()}</div>
+              </div>
+              <div className="stat-icon" style={{ background: 'var(--accent-glow)' }}>
+                <Users size={22} style={{ color: 'var(--accent-primary)' }} />
+              </div>
             </div>
-            <div className="stat-icon" style={{ background: 'var(--accent-glow)' }}>
-              <Users size={22} style={{ color: 'var(--accent-primary)' }} />
+            <div className="stat-footer">
+              <span className="stat-trend up"><ArrowUpRight size={13} /> {hotLeads} Hot</span>
+              <span className="stat-period">{convertedLeads} Converted</span>
             </div>
           </div>
-          <div className="stat-footer">
-            <span className="stat-trend up"><ArrowUpRight size={13} /> {hotLeads} Hot</span>
-            <span className="stat-period">{convertedLeads} Converted</span>
+
+          <div className="stat-card animate-slide-up" style={{ '--card-accent': 'var(--whatsapp)' }}>
+            <div className="stat-header">
+              <div>
+                <div className="stat-label">WhatsApp Delivered</div>
+                <div className="stat-value">{totalWaDelivered > 0 ? totalWaDelivered.toLocaleString() : totalWaSent.toLocaleString()}</div>
+              </div>
+              <div className="stat-icon" style={{ background: 'var(--whatsapp-bg)' }}>
+                <MessageCircle size={22} style={{ color: 'var(--whatsapp)' }} />
+              </div>
+            </div>
+            <div className="stat-footer">
+              <span className="stat-trend up"><ArrowUpRight size={13} /> {totalWaSent} Sent</span>
+              <span className="stat-period">{campaigns.length} Campaigns</span>
+            </div>
           </div>
+
+          {hasPermission('Payments') && (
+            <div className="stat-card animate-slide-up" style={{ '--card-accent': 'var(--danger)' }}>
+              <div className="stat-header">
+                <div>
+                  <div className="stat-label">Outstanding Receivables</div>
+                  <div className="stat-value">{fmtAmount(overdueAmount + pendingAmount)}</div>
+                </div>
+                <div className="stat-icon" style={{ background: 'var(--danger-bg)' }}>
+                  <CreditCard size={22} style={{ color: 'var(--danger)' }} />
+                </div>
+              </div>
+              <div className="stat-footer">
+                {overdueInvoices > 0 ? (
+                  <span className="stat-trend down"><ArrowDownRight size={13} /> {fmtAmount(overdueAmount)} Overdue</span>
+                ) : (
+                  <span className="stat-trend up" style={{ color: 'var(--success)' }}><CheckCircle2 size={13} /> 0 Overdue</span>
+                )}
+                <span className="stat-period">{fmtAmount(pendingAmount)} Not Yet Due</span>
+              </div>
+            </div>
+          )}
+
+          {hasPermission('Finance') ? (
+            <div className="stat-card animate-slide-up" style={{ '--card-accent': 'var(--success)' }}>
+              <div className="stat-header">
+                <div>
+                  <div className="stat-label">Collected Revenue</div>
+                  <div className="stat-value">{fmtAmount(totalPaid)}</div>
+                </div>
+                <div className="stat-icon" style={{ background: 'var(--success-bg)' }}>
+                  <TrendingUp size={22} style={{ color: 'var(--success)' }} />
+                </div>
+              </div>
+              <div className="stat-footer">
+                <span className="stat-trend up"><ArrowUpRight size={13} /> {paidInvoicesCount} Paid Invoices</span>
+                <span className="stat-period">{collectionRate}% of {fmtAmount(totalInvoiced)}</span>
+              </div>
+            </div>
+          ) : (
+            <div className="stat-card animate-slide-up" style={{ '--card-accent': 'var(--success)' }}>
+              <div className="stat-header">
+                <div>
+                  <div className="stat-label">Team Members</div>
+                  <div className="stat-value">{teamMembers.length}</div>
+                </div>
+                <div className="stat-icon" style={{ background: 'var(--success-bg)' }}>
+                  <Users size={22} style={{ color: 'var(--success)' }} />
+                </div>
+              </div>
+              <div className="stat-footer">
+                <span className="stat-trend up"><ArrowUpRight size={13} /> {tasksDueCt} Tasks Due</span>
+                <span className="stat-period">Active Now</span>
+              </div>
+            </div>
+          )}
         </div>
-
-        <div className="stat-card animate-slide-up" style={{ '--card-accent': 'var(--whatsapp)' }}>
-          <div className="stat-header">
-            <div>
-              <div className="stat-label">WhatsApp Delivered</div>
-              <div className="stat-value">{totalWaDelivered > 0 ? totalWaDelivered.toLocaleString() : totalWaSent.toLocaleString()}</div>
-            </div>
-            <div className="stat-icon" style={{ background: 'var(--whatsapp-bg)' }}>
-              <MessageCircle size={22} style={{ color: 'var(--whatsapp)' }} />
-            </div>
-          </div>
-          <div className="stat-footer">
-            <span className="stat-trend up"><ArrowUpRight size={13} /> {totalWaSent} Sent</span>
-            <span className="stat-period">{campaigns.length} Campaigns</span>
-          </div>
-        </div>
-
-        {hasPermission('Payments') && (
-          <div className="stat-card animate-slide-up" style={{ '--card-accent': 'var(--danger)' }}>
-            <div className="stat-header">
-              <div>
-                <div className="stat-label">Outstanding Receivables</div>
-                <div className="stat-value">{fmtAmount(overdueAmount + pendingAmount)}</div>
-              </div>
-              <div className="stat-icon" style={{ background: 'var(--danger-bg)' }}>
-                <CreditCard size={22} style={{ color: 'var(--danger)' }} />
-              </div>
-            </div>
-            <div className="stat-footer">
-              {overdueInvoices > 0 ? (
-                <span className="stat-trend down"><ArrowDownRight size={13} /> {fmtAmount(overdueAmount)} Overdue</span>
-              ) : (
-                <span className="stat-trend up" style={{ color: 'var(--success)' }}><CheckCircle2 size={13} /> 0 Overdue</span>
-              )}
-              <span className="stat-period">{fmtAmount(pendingAmount)} Not Yet Due</span>
-            </div>
-          </div>
-        )}
-
-
-        {hasPermission('Finance') ? (
-          <div className="stat-card animate-slide-up" style={{ '--card-accent': 'var(--success)' }}>
-            <div className="stat-header">
-              <div>
-                <div className="stat-label">Collected Revenue</div>
-                <div className="stat-value">{fmtAmount(totalPaid)}</div>
-              </div>
-              <div className="stat-icon" style={{ background: 'var(--success-bg)' }}>
-                <TrendingUp size={22} style={{ color: 'var(--success)' }} />
-              </div>
-            </div>
-            <div className="stat-footer">
-              <span className="stat-trend up"><ArrowUpRight size={13} /> {paidInvoicesCount} Paid Invoices</span>
-              <span className="stat-period">{collectionRate}% of {fmtAmount(totalInvoiced)}</span>
-            </div>
-          </div>
-        ) : (
-          <div className="stat-card animate-slide-up" style={{ '--card-accent': 'var(--success)' }}>
-            <div className="stat-header">
-              <div>
-                <div className="stat-label">Team Members</div>
-                <div className="stat-value">{teamMembers.length}</div>
-              </div>
-              <div className="stat-icon" style={{ background: 'var(--success-bg)' }}>
-                <Users size={22} style={{ color: 'var(--success)' }} />
-              </div>
-            </div>
-            <div className="stat-footer">
-              <span className="stat-trend up"><ArrowUpRight size={13} /> {tasksDueCt} Tasks Due</span>
-              <span className="stat-period">Active Now</span>
-            </div>
-          </div>
-        )}
-      </div>
+      )}
 
       {/* ── Main grid ────────────────────────────────────────────────── */}
       <div className="grid grid-cols-2" style={{ gap: '1.25rem' }}>

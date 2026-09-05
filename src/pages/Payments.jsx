@@ -10,6 +10,7 @@ import { reconcileCustomerInvoices } from '../lib/reconciliation';
 import { buildCustomerIndex, matchCustomer } from '../lib/customerMatcher';
 import { useCompany } from '../context/CompanyContext';
 import InvoiceDocModal from '../components/InvoiceDocModal';
+import { Skeleton, SkeletonTable, SkeletonStats } from '../components/Skeleton';
 import './Pages.css';
 
 /**
@@ -299,52 +300,71 @@ const Payments = () => {
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <ShieldCheck size={16} color="#6366f1" />
-          <span style={{ color: '#6366f1', fontWeight: 700 }}>
-            {enrichedInvoices.length} Verified Customer Invoices
-          </span>
-          <span style={{ color: 'var(--text-muted)' }}>
-            · Matched against Google Sheet Master Directory ({customerMaster.length} Companies)
-          </span>
+          {loading ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Skeleton width="160px" height="15px" borderRadius="4px" />
+              <Skeleton width="220px" height="13px" borderRadius="4px" style={{ opacity: 0.6 }} />
+            </div>
+          ) : (
+            <>
+              <span style={{ color: '#6366f1', fontWeight: 700 }}>
+                {enrichedInvoices.length} Verified Customer Invoices
+              </span>
+              <span style={{ color: 'var(--text-muted)' }}>
+                · Matched against Google Sheet Master Directory ({customerMaster.length} Companies)
+              </span>
+            </>
+          )}
         </div>
         <div style={{ display: 'flex', gap: '0.85rem', alignItems: 'center', fontSize: '0.75rem' }}>
-          <span style={{ color: '#10b981', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
-            <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#10b981' }} />
-            {totalWithPhone} Ready for WhatsApp
-          </span>
-          {totalMissingPhone > 0 && (
-            <span
-              style={{ color: '#d97706', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer' }}
-              onClick={() => setPhoneFilter('missing')}
-              data-tooltip="Click to view all customers with missing phone numbers in Google Sheet"
-              data-tooltip-pos="bottom"
-            >
-              <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#d97706' }} />
-              {totalMissingPhone} Phone Missing in Sheet
-            </span>
+          {loading ? (
+            <Skeleton width="180px" height="14px" borderRadius="4px" />
+          ) : (
+            <>
+              <span style={{ color: '#10b981', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
+                <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#10b981' }} />
+                {totalWithPhone} Ready for WhatsApp
+              </span>
+              {totalMissingPhone > 0 && (
+                <span
+                  style={{ color: '#d97706', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer' }}
+                  onClick={() => setPhoneFilter('missing')}
+                  data-tooltip="Click to view all customers with missing phone numbers in Google Sheet"
+                  data-tooltip-pos="bottom"
+                >
+                  <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#d97706' }} />
+                  {totalMissingPhone} Phone Missing in Sheet
+                </span>
+              )}
+            </>
           )}
         </div>
       </div>
 
       {/* KPI Stats Grid */}
-      <div className="stats-grid">
-        {[
-          { label: 'Overdue Amount', value: fmtAmount(totalOverdue), color: 'var(--danger)', bg: 'var(--danger-bg)', icon: <AlertTriangle size={20} />, count: enrichedInvoices.filter(i => i.status === 'Overdue').length + ' invoices' },
-          { label: 'Not Yet Due', value: fmtAmount(totalPending), color: 'var(--warning)', bg: 'var(--warning-bg)', icon: <Clock size={20} />, count: enrichedInvoices.filter(i => i.status === 'Pending').length + ' invoices' },
-          { label: 'Collected (Paid)', value: fmtAmount(totalPaid), color: 'var(--success)', bg: 'var(--success-bg)', icon: <CheckCircle2 size={20} />, count: enrichedInvoices.filter(i => i.status === 'Paid').length + ' invoices' },
-          { label: 'Reminders Sent', value: sentIds.length + enrichedInvoices.reduce((s, i) => s + (i.reminder_count || 0), 0), color: '#6366f1', bg: 'rgba(99,102,241,0.1)', icon: <MessageCircle size={20} />, count: 'total logged' },
-        ].map(s => (
-          <div key={s.label} className="stat-card" style={{ '--card-accent': s.color }}>
-            <div className="stat-header">
-              <div>
-                <div className="stat-label">{s.label}</div>
-                <div className="stat-value" style={{ fontSize: '1.5rem' }}>{s.value}</div>
-                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>{s.count}</div>
+      {loading ? (
+        <SkeletonStats count={4} />
+      ) : (
+        <div className="stats-grid">
+          {[
+            { label: 'Overdue Amount', value: fmtAmount(totalOverdue), color: 'var(--danger)', bg: 'var(--danger-bg)', icon: <AlertTriangle size={20} />, count: enrichedInvoices.filter(i => i.status === 'Overdue').length + ' invoices' },
+            { label: 'Not Yet Due', value: fmtAmount(totalPending), color: 'var(--warning)', bg: 'var(--warning-bg)', icon: <Clock size={20} />, count: enrichedInvoices.filter(i => i.status === 'Pending').length + ' invoices' },
+            { label: 'Collected (Paid)', value: fmtAmount(totalPaid), color: 'var(--success)', bg: 'var(--success-bg)', icon: <CheckCircle2 size={20} />, count: enrichedInvoices.filter(i => i.status === 'Paid').length + ' invoices' },
+            { label: 'Reminders Sent', value: sentIds.length + enrichedInvoices.reduce((s, i) => s + (i.reminder_count || 0), 0), color: '#6366f1', bg: 'rgba(99,102,241,0.1)', icon: <MessageCircle size={20} />, count: 'total logged' },
+          ].map(s => (
+            <div key={s.label} className="stat-card" style={{ '--card-accent': s.color }}>
+              <div className="stat-header">
+                <div>
+                  <div className="stat-label">{s.label}</div>
+                  <div className="stat-value" style={{ fontSize: '1.5rem' }}>{s.value}</div>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>{s.count}</div>
+                </div>
+                <div className="stat-icon" style={{ background: s.bg, color: s.color }}>{s.icon}</div>
               </div>
-              <div className="stat-icon" style={{ background: s.bg, color: s.color }}>{s.icon}</div>
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
 
       {/* Search & Multi-filter Bar */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
@@ -418,9 +438,11 @@ const Payments = () => {
 
       {/* Main Invoices Table */}
       {loading ? (
-        <div style={{ display: 'flex', justifyContent: 'center', padding: '3.5rem' }}>
-          <RefreshCw size={24} className="animate-spin" style={{ color: 'var(--text-muted)' }} />
-        </div>
+        <SkeletonTable
+          columns={['Invoice #', 'Client', 'Amount', 'Status', 'Due / Overdue', 'Reminders', 'Actions']}
+          rows={8}
+          paginationLabel="invoices"
+        />
       ) : (
         <div className="glass-card table-container">
           <table className="data-table">

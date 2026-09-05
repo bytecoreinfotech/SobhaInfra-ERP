@@ -779,9 +779,47 @@ h1, h2, h3, h4, h5, h6 {
    SKELETON LOADING
    ===================== */
 .skeleton {
-  background: linear-gradient(90deg, var(--bg-tertiary) 25%, var(--bg-hover) 50%, var(--bg-tertiary) 75%);
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.04) 25%,
+    rgba(255, 255, 255, 0.09) 50%,
+    rgba(255, 255, 255, 0.04) 75%
+  );
   background-size: 200% 100%;
-  animation: shimmer 1.5s infinite;
+  animation: shimmer 1.6s infinite ease-in-out;
+  border-radius: var(--radius-sm);
+  display: inline-block;
+  pointer-events: none;
+}
+
+[data-theme="light"] .skeleton {
+  background: linear-gradient(
+    90deg,
+    rgba(0, 0, 0, 0.04) 25%,
+    rgba(0, 0, 0, 0.09) 50%,
+    rgba(0, 0, 0, 0.04) 75%
+  );
+  background-size: 200% 100%;
+}
+
+.skeleton-text {
+  height: 12px;
+  border-radius: 4px;
+}
+
+.skeleton-circle {
+  border-radius: 50% !important;
+  flex-shrink: 0;
+}
+
+.skeleton-badge {
+  height: 22px;
+  border-radius: 9999px;
+}
+
+.skeleton-btn {
+  height: 28px;
+  width: 28px;
   border-radius: var(--radius-sm);
 }
 

@@ -12,6 +12,7 @@ import ProductCatalogModal from '../components/ProductCatalogModal';
 import BulkImportModal from '../components/BulkImportModal';
 import CampaignBuilderModal from '../components/CampaignBuilderModal';
 import EmailComposeModal from '../components/EmailComposeModal';
+import { Skeleton, SkeletonCard } from '../components/Skeleton';
 import './Pages.css';
 
 const statusConfig = {
@@ -288,10 +289,19 @@ const CRM = () => {
             }}
             onClick={() => setActiveFilter(activeFilter === s ? 'All' : s)}
           >
-            <div style={{ fontSize: '1.5rem', fontWeight: 800, color: statusConfig[s]?.dot, fontFamily: 'Outfit, sans-serif' }}>
-              {counts[s] || 0}
-            </div>
-            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.1rem' }}>{s}</div>
+            {loading ? (
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
+                <Skeleton width="45px" height="24px" borderRadius="4px" />
+                <Skeleton width="50px" height="11px" borderRadius="3px" style={{ opacity: 0.6 }} />
+              </div>
+            ) : (
+              <>
+                <div style={{ fontSize: '1.5rem', fontWeight: 800, color: statusConfig[s]?.dot, fontFamily: 'Outfit, sans-serif' }}>
+                  {counts[s] || 0}
+                </div>
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.1rem' }}>{s}</div>
+              </>
+            )}
           </div>
         ))}
       </div>
@@ -365,7 +375,48 @@ const CRM = () => {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={9} style={{ textAlign: 'center', padding: '3rem' }}><RefreshCw size={24} className="animate-spin" style={{ color: 'var(--text-muted)' }} /></td></tr>
+                Array.from({ length: 6 }).map((_, rIdx) => (
+                  <tr key={rIdx} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                    <td style={{ textAlign: 'center', verticalAlign: 'middle', padding: '0.75rem 0.5rem' }}>
+                      <Skeleton width="16px" height="16px" borderRadius="3px" />
+                    </td>
+                    <td style={{ verticalAlign: 'middle', padding: '0.75rem 0.85rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <Skeleton width="28px" height="28px" borderRadius="50%" style={{ flexShrink: 0 }} />
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                          <Skeleton width={`${110 + (rIdx % 3) * 20}px`} height="14px" borderRadius="4px" />
+                          <Skeleton width={`${70 + (rIdx % 2) * 15}px`} height="11px" borderRadius="3px" style={{ opacity: 0.6 }} />
+                        </div>
+                      </div>
+                    </td>
+                    <td style={{ verticalAlign: 'middle', padding: '0.75rem 0.85rem' }}>
+                      <Skeleton width="105px" height="13px" borderRadius="4px" />
+                    </td>
+                    <td style={{ verticalAlign: 'middle', padding: '0.75rem 0.85rem' }}>
+                      <Skeleton width="65px" height="22px" borderRadius="9999px" />
+                    </td>
+                    <td style={{ verticalAlign: 'middle', padding: '0.75rem 0.85rem' }}>
+                      <Skeleton width="45px" height="20px" borderRadius="4px" />
+                    </td>
+                    <td style={{ verticalAlign: 'middle', padding: '0.75rem 0.85rem' }}>
+                      <Skeleton width="110px" height="13px" borderRadius="4px" />
+                    </td>
+                    <td style={{ verticalAlign: 'middle', padding: '0.75rem 0.85rem' }}>
+                      <Skeleton width="75px" height="14px" borderRadius="4px" />
+                    </td>
+                    <td style={{ verticalAlign: 'middle', padding: '0.75rem 0.85rem' }}>
+                      <Skeleton width="65px" height="20px" borderRadius="9999px" />
+                    </td>
+                    <td style={{ verticalAlign: 'middle', padding: '0.75rem 0.85rem' }}>
+                      <div style={{ display: 'flex', gap: '0.35rem' }}>
+                        <Skeleton width="26px" height="26px" borderRadius="4px" />
+                        <Skeleton width="26px" height="26px" borderRadius="4px" />
+                        <Skeleton width="26px" height="26px" borderRadius="4px" />
+                        <Skeleton width="26px" height="26px" borderRadius="4px" />
+                      </div>
+                    </td>
+                  </tr>
+                ))
               ) : filtered.length === 0 ? (
                 <tr>
                   <td colSpan={9} style={{ textAlign: 'center', padding: '3.5rem 1rem' }}>
@@ -459,6 +510,30 @@ const CRM = () => {
               )}
             </tbody>
           </table>
+
+          {/* Table Footer with lead counts */}
+          <div style={{
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            padding: '0.75rem 1.25rem', borderTop: '1px solid var(--border-color)',
+            background: 'var(--bg-tertiary)', fontSize: '0.78rem', color: 'var(--text-muted)'
+          }}>
+            <div>
+              {loading ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span>Showing</span>
+                  <Skeleton width="40px" height="14px" borderRadius="3px" />
+                  <span>leads</span>
+                </div>
+              ) : (
+                <span>Showing <strong>{filtered.length}</strong> of <strong>{leads.length}</strong> total leads</span>
+              )}
+            </div>
+            {selectedLeadIds.size > 0 && (
+              <span style={{ color: 'var(--accent-primary)', fontWeight: 600 }}>
+                {selectedLeadIds.size} leads selected
+              </span>
+            )}
+          </div>
         </div>
       )}
 
@@ -471,10 +546,16 @@ const CRM = () => {
               <div key={stage} className="kanban-col" style={{ minWidth: 250 }}>
                 <div className="kanban-col-header">
                   <span className="kanban-col-title" style={{ color: statusConfig[stage]?.dot }}>{stage}</span>
-                  <span className="kanban-count">{stageLeads.length}</span>
+                  <span className="kanban-count">{loading ? '—' : stageLeads.length}</span>
                 </div>
                 <div className="kanban-cards">
-                  {stageLeads.map(lead => (
+                  {loading ? (
+                    <>
+                      <SkeletonCard height="105px" />
+                      <SkeletonCard height="105px" />
+                    </>
+                  ) : (
+                    stageLeads.map(lead => (
                     <div
                       key={lead.id}
                       className="kanban-card"
@@ -508,7 +589,7 @@ const CRM = () => {
                         ))}
                       </div>
                     </div>
-                  ))}
+                  )))}
                   <button
                     className="btn btn-secondary btn-sm"
                     style={{ width: '100%', justifyContent: 'center', borderStyle: 'dashed' }}

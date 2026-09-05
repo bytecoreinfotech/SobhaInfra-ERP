@@ -15,6 +15,7 @@ import {
   toggleTaskTemplateActive, checkAndRunRecurringTaskRoutines
 } from '../lib/db';
 import { useAuth } from '../context/AuthContext';
+import { Skeleton, SkeletonCard, SkeletonTable } from '../components/Skeleton';
 import './Pages.css';
 
 const priorityColors = { High: 'var(--danger)', Medium: 'var(--warning)', Low: 'var(--success)' };
@@ -730,7 +731,28 @@ const Tasks = () => {
           )}
 
           {loading ? (
-            <div style={{ display: 'flex', justifyContent: 'center', padding: '3rem' }}><RefreshCw size={24} className="animate-spin" style={{ color: 'var(--text-muted)' }} /></div>
+            view === 'kanban' ? (
+              <div className="kanban-board">
+                {['To Do', 'In Progress', 'Under Review', 'Done'].map(col => (
+                  <div key={col} className="kanban-col">
+                    <div className="kanban-col-header">
+                      <span className="kanban-col-title">{col}</span>
+                      <span className="kanban-count">—</span>
+                    </div>
+                    <div className="kanban-cards">
+                      <SkeletonCard height="110px" />
+                      <SkeletonCard height="110px" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <SkeletonTable
+                columns={['Task', 'Client', 'Assigned To', 'Priority', 'Due Date', 'Status / Proof', 'Actions']}
+                rows={7}
+                paginationLabel="tasks"
+              />
+            )
           ) : (
             <>
               {/* Admin Recurring Task Summary Bar */}

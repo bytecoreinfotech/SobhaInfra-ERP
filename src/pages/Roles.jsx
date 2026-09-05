@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Shield, Plus, X, Edit2, Edit3, Trash2, User, Check, RefreshCw, AlertCircle, Save, RotateCcw, Lock, CheckSquare, Square, ToggleLeft, ToggleRight } from 'lucide-react';
 import { getRoles, createRole, updateRole, deleteRole, getTeamMembers, inviteTeamMember, getPermissionMatrix, savePermissionMatrix } from '../lib/db';
 import { useAuth } from '../context/AuthContext';
+import { Skeleton } from '../components/Skeleton';
 import './Pages.css';
 
 const modules = ['Dashboard', 'WhatsApp', 'CRM', 'Tasks', 'Payments', 'Finance', 'Reports', 'Roles', 'FieldOps'];
@@ -296,7 +297,35 @@ const Roles = () => {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={5} style={{ textAlign: 'center', padding: '2.5rem', color: 'var(--text-muted)' }}><RefreshCw size={20} className="animate-spin" /></td></tr>
+                Array.from({ length: 5 }).map((_, rIdx) => (
+                  <tr key={rIdx} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                    <td style={{ verticalAlign: 'middle', padding: '0.75rem 0.85rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                        <Skeleton width="34px" height="34px" borderRadius="50%" style={{ flexShrink: 0 }} />
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                          <Skeleton width={`${100 + (rIdx % 3) * 15}px`} height="14px" borderRadius="4px" />
+                          <Skeleton width={`${130 + (rIdx % 2) * 20}px`} height="11px" borderRadius="3px" style={{ opacity: 0.6 }} />
+                        </div>
+                      </div>
+                    </td>
+                    <td style={{ verticalAlign: 'middle', padding: '0.75rem 0.85rem' }}>
+                      <Skeleton width="90px" height="22px" borderRadius="9999px" />
+                    </td>
+                    <td style={{ verticalAlign: 'middle', padding: '0.75rem 0.85rem' }}>
+                      <Skeleton width="60px" height="20px" borderRadius="9999px" />
+                    </td>
+                    <td style={{ verticalAlign: 'middle', padding: '0.75rem 0.85rem' }}>
+                      <Skeleton width="85px" height="12px" borderRadius="4px" />
+                    </td>
+                    <td style={{ verticalAlign: 'middle', padding: '0.75rem 0.85rem' }}>
+                      <div style={{ display: 'flex', gap: '0.35rem' }}>
+                        <Skeleton width="28px" height="28px" borderRadius="4px" />
+                        <Skeleton width="28px" height="28px" borderRadius="4px" />
+                        <Skeleton width="28px" height="28px" borderRadius="4px" />
+                      </div>
+                    </td>
+                  </tr>
+                ))
               ) : teamMembers.length === 0 ? (
                 <tr>
                   <td colSpan={5} style={{ textAlign: 'center', padding: '3rem 1rem' }}>

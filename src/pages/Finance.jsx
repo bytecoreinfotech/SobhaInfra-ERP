@@ -19,6 +19,7 @@ import { supabase } from '../lib/supabase';
 import { useCompany } from '../context/CompanyContext';
 import LedgerDetailDrawer from '../components/LedgerDetailDrawer';
 import InvoiceDocModal from '../components/InvoiceDocModal';
+import { Skeleton } from '../components/Skeleton';
 import './Pages.css';
 
 
@@ -1177,7 +1178,52 @@ const Finance = () => {
                     </thead>
                     <tbody>
                       {loading ? (
-                        <tr><td colSpan={8} style={{ textAlign: 'center', padding: '3rem' }}><RefreshCw size={24} className="animate-spin" style={{ color: 'var(--text-muted)' }} /></td></tr>
+                        Array.from({ length: 8 }).map((_, rIdx) => (
+                          <tr key={rIdx} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                            {/* 1. Invoice No. */}
+                            <td style={{ verticalAlign: 'middle', padding: '0.65rem 0.75rem' }}>
+                              <Skeleton width={`${85 + (rIdx % 3) * 10}px`} height="15px" borderRadius="4px" />
+                            </td>
+                            {/* 2. Client / Ledger */}
+                            <td style={{ verticalAlign: 'middle', padding: '0.65rem 0.75rem' }}>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                <Skeleton width={`${120 + (rIdx % 4) * 15}px`} height="14px" borderRadius="4px" />
+                                <Skeleton width={`${75 + (rIdx % 2) * 15}px`} height="11px" borderRadius="3px" style={{ opacity: 0.6 }} />
+                              </div>
+                            </td>
+                            {/* 3. Phone */}
+                            <td style={{ verticalAlign: 'middle', padding: '0.65rem 0.75rem' }}>
+                              <Skeleton width="105px" height="13px" borderRadius="4px" />
+                            </td>
+                            {/* 4. Date / Due */}
+                            <td style={{ verticalAlign: 'middle', padding: '0.65rem 0.75rem' }}>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                <Skeleton width="80px" height="12px" borderRadius="4px" />
+                                <Skeleton width="65px" height="10px" borderRadius="3px" style={{ opacity: 0.6 }} />
+                              </div>
+                            </td>
+                            {/* 5. Amount */}
+                            <td style={{ verticalAlign: 'middle', padding: '0.65rem 0.75rem' }}>
+                              <Skeleton width="85px" height="16px" borderRadius="4px" />
+                            </td>
+                            {/* 6. Status */}
+                            <td style={{ verticalAlign: 'middle', padding: '0.65rem 0.75rem' }}>
+                              <Skeleton width="70px" height="22px" borderRadius="9999px" />
+                            </td>
+                            {/* 7. Reminder Automation */}
+                            <td style={{ verticalAlign: 'middle', padding: '0.65rem 0.75rem' }}>
+                              <Skeleton width="110px" height="20px" borderRadius="6px" />
+                            </td>
+                            {/* 8. Actions */}
+                            <td style={{ verticalAlign: 'middle', padding: '0.65rem 0.75rem', textAlign: 'center' }}>
+                              <div style={{ display: 'flex', gap: '0.35rem', justifyContent: 'center' }}>
+                                <Skeleton width="26px" height="26px" borderRadius="4px" />
+                                <Skeleton width="26px" height="26px" borderRadius="4px" />
+                                <Skeleton width="26px" height="26px" borderRadius="4px" />
+                              </div>
+                            </td>
+                          </tr>
+                        ))
                       ) : totalInvoicesCount === 0 ? (
                         <tr><td colSpan={8} style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>No invoices found matching criteria.</td></tr>
                       ) : (
@@ -1409,7 +1455,13 @@ const Finance = () => {
                   {/* Left: Range Summary & Page Size */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem', flexWrap: 'wrap' }}>
                     <span style={{ color: 'var(--text-muted)' }}>
-                      Showing <strong style={{ color: 'var(--text-primary)' }}>{totalInvoicesCount === 0 ? 0 : pageStartIndex + 1}</strong> to <strong style={{ color: 'var(--text-primary)' }}>{pageEndIndex}</strong> of <strong style={{ color: 'var(--accent-primary)' }}>{totalInvoicesCount}</strong> vouchers
+                      {loading ? (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                          Showing <Skeleton width="20px" height="13px" borderRadius="3px" /> to <Skeleton width="20px" height="13px" borderRadius="3px" /> of <Skeleton width="35px" height="13px" borderRadius="3px" /> vouchers
+                        </span>
+                      ) : (
+                        <>Showing <strong style={{ color: 'var(--text-primary)' }}>{totalInvoicesCount === 0 ? 0 : pageStartIndex + 1}</strong> to <strong style={{ color: 'var(--text-primary)' }}>{pageEndIndex}</strong> of <strong style={{ color: 'var(--accent-primary)' }}>{totalInvoicesCount}</strong> vouchers</>
+                      )}
                     </span>
                     <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', color: 'var(--text-muted)' }}>
                       <span>Rows:</span>
