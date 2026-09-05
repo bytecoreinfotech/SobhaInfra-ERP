@@ -2461,7 +2461,7 @@ const Finance = () => {
                       <div style={{ fontSize: '16px', fontWeight: 800 }}>{compName.toUpperCase()}</div>
                       <div style={{ fontSize: '9.5px', color: '#4b5563' }}>{compAddr}</div>
                       <div style={{ fontSize: '9.5px', color: '#4b5563' }}>E-Mail : {compEmail} {compPhone ? `| Phone: ${compPhone}` : ''}</div>
-                      <div style={{ fontSize: '14px', fontWeight: 800, marginTop: '8px', color: 'var(--text-primary)' }}>{partyName.toUpperCase()}</div>
+                      <div style={{ fontSize: '14px', fontWeight: 800, marginTop: '8px', color: '#111' }}>{partyName.toUpperCase()}</div>
                       <div style={{ fontSize: '10px' }}>Bill-wise Details · As on {new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' })} · <strong>Pending Bills Statement</strong></div>
                     </div>
 
