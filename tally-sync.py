@@ -141,7 +141,7 @@ ALL_VOUCHERS_UNFILTERED_XML = """<?xml version="1.0" encoding="utf-8"?>
             <TYPE>Voucher</TYPE>
             <FETCH>DATE, VOUCHERNUMBER, VOUCHERTYPENAME, PARTYLEDGERNAME, BASICBUYERNAME,
                    AMOUNT, NARRATION, PARTYGSTIN, BASICBUYERADDRESS,
-                   ALLLEDGERENTRIES, INVENTORYENTRIES.LIST</FETCH>
+                   ALLLEDGERENTRIES.LIST</FETCH>
           </COLLECTION>
         </TDLMESSAGE>
       </TDL>
@@ -171,7 +171,7 @@ ALL_VOUCHERS_TDL_XML = f"""<?xml version="1.0" encoding="utf-8"?>
             <TYPE>Voucher</TYPE>
             <FETCH>DATE, VOUCHERNUMBER, VOUCHERTYPENAME, PARTYLEDGERNAME, BASICBUYERNAME,
                    AMOUNT, NARRATION, PARTYGSTIN, BASICBUYERADDRESS, ISOPTIONAL,
-                   ALLLEDGERENTRIES, INVENTORYENTRIES.LIST</FETCH>
+                   ALLLEDGERENTRIES.LIST</FETCH>
             <FILTER>FilterByDateRange</FILTER>
           </COLLECTION>
           <SYSTEM TYPE="Formulae" NAME="FilterByDateRange">
@@ -241,7 +241,8 @@ ACCOUNTS_XML = """<?xml version="1.0" encoding="utf-8"?>
 </ENVELOPE>"""
 
 # ==============================================================================
-# STRATEGY 5: All DayBook Vouchers TDL (Sales, Purchases, Receipts, Payments, Notes, Journals)
+# STRATEGY 3: Sales Vouchers & Debit/Credit Notes (Current Financial Years)
+# Lightweight, date-bounded, captures full sales ledger entries without memory crash
 # ==============================================================================
 DAYBOOK_XML = f"""<?xml version="1.0" encoding="utf-8"?>
 <ENVELOPE>
@@ -249,28 +250,28 @@ DAYBOOK_XML = f"""<?xml version="1.0" encoding="utf-8"?>
     <VERSION>1</VERSION>
     <TALLYREQUEST>Export</TALLYREQUEST>
     <TYPE>Collection</TYPE>
-    <ID>AllDayBookVouchers</ID>
+    <ID>SalesDayBookVouchers</ID>
   </HEADER>
   <BODY>
     <DESC>
       <STATICVARIABLES>
         <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+        <SVFROMDATE>{_fy_from}</SVFROMDATE>
+        <SVTODATE>{_fy_to}</SVTODATE>
       </STATICVARIABLES>
       <TDL>
         <TDLMESSAGE>
-          <COLLECTION NAME="AllDayBookVouchers" ISMODIFY="No">
+          <COLLECTION NAME="SalesDayBookVouchers" ISMODIFY="No">
             <TYPE>Voucher</TYPE>
             <FETCH>DATE, VOUCHERNUMBER, VOUCHERTYPENAME, PARTYLEDGERNAME, BASICBUYERNAME,
                    AMOUNT, NARRATION, PARTYGSTIN, BASICBUYERADDRESS,
-                   ALLLEDGERENTRIES, ALLLEDGERENTRIES.BILLALLOCATIONS.LIST, INVENTORYENTRIES.LIST</FETCH>
-            <FILTER>AllDayBookFilter</FILTER>
+                   ALLLEDGERENTRIES.LIST</FETCH>
+            <FILTER>SalesDayBookFilter</FILTER>
           </COLLECTION>
-          <SYSTEM TYPE="Formulae" NAME="AllDayBookFilter">
-            $VoucherTypeName = "Sales" OR $VoucherTypeName = "Sales Order" OR
+          <SYSTEM TYPE="Formulae" NAME="SalesDayBookFilter">
+            $VoucherTypeName = "Sales" OR $VoucherTypeName = "Tax Invoice" OR $VoucherTypeName = "Sales Order" OR
             $VoucherTypeName = "Purchase" OR $VoucherTypeName = "Purchase Order" OR
-            $VoucherTypeName = "Receipt" OR $VoucherTypeName = "Cash Receipt" OR $VoucherTypeName = "Bank Receipt" OR
-            $VoucherTypeName = "Payment" OR $VoucherTypeName = "Cash Payment" OR $VoucherTypeName = "Bank Payment" OR
-            $VoucherTypeName = "Credit Note" OR $VoucherTypeName = "Debit Note" OR $VoucherTypeName = "Journal"
+            $VoucherTypeName = "Credit Note" OR $VoucherTypeName = "Debit Note"
           </SYSTEM>
         </TDLMESSAGE>
       </TDL>
@@ -279,35 +280,8 @@ DAYBOOK_XML = f"""<?xml version="1.0" encoding="utf-8"?>
 </ENVELOPE>"""
 
 # ==============================================================================
-# STRATEGY 6: All Bill Outstandings — TDL Bill Collection
-# ==============================================================================
-OUTSTANDING_XML = """<?xml version="1.0" encoding="utf-8"?>
-<ENVELOPE>
-  <HEADER>
-    <VERSION>1</VERSION>
-    <TALLYREQUEST>Export</TALLYREQUEST>
-    <TYPE>Collection</TYPE>
-    <ID>AllBillsOutstanding</ID>
-  </HEADER>
-  <BODY>
-    <DESC>
-      <STATICVARIABLES>
-        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-      </STATICVARIABLES>
-      <TDL>
-        <TDLMESSAGE>
-          <COLLECTION NAME="AllBillsOutstanding" ISMODIFY="No">
-            <TYPE>BillOutstanding</TYPE>
-            <FETCH>NAME, BILLNAME, CLOSINGBALANCE, OPENINGBALANCE, PARENT, LEDGERNAME, BILLDATED, BILLCL</FETCH>
-          </COLLECTION>
-        </TDLMESSAGE>
-      </TDL>
-    </DESC>
-  </BODY>
-</ENVELOPE>"""
-
-# ==============================================================================
-# STRATEGY 7: Receipt + Payment Vouchers (TDL Collection)
+# STRATEGY 4: Receipts, Payments & Journals (Current Financial Years)
+# Captures incoming customer receipts and bank allocations without memory bloat
 # ==============================================================================
 VOUCHERS_XML = f"""<?xml version="1.0" encoding="utf-8"?>
 <ENVELOPE>
@@ -321,6 +295,8 @@ VOUCHERS_XML = f"""<?xml version="1.0" encoding="utf-8"?>
     <DESC>
       <STATICVARIABLES>
         <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+        <SVFROMDATE>{_fy_from}</SVFROMDATE>
+        <SVTODATE>{_fy_to}</SVTODATE>
       </STATICVARIABLES>
       <TDL>
         <TDLMESSAGE>
@@ -328,19 +304,23 @@ VOUCHERS_XML = f"""<?xml version="1.0" encoding="utf-8"?>
             <TYPE>Voucher</TYPE>
             <FETCH>DATE, VOUCHERNUMBER, VOUCHERTYPENAME, PARTYLEDGERNAME, BASICBUYERNAME,
                    AMOUNT, NARRATION, PARTYGSTIN, BASICBUYERADDRESS,
-                   ALLLEDGERENTRIES, ALLLEDGERENTRIES.BILLALLOCATIONS.LIST</FETCH>
+                   ALLLEDGERENTRIES.LIST</FETCH>
             <FILTER>ReceiptPaymentFilter</FILTER>
           </COLLECTION>
           <SYSTEM TYPE="Formulae" NAME="ReceiptPaymentFilter">
             $VoucherTypeName = "Receipt" OR $VoucherTypeName = "Payment" OR
             $VoucherTypeName = "Cash Receipt" OR $VoucherTypeName = "Bank Receipt" OR
-            $VoucherTypeName = "Cash Payment" OR $VoucherTypeName = "Bank Payment"
+            $VoucherTypeName = "Cash Payment" OR $VoucherTypeName = "Bank Payment" OR
+            $VoucherTypeName = "Journal"
           </SYSTEM>
         </TDLMESSAGE>
       </TDL>
     </DESC>
   </BODY>
 </ENVELOPE>"""
+
+# Legacy alias (OUTSTANDING_XML replaced with real-time settlement engine)
+OUTSTANDING_XML = ""
 
 # ==============================================================================
 # STRATEGY 8: Ledger Vouchers for each Sundry Debtor (per-party drill-down)
@@ -1418,36 +1398,15 @@ def fetch_from_tally():
             print(f"  📞 Master Ledger Phone Registry: {len(ledger_phone_map)} party contact(s) loaded", flush=True)
 
         strategies = [
-            # Strategy 1 (Fastest & Proven): Sundry Debtors ledger closing balances & master records
+            # Strategy 1 (Fast & Proven): Sundry Debtors ledger closing balances & master records
             (f"1_SundryDebtors_{comp}" if comp else "1_SundryDebtors",
              inject_company_into_xml(SUNDRY_DEBTORS_XML, comp)),
-            # Strategy 2: All party ledgers (Sundry Debtors + Creditors)
-            (f"2_AllPartyLedgers_{comp}" if comp else "2_AllPartyLedgers",
-             inject_company_into_xml(ACCOUNTS_XML, comp)),
-            # Strategy 3: Sales + Receipt DayBook vouchers
-            (f"3_SalesVouchers_{comp}" if comp else "3_SalesVouchers",
+            # Strategy 2: Sales DayBook vouchers (current FYs, lightweight, captures receivables)
+            (f"2_SalesVouchers_{comp}" if comp else "2_SalesVouchers",
              inject_company_into_xml(DAYBOOK_XML, comp)),
-            # Strategy 4: Receipt+Payment vouchers (TDL type-filtered)
-            (f"4_ReceiptPayment_{comp}" if comp else "4_ReceiptPayment",
+            # Strategy 3: Receipt & Payment DayBook vouchers (current FYs, captures bank settlements & bill allocations)
+            (f"3_ReceiptPayment_{comp}" if comp else "3_ReceiptPayment",
              inject_company_into_xml(VOUCHERS_XML, comp)),
-            # Strategy 5: Date-range filtered vouchers (current FYs)
-            (f"5_AllVouchersTDL_{comp}" if comp else "5_AllVouchersTDL",
-             inject_company_into_xml(ALL_VOUCHERS_TDL_XML, comp)),
-            # Strategy 6: Bills Outstanding (TDL BillOutstanding Collection)
-            (f"6_BillsOutstanding_{comp}" if comp else "6_BillsOutstanding",
-             inject_company_into_xml(OUTSTANDING_XML, comp)),
-            # Strategy 7: Comprehensive All Vouchers
-            (f"7_AllVouchersUnfiltered_{comp}" if comp else "7_AllVouchersUnfiltered",
-             inject_company_into_xml(ALL_VOUCHERS_UNFILTERED_XML, comp)),
-            # --- Fallback strategies (Only reached if needed) ---
-            (f"8_LedgerVouchers_{comp}" if comp else "8_LedgerVouchers",
-             inject_company_into_xml(LEDGER_VOUCHERS_XML, comp)),
-            (f"9_DebtorBalance_{comp}" if comp else "9_DebtorBalance",
-             inject_company_into_xml(COLLECTION_XML, comp)),
-            (f"10_ExportAllVouchers_{comp}" if comp else "10_ExportAllVouchers",
-             inject_company_into_xml(EXPORT_OBJECT_XML, comp)),
-            (f"11_SalesRegisterFull_{comp}" if comp else "11_SalesRegisterFull",
-             inject_company_into_xml(SALES_VOUCHER_OBJECT_XML, comp)),
         ]
 
         # FIX 1: Collect records from ALL strategies (no break after first success)
