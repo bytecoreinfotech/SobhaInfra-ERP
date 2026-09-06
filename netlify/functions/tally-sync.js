@@ -354,7 +354,10 @@ exports.handler = async (event) => {
                 const cleanPhone = String(targetPhone).replace(/[^\d]/g, '');
 
                 if (WA_TOKEN_LOCAL && PHONE_ID_LOCAL) {
-                  // 1. Send Text Notification
+                  let wamid = null;
+                  let sentViaTemplate = false;
+
+                  // 1. Send Text Notification (within 24h window)
                   const textRes = await fetch(BASE_URL, {
                     method: 'POST',
                     headers: waHeaders,
@@ -366,9 +369,45 @@ exports.handler = async (event) => {
                     }),
                   });
                   const textData = await textRes.json();
-                  const wamid = textData?.messages?.[0]?.id;
+                  if (textData.error && (textData.error.code === 131047 || textData.error.message?.includes('Re-engagement') || textData.error.message?.includes('24-hour'))) {
+                    // Outside 24h window: dispatch official approved Meta template invoice_dispatch_v1
+                    try {
+                      const tplRes = await fetch(BASE_URL, {
+                        method: 'POST',
+                        headers: waHeaders,
+                        body: JSON.stringify({
+                          messaging_product: 'whatsapp',
+                          to: cleanPhone,
+                          type: 'template',
+                          template: {
+                            name: 'invoice_dispatch_v1',
+                            language: { code: 'en' },
+                            components: [{
+                              type: 'body',
+                              parameters: [
+                                { type: 'text', text: clientDisplayName || 'Valued Customer' },
+                                { type: 'text', text: String(invNum) },
+                                { type: 'text', text: 'Sobhainfra Tech' },
+                                { type: 'text', text: String(v.date || new Date().toISOString().slice(0, 10)) },
+                                { type: 'text', text: fmtAmt(invoiceRow.amount) },
+                                { type: 'text', text: 'Dispatched' },
+                              ]
+                            }]
+                          }
+                        }),
+                      });
+                      const tplData = await tplRes.json();
+                      wamid = tplData?.messages?.[0]?.id;
+                      sentViaTemplate = true;
+                      console.log(`[tally-sync] Dispatched invoice_dispatch_v1 template to ${cleanPhone} for invoice ${invNum}`);
+                    } catch (tplErr) {
+                      console.warn('[tally-sync] Template dispatch warning:', tplErr.message);
+                    }
+                  } else {
+                    wamid = textData?.messages?.[0]?.id;
+                  }
 
-                  // 2. Small delay then send Tax Invoice PDF document
+                  // 2. Small delay then send Tax Invoice PDF document (within 24h)
                   await new Promise(r => setTimeout(r, 600));
 
                   const safePdfName = `Invoice_${String(invNum).replace(/[^a-zA-Z0-9_-]/g, '_')}.pdf`;

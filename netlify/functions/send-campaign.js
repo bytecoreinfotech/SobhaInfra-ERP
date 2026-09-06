@@ -241,9 +241,55 @@ async function sendMetaWhatsAppMediaOrText(to, text, mediaType = 'text', mediaUr
     const data = await res.json();
     if (data.error) {
       console.error('[Campaign Send] Meta API Error for ' + cleanPhone + ':', JSON.stringify(data.error));
-      return { success: false, error: data.error.message || 'WhatsApp API error' };
+      return { success: false, error: `${data.error.code || ''}: ${data.error.message || 'WhatsApp API error'}` };
     }
     return { success: true, messageId: data.messages?.[0]?.id };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
+// ─── 3.1 Send Meta Approved Template Message for Cold Campaigns ──────────────
+async function sendWhatsAppTemplate(to, templateName, language = 'en', params = []) {
+  if (!WA_TOKEN || !PHONE_ID) {
+    return { success: true, messageId: 'mock-tpl-' + Date.now(), simulated: true };
+  }
+  try {
+    const phone = String(to).replace(/[^\d]/g, '');
+    const components = [];
+    if (params && params.length > 0) {
+      components.push({
+        type: 'body',
+        parameters: params.map(p => ({ type: 'text', text: String(p) })),
+      });
+    }
+
+    const payload = {
+      messaging_product: 'whatsapp',
+      to: phone,
+      type: 'template',
+      template: {
+        name: templateName,
+        language: { code: language },
+        ...(components.length > 0 ? { components } : {}),
+      },
+    };
+
+    const res = await fetch(`https://graph.facebook.com/v20.0/${PHONE_ID}/messages`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${WA_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await res.json();
+    if (data.error) {
+      console.warn(`[Campaign Meta Template Error] ${templateName}:`, data.error.message);
+      return { success: false, error: `${data.error.code}: ${data.error.message}` };
+    }
+    return { success: true, messageId: data.messages?.[0]?.id, isTemplate: true };
   } catch (err) {
     return { success: false, error: err.message };
   }
@@ -471,6 +517,21 @@ exports.handler = async (event) => {
         );
       }
 
+      // If rejected because recipient is outside 24h window, fallback to approved Meta Marketing Template
+      let usedTemplate = false;
+      if (!sendRes.success && (sendRes.error?.includes('131047') || sendRes.error?.includes('Re-engagement') || sendRes.error?.includes('24-hour'))) {
+        const clientName = (recipientLead.name && !isGenericName(recipientLead.name)) ? recipientLead.name.trim() : 'Valued Client';
+        const tplRes = await sendWhatsAppTemplate(phone, 'sobha_catalog_campaign_v1', 'en', [
+          clientName,
+          effectiveDefaults.company || 'Sobhainfra Tech',
+        ]);
+        if (tplRes.success) {
+          sendRes = tplRes;
+          usedTemplate = true;
+          console.log(`[send-campaign] Dispatched sobha_catalog_campaign_v1 template to cold contact ${phone}`);
+        }
+      }
+
       if (sendRes.success) {
         results.sent++;
 
@@ -492,9 +553,7 @@ exports.handler = async (event) => {
               const { data: newConv } = await supabase.from('whatsapp_conversations').insert([{
                 contact_name: safeName,
                 contact_phone: cleanPhone,
-                conversation_mode: 'AI ACTIVE',
-                last_message_text: personalizedMsg || (effectiveMediaUrl ? `[${effectiveMediaType}]` : 'Campaign broadcast'),
-                last_message_at: new Date().toISOString(),
+                conversation_mode: 'HUMAN ACTIVE',
                 unread_count: 0,
               }]).select('id').maybeSingle();
               convId = newConv?.id;
@@ -505,9 +564,11 @@ exports.handler = async (event) => {
                 ? `\n[Quick Replies: ${effectiveButtons.map(b => b.title || b.label).join(' | ')}]`
                 : '';
               
-              const msgBody = effectiveMediaUrl
-                ? (personalizedMsg ? `${personalizedMsg}\n[${effectiveMediaType}: ${effectiveMediaUrl}]${buttonSummary}` : `[${effectiveMediaType}: ${effectiveMediaUrl}]${buttonSummary}`)
-                : (personalizedMsg + buttonSummary);
+              const msgBody = usedTemplate
+                ? `[Template: sobha_catalog_campaign_v1] Namaste ${(recipientLead.name && !isGenericName(recipientLead.name)) ? recipientLead.name.trim() : 'Valued Client'}! Official product catalog dispatched.`
+                : (effectiveMediaUrl
+                    ? (personalizedMsg ? `${personalizedMsg}\n[${effectiveMediaType}: ${effectiveMediaUrl}]${buttonSummary}` : `[${effectiveMediaType}: ${effectiveMediaUrl}]${buttonSummary}`)
+                    : (personalizedMsg + buttonSummary));
 
               await supabase.from('whatsapp_messages').insert([{
                 conversation_id: convId,

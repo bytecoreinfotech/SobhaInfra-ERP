@@ -179,13 +179,17 @@ export default function PaymentReminderModal({
         setSendResult({
           success: false,
           is24hClosed: true,
-          waUrl: data.waMeUrl || waDirectUrl,
-          text: data.error || 'Meta 24-Hour Policy Window is closed for this number. Click below to send directly via WhatsApp Web/App.'
+          isPaymentRequired: data.isPaymentRequired || data.error?.includes('131042'),
+          text: data.error || 'Meta requires an active payment card on your WhatsApp Business Account (WABA: 2375569266307315) to deliver official templates to new contacts.'
         });
       } else {
+        const isPay = data.error?.includes('131042') || data.error?.toLowerCase().includes('payment issue');
         setSendResult({
           success: false,
-          text: data.error || 'Failed to dispatch reminder. Check WhatsApp credentials.'
+          isPaymentRequired: isPay,
+          text: isPay
+            ? 'Meta Payment Issue (131042): Add a payment method to your WhatsApp Business Account in Meta Business Suite to activate automated delivery.'
+            : (data.error || 'Failed to dispatch reminder. Check WhatsApp credentials.')
         });
       }
     } catch (err) {
@@ -391,32 +395,30 @@ export default function PaymentReminderModal({
           )}
 
           {/* Result Alert */}
-          {sendResult && sendResult.is24hClosed ? (
+          {sendResult && (sendResult.isPaymentRequired || sendResult.is24hClosed) ? (
             <div style={{
-              padding: '0.85rem 1rem', borderRadius: 10, fontSize: '0.82rem',
+              padding: '0.9rem 1rem', borderRadius: 10, fontSize: '0.82rem',
               background: 'rgba(245, 158, 11, 0.12)', border: '1px solid rgba(245, 158, 11, 0.35)',
               color: '#d97706', display: 'flex', flexDirection: 'column', gap: '0.5rem'
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 700, fontSize: '0.88rem' }}>
-                <AlertTriangle size={16} /> Meta 24-Hour Policy Window Closed
+                <AlertTriangle size={16} /> Meta Payment Setup Required (Error 131042)
               </div>
               <div style={{ fontSize: '0.76rem', lineHeight: 1.45, color: 'var(--text-secondary)' }}>
-                This customer has not messaged our WhatsApp Business number in the last 24 hours. Meta Cloud API blocks freeform text outside 24h to prevent spam.
+                This recipient has not messaged our WhatsApp Business number in 24 hours. Meta dispatches an official approved template (<strong style={{ color: 'var(--text-primary)' }}>payment_reminder_v1</strong>), but requires an active payment card attached to WhatsApp Business Account (<strong style={{ color: 'var(--text-primary)' }}>WABA ID: 2375569266307315</strong>) to deliver utility messages to new contacts.
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginTop: '0.25rem', flexWrap: 'wrap' }}>
-                {waDirectUrl && (
-                  <a
-                    href={sendResult.waUrl || waDirectUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="btn btn-whatsapp btn-sm"
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', textDecoration: 'none', padding: '0.35rem 0.75rem' }}
-                  >
-                    <ExternalLink size={13} /> Send Directly via WhatsApp Web (1-Click)
-                  </a>
-                )}
-                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-                  Once the client replies, the 24h window opens automatically!
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginTop: '0.35rem', flexWrap: 'wrap' }}>
+                <a
+                  href="https://business.facebook.com/billing_hub/accounts?business_id=2375569266307315"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn btn-warning btn-sm"
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', textDecoration: 'none', padding: '0.4rem 0.85rem', fontWeight: 600 }}
+                >
+                  <ExternalLink size={13} /> Add Payment Card in Meta Business Suite ↗
+                </a>
+                <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                  Once card is attached, all dispatches deliver 100% automatically via +91 88508 81761.
                 </span>
               </div>
             </div>
@@ -462,19 +464,6 @@ export default function PaymentReminderModal({
             >
               {sendResult?.success ? 'Close' : 'Cancel'}
             </button>
-
-            {waDirectUrl && (
-              <a
-                href={waDirectUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="btn btn-secondary btn-sm"
-                style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', color: '#10b981', borderColor: 'rgba(16,185,129,0.3)', textDecoration: 'none' }}
-                data-tooltip="Bypasses Meta 24h restrictions: opens directly in your WhatsApp Web / Desktop"
-              >
-                <ExternalLink size={13} /> Open in WhatsApp Web
-              </a>
-            )}
           </div>
 
           <button

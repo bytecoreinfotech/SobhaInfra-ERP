@@ -1272,13 +1272,42 @@ const WhatsApp = () => {
                           </div>
                         )}
 
-                        {/* Read Status Tick */}
+                        {/* Read / Delivery / Failed Status Indicator */}
                         {isOutbound && (
-                          <div style={{ textAlign: 'right', marginTop: '0.3rem', display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '0.2rem' }}>
-                            <span style={{ fontSize: '0.62rem', color: 'var(--text-muted)' }}>
-                              {m.status === 'read' ? 'Read' : m.status === 'delivered' ? 'Delivered' : 'Sent'}
-                            </span>
-                            <CheckCheck size={13} color={m.status === 'read' ? '#3b82f6' : 'var(--accent-secondary)'} />
+                          <div style={{ textAlign: 'right', marginTop: '0.35rem', display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '0.3rem' }}>
+                            {m.status === 'failed' ? (
+                              <span
+                                style={{
+                                  fontSize: '0.66rem',
+                                  color: '#ef4444',
+                                  fontWeight: 600,
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '0.25rem',
+                                  background: 'rgba(239, 68, 68, 0.08)',
+                                  padding: '0.15rem 0.4rem',
+                                  borderRadius: '4px',
+                                  border: '1px solid rgba(239, 68, 68, 0.25)'
+                                }}
+                                title={m.error_message || 'Delivery failed by Meta'}
+                              >
+                                <AlertTriangle size={11} color="#ef4444" />
+                                <span>Failed {m.error_message?.includes('131042') ? '(Meta Card Required)' : m.error_message?.includes('131047') ? '(24h Expired)' : ''}</span>
+                              </span>
+                            ) : (
+                              <>
+                                <span style={{ fontSize: '0.62rem', color: 'var(--text-muted)' }}>
+                                  {m.status === 'read' ? 'Read' : m.status === 'delivered' ? 'Delivered' : 'Sent'}
+                                </span>
+                                {m.status === 'read' ? (
+                                  <CheckCheck size={13} color="#3b82f6" title="Read by recipient" />
+                                ) : m.status === 'delivered' ? (
+                                  <CheckCheck size={13} color="var(--accent-secondary)" title="Delivered to recipient" />
+                                ) : (
+                                  <Check size={13} color="var(--text-muted)" title="Sent to Meta server" />
+                                )}
+                              </>
+                            )}
                           </div>
                         )}
                       </div>
