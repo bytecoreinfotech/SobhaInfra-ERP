@@ -33,15 +33,6 @@ export async function uploadToWhatsAppMedia(file, folder = 'crm', onProgress = n
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
   const lowerName = file.name.toLowerCase();
 
-  // 1. Instant Fast-Path for Sobha Official Brochure / Catalog PDF
-  if (lowerName.includes('sobha') && (lowerName.includes('product') || lowerName.includes('catalog') || lowerName.includes('brochure') || ext === 'pdf')) {
-    if (onProgress) {
-      onProgress(50);
-      setTimeout(() => onProgress(100), 100);
-    }
-    return 'https://sobhainfra-erp.netlify.app/sobha-products.pdf';
-  }
-
   // Validate file type
   const allowed = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'pdf', 'mp4', 'mp3', 'ogg', 'wav', 'doc', 'docx'];
   if (!allowed.includes(ext)) {

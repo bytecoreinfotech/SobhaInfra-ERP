@@ -47,21 +47,8 @@ exports.handler = async (event) => {
       };
     }
 
-    // Fast-path: Sobha Product Range Brochure / Catalog
     const lowerName = String(fileName || '').toLowerCase();
     const ext = lowerName.split('.').pop().toLowerCase();
-    if (folder !== 'statements' && folder !== 'invoices' && (lowerName.includes('catalog') || lowerName.includes('brochure') || (lowerName.includes('sobha') && lowerName.includes('product')))) {
-      return {
-        statusCode: 200,
-        headers: cors,
-        body: JSON.stringify({
-          success: true,
-          publicUrl: 'https://sobhainfra-erp.netlify.app/sobha-products.pdf',
-          mediaType: 'document',
-          fileName: 'Sobha_Infratech_Product_Catalog.pdf',
-        }),
-      };
-    }
 
     // Extract raw base64 and inferred MIME type
     let rawBase64 = fileData;

@@ -59,6 +59,35 @@ function getSupabaseAdmin() {
   });
 }
 
+// ─── Dynamic Org Settings Cache (customizable messages, dynamic PDF assets, executive assignment) ──
+let _orgSettingsCache = null;
+let _orgSettingsCacheAt = 0;
+const ORG_SETTINGS_CACHE_TTL = 30 * 1000; // 30 seconds for immediate responsiveness
+
+async function loadDynamicOrgSettings(supabase) {
+  const now = Date.now();
+  if (_orgSettingsCache && (now - _orgSettingsCacheAt < ORG_SETTINGS_CACHE_TTL)) {
+    return _orgSettingsCache;
+  }
+  if (!supabase) return {};
+  try {
+    const { data, error } = await supabase
+      .from('org_settings')
+      .select('key, value')
+      .eq('organization_id', DEFAULT_ORG_ID);
+    if (!error && data && data.length > 0) {
+      const map = {};
+      data.forEach(r => { map[r.key] = r.value; });
+      _orgSettingsCache = map;
+      _orgSettingsCacheAt = now;
+      return map;
+    }
+  } catch (err) {
+    console.warn('[webhook] loadDynamicOrgSettings error:', err.message);
+  }
+  return _orgSettingsCache || {};
+}
+
 // ─── Status Update Processor (Delivery, Read, Failed receipts from Meta) ─────
 async function handleStatusUpdate(supabase, statuses) {
   if (!statuses || statuses.length === 0) return;
@@ -1327,9 +1356,17 @@ exports.handler = async (event) => {
     let leadId = null;
     let activeConv = null;
     let assignedRep = 'Pooja Kumari';
+    let isFirstGreeting = true;
+    let orgSettings = {};
 
     if (supabase) {
       try {
+        // Load dynamic org settings (custom messages, dynamic PDF assets, sales rep)
+        orgSettings = await loadDynamicOrgSettings(supabase);
+        if (orgSettings.whatsapp_default_salesperson) {
+          assignedRep = orgSettings.whatsapp_default_salesperson;
+        }
+
         // Idempotency check
         const { data: existing } = await supabase.from('integration_events')
           .select('id, processed').eq('provider', 'whatsapp').eq('provider_event_id', providerEventId).maybeSingle();
@@ -1425,7 +1462,6 @@ exports.handler = async (event) => {
 
         activeConv = conv;
 
-        let isFirstGreeting = true;
         if (conv) {
           conversationId = conv.id;
           conversationMode = conv.conversation_mode || 'AI ACTIVE';
@@ -1609,12 +1645,15 @@ exports.handler = async (event) => {
     // 1. Check for Human Agent Handover
     const isHumanTrigger = buttonId.includes('human') ||
       buttonId.includes('agent') ||
+      buttonId.includes('executive') ||
       buttonTitle.toLowerCase().includes('human') ||
       buttonTitle.toLowerCase().includes('agent') ||
       buttonTitle.toLowerCase().includes('specialist') ||
-      ['talk to human', 'talk to agent', 'speak to human', 'connect to human', 'human takeover', 'call me', 'talk to sales', 'salesperson', 'executive'].some(t => lowerMsg.includes(t));
+      buttonTitle.toLowerCase().includes('executive') ||
+      ['talk to human', 'talk to agent', 'speak to human', 'connect to human', 'human takeover', 'call me', 'talk to sales', 'salesperson', 'executive', 'talk to executive'].some(t => lowerMsg.includes(t));
 
     if (isHumanTrigger) {
+      const activeRep = orgSettings.whatsapp_default_salesperson || assignedRep || 'Pooja Kumari';
       if (supabase && conversationId) {
         await supabase.from('whatsapp_conversations').update({
           conversation_mode: 'HUMAN TAKEOVER REQUESTED',
@@ -1626,8 +1665,8 @@ exports.handler = async (event) => {
           await supabase.from('tasks').insert([{
             organization_id: DEFAULT_ORG_ID,
             title: `⚡ Executive WhatsApp Callback: ${contactName}`,
-            description: `Customer ${contactName} (${fromPhone}) requested executive callback on WhatsApp: "${messageText}". Assigned to ${assignedRep}.`,
-            assigned_to: assignedRep,
+            description: `Customer ${contactName} (${fromPhone}) requested executive callback on WhatsApp: "${messageText}". Assigned to ${activeRep}.`,
+            assigned_to: activeRep,
             priority: 'High',
             due_date: new Date(Date.now() + 3600000).toISOString(),
             status: 'Pending',
@@ -1638,9 +1677,15 @@ exports.handler = async (event) => {
 
       const mainName = extractMainName(contactName);
       const salutation = mainName ? `Namaste ${mainName}!` : 'Namaste!';
-      const handoffReply = isFirstGreeting
-        ? `👋 ${salutation}\n\nI have assigned your request to our Senior Sales Executive (*${assignedRep}*).\n\n📞 They have been notified and will connect with you directly on this number shortly!\n\n💡 *In the meantime, our AI Assistant is right here 24/7:* feel free to ask about product technical specifications, AAC block mortar coverage, plaster mixing ratios, or packing sizes.\n\nWhat can I help you check right now?`
-        : `👋 ${salutation}\n\nI have alerted our Senior Sales Executive (*${assignedRep}*) regarding your inquiry.\n\n📞 They are reviewing your requirement and will connect with you on WhatsApp / call shortly!\n\n💡 *In the meantime, I am right here to help you:* feel free to ask any technical, application, or packing questions about our products right here!`;
+      const defaultExecutiveMsg = isFirstGreeting
+        ? `👋 ${salutation}\n\nI have assigned your request to our Senior Sales Executive (*${activeRep}*).\n\n📞 They have been notified and will connect with you directly on this number shortly!\n\n💡 *In the meantime, our AI Assistant is right here 24/7:* feel free to ask about product technical specifications, AAC block mortar coverage, plaster mixing ratios, or packing sizes.\n\nWhat can I help you check right now?`
+        : `👋 ${salutation}\n\nI have alerted our Senior Sales Executive (*${activeRep}*) regarding your inquiry.\n\n📞 They are reviewing your requirement and will connect with you on WhatsApp / call shortly!\n\n💡 *In the meantime, I am right here to help you:* feel free to ask any technical, application, or packing questions about our products right here!`;
+
+      let handoffReply = (orgSettings.whatsapp_talk_executive_message || defaultExecutiveMsg)
+        .replace(/\{name\}/g, mainName || 'Sir/Madam')
+        .replace(/\{executive\}/g, activeRep)
+        .replace(/\{phone\}/g, fromPhone);
+
       const handoffButtons = [
         { id: 'btn_catalog', title: '📄 Get Catalog' },
         { id: 'btn_pricing', title: '💰 Get Quote' },
@@ -1677,11 +1722,14 @@ exports.handler = async (event) => {
     if (isBrochureTrigger) {
       console.log(JSON.stringify({ step: 'brochure_dispatch', to: fromPhone, name: contactName }));
 
-      // Step A: Send native PDF document attachment (no plain links)
+      const catalogPdfUrl = orgSettings.whatsapp_catalog_pdf_url || BROCHURE_PUBLIC_URL;
+      const catalogFilename = orgSettings.whatsapp_catalog_filename || 'Sobha_Infratech_Product_Catalog.pdf';
+
+      // Step A: Send native PDF document attachment (dynamic active catalog)
       await sendWhatsAppDocument(
         fromPhone,
-        BROCHURE_MEDIA_ID || BROCHURE_PUBLIC_URL,
-        'Sobha_Infratech_Product_Catalog.pdf',
+        catalogPdfUrl,
+        catalogFilename,
         '📄 Sobhainfra Tech Pvt. Ltd. — Official Product Catalog & Technical Guide'
       );
 
@@ -1707,8 +1755,8 @@ exports.handler = async (event) => {
               direction: 'outbound',
               sender_type: 'system',
               message_type: 'document',
-              media_url: BROCHURE_PUBLIC_URL,
-              body: 'Sobha_Infratech_Product_Catalog.pdf',
+              media_url: catalogPdfUrl,
+              body: catalogFilename,
               status: 'sent',
             },
             {
@@ -1728,7 +1776,7 @@ exports.handler = async (event) => {
       return { statusCode: 200, headers, body: JSON.stringify({ status: 'brochure_pdf_dispatched' }) };
     }
 
-    // 3. Check for Rate List / Pricing Inquiry -> FLAG FOR HUMAN ESCALATION WHILE KEEPING AI ACTIVE
+    // 3. Check for Rate List / Pricing Inquiry -> FLAG FOR HUMAN ESCALATION & AUTO-ATTACH PDF IF CONFIGURED
     const isRateListTrigger = buttonId.includes('price') ||
       buttonId.includes('pricing') ||
       buttonId.includes('rate') ||
@@ -1736,16 +1784,17 @@ exports.handler = async (event) => {
       buttonTitle.toLowerCase().includes('rate') ||
       buttonTitle.toLowerCase().includes('price') ||
       buttonTitle.toLowerCase().includes('quote') ||
-      ['rate list', 'price list', 'rate chart', 'price chart', 'rate kya hai', 'price kya hai', 'kya rate hai', 'bhav kya hai', 'quotation', 'quote', 'bulk discount', 'rate kam', 'kitna rate'].some(t => lowerMsg.includes(t));
+      ['rate list', 'price list', 'rate chart', 'price chart', 'rate kya hai', 'price kya hai', 'kya rate hai', 'bhav kya hai', 'quotation', 'quote', 'get quote', 'bulk discount', 'rate kam', 'kitna rate'].some(t => lowerMsg.includes(t));
 
     if (isRateListTrigger) {
       console.log(JSON.stringify({ step: 'rate_list_escalation', to: fromPhone, name: contactName }));
+      const activeRep = orgSettings.whatsapp_default_salesperson || assignedRep || 'Pooja Kumari';
 
       // Flag conversation mode to HUMAN TAKEOVER REQUESTED (operator alerted, but AI continues answering subsequent questions!)
       if (supabase && conversationId) {
         await supabase.from('whatsapp_conversations').update({
           conversation_mode: 'HUMAN TAKEOVER REQUESTED',
-          last_message_text: `[Rate List Requested] ${messageText}`,
+          last_message_text: `[Rate List / Quote Requested] ${messageText}`,
           last_message_at: new Date().toISOString(),
         }).eq('id', conversationId);
 
@@ -1754,7 +1803,7 @@ exports.handler = async (event) => {
             organization_id: DEFAULT_ORG_ID,
             title: `⚡ Rate List & Quotation Request: ${contactName}`,
             description: `Customer ${contactName} (${fromPhone}) requested official rate list / quotation on WhatsApp: "${messageText}".`,
-            assigned_to: 'Rajesh Kumar',
+            assigned_to: activeRep,
             priority: 'High',
             due_date: new Date(Date.now() + 3600000).toISOString(),
             status: 'Pending',
@@ -1763,11 +1812,47 @@ exports.handler = async (event) => {
         } catch {}
       }
 
+      // Check if active Rate List PDF is uploaded and configured in org_settings
+      const rateListPdfUrl = orgSettings.whatsapp_rate_list_pdf_url;
+      const rateListFilename = orgSettings.whatsapp_rate_list_filename || 'Sobha_Infratech_Official_Rate_List.pdf';
+      const autoSendRateListPdf = orgSettings.whatsapp_auto_send_rate_list !== 'false';
+
+      if (rateListPdfUrl && rateListPdfUrl.startsWith('http') && autoSendRateListPdf) {
+        try {
+          await sendWhatsAppDocument(
+            fromPhone,
+            rateListPdfUrl,
+            rateListFilename,
+            '📊 Sobhainfra Tech Pvt. Ltd. — Official Rate List & Price Schedule'
+          );
+          if (supabase && conversationId) {
+            await supabase.from('whatsapp_messages').insert([{
+              organization_id: DEFAULT_ORG_ID,
+              conversation_id: conversationId,
+              direction: 'outbound',
+              sender_type: 'system',
+              message_type: 'document',
+              media_url: rateListPdfUrl,
+              body: rateListFilename,
+              status: 'sent',
+            }]);
+          }
+        } catch (pdfSendErr) {
+          console.warn('[webhook] rate list PDF send error:', pdfSendErr.message);
+        }
+      }
+
       const mainName = extractMainName(contactName);
       const salutation = mainName ? `Namaste ${mainName}!` : 'Namaste!';
-      const rateReply = isFirstGreeting
-        ? `💰 ${salutation}\n\nOur official rate lists and customized project quotations are provided directly by our senior sales specialists based on your delivery location and order quantity.\n\nI have transferred your request to our executive who will share the latest rate chart and connect with you shortly! 📞\n\nIn the meantime, feel free to ask any technical, application, or packing questions about our products right here!`
-        : `💰 Our official rate lists and customized project quotations are provided directly by our senior sales specialists based on your delivery location and order quantity.\n\nI have transferred your request to our executive who will share the latest rate chart and connect with you shortly! 📞\n\nIn the meantime, feel free to ask any technical, application, or packing questions about our products right here!`;
+      const defaultRateMsg = isFirstGreeting
+        ? `💰 ${salutation}\n\nOur official rate lists and customized project quotations are provided directly by our senior sales specialists based on your delivery location and order quantity.\n\nI have transferred your request to our executive (*${activeRep}*) who will share the latest rate chart and connect with you shortly! 📞\n\nIn the meantime, feel free to ask any technical, application, or packing questions about our products right here!`
+        : `💰 ${salutation}\n\nOur official rate lists and customized project quotations are provided directly by our senior sales specialists based on your delivery location and order quantity.\n\nI have transferred your request to our executive (*${activeRep}*) who will share the latest rate chart and connect with you shortly! 📞\n\nIn the meantime, feel free to ask any technical, application, or packing questions about our products right here!`;
+
+      let rateReply = (orgSettings.whatsapp_get_quote_message || defaultRateMsg)
+        .replace(/\{name\}/g, mainName || 'Sir/Madam')
+        .replace(/\{executive\}/g, activeRep)
+        .replace(/\{phone\}/g, fromPhone);
+
       const rateButtons = [
         { id: 'btn_catalog', title: '📄 Get Catalog' },
         { id: 'btn_human', title: '👤 Talk to Executive' },
