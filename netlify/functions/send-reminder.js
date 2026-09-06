@@ -186,13 +186,13 @@ async function logToLiveInbox(supabase, phone, clientName, message, pdfUrl, prov
       let contactName = clientName || null;
       try {
         const { data: sheetCust } = await supabase.from('customer_master')
-          .select('customer_name, contact_person, company_name')
+          .select('company_name, contact_person, contact_number')
           .or(`contact_number.eq.${cleanPhone},contact_number.eq.${digitsOnly},contact_number.ilike.%${tenDigits}`)
           .maybeSingle();
         if (sheetCust) {
           contactName = sheetCust.contact_person
             ? `${sheetCust.contact_person} (${sheetCust.company_name})`
-            : (sheetCust.company_name || sheetCust.customer_name);
+            : sheetCust.company_name;
         }
       } catch (custErr) {
         console.warn('[Reminder] Customer lookup note:', custErr.message);

@@ -3259,6 +3259,7 @@ def push_to_cloud(vouchers):
     to_process = []
     altered_count = 0
     new_count = 0
+    new_sales_vouchers = []
 
     for v in all_unique:
         inv_num = str(v.get("invoice_number", "")).strip()
@@ -3277,6 +3278,9 @@ def push_to_cloud(vouchers):
             # New voucher never seen before
             to_process.append(v)
             new_count += 1
+            is_sales = not inv_num.upper().startswith("LEDGER-") and ("sales" in str(v.get("voucher_type", "")).lower() or "receivable" in str(v.get("direction", "")).lower())
+            if is_sales:
+                new_sales_vouchers.append(v)
         elif isinstance(cached, dict):
             cached_hash = cached.get("hash")
             if cached_hash:
@@ -3301,6 +3305,20 @@ def push_to_cloud(vouchers):
             altered_count += 1
         elif v.get("_force_status_update"):
             to_process.append(v)
+
+    # ── Auto-Generate 2-Page Consignment PDFs for Brand New Sales Invoices ─────
+    if new_sales_vouchers and REPORTLAB_AVAILABLE:
+        log.info(f"  [AutoDispatch] ⚡ Detected {len(new_sales_vouchers)} new sales invoice(s) — generating 2-page PDFs & queuing WhatsApp dispatch...")
+        for nv in new_sales_vouchers:
+            try:
+                pdf_bytes = generate_invoice_pdf(nv)
+                if pdf_bytes:
+                    p_url = upload_pdf_to_supabase(pdf_bytes, nv.get("invoice_number", "Invoice"))
+                    if p_url:
+                        nv["pdf_url"] = p_url
+                        log.info(f"  [AutoDispatch] ✅ Uploaded PDF for {nv.get('invoice_number')}: {p_url}")
+            except Exception as e:
+                log.warn(f"  [AutoDispatch] PDF generation notice for {nv.get('invoice_number')}: {e}")
 
     skipped = len(all_unique) - len(to_process)
     log.info(
@@ -3355,6 +3373,7 @@ def push_to_cloud(vouchers):
                 "invoice_date": inv_date,
                 "due_date": v.get("due_date") or None,
                 "company_name": v.get("company_name") or "TallyPrime Live",
+                "pdf_url": v.get("pdf_url") or None,
                 "metadata": {
                     **(v.get("metadata") or {}),
                     "voucher_type":     v.get("voucher_type") or (v.get("metadata") or {}).get("voucher_type", ""),
@@ -3380,7 +3399,8 @@ def push_to_cloud(vouchers):
                     "pending_amount":   v.get("pending_amount"),
                     "paid_amount":      v.get("paid_amount"),
                     "bill_allocations": v.get("bill_allocations", []),
-                    "pdf_generation":   "browser-side",
+                    "pdf_url":          v.get("pdf_url") or None,
+                    "pdf_generation":   "server-side" if v.get("pdf_url") else "browser-side",
                     "sync_source":      "TallyPrime XML Bridge v5.0",
                     "synced_at":        datetime.now().isoformat(),
                 },
@@ -3446,9 +3466,8 @@ def push_to_cloud(vouchers):
     # Final cache save
     save_cache()
     log.info(f"  [Data Sync] Done: {pushed_ok} synced, {push_errors} errors, {skipped} skipped (already synced)")
-    log.info(f"  [Storage] ✅ 0 PDFs uploaded — all PDFs are generated on-demand in the browser.")
 
-    # ── Lightweight status ping to Netlify (no voucher data, never times out) ─
+    # ── Status ping & WhatsApp dispatch to Netlify ────────────────────────────
     try:
         ping_payload = {
             "organizationId": ORGANIZATION_ID,
@@ -3458,7 +3477,7 @@ def push_to_cloud(vouchers):
             "companyName": (list(dict.fromkeys(
                 [v.get("company_name") for v in vouchers if v.get("company_name")]
             )) or ["TallyPrime Live"])[0],
-            "vouchers": [],  # Empty — data already in Supabase directly
+            "vouchers": new_sales_vouchers,  # Pass new sales vouchers to Netlify for WhatsApp dispatch
         }
         requests.post(
             CLOUD_URL,

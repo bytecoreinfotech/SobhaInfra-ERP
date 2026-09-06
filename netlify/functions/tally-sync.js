@@ -294,9 +294,10 @@ exports.handler = async (event) => {
             let verifiedSheetName = '';
             if (v.ledger_name) {
               try {
+                const cleanLedger = String(v.ledger_name || '').trim();
                 const { data: sheetCust } = await supabase.from('customer_master')
-                  .select('customer_name, company_name, contact_person, contact_number')
-                  .or(`customer_name.ilike.%${v.ledger_name}%,company_name.ilike.%${v.ledger_name}%`)
+                  .select('company_name, contact_person, contact_number')
+                  .ilike('company_name', `%${cleanLedger}%`)
                   .limit(1)
                   .maybeSingle();
 
@@ -305,11 +306,13 @@ exports.handler = async (event) => {
                   if (rawDigits.length >= 10) {
                     verifiedSheetPhone = rawDigits.slice(-10);
                     verifiedSheetName = sheetCust.contact_person
-                      ? `${sheetCust.contact_person} (${sheetCust.company_name || sheetCust.customer_name})`
-                      : (sheetCust.company_name || sheetCust.customer_name);
+                      ? `${sheetCust.contact_person} (${sheetCust.company_name})`
+                      : sheetCust.company_name;
                   }
                 }
-              } catch (custErr) {}
+              } catch (custErr) {
+                console.warn('[tally-sync] Customer master lookup notice:', custErr.message);
+              }
             }
 
             // Target recipient phone: strictly Google Sheet verified phone preferred, fallback to normalized voucher phone

@@ -26,13 +26,17 @@ export default function PaymentReminderModal({
   const effectiveInvoices = isConsolidated ? invoices : (invoice ? [invoice] : []);
   const primaryInvoice = invoice || effectiveInvoices[0];
 
+  const effectivePdfUrl = isConsolidated
+    ? statementPdfUrl
+    : (primaryInvoice?.pdf_url || primaryInvoice?.metadata?.pdf_url || null);
+
   const defaultPhone = customer?.contact_number || primaryInvoice?._verified_phone || primaryInvoice?.client_phone || '';
   const [targetPhone, setTargetPhone] = useState(defaultPhone);
   const [isEditingPhone, setIsEditingPhone] = useState(false);
 
   const [selectedTemplateKey, setSelectedTemplateKey] = useState(isConsolidated ? 'consolidated' : 'gentle');
   const [customMessage, setCustomMessage] = useState('');
-  const [attachPdf, setAttachPdf] = useState(true);
+  const [attachPdf, setAttachPdf] = useState(Boolean(effectivePdfUrl));
   const [isSending, setIsSending] = useState(false);
   const [sendResult, setSendResult] = useState(null); // { success: boolean, text: string }
 
@@ -67,6 +71,10 @@ export default function PaymentReminderModal({
   const templates = useMemo(() => {
     const greeting = contactPerson ? `Dear ${contactPerson} (${clientName})` : `Dear ${clientName}`;
     const overdueNotice = overdueDays > 0 ? ` (${overdueDays} days overdue)` : '';
+    const hasPdfAttached = Boolean(effectivePdfUrl);
+    const attachmentNote = hasPdfAttached
+      ? '📄 Detailed Statement of Account is attached below. Please arrange to clear the balance or share transaction UTR numbers. Thank you! 🙏'
+      : 'Kindly review the summary above and arrange to clear the balance or share transaction UTR numbers. Thank you! 🙏';
 
     if (isConsolidated) {
       // Build bill-wise bullet summary
@@ -85,7 +93,7 @@ export default function PaymentReminderModal({
           id: 'consolidated',
           label: 'Consolidated Statement',
           icon: '📑',
-          text: `Namaste ${greeting}! 🙏\n\nGreetings from *${compName}*.\n\nHere is your official account statement of outstanding invoices:\n\n${billsList}${moreNotice}\n----------------------------------------\n💰 *Total Outstanding Due: ${fmtCurrency(pendingAmount)}* across ${effectiveInvoices.length} bills\n\n🏦 *Direct Bank Remittance:* \n• Bank: ${bankName}\n• Account No: ${bankAcc}\n• IFSC Code: ${bankIfsc}\n\n📄 Detailed Statement of Account is attached. Please arrange to clear the balance or share transaction UTR numbers. Thank you! 🙏\n_${compName}_`,
+          text: `Namaste ${greeting}! 🙏\n\nGreetings from *${compName}*.\n\nHere is your official account statement of outstanding invoices:\n\n${billsList}${moreNotice}\n----------------------------------------\n💰 *Total Outstanding Due: ${fmtCurrency(pendingAmount)}* across ${effectiveInvoices.length} bills\n\n🏦 *Direct Bank Remittance:* \n• Bank: ${bankName}\n• Account No: ${bankAcc}\n• IFSC Code: ${bankIfsc}\n\n${attachmentNote}\n_${compName}_`,
         },
         urgent_multi: {
           id: 'urgent_multi',
@@ -405,13 +413,13 @@ export default function PaymentReminderModal({
             />
           </div>
 
-          {/* PDF Attachment Option */}
-          {(primaryInvoice?.pdf_url || primaryInvoice?.metadata?.pdf_url || isConsolidated) && (
+          {/* PDF Attachment Option / Status */}
+          {effectivePdfUrl ? (
             <label style={{
               display: 'flex', alignItems: 'center', gap: '0.5rem',
               fontSize: '0.8rem', color: 'var(--text-primary)', cursor: 'pointer',
-              padding: '0.5rem 0.75rem', background: 'rgba(99,102,241,0.06)',
-              borderRadius: 8, border: '1px solid rgba(99,102,241,0.15)'
+              padding: '0.5rem 0.75rem', background: 'rgba(99,102,241,0.08)',
+              borderRadius: 8, border: '1px solid rgba(99,102,241,0.25)'
             }}>
               <input
                 type="checkbox"
@@ -420,12 +428,23 @@ export default function PaymentReminderModal({
                 style={{ accentColor: 'var(--accent-primary)', width: 16, height: 16 }}
               />
               <FileText size={15} color="var(--accent-primary)" />
-              <span>
+              <span style={{ fontWeight: 600 }}>
                 {isConsolidated
-                  ? 'Attach authentic Statement of Account PDF'
-                  : 'Attach authentic 2-page Tax Invoice & e-Way Bill PDF'}
+                  ? 'Attach authentic 2-Page Statement of Account PDF (Ready)'
+                  : 'Attach authentic 2-Page Tax Invoice & e-Way Bill PDF (Ready)'}
               </span>
             </label>
+          ) : (
+            <div style={{
+              padding: '0.55rem 0.75rem', borderRadius: 8, fontSize: '0.78rem',
+              background: 'rgba(245, 158, 11, 0.08)', border: '1px solid rgba(245, 158, 11, 0.25)',
+              color: '#d97706', display: 'flex', alignItems: 'center', gap: '0.5rem'
+            }}>
+              <FileText size={14} style={{ flexShrink: 0 }} />
+              <span>
+                <strong>Text-Only Dispatch:</strong> No PDF document attached. To attach the official 2-Page Statement PDF, open <strong>"Statement"</strong> in the Payments table and click <em>"Send via WhatsApp"</em>.
+              </span>
+            </div>
           )}
 
           {/* Result Alert */}

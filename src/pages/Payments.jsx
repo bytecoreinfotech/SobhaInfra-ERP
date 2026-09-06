@@ -329,11 +329,8 @@ const Payments = () => {
 
   const handleRemindCustomer = (grp) => {
     if (!grp.hasPhone) return;
-    const unpaid = grp.invoices.filter(i => i.status !== 'Paid');
-    setReminderModalData({
-      customer: grp.customer,
-      invoices: unpaid.length > 0 ? unpaid : grp.invoices,
-    });
+    // Route through Consolidated Statement modal to generate authentic 2-page PDF & dispatch with WhatsApp
+    handleOpenStatement(grp);
   };
 
   const handleOpenStatement = (grp) => {

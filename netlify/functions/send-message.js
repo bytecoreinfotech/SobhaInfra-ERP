@@ -220,11 +220,11 @@ exports.handler = async (event) => {
               discoveredName = leadMatch.name.trim();
             } else {
               const { data: sheetCust } = await supabase.from('customer_master')
-                .select('customer_name, contact_person, company_name')
+                .select('company_name, contact_person, contact_number')
                 .or(`contact_number.eq.${cleanPhone},contact_number.eq.${digitsOnly},contact_number.ilike.%${tenDigits}`)
                 .maybeSingle();
               if (sheetCust) {
-                const candidate = sheetCust.customer_name || sheetCust.contact_person || sheetCust.company_name;
+                const candidate = sheetCust.contact_person || sheetCust.company_name;
                 if (candidate && !isGenericName(candidate)) discoveredName = candidate.trim();
               }
             }
