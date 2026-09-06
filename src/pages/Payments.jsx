@@ -790,6 +790,17 @@ const Payments = () => {
                                 >
                                   <Phone size={12} />
                                 </a>
+                                <a
+                                  href={`https://wa.me/91${String(grp.phone).replace(/\D/g, '').slice(-10)}?text=${encodeURIComponent(`Namaste ${grp.clientName}! Greetings from Sobhainfra Tech. Your total outstanding balance is ${fmtCurrency(grp.totalPending)} across ${grp.invoices.filter(i => i.status !== 'Paid').length} unpaid bills. Please release payment or share UTR. Thank you!`)}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="btn btn-secondary btn-sm"
+                                  data-tooltip={`Open directly in WhatsApp Web / Desktop for ${grp.phone}`}
+                                  data-tooltip-pos="left"
+                                  style={{ display: 'flex', alignItems: 'center', padding: '0.25rem 0.4rem', color: '#10b981' }}
+                                >
+                                  <ExternalLink size={12} />
+                                </a>
                               </>
                             )}
                           </div>
@@ -1081,6 +1092,17 @@ const Payments = () => {
                                 style={{ display: 'flex', alignItems: 'center', padding: '0.25rem 0.4rem' }}
                               >
                                 <Phone size={12} />
+                              </a>
+                              <a
+                                href={`https://wa.me/91${String(inv._verified_phone).replace(/\D/g, '').slice(-10)}?text=${encodeURIComponent(`Namaste ${inv.client_name || 'Client'}! Payment reminder regarding Invoice ${inv.invoice_number || inv.tally_voucher_number} for ₹${Number(inv.amount || 0).toLocaleString('en-IN')}. Please release payment or share UTR. Thank you! - Sobhainfra Tech`)}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="btn btn-secondary btn-sm"
+                                data-tooltip={`Open directly in WhatsApp Web / Desktop for ${inv._verified_phone}`}
+                                data-tooltip-pos="left"
+                                style={{ display: 'flex', alignItems: 'center', padding: '0.25rem 0.4rem', color: '#10b981' }}
+                              >
+                                <ExternalLink size={12} />
                               </a>
                             </>
                           )}

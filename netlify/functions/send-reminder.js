@@ -95,8 +95,78 @@ async function sendDocumentMessage(to, documentUrl, fileName, caption) {
   }
 }
 
+// ── Check if 24-Hour Customer Service Window is currently active ──────────────
+async function check24hWindow(supabase, phone) {
+  if (!supabase || !phone) return false;
+  try {
+    const rawDigits = String(phone).replace(/[^\d]/g, '');
+    const tenDigits = rawDigits.slice(-10);
+    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
+    const { data: conv } = await supabase.from('whatsapp_conversations')
+      .select('id')
+      .or(`contact_phone.ilike.%${tenDigits}%`)
+      .maybeSingle();
+
+    if (!conv?.id) return false;
+
+    const { data: recentInbound } = await supabase.from('whatsapp_messages')
+      .select('id, created_at')
+      .eq('conversation_id', conv.id)
+      .eq('direction', 'inbound')
+      .gte('created_at', oneDayAgo)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    return Boolean(recentInbound);
+  } catch (err) {
+    return false;
+  }
+}
+
+// ── Send WhatsApp Template Message (Meta Approved) ───────────────────────────
+async function sendWhatsAppTemplate(to, templateName, language = 'en', params = []) {
+  if (!WA_TOKEN || !PHONE_ID) {
+    return { success: true, messageId: 'mock-tpl-' + Date.now(), simulated: true };
+  }
+  try {
+    const phone = to.replace(/\s+/g, '').replace(/^\+/, '');
+    const components = [];
+    if (params && params.length > 0) {
+      components.push({
+        type: 'body',
+        parameters: params.map(p => ({ type: 'text', text: String(p) })),
+      });
+    }
+
+    const payload = {
+      messaging_product: 'whatsapp',
+      to: phone,
+      type: 'template',
+      template: {
+        name: templateName,
+        language: { code: language },
+      },
+    };
+    if (components.length > 0) {
+      payload.template.components = components;
+    }
+
+    const res = await fetch(`https://graph.facebook.com/v20.0/${PHONE_ID}/messages`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${WA_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    return { success: !data.error, messageId: data.messages?.[0]?.id, error: data.error?.message };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
 // ── Log to WhatsApp Live Inbox (whatsapp_conversations & whatsapp_messages) ──
-async function logToLiveInbox(supabase, phone, clientName, message, pdfUrl, providerMsgId) {
+async function logToLiveInbox(supabase, phone, clientName, message, pdfUrl, providerMsgId, msgStatus = 'delivered', errMsg = null) {
   if (!supabase || !phone) return;
   try {
     const rawPhone = String(phone).trim();
@@ -155,7 +225,8 @@ async function logToLiveInbox(supabase, phone, clientName, message, pdfUrl, prov
         message_type: hasPdf ? 'document' : 'text',
         body: message,
         media_url: hasPdf ? pdfUrl : null,
-        status: 'delivered',
+        status: msgStatus || 'delivered',
+        error_message: errMsg || null,
         provider_message_id: providerMsgId || null,
       }]);
 
@@ -306,17 +377,71 @@ exports.handler = async (event) => {
       const pdfUrl = (body.attachPdf !== false && body.pdfUrl && body.pdfUrl.startsWith('http')) ? body.pdfUrl : null;
       const message = customText || `Namaste ${clientName}! Please find your official Consolidated Statement of Account attached.`;
 
-      let sendRes;
-      const pdfFileName = `Statement_${clientName.replace(/[^a-zA-Z0-9_-]/g, '_')}.pdf`;
+      const isWithin24h = await check24hWindow(supabase, recipientPhone);
+      const clean10 = recipientPhone.slice(-10);
+      const waMeUrl = `https://wa.me/91${clean10}?text=${encodeURIComponent(message)}`;
 
-      if (pdfUrl) {
-        sendRes = await sendDocumentMessage(recipientPhone, pdfUrl, pdfFileName, message);
-        if (!sendRes.success) {
-          console.warn('[Reminder] Document send failed, falling back to text:', sendRes.error);
+      let sendRes;
+      let sentAsTemplate = false;
+
+      // If outside 24h window, attempt approved Meta Template
+      if (!isWithin24h) {
+        const tplRes = await sendWhatsAppTemplate(recipientPhone, 'statement_reminder_v1', 'en', [
+          clientName,
+          'Sobhainfra Tech',
+          'pending balance',
+          String(invoiceIds.length),
+          'various',
+          'ICICI Bank',
+          '001905012691',
+          'ICIC0000019',
+        ]);
+        if (tplRes.success) {
+          sendRes = tplRes;
+          sentAsTemplate = true;
+          console.log(`[Reminder] Dispatched via Meta Template to ${recipientPhone}`);
+        } else {
+          console.warn('[Reminder] Template statement_reminder_v1 pending or unavailable:', tplRes.error);
+        }
+      }
+
+      if (!sentAsTemplate) {
+        const pdfFileName = `Statement_${clientName.replace(/[^a-zA-Z0-9_-]/g, '_')}.pdf`;
+        if (pdfUrl && isWithin24h) {
+          sendRes = await sendDocumentMessage(recipientPhone, pdfUrl, pdfFileName, message);
+          if (!sendRes.success) {
+            console.warn('[Reminder] Document send failed, falling back to text:', sendRes.error);
+            sendRes = await sendTextMessage(recipientPhone, message);
+          }
+        } else {
           sendRes = await sendTextMessage(recipientPhone, message);
         }
-      } else {
-        sendRes = await sendTextMessage(recipientPhone, message);
+      }
+
+      // If outside 24h window and no template was sent, Meta will drop the message asynchronously
+      if (!isWithin24h && !sentAsTemplate) {
+        await logToLiveInbox(
+          supabase,
+          recipientPhone,
+          clientName,
+          message,
+          pdfUrl,
+          sendRes?.messageId,
+          'failed',
+          '131047: Meta 24-Hour Service Window Closed'
+        );
+
+        return {
+          statusCode: 200,
+          headers: cors,
+          body: JSON.stringify({
+            success: false,
+            is24hWindowClosed: true,
+            waMeUrl,
+            error: 'Meta 24-Hour Policy Window is closed for this number (recipient has not replied in 24h). Click "Open in WhatsApp Web" below to send directly.',
+            messageId: sendRes?.messageId,
+          }),
+        };
       }
 
       if (sendRes.success) {
@@ -335,7 +460,7 @@ exports.handler = async (event) => {
           }
         }
 
-        await logToLiveInbox(supabase, recipientPhone, clientName, message, pdfUrl, sendRes.messageId);
+        await logToLiveInbox(supabase, recipientPhone, clientName, message, pdfUrl, sendRes.messageId, 'delivered', null);
 
         try {
           const insertRows = invoiceIds.map(id => ({
@@ -363,6 +488,7 @@ exports.handler = async (event) => {
           body: JSON.stringify({
             success: true,
             isConsolidated: true,
+            sentAsTemplate,
             invoicesUpdated: invoiceIds.length,
             messageId: sendRes.messageId,
           }),
@@ -460,18 +586,73 @@ exports.handler = async (event) => {
       const reminderNum = (inv.reminder_count || 0) + 1;
       const message = customText || REMINDER_TEXT(inv, reminderNum);
 
+      const isWithin24h = await check24hWindow(supabase, inv.client_phone);
+      const clean10 = String(inv.client_phone).replace(/[^\d]/g, '').slice(-10);
+      const waMeUrl = `https://wa.me/91${clean10}?text=${encodeURIComponent(message)}`;
+
       let result;
+      let sentAsTemplate = false;
+
+      if (!isWithin24h) {
+        const tplRes = await sendWhatsAppTemplate(inv.client_phone, 'payment_reminder_v1', 'en', [
+          inv.client_name || 'Valued Customer',
+          'Sobhainfra Tech',
+          inv.invoice_number || inv.tally_voucher_number || 'Inv',
+          fmtAmount(inv.amount),
+          fmtDate(inv.due_date),
+          inv.status || 'Pending',
+          'ICICI Bank',
+          '001905012691',
+          'ICIC0000019',
+        ]);
+        if (tplRes.success) {
+          result = tplRes;
+          sentAsTemplate = true;
+          console.log(`[Reminder] Dispatched single reminder via Meta Template to ${inv.client_phone}`);
+        } else {
+          console.warn('[Reminder] Template payment_reminder_v1 pending or unavailable:', tplRes.error);
+        }
+      }
+
       const hasValidPdf = inv.pdf_url && typeof inv.pdf_url === 'string' && (inv.pdf_url.startsWith('http://') || inv.pdf_url.startsWith('https://'));
 
-      if (hasValidPdf) {
-        const pdfFileName = `Invoice_${inv.invoice_number || inv.id}.pdf`;
-        result = await sendDocumentMessage(inv.client_phone, inv.pdf_url, pdfFileName, message);
-        if (!result.success) {
-          console.warn('[Reminder] Document send failed, falling back to text:', result.error);
+      if (!sentAsTemplate) {
+        if (hasValidPdf && isWithin24h) {
+          const pdfFileName = `Invoice_${inv.invoice_number || inv.id}.pdf`;
+          result = await sendDocumentMessage(inv.client_phone, inv.pdf_url, pdfFileName, message);
+          if (!result.success) {
+            console.warn('[Reminder] Document send failed, falling back to text:', result.error);
+            result = await sendTextMessage(inv.client_phone, message);
+          }
+        } else {
           result = await sendTextMessage(inv.client_phone, message);
         }
-      } else {
-        result = await sendTextMessage(inv.client_phone, message);
+      }
+
+      // If single manual trigger from UI and outside 24h window with no template
+      if (isSingleManual && !isWithin24h && !sentAsTemplate) {
+        await logToLiveInbox(
+          supabase,
+          inv.client_phone,
+          inv.client_name,
+          message,
+          hasValidPdf ? inv.pdf_url : null,
+          result?.messageId,
+          'failed',
+          '131047: Meta 24-Hour Service Window Closed'
+        );
+
+        return {
+          statusCode: 200,
+          headers: cors,
+          body: JSON.stringify({
+            success: false,
+            is24hWindowClosed: true,
+            waMeUrl,
+            error: 'Meta 24-Hour Policy Window is closed for this number (recipient has not replied in 24h). Click "Open in WhatsApp Web" below to send directly.',
+            messageId: result?.messageId,
+          }),
+        };
       }
 
       if (result.success) {

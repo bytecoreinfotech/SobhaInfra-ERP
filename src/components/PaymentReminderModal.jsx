@@ -50,6 +50,9 @@ export default function PaymentReminderModal({
     return 0;
   }));
 
+  const clean10 = String(verifiedPhone || '').replace(/[^\d]/g, '').slice(-10);
+  const waDirectUrl = clean10 ? `https://wa.me/91${clean10}?text=${encodeURIComponent(customMessage)}` : null;
+
   // Dynamic Company Details & Bank Account from Settings
   const compName = primaryInvoice?.company_name || activeCompany?.company_name || 'Sobhainfra Tech Private Limited';
   const bankName = activeCompany?.bank_name || 'ICICI BANK';
@@ -164,7 +167,7 @@ export default function PaymentReminderModal({
 
       const data = await res.json();
 
-      if (data.success) {
+      if (data.success && !data.is24hWindowClosed) {
         setSendResult({
           success: true,
           text: `Payment reminder sent successfully to ${verifiedPhone}! Logged in Live Inbox.`
@@ -172,6 +175,13 @@ export default function PaymentReminderModal({
         if (onSendSuccess) {
           onSendSuccess(effectiveInvoices.map(i => i.id), customMessage.trim());
         }
+      } else if (data.is24hWindowClosed) {
+        setSendResult({
+          success: false,
+          is24hClosed: true,
+          waUrl: data.waMeUrl || waDirectUrl,
+          text: data.error || 'Meta 24-Hour Policy Window is closed for this number. Click below to send directly via WhatsApp Web/App.'
+        });
       } else {
         setSendResult({
           success: false,
@@ -381,7 +391,36 @@ export default function PaymentReminderModal({
           )}
 
           {/* Result Alert */}
-          {sendResult && (
+          {sendResult && sendResult.is24hClosed ? (
+            <div style={{
+              padding: '0.85rem 1rem', borderRadius: 10, fontSize: '0.82rem',
+              background: 'rgba(245, 158, 11, 0.12)', border: '1px solid rgba(245, 158, 11, 0.35)',
+              color: '#d97706', display: 'flex', flexDirection: 'column', gap: '0.5rem'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 700, fontSize: '0.88rem' }}>
+                <AlertTriangle size={16} /> Meta 24-Hour Policy Window Closed
+              </div>
+              <div style={{ fontSize: '0.76rem', lineHeight: 1.45, color: 'var(--text-secondary)' }}>
+                This customer has not messaged our WhatsApp Business number in the last 24 hours. Meta Cloud API blocks freeform text outside 24h to prevent spam.
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginTop: '0.25rem', flexWrap: 'wrap' }}>
+                {waDirectUrl && (
+                  <a
+                    href={sendResult.waUrl || waDirectUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="btn btn-whatsapp btn-sm"
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', textDecoration: 'none', padding: '0.35rem 0.75rem' }}
+                  >
+                    <ExternalLink size={13} /> Send Directly via WhatsApp Web (1-Click)
+                  </a>
+                )}
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                  Once the client replies, the 24h window opens automatically!
+                </span>
+              </div>
+            </div>
+          ) : sendResult ? (
             <div style={{
               padding: '0.75rem 1rem', borderRadius: 8, fontSize: '0.82rem',
               display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -404,7 +443,7 @@ export default function PaymentReminderModal({
                 </button>
               )}
             </div>
-          )}
+          ) : null}
 
         </div>
 
@@ -412,16 +451,31 @@ export default function PaymentReminderModal({
         <div style={{
           padding: '0.85rem 1.25rem', borderTop: '1px solid var(--border-color)',
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-          background: 'var(--bg-tertiary)'
+          background: 'var(--bg-tertiary)', flexWrap: 'wrap', gap: '0.5rem'
         }}>
-          <button
-            type="button"
-            className="btn btn-secondary btn-sm"
-            onClick={onClose}
-            disabled={isSending}
-          >
-            {sendResult?.success ? 'Close' : 'Cancel'}
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={onClose}
+              disabled={isSending}
+            >
+              {sendResult?.success ? 'Close' : 'Cancel'}
+            </button>
+
+            {waDirectUrl && (
+              <a
+                href={waDirectUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn btn-secondary btn-sm"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', color: '#10b981', borderColor: 'rgba(16,185,129,0.3)', textDecoration: 'none' }}
+                data-tooltip="Bypasses Meta 24h restrictions: opens directly in your WhatsApp Web / Desktop"
+              >
+                <ExternalLink size={13} /> Open in WhatsApp Web
+              </a>
+            )}
+          </div>
 
           <button
             type="button"
@@ -436,7 +490,7 @@ export default function PaymentReminderModal({
               </>
             ) : (
               <>
-                <Send size={14} /> Send Reminder to WhatsApp
+                <Send size={14} /> Send via Cloud API
               </>
             )}
           </button>
