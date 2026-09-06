@@ -36,9 +36,9 @@ const Chatbot = () => {
     whatsapp_rate_list_pdf_url: '',
     whatsapp_rate_list_filename: 'Sobha_Infratech_Official_Rate_List.pdf',
     whatsapp_auto_send_rate_list: 'true',
-    whatsapp_default_salesperson: 'Pooja Kumari',
-    whatsapp_talk_executive_message: `👋 Namaste {name}!\n\nI have assigned your request to our Senior Sales Executive (*{executive}*).\n\n📞 They have been notified and will connect with you directly on this number shortly!\n\n💡 *In the meantime, our AI Assistant is right here 24/7:* feel free to ask about product technical specifications, AAC block mortar coverage, plaster mixing ratios, or packing sizes.\n\nWhat can I help you check right now?`,
-    whatsapp_get_quote_message: `💰 Namaste {name}!\n\nOur official rate lists and customized project quotations are provided directly by our senior sales specialists based on your delivery location and order quantity.\n\nI have transferred your request to our executive (*{executive}*) who will share the latest rate chart and connect with you shortly! 📞\n\nIn the meantime, feel free to ask any technical, application, or packing questions about our products right here!`,
+    whatsapp_default_salesperson: 'Senior Sales Executive',
+    whatsapp_talk_executive_message: `👋 Namaste {name}!\n\nI have notified our Senior Sales Team regarding your inquiry.\n\n📞 A dedicated sales specialist has been alerted and will connect with you directly on this number shortly!\n\n💡 *In the meantime, our AI Assistant is right here 24/7:* feel free to ask about product technical specifications, AAC block mortar coverage, plaster mixing ratios, or packing sizes.\n\nWhat can I help you check right now?`,
+    whatsapp_get_quote_message: `💰 Namaste {name}!\n\nOur official rate lists and customized project quotations are provided directly by our senior sales specialists based on your delivery location and order quantity.\n\nI have forwarded your request to our Senior Sales Team who will share the latest rate schedule and connect with you shortly! 📞\n\nIn the meantime, feel free to ask any technical, application, or packing questions about our products right here!`,
     whatsapp_welcome_message: `👋 Namaste {name}! Welcome to *Sobhainfra Tech Pvt. Ltd.*\n\nWe manufacture high-performance construction chemicals, AAC block fix mortars, ready-mix plasters, and tile adhesives.\n\nHow can we help you today? Please choose an option below or type your inquiry:`,
   });
   const [loadingFlowSettings, setLoadingFlowSettings] = useState(true);
@@ -527,7 +527,7 @@ const Chatbot = () => {
                     className="input-field"
                     value={flowSettings.whatsapp_default_salesperson || ''}
                     onChange={e => setFlowSettings(prev => ({ ...prev, whatsapp_default_salesperson: e.target.value }))}
-                    placeholder="e.g. Pooja Kumari, Rajesh Kumar"
+                    placeholder="e.g. Senior Sales Executive, Technical Specialist"
                     style={{ width: '100%', fontSize: '0.85rem', padding: '0.45rem 0.75rem' }}
                   />
                 </div>
