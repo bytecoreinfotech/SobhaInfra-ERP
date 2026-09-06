@@ -3211,14 +3211,14 @@ def push_to_cloud(vouchers):
         # 2. Apply total receipts in FIFO order accounting for prior opening balance
         prior_op = 0.0
         if ledger_marker:
-            prior_op = float((ledger_marker.get("metadata") or {}).get("opening_balance") or 0.0)
-            if prior_op <= 0:
-                tally_cl = float(ledger_marker.get("amount") or 0.0)
-                tot_s = sum(float(s.get("amount") or 0) for s in sales_vchs)
-                if tally_cl > (tot_s - total_rcpts):
-                    prior_op = tally_cl - (tot_s - total_rcpts)
+            tally_cl = float(ledger_marker.get("amount") or 0.0)
+            tot_s = sum(float(s.get("amount") or 0) for s in sales_vchs)
+            prior_op = round(tally_cl - (tot_s - total_rcpts), 2)
+            lm_meta = ledger_marker.setdefault("metadata", {})
+            lm_meta["opening_balance"] = prior_op
+            lm_meta["closing_balance"] = tally_cl
 
-        # Unallocated receipts settle prior opening balance FIRST!
+        # Unallocated receipts settle prior opening balance FIRST! (Or include customer advance if prior_op < 0)
         rem_rcpts = max(0.0, total_rcpts - prior_op)
         for sv in sales_vchs:
             amt = float(sv.get("amount") or 0)

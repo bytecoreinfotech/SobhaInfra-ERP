@@ -243,7 +243,7 @@ export function reconcileCustomerInvoices(rawInvoices = []) {
     }
 
     // 5. Align with Tally Closing Balance:
-    // Determine effective closing balance accounting for transactions occurring after marker snapshot
+    // Determine effective closing balance accounting for transactions
     const markerDate = ledgerMarker ? (ledgerMarker.invoice_date || '') : '';
     const explicitOpening = Number(ledgerMarker?.metadata?.opening_balance || 0);
 
@@ -251,18 +251,16 @@ export function reconcileCustomerInvoices(rawInvoices = []) {
     let priorOpening = 0;
 
     if (tallyClosingBalance !== null) {
-      if (explicitOpening !== 0 && explicitOpening !== null && !isNaN(explicitOpening)) {
-        priorOpening = explicitOpening;
-      } else {
-        const totalSalesAmt = salesInvoices.reduce((sum, s) => sum + Number(s.amount || 0), 0);
-        const totalReceiptsAmt = receipts.reduce((sum, r) => sum + Number(r.amount || 0), 0);
-        const netUpTo = totalSalesAmt - totalReceiptsAmt;
-        priorOpening = Math.round((tallyClosingBalance - netUpTo) * 100) / 100;
-      }
-
       const totalSalesAmt = salesInvoices.reduce((sum, s) => sum + Number(s.amount || 0), 0);
       const totalReceiptsAmt = receipts.reduce((sum, r) => sum + Number(r.amount || 0), 0);
-      effectiveClosingBalance = Math.max(0, Math.round((priorOpening + totalSalesAmt - totalReceiptsAmt) * 100) / 100);
+      const netCurrent = totalSalesAmt - totalReceiptsAmt;
+
+      // Mathematical derivation of prior-period opening balance:
+      // In double-entry accounting: Closing Balance = Opening Balance + Debits - Credits
+      // => Opening Balance = Closing Balance - (Debits - Credits)
+      // When Tally master closing balance is available, it is the ground truth.
+      priorOpening = Math.round((tallyClosingBalance - netCurrent) * 100) / 100;
+      effectiveClosingBalance = tallyClosingBalance;
     }
 
     const currentPendingSum = salesInvoices.reduce((sum, inv) => sum + (inv.status !== 'Paid' ? Number(inv.pending_amount || 0) : 0), 0);
@@ -463,19 +461,21 @@ export function getCustomerLedgerStatement(partyName, allInvoices = []) {
 
   // Compute prior period opening balance as of 01-Apr-2026:
   // In standard accounting: Closing Balance = Opening Balance + totalDebits - totalCredits
-  // So as of marker date: Opening Balance = Marker Closing - (Debits up to marker - Credits up to marker)
+  // So: Opening Balance = Marker Closing - (totalDebits - totalCredits)
   let openingBalance = 0;
-  if (explicitOpening !== 0 && explicitOpening !== null && !isNaN(explicitOpening)) {
-    openingBalance = explicitOpening;
-  } else if (markerClosing !== null) {
-    const netUpTo = totalDebits - totalCredits;
-    openingBalance = Math.round((markerClosing - netUpTo) * 100) / 100;
-  }
-
-  // Derive live authoritative closing balance: Opening Balance + Total Debits - Total Credits
+  let closingBalance = 0;
   const netCurrent = totalDebits - totalCredits;
-  const netClosing = openingBalance + netCurrent;
-  const closingBalance = Math.max(0, Math.round(netClosing * 100) / 100);
+
+  if (markerClosing !== null && !isNaN(markerClosing)) {
+    // Authoritative derivation from Tally master closing balance
+    openingBalance = Math.round((markerClosing - netCurrent) * 100) / 100;
+    closingBalance = markerClosing;
+  } else if (explicitOpening !== 0 && !isNaN(explicitOpening)) {
+    openingBalance = explicitOpening;
+    closingBalance = Math.max(0, Math.round((openingBalance + netCurrent) * 100) / 100);
+  } else {
+    closingBalance = Math.max(0, Math.round(netCurrent * 100) / 100);
+  }
 
   if (openingBalance > 0.5) {
     entries.unshift({
