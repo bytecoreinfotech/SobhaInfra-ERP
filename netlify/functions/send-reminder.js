@@ -223,11 +223,16 @@ exports.handler = async (event) => {
     const todayMs = Date.now();
 
     let invoices = [];
+    const isSingleManual = Boolean(body.invoiceId);
+    const customText = body.customMessage && typeof body.customMessage === 'string' ? body.customMessage.trim() : null;
 
     if (body.invoiceId) {
       // Single invoice reminder (manual trigger from UI)
       const { data } = await supabase.from('invoices').select('*').eq('id', body.invoiceId).maybeSingle();
       if (data) {
+        if (body.phone) {
+          data.client_phone = body.phone;
+        }
         if (body.pdfUrl) {
           data.pdf_url = body.pdfUrl;
           try {
@@ -235,6 +240,9 @@ exports.handler = async (event) => {
           } catch (err) {
             console.warn('[Reminder] Failed to cache pdf_url:', err.message);
           }
+        }
+        if (body.attachPdf === false) {
+          data.pdf_url = null;
         }
         invoices = [data];
       }
@@ -267,35 +275,39 @@ exports.handler = async (event) => {
     for (const inv of invoices) {
       if (!inv.client_phone) { results.skipped++; continue; }
 
-      // ── Smart Pause Check ─────────────────────────────────────────────────────
-      const pauseCheck = shouldSkipInvoice(inv, todayMs);
+      // ── Smart Pause Check (Only for automated bulk runs; single manual clicks can bypass) ─
+      if (!isSingleManual) {
+        const pauseCheck = shouldSkipInvoice(inv, todayMs);
 
-      if (pauseCheck.skip) {
-        results.skipped++;
-        results.skippedDetails.push({ invoice: inv.invoice_number || inv.id, reason: pauseCheck.reason });
-        console.log(`[Reminder] SKIPPED ${inv.invoice_number || inv.id}: ${pauseCheck.reason}`);
-        continue;
-      }
+        if (pauseCheck.skip) {
+          results.skipped++;
+          results.skippedDetails.push({ invoice: inv.invoice_number || inv.id, reason: pauseCheck.reason });
+          console.log(`[Reminder] SKIPPED ${inv.invoice_number || inv.id}: ${pauseCheck.reason}`);
+          continue;
+        }
 
-      // Auto-resume if promise date passed
-      if (pauseCheck.autoResume) {
-        results.autoResumed++;
-        console.log(`[Reminder] AUTO-RESUME: ${inv.invoice_number || inv.id} — promise date passed, resuming reminders`);
-        await supabase.from('invoices').update({
-          reminder_paused: false,
-          reminder_paused_reason: null,
-          payment_promised_date: null,
-          payment_promised_at: null,
-          promise_committed_by: null,
-          promise_notes: null,
-        }).eq('id', inv.id);
+        // Auto-resume if promise date passed
+        if (pauseCheck.autoResume) {
+          results.autoResumed++;
+          console.log(`[Reminder] AUTO-RESUME: ${inv.invoice_number || inv.id} — promise date passed, resuming reminders`);
+          await supabase.from('invoices').update({
+            reminder_paused: false,
+            reminder_paused_reason: null,
+            payment_promised_date: null,
+            payment_promised_at: null,
+            promise_committed_by: null,
+            promise_notes: null,
+          }).eq('id', inv.id);
+        }
       }
 
       const reminderNum = (inv.reminder_count || 0) + 1;
-      const message = REMINDER_TEXT(inv, reminderNum);
+      const message = customText || REMINDER_TEXT(inv, reminderNum);
 
       let result;
-      if (inv.pdf_url) {
+      const hasValidPdf = inv.pdf_url && typeof inv.pdf_url === 'string' && (inv.pdf_url.startsWith('http://') || inv.pdf_url.startsWith('https://'));
+
+      if (hasValidPdf) {
         const pdfFileName = `Invoice_${inv.invoice_number || inv.id}.pdf`;
         result = await sendDocumentMessage(inv.client_phone, inv.pdf_url, pdfFileName, message);
         if (!result.success) {
@@ -320,7 +332,81 @@ exports.handler = async (event) => {
         }
         await supabase.from('invoices').update(updatePayload).eq('id', inv.id);
 
-        // Log to payment_reminders
+        // 1. Log to WhatsApp Live Inbox (whatsapp_conversations & whatsapp_messages)
+        try {
+          const rawPhone = String(inv.client_phone).trim();
+          const cleanPhone = rawPhone.replace(/[^\d+]/g, '');
+          const digitsOnly = cleanPhone.replace(/[^\d]/g, '');
+          const tenDigits = digitsOnly.slice(-10);
+
+          let convId = null;
+          const { data: existingConv } = await supabase.from('whatsapp_conversations')
+            .select('id, contact_name')
+            .or(`contact_phone.eq.${cleanPhone},contact_phone.eq.${digitsOnly},contact_phone.eq.+${digitsOnly}`)
+            .maybeSingle();
+
+          if (existingConv?.id) {
+            convId = existingConv.id;
+          } else {
+            // Match with customer_master or invoice for authentic business/contact name
+            let contactName = inv.client_name || inv.party_name || null;
+            try {
+              const { data: sheetCust } = await supabase.from('customer_master')
+                .select('customer_name, contact_person, company_name')
+                .or(`contact_number.eq.${cleanPhone},contact_number.eq.${digitsOnly},contact_number.ilike.%${tenDigits}`)
+                .maybeSingle();
+              if (sheetCust) {
+                contactName = sheetCust.contact_person
+                  ? `${sheetCust.contact_person} (${sheetCust.company_name})`
+                  : (sheetCust.company_name || sheetCust.customer_name);
+              }
+            } catch (custErr) {
+              console.warn('[Reminder] Customer lookup note:', custErr.message);
+            }
+
+            const newConvPayload = {
+              organization_id: DEFAULT_ORG_ID,
+              contact_name: contactName || (cleanPhone.startsWith('+') ? cleanPhone : `+${cleanPhone}`),
+              contact_phone: cleanPhone.startsWith('+') ? cleanPhone : '+' + cleanPhone,
+              conversation_mode: 'HUMAN ACTIVE',
+              last_message_text: message,
+              last_message_at: new Date().toISOString(),
+              unread_count: 0,
+            };
+
+            const { data: newConv } = await supabase.from('whatsapp_conversations')
+              .insert([newConvPayload])
+              .select('id')
+              .maybeSingle();
+            convId = newConv?.id;
+          }
+
+          if (convId) {
+            // Insert outbound reminder message into whatsapp_messages
+            await supabase.from('whatsapp_messages').insert([{
+              organization_id: DEFAULT_ORG_ID,
+              conversation_id: convId,
+              direction: 'outbound',
+              sender_type: 'human_agent',
+              message_type: hasValidPdf ? 'document' : 'text',
+              body: message,
+              media_url: hasValidPdf ? inv.pdf_url : null,
+              status: 'delivered',
+              provider_message_id: result.messageId || null,
+            }]);
+
+            // Keep conversation in sync for the Live Inbox list
+            await supabase.from('whatsapp_conversations').update({
+              last_message_text: message,
+              last_message_at: new Date().toISOString(),
+              unread_count: 0,
+            }).eq('id', convId);
+          }
+        } catch (inboxErr) {
+          console.warn('[Reminder] WhatsApp Live Inbox logging error:', inboxErr.message);
+        }
+
+        // 2. Log to payment_reminders
         try {
           await supabase.from('payment_reminders').insert([{
             organization_id: DEFAULT_ORG_ID,
@@ -331,7 +417,7 @@ exports.handler = async (event) => {
           }]);
         } catch {}
 
-        // Log to activities
+        // 3. Log to activities
         try {
           await supabase.from('activities').insert([{
             type: 'payment_reminder',
@@ -350,7 +436,7 @@ exports.handler = async (event) => {
     return {
       statusCode: 200,
       headers: cors,
-      body: JSON.stringify({ success: true, intervalDays, maxReminders, results }),
+      body: JSON.stringify({ success: results.sent > 0, intervalDays, maxReminders, results }),
     };
 
   } catch (err) {

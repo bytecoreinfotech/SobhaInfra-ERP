@@ -10,6 +10,7 @@ import { reconcileCustomerInvoices } from '../lib/reconciliation';
 import { buildCustomerIndex, matchCustomer } from '../lib/customerMatcher';
 import { useCompany } from '../context/CompanyContext';
 import InvoiceDocModal from '../components/InvoiceDocModal';
+import PaymentReminderModal from '../components/PaymentReminderModal';
 import { Skeleton, SkeletonTable, SkeletonStats } from '../components/Skeleton';
 import './Pages.css';
 
@@ -70,6 +71,7 @@ const Payments = () => {
   const [phoneFilter, setPhoneFilter]         = useState('all'); // 'all' | 'verified' | 'missing'
   const [searchQuery, setSearchQuery]         = useState('');
   const [docModalInv, setDocModalInv]         = useState(null);
+  const [reminderModalInv, setReminderModalInv] = useState(null);
 
   // Pagination state (prevents DOM lag)
   const [currentPage, setCurrentPage]         = useState(1);
@@ -201,28 +203,9 @@ const Payments = () => {
     setTimeout(() => setSyncMsg(''), 4500);
   };
 
-  const handleRemind = async (inv) => {
+  const handleRemind = (inv) => {
     if (!inv._has_verified_phone) return;
-    // If invoice does not yet have a generated PDF, open the 2-page modal for preview & 1-click send
-    if (!inv.pdf_url && !inv.metadata?.pdf_url) {
-      setDocModalInv(inv);
-      return;
-    }
-    setRemindingId(inv.id);
-    try {
-      const res = await fetch('/.netlify/functions/send-reminder', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ invoiceId: inv.id }),
-      });
-      const data = await res.json();
-      if (data.success) setSentIds(prev => [...prev, inv.id]);
-      else setSentIds(prev => [...prev, inv.id]);
-    } catch {
-      setSentIds(prev => [...prev, inv.id]);
-    }
-    setAllInvoices(prev => prev.map(i => i.id === inv.id ? { ...i, reminder_count: (i.reminder_count || 0) + 1 } : i));
-    setRemindingId(null);
+    setReminderModalInv(inv);
   };
 
   const getDaysLabel = (inv) => {
@@ -711,6 +694,23 @@ const Payments = () => {
               ...i,
               pdf_url: pdfUrl,
               reminder_count: (i.reminder_count || 0) + 1,
+              last_reminder_at: new Date().toISOString(),
+            } : i));
+          }}
+        />
+      )}
+
+      {/* Customizable WhatsApp Payment Reminder Modal */}
+      {reminderModalInv && (
+        <PaymentReminderModal
+          invoice={reminderModalInv}
+          onClose={() => setReminderModalInv(null)}
+          onSendSuccess={(invId, message) => {
+            setSentIds(prev => [...prev, invId]);
+            setAllInvoices(prev => prev.map(i => i.id === invId ? {
+              ...i,
+              reminder_count: (i.reminder_count || 0) + 1,
+              last_reminder_at: new Date().toISOString(),
             } : i));
           }}
         />
