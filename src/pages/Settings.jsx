@@ -124,6 +124,8 @@ const Settings = () => {
     org_name: localStorage.getItem('erppro_org_name') || 'SobhaInfra Tech',
     company_logo_url: '',
     company_qr_code_url: '',
+    company_stamp_url: '',
+    authorized_signature_url: '',
     company_udyam_reg: 'UDYAM-GJ-01-0012345',
     admin_email: 'contact@sobhainfratech.com',
     contact_phone: '+91 98765 43210',
@@ -142,6 +144,8 @@ const Settings = () => {
   const [generalLoading, setGeneralLoading] = useState(false);
   const logoInputRef = useRef(null);
   const qrInputRef = useRef(null);
+  const stampInputRef = useRef(null);
+  const signatureInputRef = useRef(null);
 
   // Storage & Supabase Health State
   const [storageSummary, setStorageSummary] = useState(null);
@@ -398,6 +402,9 @@ const Settings = () => {
         ...prev,
         org_name: data.org_name || prev.org_name,
         company_logo_url: data.company_logo_url || prev.company_logo_url,
+        company_qr_code_url: data.company_qr_code_url || prev.company_qr_code_url,
+        company_stamp_url: data.company_stamp_url || prev.company_stamp_url,
+        authorized_signature_url: data.authorized_signature_url || prev.authorized_signature_url,
         company_udyam_reg: data.company_udyam_reg || prev.company_udyam_reg,
         admin_email: data.admin_email || prev.admin_email,
         contact_phone: data.contact_phone || prev.contact_phone,
@@ -409,6 +416,7 @@ const Settings = () => {
         bank_name: data.bank_name || prev.bank_name,
         bank_account_no: data.bank_account_no || prev.bank_account_no,
         bank_ifsc: data.bank_ifsc || prev.bank_ifsc,
+        upi_id: data.upi_id || prev.upi_id,
       }));
     }
     setGeneralLoading(false);
@@ -442,12 +450,42 @@ const Settings = () => {
     reader.readAsDataURL(file);
   };
 
+  const handleStampUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) {
+      alert('Stamp image file size should be less than 2MB.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      setGeneralSettings(prev => ({ ...prev, company_stamp_url: reader.result }));
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleSignatureUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) {
+      alert('Signature image file size should be less than 2MB.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      setGeneralSettings(prev => ({ ...prev, authorized_signature_url: reader.result }));
+    };
+    reader.readAsDataURL(file);
+  };
+
   const handleSaveGeneralSettings = async () => {
     setGeneralSaving(true);
     await Promise.all([
       updateOrgSetting('org_name', generalSettings.org_name),
       updateOrgSetting('company_logo_url', generalSettings.company_logo_url),
       updateOrgSetting('company_qr_code_url', generalSettings.company_qr_code_url),
+      updateOrgSetting('company_stamp_url', generalSettings.company_stamp_url),
+      updateOrgSetting('authorized_signature_url', generalSettings.authorized_signature_url),
       updateOrgSetting('company_udyam_reg', generalSettings.company_udyam_reg),
       updateOrgSetting('admin_email', generalSettings.admin_email),
       updateOrgSetting('contact_phone', generalSettings.contact_phone),
@@ -2290,6 +2328,101 @@ const Settings = () => {
                               Remove
                             </button>
                           )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Digital Stamp & Authorized Signature Upload for Tax Invoices & Statements */}
+                    <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px dashed var(--border-color)', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1rem' }}>
+                      {/* Stamp Card */}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', background: 'var(--bg-primary)', padding: '0.6rem 0.75rem', borderRadius: 8, border: '1px solid var(--border-color)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                          <div style={{ width: 44, height: 44, borderRadius: 8, border: '1px solid var(--border-color)', background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+                            {generalSettings.company_stamp_url ? (
+                              <img src={generalSettings.company_stamp_url} alt="Stamp" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                            ) : (
+                              <span style={{ fontSize: '1.2rem' }}>💮</span>
+                            )}
+                          </div>
+                          <div>
+                            <div style={{ fontSize: '0.76rem', fontWeight: 700 }}>Company Stamp / Seal</div>
+                            <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>Printed on Invoices & Statements</div>
+                          </div>
+                        </div>
+                        <div>
+                          <input
+                            ref={stampInputRef}
+                            type="file"
+                            accept="image/png,image/jpeg,image/svg+xml,image/webp"
+                            style={{ display: 'none' }}
+                            onChange={handleStampUpload}
+                          />
+                          <div style={{ display: 'flex', gap: '0.35rem' }}>
+                            <button
+                              type="button"
+                              className="btn btn-secondary btn-sm"
+                              onClick={() => stampInputRef.current?.click()}
+                              style={{ fontSize: '0.72rem', padding: '0.2rem 0.5rem' }}
+                            >
+                              <Upload size={12} /> {generalSettings.company_stamp_url ? 'Change' : 'Upload'}
+                            </button>
+                            {generalSettings.company_stamp_url && (
+                              <button
+                                type="button"
+                                className="btn btn-outline btn-sm"
+                                style={{ color: 'var(--danger)', fontSize: '0.72rem', padding: '0.2rem 0.4rem' }}
+                                onClick={() => setGeneralSettings(p => ({ ...p, company_stamp_url: '' }))}
+                              >
+                                ✕
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Signature Card */}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', background: 'var(--bg-primary)', padding: '0.6rem 0.75rem', borderRadius: 8, border: '1px solid var(--border-color)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                          <div style={{ width: 44, height: 44, borderRadius: 8, border: '1px solid var(--border-color)', background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+                            {generalSettings.authorized_signature_url ? (
+                              <img src={generalSettings.authorized_signature_url} alt="Signature" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                            ) : (
+                              <span style={{ fontSize: '1.2rem' }}>✍️</span>
+                            )}
+                          </div>
+                          <div>
+                            <div style={{ fontSize: '0.76rem', fontWeight: 700 }}>Authorized Signature</div>
+                            <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>Official signatory image</div>
+                          </div>
+                        </div>
+                        <div>
+                          <input
+                            ref={signatureInputRef}
+                            type="file"
+                            accept="image/png,image/jpeg,image/svg+xml,image/webp"
+                            style={{ display: 'none' }}
+                            onChange={handleSignatureUpload}
+                          />
+                          <div style={{ display: 'flex', gap: '0.35rem' }}>
+                            <button
+                              type="button"
+                              className="btn btn-secondary btn-sm"
+                              onClick={() => signatureInputRef.current?.click()}
+                              style={{ fontSize: '0.72rem', padding: '0.2rem 0.5rem' }}
+                            >
+                              <Upload size={12} /> {generalSettings.authorized_signature_url ? 'Change' : 'Upload'}
+                            </button>
+                            {generalSettings.authorized_signature_url && (
+                              <button
+                                type="button"
+                                className="btn btn-outline btn-sm"
+                                style={{ color: 'var(--danger)', fontSize: '0.72rem', padding: '0.2rem 0.4rem' }}
+                                onClick={() => setGeneralSettings(p => ({ ...p, authorized_signature_url: '' }))}
+                              >
+                                ✕
+                              </button>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </div>

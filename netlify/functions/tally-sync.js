@@ -271,29 +271,77 @@ exports.handler = async (event) => {
             if (matchedLead) results.mappedLedgers++;
             else results.unmappedLedgers++;
 
-            // ── AUTO-SEND NEW INVOICE VIA WHATSAPP ─────────────────────────
-            // Only send for NEW invoices (not updates) and when phone is available
-            const isNewInvoice = !existing;
-            const recipientPhone = normVoucherPhone || (matchedLead ? matchedLead.phone : '');
+            // ── 4-LAYER AIRTIGHT SAFETY GUARD FOR NEW BILL AUTO-DISPATCH ─────
+            // Rule 1: Surge Brake — payload size > 15 vouchers is classified as bulk restore / sync
+            const isBulkSync = vouchers.length > 15;
 
-            if (isNewInvoice && recipientPhone && finalPdfUrl) {
+            // Rule 2: Date Recency Guard — invoice must be within the last 48 hours
+            const invDateMs = new Date(invoiceDateStr).getTime();
+            const nowMs = Date.now();
+            const diffHours = (nowMs - invDateMs) / (1000 * 60 * 60);
+            const isRecentInvoice = diffHours >= -12 && diffHours <= 48;
+
+            // Rule 3: Idempotency Guard — never re-send if already dispatched
+            const isAlreadyDispatched = Boolean(existing?.metadata?.first_dispatched_at || existing?.metadata?.auto_dispatched_at);
+
+            // Rule 4: Must be a genuine Sales / Tax Invoice (never purchase/payment)
+            const isSalesInvoice = derivedDirection === 'receivable' ||
+              ['sales', 'sales order', 'tax invoice'].some(t => rawVoucherType.includes(t)) ||
+              /^(srp|sb|inv|tax)\//i.test(invNum);
+
+            // Rule 5: Authoritative Google Sheet Phone Verification
+            let verifiedSheetPhone = '';
+            let verifiedSheetName = '';
+            if (v.ledger_name) {
+              try {
+                const { data: sheetCust } = await supabase.from('customer_master')
+                  .select('customer_name, company_name, contact_person, contact_number')
+                  .or(`customer_name.ilike.%${v.ledger_name}%,company_name.ilike.%${v.ledger_name}%`)
+                  .limit(1)
+                  .maybeSingle();
+
+                if (sheetCust?.contact_number) {
+                  const rawDigits = String(sheetCust.contact_number).replace(/[^\d]/g, '');
+                  if (rawDigits.length >= 10) {
+                    verifiedSheetPhone = rawDigits.slice(-10);
+                    verifiedSheetName = sheetCust.contact_person
+                      ? `${sheetCust.contact_person} (${sheetCust.company_name || sheetCust.customer_name})`
+                      : (sheetCust.company_name || sheetCust.customer_name);
+                  }
+                }
+              } catch (custErr) {}
+            }
+
+            // Target recipient phone: strictly Google Sheet verified phone preferred, fallback to normalized voucher phone
+            const targetPhone = verifiedSheetPhone ? `+91${verifiedSheetPhone}` : (normVoucherPhone || '');
+
+            const canAutoDispatch = !isBulkSync &&
+              isRecentInvoice &&
+              !isAlreadyDispatched &&
+              isSalesInvoice &&
+              Boolean(targetPhone) &&
+              Boolean(finalPdfUrl);
+
+            if (canAutoDispatch) {
               try {
                 const fmtAmt = (n) => '₹' + Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 });
-                const clientName = v.ledger_name || 'Customer';
-                const company = v.company_name || companyName || 'Shobha Infra';
+                const clientDisplayName = verifiedSheetName || v.ledger_name || 'Customer';
+                const company = v.company_name || companyName || 'Sobhainfra Tech';
 
-                // 1. Send text notification first
                 const textMsg = [
-                  `🧾 *New Invoice from ${company}*`,
+                  `🧾 *Tax Invoice Dispatched from ${company}*`,
                   ``,
-                  `Hello ${clientName}! Your new invoice has been generated.`,
+                  `Namaste ${clientDisplayName}! 🙏`,
+                  `Your order under Invoice *${invNum}* has been generated and dispatched from our plant.`,
                   ``,
                   `📋 *Invoice No:* ${invNum}`,
                   `📅 *Date:* ${invoiceDateStr}`,
-                  `💰 *Amount:* *${fmtAmt(invoiceRow.amount)}*`,
+                  `💰 *Total Amount:* *${fmtAmt(invoiceRow.amount)}*`,
                   `📌 *Status:* ${invoiceRow.status}`,
                   ``,
-                  `Your GST Tax Invoice is attached below as a PDF. Please review and contact us for any queries. 🙏`,
+                  `Your official 2-Page GST Tax Invoice is attached below as a PDF.`,
+                  `Kindly review and share confirmation once received. Thank you for your valued business! 🙏`,
+                  `_${company}_`,
                 ].join('\n');
 
                 const WA_TOKEN_LOCAL = process.env.WHATSAPP_TOKEN || 'EAAZAoFJNWmo4BSXS3ZBJrD7sk039yowup2fxSWYZAQFTiTvEfOm5XsRNmyRZC4RnkYyjvFaXaxN3fhqNVvvyBqe0CXwoWClgcBx6X8UhqaNWTUjNFt0XMkufGVKkF9FSOP2V2SXSwxreUpX3UALTRW8TC8feqyWyYdyyamSrkF8qWvqkuSEEkatiTGvaGZC1AYwZDZD';
@@ -303,11 +351,11 @@ exports.handler = async (event) => {
                   'Authorization': `Bearer ${WA_TOKEN_LOCAL}`,
                   'Content-Type': 'application/json',
                 };
-                const cleanPhone = String(recipientPhone).replace(/[^\d]/g, '');
+                const cleanPhone = String(targetPhone).replace(/[^\d]/g, '');
 
                 if (WA_TOKEN_LOCAL && PHONE_ID_LOCAL) {
-                  // Send text summary
-                  await fetch(BASE_URL, {
+                  // 1. Send Text Notification
+                  const textRes = await fetch(BASE_URL, {
                     method: 'POST',
                     headers: waHeaders,
                     body: JSON.stringify({
@@ -317,11 +365,13 @@ exports.handler = async (event) => {
                       text: { body: textMsg },
                     }),
                   });
+                  const textData = await textRes.json();
+                  const wamid = textData?.messages?.[0]?.id;
 
-                  // Small delay then send PDF document
-                  await new Promise(r => setTimeout(r, 500));
+                  // 2. Small delay then send Tax Invoice PDF document
+                  await new Promise(r => setTimeout(r, 600));
 
-                  const safePdfName = String(invNum).replace(/[^a-zA-Z0-9_-]/g, '_') + '.pdf';
+                  const safePdfName = `Invoice_${String(invNum).replace(/[^a-zA-Z0-9_-]/g, '_')}.pdf`;
                   await fetch(BASE_URL, {
                     method: 'POST',
                     headers: waHeaders,
@@ -332,16 +382,109 @@ exports.handler = async (event) => {
                       document: {
                         link: finalPdfUrl,
                         filename: safePdfName,
-                        caption: `${invNum} | ${fmtAmt(invoiceRow.amount)} | ${company}`,
+                        caption: `Tax Invoice ${invNum} | ${fmtAmt(invoiceRow.amount)} | ${company}`,
                       },
                     }),
                   });
 
-                  console.log(`[AutoSend] Invoice ${invNum} sent via WhatsApp to ${recipientPhone}`);
+                  // 3. If separate e-Way bill PDF exists, send e-Way bill too
+                  const ewayUrl = v.metadata?.eway_pdf_url || v.eway_pdf_url;
+                  if (ewayUrl && ewayUrl.startsWith('http')) {
+                    await new Promise(r => setTimeout(r, 600));
+                    await fetch(BASE_URL, {
+                      method: 'POST',
+                      headers: waHeaders,
+                      body: JSON.stringify({
+                        messaging_product: 'whatsapp',
+                        to: cleanPhone,
+                        type: 'document',
+                        document: {
+                          link: ewayUrl,
+                          filename: `eWayBill_${String(invNum).replace(/[^a-zA-Z0-9_-]/g, '_')}.pdf`,
+                          caption: `e-Way Bill for Invoice ${invNum}`,
+                        },
+                      }),
+                    });
+                  }
+
+                  // 4. Mark invoice as first_dispatched_at in database
+                  try {
+                    const nowDispatched = new Date().toISOString();
+                    const updatedMeta = {
+                      ...(invoiceRow.metadata || {}),
+                      first_dispatched_at: nowDispatched,
+                      auto_dispatched_at: nowDispatched,
+                      auto_dispatched_to: targetPhone,
+                    };
+                    await supabase.from('invoices').update({
+                      metadata: updatedMeta,
+                      last_reminder_at: nowDispatched,
+                      reminder_count: 1,
+                    }).eq('tally_voucher_number', invNum);
+                  } catch (metaUpErr) {
+                    console.warn('[AutoSend] Metadata update notice:', metaUpErr.message);
+                  }
+
+                  // 5. Log to WhatsApp Live Inbox (whatsapp_conversations & whatsapp_messages)
+                  try {
+                    const cleanTargetDigits = cleanPhone.slice(-10);
+                    let convId = null;
+                    const { data: convRow } = await supabase.from('whatsapp_conversations')
+                      .select('id')
+                      .or(`contact_phone.eq.+91${cleanTargetDigits},contact_phone.eq.91${cleanTargetDigits},contact_phone.eq.${cleanTargetDigits}`)
+                      .maybeSingle();
+
+                    if (convRow?.id) {
+                      convId = convRow.id;
+                    } else {
+                      const { data: newConv } = await supabase.from('whatsapp_conversations').insert([{
+                        organization_id: '00000000-0000-0000-0000-000000000001',
+                        contact_name: clientDisplayName,
+                        contact_phone: `+91${cleanTargetDigits}`,
+                        conversation_mode: 'HUMAN ACTIVE',
+                        last_message_text: textMsg,
+                        last_message_at: new Date().toISOString(),
+                        unread_count: 0,
+                      }]).select('id').maybeSingle();
+                      convId = newConv?.id;
+                    }
+
+                    if (convId) {
+                      await supabase.from('whatsapp_messages').insert([{
+                        organization_id: '00000000-0000-0000-0000-000000000001',
+                        conversation_id: convId,
+                        direction: 'outbound',
+                        sender_type: 'system',
+                        message_type: 'document',
+                        body: textMsg,
+                        media_url: finalPdfUrl,
+                        status: 'delivered',
+                        provider_message_id: wamid || null,
+                      }]);
+
+                      await supabase.from('whatsapp_conversations').update({
+                        last_message_text: `🧾 Dispatched Invoice ${invNum}`,
+                        last_message_at: new Date().toISOString(),
+                        unread_count: 0,
+                      }).eq('id', convId);
+                    }
+                  } catch (inboxErr) {
+                    console.warn('[AutoSend] Live inbox logging notice:', inboxErr.message);
+                  }
+
+                  console.log(`[AutoSend Guard] Verified new invoice ${invNum} safely auto-dispatched to ${targetPhone}`);
                   results.autoSentWhatsApp = (results.autoSentWhatsApp || 0) + 1;
                 }
               } catch (waSendErr) {
-                console.warn('[AutoSend] Non-fatal WhatsApp send error:', waSendErr.message);
+                console.warn('[AutoSend Guard] Non-fatal WhatsApp dispatch error:', waSendErr.message);
+              }
+            } else {
+              if (isBulkSync) {
+                // Silently skip bulk batch
+              } else if (!isRecentInvoice) {
+                console.log(`[AutoSend Guard] Invoice ${invNum} dated ${invoiceDateStr} is older than 48h. Auto-dispatch skipped.`);
+              } else if (isAlreadyDispatched) {
+                console.log(`[AutoSend Guard] Invoice ${invNum} was already dispatched previously. Skipped.`);
               }
             }
           } else {

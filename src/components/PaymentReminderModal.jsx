@@ -11,34 +11,47 @@ const fmtCurrency = (n) => '₹' + Number(n || 0).toLocaleString('en-IN', { mini
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : 'N/A';
 
 export default function PaymentReminderModal({
-  invoice,
+  invoice = null,
+  customer = null,
+  invoices = [],
+  statementPdfUrl = null,
   onClose,
   onSendSuccess,
 }) {
   const navigate = useNavigate();
   const { activeCompany } = useCompany();
 
-  const [selectedTemplateKey, setSelectedTemplateKey] = useState('gentle');
+  // Mode detection
+  const isConsolidated = Boolean(customer && (invoices.length > 1 || !invoice));
+  const effectiveInvoices = isConsolidated ? invoices : (invoice ? [invoice] : []);
+  const primaryInvoice = invoice || effectiveInvoices[0];
+
+  const [selectedTemplateKey, setSelectedTemplateKey] = useState(isConsolidated ? 'consolidated' : 'gentle');
   const [customMessage, setCustomMessage] = useState('');
   const [attachPdf, setAttachPdf] = useState(true);
   const [isSending, setIsSending] = useState(false);
   const [sendResult, setSendResult] = useState(null); // { success: boolean, text: string }
 
-  if (!invoice) return null;
+  if (!primaryInvoice && !customer) return null;
 
-  const clientName = invoice.client_name || invoice.party_name || 'Valued Client';
-  const contactPerson = invoice._contact_person || '';
-  const verifiedPhone = invoice._verified_phone || invoice.client_phone || '';
-  const invNumber = invoice.invoice_number || invoice.tally_voucher_number || 'N/A';
-  const totalAmount = Number(invoice.amount || 0);
-  const pendingAmount = Number(invoice.pending_amount !== undefined ? invoice.pending_amount : invoice.amount || 0);
-  const paidAmount = Number(invoice.paid_amount || (totalAmount - pendingAmount));
-  const isOverdue = invoice.status === 'Overdue';
-  const dueDateStr = fmtDate(invoice.due_date);
-  const overdueDays = invoice.days_overdue || (invoice.due_date ? Math.max(0, Math.floor((Date.now() - new Date(invoice.due_date)) / 86400000)) : 0);
+  const clientName = customer?.company_name || customer?.customer_name || primaryInvoice?.client_name || primaryInvoice?.party_name || 'Valued Client';
+  const contactPerson = customer?.contact_person || primaryInvoice?._contact_person || '';
+  const verifiedPhone = customer?.contact_number || primaryInvoice?._verified_phone || primaryInvoice?.client_phone || '';
+  const invNumber = primaryInvoice?.invoice_number || primaryInvoice?.tally_voucher_number || 'N/A';
 
-  // Dynamic Company Details & Bank Account
-  const compName = invoice.company_name || activeCompany?.company_name || 'Sobhainfra Tech Private Limited';
+  const totalAmount = effectiveInvoices.reduce((s, i) => s + Number(i.amount || 0), 0);
+  const pendingAmount = effectiveInvoices.reduce((s, i) => s + Number(i.pending_amount !== undefined ? i.pending_amount : (i.status === 'Paid' ? 0 : i.amount || 0)), 0);
+  const paidAmount = Math.max(0, totalAmount - pendingAmount);
+  const isOverdue = effectiveInvoices.some(i => i.status === 'Overdue');
+  const dueDateStr = primaryInvoice ? fmtDate(primaryInvoice.due_date) : 'Various Dates';
+  const overdueDays = Math.max(0, ...effectiveInvoices.map(i => {
+    if (i.days_overdue) return Number(i.days_overdue);
+    if (i.due_date) return Math.floor((Date.now() - new Date(i.due_date)) / 86400000);
+    return 0;
+  }));
+
+  // Dynamic Company Details & Bank Account from Settings
+  const compName = primaryInvoice?.company_name || activeCompany?.company_name || 'Sobhainfra Tech Private Limited';
   const bankName = activeCompany?.bank_name || 'ICICI BANK';
   const bankAcc = activeCompany?.bank_account_no || '001905012691';
   const bankIfsc = activeCompany?.bank_ifsc || 'ICIC0000019';
@@ -46,14 +59,49 @@ export default function PaymentReminderModal({
   // Smart Pre-built Templates
   const templates = useMemo(() => {
     const greeting = contactPerson ? `Dear ${contactPerson} (${clientName})` : `Dear ${clientName}`;
-    const overdueNotice = overdueDays > 0 ? ` (Overdue by ${overdueDays} days)` : '';
+    const overdueNotice = overdueDays > 0 ? ` (${overdueDays} days overdue)` : '';
 
+    if (isConsolidated) {
+      // Build bill-wise bullet summary
+      const billsList = effectiveInvoices.slice(0, 8).map(inv => {
+        const num = inv.invoice_number || inv.tally_voucher_number || 'Inv';
+        const dateStr = inv.invoice_date ? new Date(inv.invoice_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : 'N/A';
+        const bal = Number(inv.pending_amount !== undefined ? inv.pending_amount : inv.amount);
+        const days = inv.days_overdue || (inv.due_date ? Math.max(0, Math.floor((Date.now() - new Date(inv.due_date)) / 86400000)) : 0);
+        return `• *${num}* (${dateStr}): ${fmtCurrency(bal)} ${days > 0 ? `(${days}d overdue)` : ''}`;
+      }).join('\n');
+
+      const moreNotice = effectiveInvoices.length > 8 ? `\n• ...and ${effectiveInvoices.length - 8} more invoices in attached statement` : '';
+
+      return {
+        consolidated: {
+          id: 'consolidated',
+          label: 'Consolidated Statement',
+          icon: '📑',
+          text: `Namaste ${greeting}! 🙏\n\nGreetings from *${compName}*.\n\nHere is your official account statement of outstanding invoices:\n\n${billsList}${moreNotice}\n----------------------------------------\n💰 *Total Outstanding Due: ${fmtCurrency(pendingAmount)}* across ${effectiveInvoices.length} bills\n\n🏦 *Direct Bank Remittance:* \n• Bank: ${bankName}\n• Account No: ${bankAcc}\n• IFSC Code: ${bankIfsc}\n\n📄 Detailed Statement of Account is attached. Please arrange to clear the balance or share transaction UTR numbers. Thank you! 🙏\n_${compName}_`,
+        },
+        urgent_multi: {
+          id: 'urgent_multi',
+          label: 'Urgent Multiple Dues',
+          icon: '⚡',
+          text: `⚡ *URGENT STATEMENT OF OUTSTANDING DUES* ⚡\n\n${greeting},\n\nWe would like to remind you that your account currently has *${effectiveInvoices.length} unpaid invoices* with Sobhainfra Tech amounting to a total overdue balance of *${fmtCurrency(pendingAmount)}* (Oldest due ${overdueDays} days ago).\n\n🏦 *Payment Transfer Details:*\n• Bank: ${bankName}\n• Account No: ${bankAcc}\n• IFSC Code: ${bankIfsc}\n\nPlease prioritize clearing this balance today to maintain credit dispatch terms. Thank you!`,
+        },
+        bank_only: {
+          id: 'bank_only',
+          label: 'Bank Details / UPI',
+          icon: '🏦',
+          text: `Dear ${greeting},\n\nAs requested, here are our official banking details for clearing your outstanding ledger of *${fmtCurrency(pendingAmount)}* (${effectiveInvoices.length} invoices):\n\n🏦 *Bank Name:* ${bankName}\n🏢 *Beneficiary:* ${compName}\n🔢 *Account Number:* ${bankAcc}\n🏛️ *IFSC Code:* ${bankIfsc}\n\nKindly share the payment screenshot or UTR number once done. Thank you! 🙏`,
+        }
+      };
+    }
+
+    // Single Invoice Mode
     return {
       gentle: {
         id: 'gentle',
         label: 'Gentle Follow-up',
         icon: '👋',
-        text: `Namaste ${greeting}! 🙏\n\nGreetings from *${compName}*.\n\nThis is a gentle payment reminder regarding Invoice *${invNumber}*.\n\n💰 *Amount Pending: ${fmtCurrency(pendingAmount)}*\n📅 Due Date: ${dueDateStr}${overdueNotice}\n📌 Status: *${invoice.status || 'Pending'}*\n\nKindly arrange to release the payment at your earliest convenience. If already processed, please reply with payment receipt/UTR number.\n\nThank you for your business! 🙏\n_${compName}_`,
+        text: `Namaste ${greeting}! 🙏\n\nGreetings from *${compName}*.\n\nThis is a gentle payment reminder regarding Invoice *${invNumber}*.\n\n💰 *Amount Pending: ${fmtCurrency(pendingAmount)}*\n📅 Due Date: ${dueDateStr}${overdueNotice}\n📌 Status: *${primaryInvoice?.status || 'Pending'}*\n\nKindly arrange to release the payment at your earliest convenience. If already processed, please reply with payment receipt/UTR number.\n\nThank you for your business! 🙏\n_${compName}_`,
       },
       urgent: {
         id: 'urgent',
@@ -74,7 +122,7 @@ export default function PaymentReminderModal({
         text: `Dear ${greeting},\n\nAs requested, here are our official banking details for clearing Invoice *${invNumber}* (Amount: *${fmtCurrency(pendingAmount)}*):\n\n🏦 *Bank Name:* ${bankName}\n🏢 *Beneficiary:* ${compName}\n🔢 *Account Number:* ${bankAcc}\n🏛️ *IFSC Code:* ${bankIfsc}\n\nKindly share the payment screenshot or UTR number once done. Thank you! 🙏`,
       }
     };
-  }, [clientName, contactPerson, compName, invNumber, pendingAmount, dueDateStr, overdueDays, invoice.status, bankName, bankAcc, bankIfsc]);
+  }, [clientName, contactPerson, compName, invNumber, pendingAmount, dueDateStr, overdueDays, primaryInvoice?.status, bankName, bankAcc, bankIfsc, isConsolidated, effectiveInvoices]);
 
   // Set default template text when modal opens or template changes
   useEffect(() => {
@@ -93,12 +141,19 @@ export default function PaymentReminderModal({
     setSendResult(null);
 
     try {
+      const effectivePdfUrl = isConsolidated
+        ? statementPdfUrl
+        : (primaryInvoice?.pdf_url || primaryInvoice?.metadata?.pdf_url || null);
+
       const payload = {
-        invoiceId: invoice.id,
+        isConsolidated,
+        invoiceId: primaryInvoice?.id,
+        invoiceIds: effectiveInvoices.map(i => i.id),
         phone: verifiedPhone,
+        clientName,
         customMessage: customMessage.trim(),
-        attachPdf: attachPdf && Boolean(invoice.pdf_url || invoice.metadata?.pdf_url),
-        pdfUrl: attachPdf ? (invoice.pdf_url || invoice.metadata?.pdf_url || null) : null,
+        attachPdf: attachPdf && Boolean(effectivePdfUrl),
+        pdfUrl: attachPdf ? effectivePdfUrl : null,
       };
 
       const res = await fetch('/.netlify/functions/send-reminder', {
@@ -115,7 +170,7 @@ export default function PaymentReminderModal({
           text: `Payment reminder sent successfully to ${verifiedPhone}! Logged in Live Inbox.`
         });
         if (onSendSuccess) {
-          onSendSuccess(invoice.id, customMessage.trim());
+          onSendSuccess(effectiveInvoices.map(i => i.id), customMessage.trim());
         }
       } else {
         setSendResult({

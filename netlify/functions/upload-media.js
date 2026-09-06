@@ -50,7 +50,7 @@ exports.handler = async (event) => {
     // Fast-path: Sobha Product Range Brochure / Catalog
     const lowerName = String(fileName || '').toLowerCase();
     const ext = lowerName.split('.').pop().toLowerCase();
-    if (lowerName.includes('sobha') && (lowerName.includes('catalog') || lowerName.includes('product') || lowerName.includes('brochure') || ext === 'pdf')) {
+    if (folder !== 'statements' && folder !== 'invoices' && (lowerName.includes('catalog') || lowerName.includes('brochure') || (lowerName.includes('sobha') && lowerName.includes('product')))) {
       return {
         statusCode: 200,
         headers: cors,

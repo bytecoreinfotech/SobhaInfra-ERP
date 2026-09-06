@@ -95,6 +95,81 @@ async function sendDocumentMessage(to, documentUrl, fileName, caption) {
   }
 }
 
+// ── Log to WhatsApp Live Inbox (whatsapp_conversations & whatsapp_messages) ──
+async function logToLiveInbox(supabase, phone, clientName, message, pdfUrl, providerMsgId) {
+  if (!supabase || !phone) return;
+  try {
+    const rawPhone = String(phone).trim();
+    const cleanPhone = rawPhone.replace(/[^\d+]/g, '');
+    const digitsOnly = cleanPhone.replace(/[^\d]/g, '');
+    const tenDigits = digitsOnly.slice(-10);
+
+    let convId = null;
+    const { data: existingConv } = await supabase.from('whatsapp_conversations')
+      .select('id, contact_name')
+      .or(`contact_phone.eq.${cleanPhone},contact_phone.eq.${digitsOnly},contact_phone.eq.+${digitsOnly}`)
+      .maybeSingle();
+
+    if (existingConv?.id) {
+      convId = existingConv.id;
+    } else {
+      let contactName = clientName || null;
+      try {
+        const { data: sheetCust } = await supabase.from('customer_master')
+          .select('customer_name, contact_person, company_name')
+          .or(`contact_number.eq.${cleanPhone},contact_number.eq.${digitsOnly},contact_number.ilike.%${tenDigits}`)
+          .maybeSingle();
+        if (sheetCust) {
+          contactName = sheetCust.contact_person
+            ? `${sheetCust.contact_person} (${sheetCust.company_name})`
+            : (sheetCust.company_name || sheetCust.customer_name);
+        }
+      } catch (custErr) {
+        console.warn('[Reminder] Customer lookup note:', custErr.message);
+      }
+
+      const newConvPayload = {
+        organization_id: DEFAULT_ORG_ID,
+        contact_name: contactName || (cleanPhone.startsWith('+') ? cleanPhone : `+${cleanPhone}`),
+        contact_phone: cleanPhone.startsWith('+') ? cleanPhone : '+' + cleanPhone,
+        conversation_mode: 'HUMAN ACTIVE',
+        last_message_text: message,
+        last_message_at: new Date().toISOString(),
+        unread_count: 0,
+      };
+
+      const { data: newConv } = await supabase.from('whatsapp_conversations')
+        .insert([newConvPayload])
+        .select('id')
+        .maybeSingle();
+      convId = newConv?.id;
+    }
+
+    if (convId) {
+      const hasPdf = pdfUrl && typeof pdfUrl === 'string' && (pdfUrl.startsWith('http://') || pdfUrl.startsWith('https://'));
+      await supabase.from('whatsapp_messages').insert([{
+        organization_id: DEFAULT_ORG_ID,
+        conversation_id: convId,
+        direction: 'outbound',
+        sender_type: 'human_agent',
+        message_type: hasPdf ? 'document' : 'text',
+        body: message,
+        media_url: hasPdf ? pdfUrl : null,
+        status: 'delivered',
+        provider_message_id: providerMsgId || null,
+      }]);
+
+      await supabase.from('whatsapp_conversations').update({
+        last_message_text: message,
+        last_message_at: new Date().toISOString(),
+        unread_count: 0,
+      }).eq('id', convId);
+    }
+  } catch (err) {
+    console.warn('[Reminder] Live inbox logging notice:', err.message);
+  }
+}
+
 // ── Reminder message builder ──────────────────────────────────────────────────
 const REMINDER_TEXT = (inv, reminderNum) => {
   const isOverdue = inv.status === 'Overdue';
@@ -206,6 +281,7 @@ exports.handler = async (event) => {
   try {
     const supabase = getSupabase();
     const body = event.body ? JSON.parse(event.body) : {};
+    const customText = body.customMessage && typeof body.customMessage === 'string' ? body.customMessage.trim() : null;
 
     // ── Handle inbound WhatsApp message (payment promise auto-detection) ───────
     if (body.type === 'inbound_whatsapp') {
@@ -222,9 +298,89 @@ exports.handler = async (event) => {
     cutoffDate.setDate(cutoffDate.getDate() - intervalDays);
     const todayMs = Date.now();
 
+    // ── Handle Consolidated Multi-Invoice Reminder Dispatch ───────────────────
+    if (body.isConsolidated && body.phone) {
+      const recipientPhone = body.phone.replace(/\s+/g, '').replace(/^\+/, '');
+      const clientName = body.clientName || 'Valued Customer';
+      const invoiceIds = Array.isArray(body.invoiceIds) ? body.invoiceIds : (body.invoiceId ? [body.invoiceId] : []);
+      const pdfUrl = (body.attachPdf !== false && body.pdfUrl && body.pdfUrl.startsWith('http')) ? body.pdfUrl : null;
+      const message = customText || `Namaste ${clientName}! Please find your official Consolidated Statement of Account attached.`;
+
+      let sendRes;
+      const pdfFileName = `Statement_${clientName.replace(/[^a-zA-Z0-9_-]/g, '_')}.pdf`;
+
+      if (pdfUrl) {
+        sendRes = await sendDocumentMessage(recipientPhone, pdfUrl, pdfFileName, message);
+        if (!sendRes.success) {
+          console.warn('[Reminder] Document send failed, falling back to text:', sendRes.error);
+          sendRes = await sendTextMessage(recipientPhone, message);
+        }
+      } else {
+        sendRes = await sendTextMessage(recipientPhone, message);
+      }
+
+      if (sendRes.success) {
+        const nowIso = new Date().toISOString();
+        if (invoiceIds.length > 0) {
+          try {
+            const { data: invRows } = await supabase.from('invoices').select('id, reminder_count').in('id', invoiceIds);
+            for (const row of (invRows || [])) {
+              await supabase.from('invoices').update({
+                reminder_count: (row.reminder_count || 0) + 1,
+                last_reminder_at: nowIso,
+              }).eq('id', row.id);
+            }
+          } catch (invUpErr) {
+            console.warn('[Reminder] Batch invoice reminder update notice:', invUpErr.message);
+          }
+        }
+
+        await logToLiveInbox(supabase, recipientPhone, clientName, message, pdfUrl, sendRes.messageId);
+
+        try {
+          const insertRows = invoiceIds.map(id => ({
+            organization_id: DEFAULT_ORG_ID,
+            invoice_id: id,
+            channel: 'WhatsApp',
+            message,
+            status: sendRes.simulated ? 'simulated' : 'sent',
+          }));
+          if (insertRows.length > 0) {
+            await supabase.from('payment_reminders').insert(insertRows);
+          }
+        } catch {}
+
+        try {
+          await supabase.from('activities').insert([{
+            type: 'payment_reminder',
+            description: `Consolidated WhatsApp reminder sent for ${invoiceIds.length} invoice(s) to ${clientName}`,
+          }]);
+        } catch {}
+
+        return {
+          statusCode: 200,
+          headers: cors,
+          body: JSON.stringify({
+            success: true,
+            isConsolidated: true,
+            invoicesUpdated: invoiceIds.length,
+            messageId: sendRes.messageId,
+          }),
+        };
+      } else {
+        return {
+          statusCode: 200,
+          headers: cors,
+          body: JSON.stringify({
+            success: false,
+            error: sendRes.error || 'Failed to dispatch consolidated reminder',
+          }),
+        };
+      }
+    }
+
     let invoices = [];
     const isSingleManual = Boolean(body.invoiceId);
-    const customText = body.customMessage && typeof body.customMessage === 'string' ? body.customMessage.trim() : null;
 
     if (body.invoiceId) {
       // Single invoice reminder (manual trigger from UI)
@@ -333,78 +489,7 @@ exports.handler = async (event) => {
         await supabase.from('invoices').update(updatePayload).eq('id', inv.id);
 
         // 1. Log to WhatsApp Live Inbox (whatsapp_conversations & whatsapp_messages)
-        try {
-          const rawPhone = String(inv.client_phone).trim();
-          const cleanPhone = rawPhone.replace(/[^\d+]/g, '');
-          const digitsOnly = cleanPhone.replace(/[^\d]/g, '');
-          const tenDigits = digitsOnly.slice(-10);
-
-          let convId = null;
-          const { data: existingConv } = await supabase.from('whatsapp_conversations')
-            .select('id, contact_name')
-            .or(`contact_phone.eq.${cleanPhone},contact_phone.eq.${digitsOnly},contact_phone.eq.+${digitsOnly}`)
-            .maybeSingle();
-
-          if (existingConv?.id) {
-            convId = existingConv.id;
-          } else {
-            // Match with customer_master or invoice for authentic business/contact name
-            let contactName = inv.client_name || inv.party_name || null;
-            try {
-              const { data: sheetCust } = await supabase.from('customer_master')
-                .select('customer_name, contact_person, company_name')
-                .or(`contact_number.eq.${cleanPhone},contact_number.eq.${digitsOnly},contact_number.ilike.%${tenDigits}`)
-                .maybeSingle();
-              if (sheetCust) {
-                contactName = sheetCust.contact_person
-                  ? `${sheetCust.contact_person} (${sheetCust.company_name})`
-                  : (sheetCust.company_name || sheetCust.customer_name);
-              }
-            } catch (custErr) {
-              console.warn('[Reminder] Customer lookup note:', custErr.message);
-            }
-
-            const newConvPayload = {
-              organization_id: DEFAULT_ORG_ID,
-              contact_name: contactName || (cleanPhone.startsWith('+') ? cleanPhone : `+${cleanPhone}`),
-              contact_phone: cleanPhone.startsWith('+') ? cleanPhone : '+' + cleanPhone,
-              conversation_mode: 'HUMAN ACTIVE',
-              last_message_text: message,
-              last_message_at: new Date().toISOString(),
-              unread_count: 0,
-            };
-
-            const { data: newConv } = await supabase.from('whatsapp_conversations')
-              .insert([newConvPayload])
-              .select('id')
-              .maybeSingle();
-            convId = newConv?.id;
-          }
-
-          if (convId) {
-            // Insert outbound reminder message into whatsapp_messages
-            await supabase.from('whatsapp_messages').insert([{
-              organization_id: DEFAULT_ORG_ID,
-              conversation_id: convId,
-              direction: 'outbound',
-              sender_type: 'human_agent',
-              message_type: hasValidPdf ? 'document' : 'text',
-              body: message,
-              media_url: hasValidPdf ? inv.pdf_url : null,
-              status: 'delivered',
-              provider_message_id: result.messageId || null,
-            }]);
-
-            // Keep conversation in sync for the Live Inbox list
-            await supabase.from('whatsapp_conversations').update({
-              last_message_text: message,
-              last_message_at: new Date().toISOString(),
-              unread_count: 0,
-            }).eq('id', convId);
-          }
-        } catch (inboxErr) {
-          console.warn('[Reminder] WhatsApp Live Inbox logging error:', inboxErr.message);
-        }
+        await logToLiveInbox(supabase, inv.client_phone, inv.client_name, message, hasValidPdf ? inv.pdf_url : null, result.messageId);
 
         // 2. Log to payment_reminders
         try {

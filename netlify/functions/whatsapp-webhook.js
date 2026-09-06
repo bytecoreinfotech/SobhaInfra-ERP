@@ -228,6 +228,151 @@ async function sendWhatsAppDocument(to, pdfUrlOrMediaId, filename, caption) {
   }
 }
 
+// ─── 3b-2. Send WhatsApp Image (Standee UPI QR Code) ─────────────────────────
+async function sendWhatsAppImage(to, imageUrl, caption) {
+  if (!WA_TOKEN || !PHONE_ID) {
+    console.log(JSON.stringify({ step: 'send_wa_img', status: 'simulated', reason: 'no_credentials' }));
+    return { success: true, messageId: 'simulated-img-' + Date.now() };
+  }
+  try {
+    const cleanPhone = String(to).replace(/[^\d]/g, '');
+    const res = await fetch(`https://graph.facebook.com/v20.0/${PHONE_ID}/messages`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${WA_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        to: cleanPhone,
+        type: 'image',
+        image: {
+          link: imageUrl,
+          caption: caption || '',
+        },
+      }),
+    });
+    const data = await res.json();
+    return { success: !data.error, messageId: data.messages?.[0]?.id, error: data.error };
+  } catch (err) {
+    console.error(JSON.stringify({ step: 'send_wa_img', exception: err.message }));
+    return { success: false, error: err.message };
+  }
+}
+
+// ─── 3c-1. Detect Bank Details / UPI Intent ──────────────────────────────────
+function detectBankDetailsIntent(text, buttonId = '') {
+  const btn = (buttonId || '').toLowerCase();
+  if (btn.includes('bank') || btn.includes('upi') || btn.includes('qr')) return true;
+
+  const lower = (text || '').toLowerCase();
+  const triggers = [
+    'bank', 'bank details', 'bank account', 'account number', 'acc no',
+    'ifsc', 'ifsc code', 'upi', 'upi id', 'qr', 'qr code', 'gpay', 'phonepe',
+    'paytm', 'bhim', 'khata number', 'kisme bhejna', 'kahan bhejna', 'payment details',
+    'remittance', 'neft', 'rtgs', 'imps', 'share bank', 'send bank', 'bank bhejo', 'qr bhejo'
+  ];
+  return triggers.some(t => lower.includes(t));
+}
+
+// ─── 3c-2. Detect Statement of Account / Ledger Intent ───────────────────────
+function detectStatementIntent(text, buttonId = '') {
+  const btn = (buttonId || '').toLowerCase();
+  if (btn.includes('statement') || btn.includes('ledger') || btn.includes('soa')) return true;
+
+  const lower = (text || '').toLowerCase();
+  const triggers = [
+    'statement', 'ledger', 'hisab', 'khata', 'hisab kitab', 'full ledger',
+    'statement of account', 'soa', 'purana hisab', 'total baki', 'all bills',
+    'ledger copy', 'statement bhejo', 'ledger bhejo'
+  ];
+  return triggers.some(t => lower.includes(t));
+}
+
+// ─── 3c-3. Fetch & Send Dynamic Bank Remittance Card + Standee QR Code ──────
+async function handleBankDetailsRequest(supabase, fromPhone, contactName, conversationId) {
+  const mainName = extractMainName(contactName);
+  const salutation = mainName ? `Namaste ${mainName}!` : 'Namaste!';
+
+  let compName = 'Sobhainfra Tech Private Limited';
+  let bankName = 'ICICI Bank Ltd.';
+  let bankAcc = '001905012691';
+  let bankIfsc = 'ICIC0000019';
+  let upiId = 'shobhareadyplast@okhdfcbank';
+  let qrUrl = '';
+
+  if (supabase) {
+    try {
+      const { data: comp } = await supabase
+        .from('company_profiles')
+        .select('*')
+        .eq('is_default', true)
+        .maybeSingle();
+
+      if (comp) {
+        compName = comp.company_name || compName;
+        bankName = comp.bank_name || bankName;
+        bankAcc = comp.bank_account_no || bankAcc;
+        bankIfsc = comp.bank_ifsc || bankIfsc;
+        upiId = comp.upi_id || upiId;
+        qrUrl = comp.company_qr_code_url || '';
+      } else {
+        const { data: settings } = await supabase
+          .from('org_settings')
+          .select('key, value')
+          .in('key', ['org_name', 'bank_name', 'bank_account_no', 'bank_ifsc', 'upi_id', 'company_qr_code_url']);
+        if (settings) {
+          const sMap = Object.fromEntries(settings.map(s => [s.key, s.value]));
+          compName = sMap.org_name || compName;
+          bankName = sMap.bank_name || bankName;
+          bankAcc = sMap.bank_account_no || bankAcc;
+          bankIfsc = sMap.bank_ifsc || bankIfsc;
+          upiId = sMap.upi_id || upiId;
+          qrUrl = sMap.company_qr_code_url || '';
+        }
+      }
+    } catch (err) {
+      console.warn('[BankDetails] Settings load notice:', err.message);
+    }
+  }
+
+  const bankText = [
+    `🏦 *Official Bank Remittance Details* 🏦`,
+    ``,
+    `${salutation} Here are our official banking and UPI transfer details for releasing payment:`,
+    ``,
+    `🏢 *Beneficiary:* ${compName.toUpperCase()}`,
+    `🏛️ *Bank Name:* ${bankName}`,
+    `🔢 *Account Number:* *${bankAcc}*`,
+    `🔑 *IFSC Code:* *${bankIfsc}*`,
+    `📱 *UPI ID:* *${upiId}*`,
+    ``,
+    `💡 *Instructions:* Kindly quote your firm name and invoice number in the transfer remarks, and share the transaction UTR / payment receipt screenshot here. Thank you! 🙏`,
+    `_${compName}_`,
+  ].join('\n');
+
+  // If standee QR image is uploaded, send it first
+  if (qrUrl && qrUrl.startsWith('http')) {
+    await sendWhatsAppImage(fromPhone, qrUrl, `Official UPI QR Standee — ${compName}`);
+    await new Promise(r => setTimeout(r, 400));
+  }
+
+  await sendWhatsAppMessage(fromPhone, bankText);
+
+  if (supabase && conversationId) {
+    try {
+      await supabase.from('whatsapp_messages').insert([{
+        organization_id: DEFAULT_ORG_ID,
+        conversation_id: conversationId,
+        direction: 'outbound',
+        sender_type: 'system',
+        body: bankText,
+        media_url: qrUrl || null,
+        status: 'sent',
+      }]);
+    } catch {}
+  }
+
+  return true;
+}
+
 // ─── 3c. Detect Invoice / Bill Request Intent ─────────────────────────────────
 function detectInvoiceIntent(text) {
   const lower = (text || '').toLowerCase();
@@ -1536,7 +1681,23 @@ exports.handler = async (event) => {
       return { statusCode: 200, headers, body: JSON.stringify({ status: 'rate_list_flagged_for_human' }) };
     }
 
-    // ── INVOICE / BILL REQUEST HANDLER (before AI — highest priority self-service) ──
+    // ── 4. BANK DETAILS / UPI DISPATCH (highest priority self-service payment remittance) ──
+    if (detectBankDetailsIntent(messageText, buttonId)) {
+      const bankHandled = await handleBankDetailsRequest(supabase, fromPhone, contactName, conversationId);
+      if (bankHandled) {
+        return { statusCode: 200, headers, body: JSON.stringify({ status: 'bank_details_fulfilled' }) };
+      }
+    }
+
+    // ── 5. STATEMENT OF ACCOUNT / LEDGER REQUEST HANDLER ──
+    if (detectStatementIntent(messageText, buttonId)) {
+      const statementHandled = await handleInvoiceRequest(supabase, fromPhone, contactName, conversationId);
+      if (statementHandled) {
+        return { statusCode: 200, headers, body: JSON.stringify({ status: 'statement_fulfilled' }) };
+      }
+    }
+
+    // ── 6. INVOICE / BILL REQUEST HANDLER (before AI — highest priority self-service) ──
     if (detectInvoiceIntent(messageText)) {
       const invoiceHandled = await handleInvoiceRequest(supabase, fromPhone, contactName, conversationId);
       if (invoiceHandled) {
