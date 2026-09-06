@@ -407,28 +407,30 @@ exports.handler = async (event) => {
                     wamid = textData?.messages?.[0]?.id;
                   }
 
-                  // 2. Small delay then send Tax Invoice PDF document (within 24h)
-                  await new Promise(r => setTimeout(r, 600));
+                  // 2. Small delay then send Tax Invoice PDF document (only when within 24h window)
+                  if (!sentViaTemplate && finalPdfUrl) {
+                    await new Promise(r => setTimeout(r, 600));
 
-                  const safePdfName = `Invoice_${String(invNum).replace(/[^a-zA-Z0-9_-]/g, '_')}.pdf`;
-                  await fetch(BASE_URL, {
-                    method: 'POST',
-                    headers: waHeaders,
-                    body: JSON.stringify({
-                      messaging_product: 'whatsapp',
-                      to: cleanPhone,
-                      type: 'document',
-                      document: {
-                        link: finalPdfUrl,
-                        filename: safePdfName,
-                        caption: `Tax Invoice ${invNum} | ${fmtAmt(invoiceRow.amount)} | ${company}`,
-                      },
-                    }),
-                  });
+                    const safePdfName = `Invoice_${String(invNum).replace(/[^a-zA-Z0-9_-]/g, '_')}.pdf`;
+                    await fetch(BASE_URL, {
+                      method: 'POST',
+                      headers: waHeaders,
+                      body: JSON.stringify({
+                        messaging_product: 'whatsapp',
+                        to: cleanPhone,
+                        type: 'document',
+                        document: {
+                          link: finalPdfUrl,
+                          filename: safePdfName,
+                          caption: `Tax Invoice ${invNum} | ${fmtAmt(invoiceRow.amount)} | ${company}`,
+                        },
+                      }),
+                    });
+                  }
 
-                  // 3. If separate e-Way bill PDF exists, send e-Way bill too
+                  // 3. If separate e-Way bill PDF exists, send e-Way bill too (only when within 24h window)
                   const ewayUrl = v.metadata?.eway_pdf_url || v.eway_pdf_url;
-                  if (ewayUrl && ewayUrl.startsWith('http')) {
+                  if (!sentViaTemplate && ewayUrl && ewayUrl.startsWith('http')) {
                     await new Promise(r => setTimeout(r, 600));
                     await fetch(BASE_URL, {
                       method: 'POST',

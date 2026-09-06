@@ -406,7 +406,7 @@ export default function PaymentReminderModal({
           </div>
 
           {/* PDF Attachment Option */}
-          {(invoice.pdf_url || invoice.metadata?.pdf_url) && (
+          {(primaryInvoice?.pdf_url || primaryInvoice?.metadata?.pdf_url || isConsolidated) && (
             <label style={{
               display: 'flex', alignItems: 'center', gap: '0.5rem',
               fontSize: '0.8rem', color: 'var(--text-primary)', cursor: 'pointer',
@@ -420,7 +420,11 @@ export default function PaymentReminderModal({
                 style={{ accentColor: 'var(--accent-primary)', width: 16, height: 16 }}
               />
               <FileText size={15} color="var(--accent-primary)" />
-              <span>Attach authentic 2-page Tax Invoice & e-Way Bill PDF</span>
+              <span>
+                {isConsolidated
+                  ? 'Attach authentic Statement of Account PDF'
+                  : 'Attach authentic 2-page Tax Invoice & e-Way Bill PDF'}
+              </span>
             </label>
           )}
 
