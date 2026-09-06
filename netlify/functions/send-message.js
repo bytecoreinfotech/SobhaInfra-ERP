@@ -27,6 +27,59 @@ const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5c
  * @param {string} mediaUrl - Public URL to the media file (required for media types)
  * @param {string} mediaFileName - Optional filename for documents
  */
+// ─── Resolve and ensure valid public HTTPS URL for WhatsApp Media ─────────────
+async function resolvePublicMediaUrl(mediaUrl, mediaType, folder = 'crm') {
+  if (!mediaUrl || typeof mediaUrl !== 'string') return { url: null, type: 'text' };
+  const trimmed = mediaUrl.trim();
+  if (!trimmed) return { url: null, type: 'text' };
+
+  // Fast path: already a public HTTP/HTTPS URL
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    return { url: trimmed, type: mediaType || 'image' };
+  }
+
+  // If it's a base64 Data URL (e.g. data:image/png;base64,...)
+  if (trimmed.startsWith('data:')) {
+    try {
+      let mimeType = 'image/png';
+      let rawBase64 = trimmed;
+      const match = trimmed.match(/^data:([^;]+);base64,(.+)$/s);
+      if (match) {
+        mimeType = match[1];
+        rawBase64 = match[2];
+      } else {
+        const comma = trimmed.indexOf(',');
+        if (comma !== -1) rawBase64 = trimmed.slice(comma + 1);
+      }
+
+      const buffer = Buffer.from(rawBase64, 'base64');
+      if (buffer.length > 0) {
+        const ext = mimeType.includes('pdf') ? 'pdf' : (mimeType.split('/')[1] || 'png').replace(/[^a-z0-9]/gi, '');
+        const safeFolder = folder || 'crm';
+        const path = `${safeFolder}/${Date.now()}_upload.${ext}`;
+
+        const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+        const { data: upData, error: upErr } = await supabase.storage
+          .from('whatsapp-media')
+          .upload(path, buffer, { contentType: mimeType, upsert: true });
+
+        if (!upErr && upData) {
+          const { data: urlData } = supabase.storage.from('whatsapp-media').getPublicUrl(path);
+          if (urlData?.publicUrl && urlData.publicUrl.startsWith('http')) {
+            const resolvedType = mimeType.includes('pdf') ? 'document' : (mimeType.startsWith('video/') ? 'video' : 'image');
+            return { url: urlData.publicUrl, type: resolvedType };
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[send-message] Base64 auto-upload failed:', err.message);
+    }
+  }
+
+  // Safety fallback
+  return { url: null, type: 'text' };
+}
+
 async function sendMetaWhatsApp(to, text, mediaType = 'text', mediaUrl = null, mediaFileName = null) {
   if (!WA_TOKEN || !PHONE_ID) {
     return { success: true, messageId: 'mock-wamid-' + Date.now() };
@@ -34,56 +87,66 @@ async function sendMetaWhatsApp(to, text, mediaType = 'text', mediaUrl = null, m
   const cleanPhone = String(to).replace(/[^\d+]/g, '').replace(/^\+/, '');
   const url = `https://graph.facebook.com/v20.0/${PHONE_ID}/messages`;
 
-  let payload;
+  // Resolve media URL to ensure valid public HTTPS link
+  let resolvedUrl = mediaUrl;
+  let resolvedType = mediaType;
+  if (mediaUrl) {
+    const res = await resolvePublicMediaUrl(mediaUrl, mediaType, 'crm');
+    resolvedUrl = res.url;
+    resolvedType = res.type;
+  }
 
   // Auto-resolve relative or sobha catalog document URLs
-  if (mediaType === 'document') {
-    if (!mediaUrl || !mediaUrl.startsWith('http')) {
-      mediaUrl = 'https://sobhainfra-erp.netlify.app/sobha-products.pdf';
+  if (resolvedType === 'document') {
+    if (!resolvedUrl || !resolvedUrl.startsWith('http')) {
+      resolvedUrl = 'https://sobhainfra-erp.netlify.app/sobha-products.pdf';
     }
     if (!mediaFileName) {
       mediaFileName = 'Sobha_Infratech_Product_Catalog.pdf';
     }
   }
 
-  if (mediaType === 'image' && mediaUrl) {
+  const hasValidMediaUrl = resolvedUrl && typeof resolvedUrl === 'string' && (resolvedUrl.startsWith('http://') || resolvedUrl.startsWith('https://'));
+
+  let payload;
+  if (resolvedType === 'image' && hasValidMediaUrl) {
     payload = {
       messaging_product: 'whatsapp',
       to: cleanPhone,
       type: 'image',
-      image: { link: mediaUrl, ...(text ? { caption: text } : {}) },
+      image: { link: resolvedUrl, ...(text ? { caption: text } : {}) },
     };
-  } else if (mediaType === 'document' && mediaUrl) {
+  } else if (resolvedType === 'document' && hasValidMediaUrl) {
     payload = {
       messaging_product: 'whatsapp',
       to: cleanPhone,
       type: 'document',
       document: {
-        link: mediaUrl,
+        link: resolvedUrl,
         filename: mediaFileName || 'Sobha_Infratech_Product_Catalog.pdf',
         ...(text ? { caption: text } : {}),
       },
     };
-  } else if (mediaType === 'video' && mediaUrl) {
+  } else if (resolvedType === 'video' && hasValidMediaUrl) {
     payload = {
       messaging_product: 'whatsapp',
       to: cleanPhone,
       type: 'video',
-      video: { link: mediaUrl, ...(text ? { caption: text } : {}) },
+      video: { link: resolvedUrl, ...(text ? { caption: text } : {}) },
     };
-  } else if (mediaType === 'audio' && mediaUrl) {
+  } else if (resolvedType === 'audio' && hasValidMediaUrl) {
     payload = {
       messaging_product: 'whatsapp',
       to: cleanPhone,
       type: 'audio',
-      audio: { link: mediaUrl },
+      audio: { link: resolvedUrl },
     };
   } else {
     payload = {
       messaging_product: 'whatsapp',
       to: cleanPhone,
       type: 'text',
-      text: { body: text || '' },
+      text: { body: text || 'Hello!' },
     };
   }
 

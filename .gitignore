@@ -21,3 +21,5 @@ npm-debug.log*
 # Local Netlify folder
 .netlify
 scratch/
+__pycache__/
+*.pyc

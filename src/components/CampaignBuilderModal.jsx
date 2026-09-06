@@ -315,11 +315,13 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued, initialRecipi
     }, 0);
   };
 
-  // Handle media file select
+  // Handle media file select with proactive background upload
   const handleCampaignFileSelect = useCallback((file) => {
     if (!file) return;
     setCampaignFile(file);
     setUploadedMediaUrl(null);
+    setUploadedMediaType(null);
+
     if (file.type.startsWith('image/')) {
       const reader = new FileReader();
       reader.onload = ev => setCampaignFilePreview(ev.target.result);
@@ -327,6 +329,22 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued, initialRecipi
     } else {
       setCampaignFilePreview(null);
     }
+
+    // Proactively upload in background so public HTTPS URL is ready before user clicks Launch
+    setUploadingMedia(true);
+    uploadToWhatsAppMedia(file, 'campaigns')
+      .then(url => {
+        if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
+          setUploadedMediaUrl(url);
+          setUploadedMediaType(getWhatsAppMediaType(file));
+        }
+      })
+      .catch(err => {
+        console.warn('[Campaign] Proactive media upload error:', err.message);
+      })
+      .finally(() => {
+        setUploadingMedia(false);
+      });
   }, []);
 
   const handleCampaignDrop = useCallback((e) => {
@@ -360,10 +378,10 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued, initialRecipi
     setBatchProgress({ sent: 0, total: effectiveCount, status: 'Preparing campaign batch...' });
 
     try {
-      // Upload campaign media if attached
+      // Upload campaign media if attached and not yet uploaded
       let mediaUrl = uploadedMediaUrl;
       let mediaType = uploadedMediaType;
-      if (campaignFile && !mediaUrl) {
+      if (campaignFile && (!mediaUrl || !mediaUrl.startsWith('http'))) {
         setUploadingMedia(true);
         setBatchProgress({ sent: 0, total: effectiveCount, status: 'Uploading campaign media attachment...' });
         try {
@@ -372,14 +390,18 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued, initialRecipi
           setUploadedMediaUrl(mediaUrl);
           setUploadedMediaType(mediaType);
         } catch (err) {
-          console.warn('[Campaign] Storage upload fallback:', err.message);
-          if (campaignFilePreview) {
-            mediaUrl = campaignFilePreview;
-            mediaType = 'image';
-          }
+          console.warn('[Campaign] Storage upload failed:', err.message);
+          // CRITICAL: NEVER fall back to campaignFilePreview (base64 Data URL).
+          // Meta WhatsApp Cloud API rejects data: URIs with (#100) Param image.link is not a valid URI.
+          mediaUrl = null;
+          mediaType = null;
         }
         setUploadingMedia(false);
       }
+
+      // Safeguard: Ensure mediaUrl is only passed if it is a valid HTTP/HTTPS URL
+      const finalMediaUrl = (mediaUrl && typeof mediaUrl === 'string' && (mediaUrl.startsWith('http://') || mediaUrl.startsWith('https://'))) ? mediaUrl : null;
+      const finalMediaType = finalMediaUrl ? (mediaType || 'image') : null;
 
       const messageText = messageMode === 'custom' ? customText : selectedTemplate.text;
 
@@ -394,8 +416,8 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued, initialRecipi
         name: campaignName,
         template_name: messageMode === 'custom' ? 'Custom Broadcast' : selectedTemplate.name,
         custom_message: messageText,
-        media_url: mediaUrl || null,
-        media_type: mediaType || null,
+        media_url: finalMediaUrl,
+        media_type: finalMediaType,
         campaignDefaults: campaignVariables,
       }, targetPayload);
 
@@ -405,8 +427,8 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued, initialRecipi
       const batchRes = await processCampaignBatch(cData?.id || Date.now(), 50, {
         customMessage: messageText,
         templateText: messageText,
-        mediaUrl: mediaUrl || null,
-        mediaType: mediaType || null,
+        mediaUrl: finalMediaUrl,
+        mediaType: finalMediaType,
         campaignDefaults: campaignVariables,
         recipients: effectiveRecipients,
       });
@@ -1278,13 +1300,25 @@ const CampaignBuilderModal = ({ isOpen, onClose, onCampaignQueued, initialRecipi
                       <div style={{ fontSize: '0.78rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {campaignFile.name}
                       </div>
-                      <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
-                        {(campaignFile.size / 1024).toFixed(0)} KB · Sent with caption to each lead
+                      <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.15rem' }}>
+                        <span>{(campaignFile.size / 1024).toFixed(0)} KB</span>
+                        <span>·</span>
+                        {uploadingMedia ? (
+                          <span style={{ color: 'var(--accent-primary)', display: 'inline-flex', alignItems: 'center', gap: '0.2rem', fontWeight: 600 }}>
+                            <RefreshCw size={11} className="animate-spin" /> Uploading to CDN...
+                          </span>
+                        ) : uploadedMediaUrl ? (
+                          <span style={{ color: '#10b981', display: 'inline-flex', alignItems: 'center', gap: '0.2rem', fontWeight: 600 }}>
+                            <CheckCircle2 size={11} /> Ready for broadcast
+                          </span>
+                        ) : (
+                          <span>Sent with caption</span>
+                        )}
                       </div>
                     </div>
                     <button
                       type="button"
-                      onClick={() => { setCampaignFile(null); setCampaignFilePreview(null); setUploadedMediaUrl(null); }}
+                      onClick={() => { setCampaignFile(null); setCampaignFilePreview(null); setUploadedMediaUrl(null); setUploadedMediaType(null); }}
                       style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '1rem', padding: '0.2rem' }}
                     >
                       ✕

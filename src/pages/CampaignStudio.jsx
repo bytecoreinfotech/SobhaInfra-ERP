@@ -147,6 +147,9 @@ const CampaignStudio = () => {
   const [customText, setCustomText] = useState(DEFAULT_PRESETS[0].text);
   const [campaignFile, setCampaignFile] = useState(null);
   const [campaignFilePreview, setCampaignFilePreview] = useState(null);
+  const [uploadedMediaUrl, setUploadedMediaUrl] = useState(null);
+  const [uploadedMediaType, setUploadedMediaType] = useState(null);
+  const [uploadingMedia, setUploadingMedia] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const campaignFileRef = useRef(null);
   const textareaRef = useRef(null);
@@ -380,10 +383,13 @@ const CampaignStudio = () => {
     }, 0);
   };
 
-  // Media file handlers
+  // Media file handlers with proactive background upload
   const handleFileSelect = (file) => {
     if (!file) return;
     setCampaignFile(file);
+    setUploadedMediaUrl(null);
+    setUploadedMediaType(null);
+
     if (file.type.startsWith('image/')) {
       const reader = new FileReader();
       reader.onload = ev => setCampaignFilePreview(ev.target.result);
@@ -391,6 +397,22 @@ const CampaignStudio = () => {
     } else {
       setCampaignFilePreview(null);
     }
+
+    // Proactively upload in background
+    setUploadingMedia(true);
+    uploadToWhatsAppMedia(file, 'campaigns')
+      .then(url => {
+        if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
+          setUploadedMediaUrl(url);
+          setUploadedMediaType(getWhatsAppMediaType(file));
+        }
+      })
+      .catch(err => {
+        console.warn('[CampaignStudio] Proactive upload error:', err.message);
+      })
+      .finally(() => {
+        setUploadingMedia(false);
+      });
   };
 
   const handleDrop = (e) => {
@@ -706,27 +728,34 @@ const CampaignStudio = () => {
     if (effectiveCount === 0) return;
     setIsSubmitting(true);
 
-    let mediaUrl = null;
-    let mediaType = 'text';
+    let mediaUrl = uploadedMediaUrl;
+    let mediaType = uploadedMediaType || 'text';
 
-    if (campaignFile) {
+    if (campaignFile && (!mediaUrl || !mediaUrl.startsWith('http'))) {
       try {
         mediaUrl = await uploadToWhatsAppMedia(campaignFile, 'campaigns');
         mediaType = getWhatsAppMediaType(campaignFile);
+        setUploadedMediaUrl(mediaUrl);
+        setUploadedMediaType(mediaType);
       } catch (err) {
-        if (campaignFilePreview) {
-          mediaUrl = campaignFilePreview;
-          mediaType = 'image';
-        }
+        console.warn('[CampaignStudio] Storage upload failed:', err.message);
+        // CRITICAL: NEVER fall back to campaignFilePreview (base64 Data URL)
+        // Meta WhatsApp Cloud API rejects data: URIs with (#100) Param image.link is not a valid URI.
+        mediaUrl = null;
+        mediaType = 'text';
       }
     }
+
+    // Safeguard: Ensure mediaUrl is only passed if it is a valid HTTP/HTTPS URL
+    const finalMediaUrl = (mediaUrl && typeof mediaUrl === 'string' && (mediaUrl.startsWith('http://') || mediaUrl.startsWith('https://'))) ? mediaUrl : null;
+    const finalMediaType = finalMediaUrl ? (mediaType || 'image') : 'text';
 
     const payload = {
       name: name.trim() || 'WhatsApp Broadcast Flow',
       template_name: 'Interactive Broadcast Flow',
       custom_message: customText,
-      media_url: mediaUrl,
-      media_type: mediaType,
+      media_url: finalMediaUrl,
+      media_type: finalMediaType,
       campaignDefaults: campaignVariables,
       interactiveButtons: buttons,
       buttonFlow: { buttons, automationMode },
@@ -741,8 +770,8 @@ const CampaignStudio = () => {
     if (cData) {
       await processCampaignBatch(cData.id, 50, {
         customMessage: customText,
-        mediaUrl,
-        mediaType,
+        mediaUrl: finalMediaUrl,
+        mediaType: finalMediaType,
         campaignDefaults: campaignVariables,
         interactiveButtons: buttons,
         buttonFlow: { buttons, automationMode },
@@ -1379,13 +1408,25 @@ const CampaignStudio = () => {
                         <div style={{ fontSize: '0.8rem', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {campaignFile.name}
                         </div>
-                        <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-                          {(campaignFile.size / 1024).toFixed(0)} KB · Attached with personalized caption
+                        <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.35rem', marginTop: '0.15rem' }}>
+                          <span>{(campaignFile.size / 1024).toFixed(0)} KB</span>
+                          <span>·</span>
+                          {uploadingMedia ? (
+                            <span style={{ color: 'var(--accent-primary)', display: 'inline-flex', alignItems: 'center', gap: '0.2rem', fontWeight: 600 }}>
+                              <RefreshCw size={11} className="animate-spin" /> Uploading to CDN...
+                            </span>
+                          ) : uploadedMediaUrl ? (
+                            <span style={{ color: '#10b981', display: 'inline-flex', alignItems: 'center', gap: '0.2rem', fontWeight: 600 }}>
+                              <CheckCircle2 size={11} /> Ready for broadcast
+                            </span>
+                          ) : (
+                            <span>Attached</span>
+                          )}
                         </div>
                       </div>
                       <button
                         type="button"
-                        onClick={() => { setCampaignFile(null); setCampaignFilePreview(null); }}
+                        onClick={() => { setCampaignFile(null); setCampaignFilePreview(null); setUploadedMediaUrl(null); setUploadedMediaType(null); }}
                         style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)', fontSize: '1.1rem', padding: '0.2rem' }}
                       >
                         ✕

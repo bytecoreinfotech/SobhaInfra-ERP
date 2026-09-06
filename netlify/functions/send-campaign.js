@@ -112,7 +112,7 @@ async function sendMetaWhatsAppInteractive(to, text, buttons = [], headerMedia =
         interactiveObj.footer = { text: footerText.slice(0, 60) };
       }
 
-      if (headerMedia && headerMedia.url) {
+      if (headerMedia && headerMedia.url && typeof headerMedia.url === 'string' && (headerMedia.url.startsWith('http://') || headerMedia.url.startsWith('https://'))) {
         if (headerMedia.type === 'image') {
           interactiveObj.header = { type: 'image', image: { link: headerMedia.url } };
         } else if (headerMedia.type === 'document') {
@@ -194,14 +194,16 @@ async function sendMetaWhatsAppMediaOrText(to, text, mediaType = 'text', mediaUr
     const url = `https://graph.facebook.com/v20.0/${PHONE_ID}/messages`;
 
     let payload;
-    if (mediaType === 'image' && mediaUrl) {
+    const hasValidMediaUrl = mediaUrl && typeof mediaUrl === 'string' && (mediaUrl.startsWith('http://') || mediaUrl.startsWith('https://'));
+
+    if (mediaType === 'image' && hasValidMediaUrl) {
       payload = {
         messaging_product: 'whatsapp',
         to: cleanPhone,
         type: 'image',
         image: { link: mediaUrl, ...(text ? { caption: text } : {}) },
       };
-    } else if (mediaType === 'document' && mediaUrl) {
+    } else if (mediaType === 'document' && hasValidMediaUrl) {
       payload = {
         messaging_product: 'whatsapp',
         to: cleanPhone,
@@ -212,7 +214,7 @@ async function sendMetaWhatsAppMediaOrText(to, text, mediaType = 'text', mediaUr
           ...(text ? { caption: text } : {}),
         },
       };
-    } else if (mediaType === 'video' && mediaUrl) {
+    } else if (mediaType === 'video' && hasValidMediaUrl) {
       payload = {
         messaging_product: 'whatsapp',
         to: cleanPhone,
@@ -288,6 +290,60 @@ function personalize(template, recipient, campaignDefaults = {}) {
     .replace(/{amount}/g, budget)
     .replace(/{phone}/g, phone)
     .replace(/{company}/g, company);
+}
+
+// ─── 4.1 Resolve and ensure valid public HTTPS URL for WhatsApp Media ────────
+async function resolvePublicMediaUrl(mediaUrl, mediaType, folder = 'campaigns') {
+  if (!mediaUrl || typeof mediaUrl !== 'string') return { url: null, type: 'text' };
+  const trimmed = mediaUrl.trim();
+  if (!trimmed) return { url: null, type: 'text' };
+
+  // Fast path: already a valid public HTTP/HTTPS URL
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    return { url: trimmed, type: mediaType || 'image' };
+  }
+
+  // If it's a base64 Data URL (e.g. data:image/png;base64,...)
+  if (trimmed.startsWith('data:')) {
+    try {
+      let mimeType = 'image/png';
+      let rawBase64 = trimmed;
+      const match = trimmed.match(/^data:([^;]+);base64,(.+)$/s);
+      if (match) {
+        mimeType = match[1];
+        rawBase64 = match[2];
+      } else {
+        const comma = trimmed.indexOf(',');
+        if (comma !== -1) rawBase64 = trimmed.slice(comma + 1);
+      }
+
+      const buffer = Buffer.from(rawBase64, 'base64');
+      if (buffer.length > 0) {
+        const ext = mimeType.includes('pdf') ? 'pdf' : (mimeType.split('/')[1] || 'png').replace(/[^a-z0-9]/gi, '');
+        const safeFolder = folder || 'campaigns';
+        const path = `${safeFolder}/${Date.now()}_auto_upload.${ext}`;
+
+        const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+        const { data: upData, error: upErr } = await supabase.storage
+          .from('whatsapp-media')
+          .upload(path, buffer, { contentType: mimeType, upsert: true });
+
+        if (!upErr && upData) {
+          const { data: urlData } = supabase.storage.from('whatsapp-media').getPublicUrl(path);
+          if (urlData?.publicUrl && urlData.publicUrl.startsWith('http')) {
+            const resolvedType = mimeType.includes('pdf') ? 'document' : (mimeType.startsWith('video/') ? 'video' : 'image');
+            return { url: urlData.publicUrl, type: resolvedType };
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[send-campaign] Base64 auto-upload failed:', err.message);
+    }
+  }
+
+  // Safety fallback: Never pass invalid URI (like data:... or relative paths) to Meta
+  console.warn('[send-campaign] Media URL is not a valid HTTP URL, falling back to text:', trimmed.slice(0, 50));
+  return { url: null, type: 'text' };
 }
 
 // ─── 5. Main Handler ─────────────────────────────────────────────────────────
@@ -370,8 +426,9 @@ exports.handler = async (event) => {
       };
     }
 
-    const effectiveMediaUrl = mediaUrl || campaign?.media_url || null;
-    const effectiveMediaType = mediaType || campaign?.media_type || (effectiveMediaUrl ? 'image' : 'text');
+    const rawMediaUrl = mediaUrl || campaign?.media_url || null;
+    const rawMediaType = mediaType || campaign?.media_type || (rawMediaUrl ? 'image' : 'text');
+    const { url: effectiveMediaUrl, type: effectiveMediaType } = await resolvePublicMediaUrl(rawMediaUrl, rawMediaType, 'campaigns');
     const messageBodyRaw = customMessage || templateText || campaign?.custom_message || campaign?.template_name || 'Hello {name}, we have exciting updates for you!';
 
     const results = {

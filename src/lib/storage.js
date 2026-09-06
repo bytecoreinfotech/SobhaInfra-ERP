@@ -57,6 +57,53 @@ export async function uploadToWhatsAppMedia(file, folder = 'crm', onProgress = n
 
   if (onProgress) onProgress(15);
 
+  // Convert File to base64 Data URL
+  let base64Data = null;
+  try {
+    base64Data = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(new Error('Failed to read file for upload'));
+      reader.readAsDataURL(file);
+    });
+  } catch (readErr) {
+    console.warn('[Storage] FileReader error:', readErr.message);
+  }
+
+  if (onProgress) onProgress(45);
+
+  // 1. Primary Route: Serverless Upload Endpoint (Service Role Key bypasses Supabase RLS)
+  if (base64Data) {
+    try {
+      const res = await fetch('/.netlify/functions/upload-media', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fileData: base64Data,
+          fileName: file.name,
+          contentType: file.type || (isDoc ? 'application/pdf' : `image/${ext}`),
+          folder: folder || 'crm',
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.publicUrl && data.publicUrl.startsWith('http')) {
+          if (onProgress) onProgress(100);
+          return data.publicUrl;
+        }
+      } else {
+        const errJson = await res.json().catch(() => ({}));
+        console.warn('[Storage] upload-media endpoint warning:', errJson.error || res.statusText);
+      }
+    } catch (netErr) {
+      console.warn('[Storage] upload-media fetch warning:', netErr.message);
+    }
+  }
+
+  if (onProgress) onProgress(75);
+
+  // 2. Secondary Route: Direct Supabase upload fallback
   try {
     const supabase = getClient();
     const path = `${folder}/${Date.now()}_${safeName}`;
@@ -65,33 +112,28 @@ export async function uploadToWhatsAppMedia(file, folder = 'crm', onProgress = n
       .from(BUCKET)
       .upload(path, file, {
         cacheControl: '3600',
-        upsert: false,
+        upsert: true,
         contentType: file.type || 'application/octet-stream',
       });
 
-    if (error) {
-      console.warn('[Storage] Supabase upload failed, checking fallbacks:', error.message);
-      // If upload failed and it's a PDF brochure, fallback to public Netlify URL
-      if (ext === 'pdf') {
+    if (!error && data?.path) {
+      const { data: urlData } = supabase.storage.from(BUCKET).getPublicUrl(data.path);
+      if (urlData?.publicUrl && urlData.publicUrl.startsWith('http')) {
         if (onProgress) onProgress(100);
-        return 'https://sobhainfra-erp.netlify.app/sobha-products.pdf';
+        return urlData.publicUrl;
       }
-      throw error;
     }
-
-    if (onProgress) onProgress(90);
-    const { data: urlData } = supabase.storage.from(BUCKET).getPublicUrl(data.path);
-    if (onProgress) onProgress(100);
-
-    return urlData.publicUrl;
   } catch (err) {
-    console.warn('[Storage] Upload error fallback handler:', err.message);
-    if (ext === 'pdf') {
-      if (onProgress) onProgress(100);
-      return 'https://sobhainfra-erp.netlify.app/sobha-products.pdf';
-    }
-    throw new Error('Upload failed: ' + err.message);
+    console.warn('[Storage] Supabase direct upload fallback failed:', err.message);
   }
+
+  // 3. Fallback for PDF brochures if network/storage fails
+  if (ext === 'pdf') {
+    if (onProgress) onProgress(100);
+    return 'https://sobhainfra-erp.netlify.app/sobha-products.pdf';
+  }
+
+  throw new Error('Could not upload media to storage. Please check your network connection.');
 }
 
 /**
