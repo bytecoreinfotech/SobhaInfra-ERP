@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { getDashboardStats, getLeads, getCampaigns, getInvoices, getAutomationRuns, syncToGoogleSheets, exportLiveTableCsv, getCustomerMaster } from '../lib/db';
 import { buildCustomerIndex, matchCustomer } from '../lib/customerMatcher';
+import { reconcileCustomerInvoices, isSalesVoucher } from '../lib/reconciliation';
 import { useCompany } from '../context/CompanyContext';
 import { Skeleton, SkeletonStats } from '../components/Skeleton';
 import './Pages.css';
@@ -112,17 +113,24 @@ const Reports = () => {
   // ── Customer index for 100% verified Google Sheet customer directory matching ──
   const customerIndex = useMemo(() => buildCustomerIndex(customerMaster), [customerMaster]);
 
+  // ── Reconcile customer invoices authoritatively (settles receipts, computes exact paid & pending) ──
+  const reconciledInvoices = useMemo(() => {
+    return reconcileCustomerInvoices(allInvoices);
+  }, [allInvoices]);
+
   // ── Company-filtered invoices (same pattern as Finance/Dashboard/Payments) ──
-  const companyFilteredInvoices = isConsolidated
-    ? allInvoices
-    : allInvoices.filter(inv => {
-        if (!activeCompany) return true;
-        const compName = (activeCompany.company_name || '').toUpperCase();
-        const aliases = Array.isArray(activeCompany.alias_names) ? activeCompany.alias_names.map(a => a.toUpperCase()) : [];
-        const invCompany = (inv.company_name || inv.tally_company || '').toUpperCase();
-        if (!invCompany) return false;
-        return [compName, ...aliases].some(n => n && (invCompany.includes(n) || n.includes(invCompany)));
-      });
+  const companyFilteredInvoices = useMemo(() => {
+    return isConsolidated
+      ? reconciledInvoices
+      : reconciledInvoices.filter(inv => {
+          if (!activeCompany) return true;
+          const compName = (activeCompany.company_name || '').toUpperCase();
+          const aliases = Array.isArray(activeCompany.alias_names) ? activeCompany.alias_names.map(a => a.toUpperCase()) : [];
+          const invCompany = (inv.company_name || inv.tally_company || '').toUpperCase();
+          if (!invCompany) return false;
+          return [compName, ...aliases].some(n => n && (invCompany.includes(n) || n.includes(invCompany)));
+        });
+  }, [reconciledInvoices, activeCompany, isConsolidated]);
 
   // ── Customer-only invoices (strictly verified against Google Sheet customer directory) ──
   const invoices = useMemo(() => {
@@ -220,8 +228,10 @@ const Reports = () => {
   const totalWaRead = filteredCampaigns.reduce((s, c) => s + (c.read_count || 0), 0);
   const totalWaReplied = filteredCampaigns.reduce((s, c) => s + (c.replied || 0), 0);
 
-  const totalInvoiced = filteredInvoices.reduce((s, i) => s + Number(i.amount || 0), 0);
-  const totalPaid = filteredInvoices.filter(i => i.status === 'Paid').reduce((s, i) => s + Number(i.amount || 0), 0);
+  // ── Sales Invoices only for revenue & collections (excludes customer receipt vouchers from billing totals)
+  const salesInvoices = useMemo(() => filteredInvoices.filter(isSalesVoucher), [filteredInvoices]);
+  const totalInvoiced = salesInvoices.reduce((s, i) => s + Number(i.amount || 0), 0);
+  const totalPaid = salesInvoices.reduce((s, i) => s + (i.status === 'Paid' ? Number(i.amount || 0) : Number(i.paid_amount || 0)), 0);
 
   // ── Lead funnel from filtered data ───────────────────────────────────────
   const STAGES = ['New', 'Hot', 'Warm', 'Cold', 'Converted', 'Lost'];
@@ -248,8 +258,9 @@ const Reports = () => {
   const autoSuccess = filteredAutoRuns.filter(r => r.status === 'success').length;
   const autoFailed = filteredAutoRuns.filter(r => r.status === 'failed').length;
 
-  // ── Revenue trend chart — real daily/weekly buckets from actual invoice data ─
+  // ── Revenue trend chart — real daily/weekly buckets from actual sales invoice data ─
   const revenueChartData = useMemo(() => {
+    const salesOnly = invoices.filter(isSalesVoucher);
     if (period === 'week') {
       // Last 7 days, day-by-day
       return Array.from({ length: 7 }, (_, i) => {
@@ -258,14 +269,14 @@ const Reports = () => {
         const dayStart = new Date(day.getFullYear(), day.getMonth(), day.getDate());
         const dayEnd = new Date(dayStart);
         dayEnd.setDate(dayStart.getDate() + 1);
-        const dayInvoices = invoices.filter(inv => {
+        const dayInvoices = salesOnly.filter(inv => {
           const d = parseDate(inv.invoice_date || inv.due_date || inv.created_at);
           return d && d >= dayStart && d < dayEnd;
         });
         return {
           label: day.toLocaleDateString('en-IN', { weekday: 'short' }),
           invoiced: dayInvoices.reduce((s, i) => s + Number(i.amount || 0), 0),
-          paid: dayInvoices.filter(i => i.status === 'Paid').reduce((s, i) => s + Number(i.amount || 0), 0),
+          paid: dayInvoices.reduce((s, i) => s + (i.status === 'Paid' ? Number(i.amount || 0) : Number(i.paid_amount || 0)), 0),
         };
       });
     } else if (period === 'quarter') {
@@ -274,14 +285,14 @@ const Reports = () => {
         const monthDate = new Date(periodTo.getFullYear(), periodTo.getMonth() - (2 - i), 1);
         const monthStart = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1);
         const monthEnd = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 1);
-        const mInvoices = invoices.filter(inv => {
+        const mInvoices = salesOnly.filter(inv => {
           const d = parseDate(inv.invoice_date || inv.due_date || inv.created_at);
           return d && d >= monthStart && d < monthEnd;
         });
         return {
           label: monthDate.toLocaleDateString('en-IN', { month: 'short' }),
           invoiced: mInvoices.reduce((s, i) => s + Number(i.amount || 0), 0),
-          paid: mInvoices.filter(i => i.status === 'Paid').reduce((s, i) => s + Number(i.amount || 0), 0),
+          paid: mInvoices.reduce((s, i) => s + (i.status === 'Paid' ? Number(i.amount || 0) : Number(i.paid_amount || 0)), 0),
         };
       });
     } else {
@@ -291,14 +302,14 @@ const Reports = () => {
         weekEnd.setDate(periodTo.getDate() - (3 - i) * 7);
         const weekStart = new Date(weekEnd);
         weekStart.setDate(weekEnd.getDate() - 7);
-        const wInvoices = invoices.filter(inv => {
+        const wInvoices = salesOnly.filter(inv => {
           const d = parseDate(inv.invoice_date || inv.due_date || inv.created_at);
           return d && d >= weekStart && d <= weekEnd;
         });
         return {
           label: `Wk ${i + 1}`,
           invoiced: wInvoices.reduce((s, i) => s + Number(i.amount || 0), 0),
-          paid: wInvoices.filter(i => i.status === 'Paid').reduce((s, i) => s + Number(i.amount || 0), 0),
+          paid: wInvoices.reduce((s, i) => s + (i.status === 'Paid' ? Number(i.amount || 0) : Number(i.paid_amount || 0)), 0),
         };
       });
     }
@@ -630,8 +641,8 @@ const Reports = () => {
                 },
                 {
                   name: 'Finance / Tally',
-                  usage: filteredInvoices.length > 0 ? Math.round((filteredInvoices.filter(i => i.status === 'Paid').length / filteredInvoices.length) * 100) : 0,
-                  note: `${filteredInvoices.filter(i => i.status === 'Paid').length} of ${filteredInvoices.length} invoices paid`,
+                  usage: salesInvoices.length > 0 ? Math.round((salesInvoices.filter(i => i.status === 'Paid').length / salesInvoices.length) * 100) : 0,
+                  note: `${salesInvoices.filter(i => i.status === 'Paid').length} of ${salesInvoices.length} sales invoices paid`,
                   color: 'var(--warning)'
                 },
                 {

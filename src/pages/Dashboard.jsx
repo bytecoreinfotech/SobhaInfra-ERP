@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { getDashboardStats, getActivityFeed, getTasks, getLeads, getCampaigns, getInvoices, getTeamMembers, getEmployeeLivePings, getSiteVisits, getCustomerMaster, triggerSheetSync, invalidateCustomerMasterCache } from '../lib/db';
 import { buildCustomerIndex, matchCustomer } from '../lib/customerMatcher';
+import { reconcileCustomerInvoices, isSalesVoucher } from '../lib/reconciliation';
 import { isSupabaseConfigured } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { useCompany } from '../context/CompanyContext';
@@ -129,18 +130,23 @@ const Dashboard = () => {
   // Build memoized customer index for 100% strict Google Sheet customer verification
   const customerIndex = useMemo(() => buildCustomerIndex(customerMaster), [customerMaster]);
 
+  // Reconcile invoices authoritatively (settles receipts, Tally closing balances, computes exact paid & pending amounts)
+  const reconciledInvoices = useMemo(() => {
+    return reconcileCustomerInvoices(allInvoices);
+  }, [allInvoices]);
+
   // Filter invoices by active company
   const invoices = useMemo(() => {
-    if (isConsolidated) return allInvoices;
-    if (!activeCompany) return allInvoices;
+    if (isConsolidated) return reconciledInvoices;
+    if (!activeCompany) return reconciledInvoices;
     const compName = (activeCompany.company_name || '').toUpperCase();
     const aliases = Array.isArray(activeCompany.alias_names) ? activeCompany.alias_names.map(a => a.toUpperCase()) : [];
-    return allInvoices.filter(inv => {
+    return reconciledInvoices.filter(inv => {
       const invCompany = (inv.company_name || inv.tally_company || '').toUpperCase();
       if (!invCompany) return false;
       return [compName, ...aliases].some(n => n && (invCompany.includes(n) || n.includes(invCompany)));
     });
-  }, [allInvoices, activeCompany, isConsolidated]);
+  }, [reconciledInvoices, activeCompany, isConsolidated]);
 
 
   const loadData = async () => {
@@ -200,12 +206,17 @@ const Dashboard = () => {
     });
   }, [invoices, customerIndex]);
 
-  const totalInvoiced = customerInvoices.reduce((s, i) => s + Number(i.amount || 0), 0);
-  const totalPaid = customerInvoices.filter(i => i.status === 'Paid').reduce((s, i) => s + Number(i.amount || 0), 0);
-  const pendingAmount = customerInvoices.filter(i => i.status === 'Pending').reduce((s, i) => s + Number(i.amount || 0), 0);
-  const overdueInvoices = customerInvoices.filter(i => i.status === 'Overdue').length;
-  const overdueAmount = customerInvoices.filter(i => i.status === 'Overdue').reduce((s, i) => s + Number(i.amount || 0), 0);
-  const paidInvoicesCount = customerInvoices.filter(i => i.status === 'Paid').length;
+  // Customer Sales Invoices only (excludes payment receipts and credit notes from billed totals)
+  const customerSales = useMemo(() => {
+    return customerInvoices.filter(isSalesVoucher);
+  }, [customerInvoices]);
+
+  const totalInvoiced = customerSales.reduce((s, i) => s + Number(i.amount || 0), 0);
+  const totalPaid = customerSales.reduce((s, i) => s + (i.status === 'Paid' ? Number(i.amount || 0) : Number(i.paid_amount || 0)), 0);
+  const pendingAmount = customerSales.filter(i => i.status === 'Pending').reduce((s, i) => s + Number(i.pending_amount ?? i.amount ?? 0), 0);
+  const overdueInvoices = customerSales.filter(i => i.status === 'Overdue').length;
+  const overdueAmount = customerSales.filter(i => i.status === 'Overdue').reduce((s, i) => s + Number(i.pending_amount ?? i.amount ?? 0), 0);
+  const paidInvoicesCount = customerSales.filter(i => i.status === 'Paid').length;
   const collectionRate = totalInvoiced > 0 ? ((totalPaid / totalInvoiced) * 100).toFixed(1) : '0.0';
 
   const tasksDueCt = taskList.filter(t => t.status !== 'Done').length;
@@ -242,36 +253,39 @@ const Dashboard = () => {
   ];
 
   // FY date boundaries for selected year
-  const fyFrom = new Date(selectedFYStart, 3, 1);       // 1-Apr-startYear
-  const fyTo   = new Date(selectedFYStart + 1, 2, 31);  // 31-Mar-nextYear
+  const fyFrom = useMemo(() => new Date(selectedFYStart, 3, 1), [selectedFYStart]);       // 1-Apr-startYear
+  const fyTo   = useMemo(() => new Date(selectedFYStart + 1, 2, 31, 23, 59, 59), [selectedFYStart]);  // 31-Mar-nextYear
 
-  // Customer Invoices that fall within the selected FY
-  const fyInvoices = customerInvoices.filter(inv => {
-    const dStr = inv.invoice_date || inv.due_date || inv.created_at;
-    if (!dStr) return false;
-    const d = new Date(dStr);
-    return !isNaN(d.getTime()) && d >= fyFrom && d <= fyTo;
-  });
-
-
-  const monthlyStats = FY_MONTH_ORDER.map(({ name, jsMonth }) => {
-    // For Jan/Feb/Mar, they belong to selectedFYStart+1 calendar year
-    const calYear = jsMonth <= 2 ? selectedFYStart + 1 : selectedFYStart;
-    const monthInvoices = fyInvoices.filter(inv => {
+  // Customer Sales Invoices that fall within the selected FY
+  const fyInvoices = useMemo(() => {
+    return customerSales.filter(inv => {
       const dStr = inv.invoice_date || inv.due_date || inv.created_at;
       if (!dStr) return false;
       const d = new Date(dStr);
-      return !isNaN(d.getTime()) && d.getMonth() === jsMonth && d.getFullYear() === calYear;
+      return !isNaN(d.getTime()) && d >= fyFrom && d <= fyTo;
     });
-    const totalBilled = monthInvoices.reduce((s, inv) => s + Number(inv.amount || 0), 0);
-    const paidAmt     = monthInvoices.filter(inv => inv.status === 'Paid').reduce((s, inv) => s + Number(inv.amount || 0), 0);
-    const pendingAmt  = monthInvoices.filter(inv => inv.status !== 'Paid').reduce((s, inv) => s + Number(inv.amount || 0), 0);
-    return { month: name, jsMonth, calYear, invoiced: totalBilled, paid: paidAmt, pending: pendingAmt, count: monthInvoices.length };
-  });
+  }, [customerSales, fyFrom, fyTo]);
+
+  const monthlyStats = useMemo(() => {
+    return FY_MONTH_ORDER.map(({ name, jsMonth }) => {
+      // For Jan/Feb/Mar, they belong to selectedFYStart+1 calendar year
+      const calYear = jsMonth <= 2 ? selectedFYStart + 1 : selectedFYStart;
+      const monthInvoices = fyInvoices.filter(inv => {
+        const dStr = inv.invoice_date || inv.due_date || inv.created_at;
+        if (!dStr) return false;
+        const d = new Date(dStr);
+        return !isNaN(d.getTime()) && d.getMonth() === jsMonth && d.getFullYear() === calYear;
+      });
+      const totalBilled = monthInvoices.reduce((s, inv) => s + Number(inv.amount || 0), 0);
+      const paidAmt     = monthInvoices.reduce((s, inv) => s + (inv.status === 'Paid' ? Number(inv.amount || 0) : Number(inv.paid_amount || 0)), 0);
+      const pendingAmt  = monthInvoices.reduce((s, inv) => s + (inv.status !== 'Paid' ? Number(inv.pending_amount ?? inv.amount ?? 0) : 0), 0);
+      return { month: name, jsMonth, calYear, invoiced: totalBilled, paid: paidAmt, pending: pendingAmt, count: monthInvoices.length };
+    });
+  }, [fyInvoices, selectedFYStart]);
 
   // Totals for selected FY
   const fyTotalBilled  = fyInvoices.reduce((s, inv) => s + Number(inv.amount || 0), 0);
-  const fyTotalPaid    = fyInvoices.filter(inv => inv.status === 'Paid').reduce((s, inv) => s + Number(inv.amount || 0), 0);
+  const fyTotalPaid    = fyInvoices.reduce((s, inv) => s + (inv.status === 'Paid' ? Number(inv.amount || 0) : Number(inv.paid_amount || 0)), 0);
   const maxRevBar = Math.max(1, ...monthlyStats.map(m => m.invoiced));
 
   // Today's FY month index (for current-month highlight)
@@ -307,9 +321,10 @@ const Dashboard = () => {
       `"Metric","Value"`,
       `"Total Billed Turn-over (${fyLabel})","₹${fyTotalBilled.toLocaleString('en-IN')}"`,
       `"Total Collected Paid (${fyLabel})","₹${fyTotalPaid.toLocaleString('en-IN')}"`,
-      `"Pending Receivables","₹${pendingAmount.toLocaleString('en-IN')}"`,
+      `"Not Yet Due Receivables","₹${pendingAmount.toLocaleString('en-IN')}"`,
+      `"Overdue Receivables","₹${overdueAmount.toLocaleString('en-IN')}"`,
+      `"Total Outstanding Receivables","₹${(pendingAmount + overdueAmount).toLocaleString('en-IN')}"`,
       `"Overdue Invoices Count","${overdueInvoices}"`,
-      `"Overdue Amount","₹${overdueAmount.toLocaleString('en-IN')}"`,
       `"Collection Rate","${collectionRate}%"`,
       `"Active CRM Leads","${totalLeads}"`,
       `"Hot Leads","${hotLeads}"`,
@@ -322,9 +337,9 @@ const Dashboard = () => {
       `"Month","Total Invoiced (₹)","Collected Paid (₹)","Pending Balance (₹)","Invoices Count"`,
       ...monthlyStats.map(m => `"${m.month}","${m.invoiced}","${m.paid}","${m.pending}","${m.count}"`),
       ``,
-      `"INVOICE LEDGER BREAKDOWN (${fyInvoices.length} Vouchers in ${fyLabel})"`,
-      `"Invoice / Voucher No","Party / Client Name","Phone","Amount (₹)","Status","Invoice Date","Due Date"`,
-      ...fyInvoices.map(inv => `"${inv.invoice_number || inv.tally_voucher_number || ''}","${(inv.client_name || '').replace(/"/g, '""')}","${inv.client_phone || ''}","${inv.amount || 0}","${inv.status || 'Pending'}","${inv.invoice_date || ''}","${inv.due_date || ''}"`)
+      `"INVOICE LEDGER BREAKDOWN (${fyInvoices.length} Sales Invoices in ${fyLabel})"`,
+      `"Invoice / Voucher No","Party / Client Name","Phone","Billed Amount (₹)","Paid Amount (₹)","Remaining Due (₹)","Status","Invoice Date","Due Date"`,
+      ...fyInvoices.map(inv => `"${inv.invoice_number || inv.tally_voucher_number || ''}","${(inv.client_name || '').replace(/"/g, '""')}","${inv.client_phone || ''}","${inv.amount || 0}","${inv.status === 'Paid' ? inv.amount : inv.paid_amount || 0}","${inv.pending_amount ?? (inv.status === 'Paid' ? 0 : inv.amount)}","${inv.status || 'Pending'}","${inv.invoice_date || ''}","${inv.due_date || ''}"`)
     ];
 
     const blob = new Blob([summaryLines.join('\n')], { type: 'text/csv;charset=utf-8;' });
@@ -851,8 +866,8 @@ const Dashboard = () => {
                   <div style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--success)', marginTop: '0.2rem' }}>{fmtAmount(totalPaid)}</div>
                 </div>
                 <div style={{ padding: '0.75rem', background: 'rgba(239,68,68,0.08)', borderRadius: 8, border: '1px solid rgba(239,68,68,0.25)', textAlign: 'center' }}>
-                  <div style={{ fontSize: '0.68rem', color: 'var(--danger)', fontWeight: 600 }}>PENDING DUE</div>
-                  <div style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--danger)', marginTop: '0.2rem' }}>{fmtAmount(pendingAmount)}</div>
+                  <div style={{ fontSize: '0.68rem', color: 'var(--danger)', fontWeight: 600 }}>OUTSTANDING DUE</div>
+                  <div style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--danger)', marginTop: '0.2rem' }}>{fmtAmount(pendingAmount + overdueAmount)}</div>
                 </div>
                 <div style={{ padding: '0.75rem', background: 'rgba(99,102,241,0.08)', borderRadius: 8, border: '1px solid rgba(99,102,241,0.25)', textAlign: 'center' }}>
                   <div style={{ fontSize: '0.68rem', color: 'var(--accent-primary)', fontWeight: 600 }}>COLLECTION RATE</div>

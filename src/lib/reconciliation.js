@@ -60,6 +60,58 @@ export function getDaysOverdue(dueDateStr) {
 }
 
 /**
+ * Accurately determines if a voucher is a customer sales bill / debit entry (Receivable).
+ * Excludes receipts, master ledger markers, and vendor payables.
+ */
+export function isSalesVoucher(inv) {
+  const num = (inv?.invoice_number || inv?.tally_voucher_number || '').toLowerCase();
+  const vtype = (inv?.metadata?.voucher_type || inv?.voucher_type || '').toLowerCase();
+  const dir = (inv?.metadata?.direction || inv?.direction || '').toLowerCase();
+  if (num.startsWith('ledger-') || /^(rec|rcpt|rct|sb-r)-?/i.test(num)) return false;
+  if (vtype.includes('receipt') || dir === 'received') return false;
+  return (
+    ['sales', 'sales order', 'tax invoice', 'opening balance'].some(t => vtype.includes(t)) ||
+    /^(srp|sb)\//i.test(num) ||
+    /^(inv|tax)\//i.test(num) ||
+    num.startsWith('op-') ||
+    dir === 'receivable' ||
+    dir === 'outgoing'
+  );
+}
+
+/**
+ * Accurately determines if a voucher is a customer receipt payment (Credit entry).
+ */
+export function isReceiptVoucher(inv) {
+  const num = (inv?.invoice_number || inv?.tally_voucher_number || '').toLowerCase();
+  const vtype = (inv?.metadata?.voucher_type || inv?.voucher_type || '').toLowerCase();
+  const dir = (inv?.metadata?.direction || inv?.direction || '').toLowerCase();
+  if (num.startsWith('ledger-')) return false;
+  return (
+    ['receipt', 'bank receipt', 'cash receipt'].some(t => vtype.includes(t)) ||
+    /^(rec|rcpt|rct|sb-r)-?/i.test(num) ||
+    dir === 'received'
+  );
+}
+
+/**
+ * Accurately determines if a voucher is a vendor purchase bill (Payable).
+ */
+export function isPurchaseVoucher(inv) {
+  const num = (inv?.invoice_number || inv?.tally_voucher_number || '').toLowerCase();
+  const vtype = (inv?.metadata?.voucher_type || inv?.voucher_type || '').toLowerCase();
+  const dir = (inv?.metadata?.direction || inv?.direction || '').toLowerCase();
+  if (num.startsWith('ledger-')) return false;
+  if (vtype.includes('payment') || /^(pay|pmt|sb-pay|sb-p)-?/i.test(num) || dir === 'paid_out') return false;
+  return (
+    ['purchase', 'purchase order'].some(t => vtype.includes(t)) ||
+    /^(pur|po)-/.test(num) ||
+    /^(sb-pur|kbs\/|idak|ne0k|sb-i|ipaa|ybs\/|lcr|v00[2-9])/.test(num) ||
+    dir === 'payable'
+  );
+}
+
+/**
  * Deduplicates receipts by canonical voucher number and/or date + amount.
  * Handles legacy duplicate generations:
  * - Bare REC-155 vs canonical SRP-REC-155 or SB-REC-155

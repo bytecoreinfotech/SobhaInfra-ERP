@@ -14,7 +14,7 @@ import {
   getCustomerMaster
 } from '../lib/db';
 import { buildCustomerIndex, matchCustomer } from '../lib/customerMatcher';
-import { reconcileCustomerInvoices, getCustomerLedgerStatement, getCustomerPendingBills } from '../lib/reconciliation';
+import { reconcileCustomerInvoices, getCustomerLedgerStatement, getCustomerPendingBills, isSalesVoucher, isPurchaseVoucher } from '../lib/reconciliation';
 import { supabase } from '../lib/supabase';
 import { useCompany } from '../context/CompanyContext';
 import LedgerDetailDrawer from '../components/LedgerDetailDrawer';
@@ -506,11 +506,18 @@ const Finance = () => {
   // Active view determines which dataset feeds KPI cards and table
   const activeViewInvoices = financeView === 'payables' ? vendorInvoices : customerInvoices;
 
-  // KPI metrics for the active view
-  const totalInvoiced = activeViewInvoices.reduce((s, i) => s + Number(i.amount || 0), 0);
-  const totalPaid     = activeViewInvoices.filter(i => i.status === 'Paid').reduce((s, i) => s + Number(i.amount || 0), 0);
-  const totalOverdue  = activeViewInvoices.filter(i => i.status === 'Overdue').reduce((s, i) => s + Number(i.pending_amount ?? i.amount ?? 0), 0);
-  const totalPending  = activeViewInvoices.filter(i => i.status === 'Pending').reduce((s, i) => s + Number(i.pending_amount ?? i.amount ?? 0), 0);
+  // Actual bills for the active view (Sales bills for receivables, Purchase bills for payables — excludes receipt & payment vouchers from billing totals)
+  const activeBills = useMemo(() => {
+    return financeView === 'payables'
+      ? activeViewInvoices.filter(isPurchaseVoucher)
+      : activeViewInvoices.filter(isSalesVoucher);
+  }, [activeViewInvoices, financeView]);
+
+  // KPI metrics for the active view (strictly based on actual bills, with accurate paid_amount and pending_amount)
+  const totalInvoiced = activeBills.reduce((s, i) => s + Number(i.amount || 0), 0);
+  const totalPaid     = activeBills.reduce((s, i) => s + (i.status === 'Paid' ? Number(i.amount || 0) : Number(i.paid_amount || 0)), 0);
+  const totalOverdue  = activeBills.filter(i => i.status === 'Overdue').reduce((s, i) => s + Number(i.pending_amount ?? i.amount ?? 0), 0);
+  const totalPending  = activeBills.filter(i => i.status === 'Pending').reduce((s, i) => s + Number(i.pending_amount ?? i.amount ?? 0), 0);
 
 
   // 3. Search & Status Filter — also filtered by active financeView (receivables vs payables)
@@ -809,11 +816,11 @@ const Finance = () => {
           {/* KPI Summary Cards — dynamically show per active view */}
           <div className="stats-grid">
             {(financeView === 'receivables' ? [
-              { label: 'Total Billed to Customers', value: fmtCurrency(totalInvoiced), sub: `${activeViewInvoices.length} invoices`, icon: <DollarSign size={20} />, color: '#6366f1', bg: 'rgba(99,102,241,0.12)' },
-              { label: 'Collected (Paid)', value: fmtCurrency(totalPaid), sub: `${activeViewInvoices.filter(i => i.status === 'Paid').length} paid`, icon: <TrendingUp size={20} />, color: '#10b981', bg: 'rgba(16,185,129,0.12)' },
+              { label: 'Total Billed to Customers', value: fmtCurrency(totalInvoiced), sub: `${activeBills.length} invoices`, icon: <DollarSign size={20} />, color: '#6366f1', bg: 'rgba(99,102,241,0.12)' },
+              { label: 'Collected (Paid)', value: fmtCurrency(totalPaid), sub: `${activeBills.filter(i => i.status === 'Paid').length} paid`, icon: <TrendingUp size={20} />, color: '#10b981', bg: 'rgba(16,185,129,0.12)' },
             ] : [
-              { label: 'Total Vendor Bills', value: fmtCurrency(totalInvoiced), sub: `${activeViewInvoices.length} bills`, icon: <DollarSign size={20} />, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)' },
-              { label: 'Paid Out to Vendors', value: fmtCurrency(totalPaid), sub: `${activeViewInvoices.filter(i => i.status === 'Paid').length} paid`, icon: <TrendingUp size={20} />, color: '#10b981', bg: 'rgba(16,185,129,0.12)' },
+              { label: 'Total Vendor Bills', value: fmtCurrency(totalInvoiced), sub: `${activeBills.length} bills`, icon: <DollarSign size={20} />, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)' },
+              { label: 'Paid Out to Vendors', value: fmtCurrency(totalPaid), sub: `${activeBills.filter(i => i.status === 'Paid').length} paid`, icon: <TrendingUp size={20} />, color: '#10b981', bg: 'rgba(16,185,129,0.12)' },
             ]).map(s => (
               <div key={s.label} className="stat-card" style={{ '--card-accent': s.color }}>
                 <div className="stat-header">
@@ -847,7 +854,7 @@ const Finance = () => {
                     {fmtCurrency(totalOverdue + totalPending)}
                   </div>
                   <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '0.1rem' }}>
-                    {activeViewInvoices.filter(i => i.status === 'Overdue' || i.status === 'Pending').length} unpaid invoices — Outstanding = Overdue + Not Yet Due
+                    {activeBills.filter(i => i.status === 'Overdue' || i.status === 'Pending').length} unpaid {financeView === 'receivables' ? 'invoices' : 'bills'} — Outstanding = Overdue + Not Yet Due
                   </div>
                 </div>
                 <div style={{
@@ -877,7 +884,7 @@ const Finance = () => {
                     {fmtCurrency(totalOverdue)}
                   </div>
                   <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
-                    {activeViewInvoices.filter(i => i.status === 'Overdue').length} invoices past due date
+                    {activeBills.filter(i => i.status === 'Overdue').length} {financeView === 'receivables' ? 'invoices' : 'bills'} past due date
                   </div>
                 </div>
                 {/* Not Yet Due sub-card */}
@@ -898,7 +905,7 @@ const Finance = () => {
                     {fmtCurrency(totalPending)}
                   </div>
                   <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
-                    {activeViewInvoices.filter(i => i.status === 'Pending').length} invoices not yet due
+                    {activeBills.filter(i => i.status === 'Pending').length} {financeView === 'receivables' ? 'invoices' : 'bills'} not yet due
                   </div>
                 </div>
               </div>
