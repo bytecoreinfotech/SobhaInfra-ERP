@@ -295,6 +295,7 @@ const Payments = () => {
   const totalMissingPhone = enrichedInvoices.filter(i => !i._has_verified_phone).length;
 
   const fmtAmount = (n) => '₹' + Number(n || 0).toLocaleString('en-IN');
+  const fmtCurrency = (n) => '₹' + Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 });
 
   const handleSheetSync = async () => {
     setSyncing(true);
