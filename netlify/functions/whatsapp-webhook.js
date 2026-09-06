@@ -391,34 +391,102 @@ function detectInvoiceIntent(text) {
   return triggers.some(t => lower.includes(t));
 }
 
-// ─── 3d. Fetch & Send Customer Invoice(s) by Phone ───────────────────────────
+// ─── 3d. Fetch & Send Customer Invoice(s) by Phone or Customer Master ─────────
 async function handleInvoiceRequest(supabase, fromPhone, contactName, conversationId) {
   const mainName = extractMainName(contactName);
-  const salutation = mainName ? `Hello ${mainName}!` : 'Hello!';
 
   if (!supabase) {
+    const salutation = mainName ? `Hello ${mainName}!` : 'Hello!';
     await sendWhatsAppMessage(fromPhone, `${salutation} 📄 I'm fetching your invoice records. Please hold on...`);
     return false;
   }
 
   try {
     const cleanDigits = fromPhone.replace(/[^\d]/g, '');
-    // Search by all common phone formats
-    const { data: invoices } = await supabase
+    const tenDigits = cleanDigits.slice(-10);
+
+    // 1. Authoritative Customer Identity Resolution (Google Sheets / Leads / Ledger Mappings)
+    let matchedCompanyName = null;
+    let matchedContactPerson = null;
+
+    // Step A: customer_master (Google Sheet Directory)
+    try {
+      const { data: sheetCust } = await supabase
+        .from('customer_master')
+        .select('company_name, contact_person, contact_number')
+        .or(`contact_number.ilike.%${tenDigits}%,contact_number.eq.${fromPhone},contact_number.eq.+${cleanDigits},contact_number.eq.+91${tenDigits}`)
+        .limit(1)
+        .maybeSingle();
+
+      if (sheetCust) {
+        matchedCompanyName = sheetCust.company_name;
+        matchedContactPerson = sheetCust.contact_person;
+      }
+    } catch (sheetErr) {
+      console.warn('[webhook] customer_master lookup error:', sheetErr.message);
+    }
+
+    // Step B: leads table fallback
+    if (!matchedCompanyName) {
+      try {
+        const { data: lead } = await supabase
+          .from('leads')
+          .select('name, company, phone')
+          .or(`phone.ilike.%${tenDigits}%,phone.eq.${fromPhone},phone.eq.+${cleanDigits},phone.eq.+91${tenDigits}`)
+          .limit(1)
+          .maybeSingle();
+
+        if (lead) {
+          matchedCompanyName = lead.company || lead.name;
+          matchedContactPerson = lead.name;
+        }
+      } catch (leadErr) {}
+    }
+
+    // Step C: ledger_mappings fallback
+    if (!matchedCompanyName) {
+      try {
+        const { data: mapMatch } = await supabase
+          .from('ledger_mappings')
+          .select('tally_ledger_name')
+          .or(`lead_phone.ilike.%${tenDigits}%`)
+          .limit(1)
+          .maybeSingle();
+
+        if (mapMatch?.tally_ledger_name) {
+          matchedCompanyName = mapMatch.tally_ledger_name;
+        }
+      } catch (mapErr) {}
+    }
+
+    // 2. Fetch Invoices by phone OR matched company name
+    const orClauses = [
+      `client_phone.eq.${fromPhone}`,
+      `client_phone.eq.+${cleanDigits}`,
+      `client_phone.eq.${cleanDigits}`,
+      `client_phone.eq.+91${tenDigits}`,
+      `client_phone.ilike.%${tenDigits}%`,
+    ];
+    if (matchedCompanyName) {
+      orClauses.push(`client_name.ilike.%${matchedCompanyName.trim()}%`);
+    }
+
+    const { data: invData } = await supabase
       .from('invoices')
-      .select('invoice_number, client_name, amount, status, due_date, invoice_date, pdf_url, metadata, company_name')
-      .or([
-        `client_phone.eq.${fromPhone}`,
-        `client_phone.eq.+${cleanDigits}`,
-        `client_phone.eq.${cleanDigits}`,
-        `client_phone.eq.+91${cleanDigits.slice(-10)}`,
-      ].join(','))
+      .select('id, invoice_number, tally_voucher_number, client_name, amount, status, due_date, invoice_date, pdf_url, metadata, company_name')
+      .or(orClauses.join(','))
       .order('invoice_date', { ascending: false })
-      .limit(5);
+      .limit(8);
+
+    const invoices = invData || [];
+
+    const displayName = matchedContactPerson || mainName || (matchedCompanyName || 'Valued Customer');
+    const companyTag = matchedCompanyName && matchedCompanyName !== displayName ? ` (${matchedCompanyName})` : '';
+    const salutation = `Hello ${displayName}${companyTag}!`;
 
     if (!invoices || invoices.length === 0) {
-      // No invoices found — soft response, don't alarm
-      const noInvReply = `${salutation} 📋 I couldn't find any invoice records linked to your number.\n\nThis might be because:\n• Your number may not be registered with us\n• Bills may be under a different contact\n\nPlease contact our team and we'll assist you right away! 📞`;
+      // No invoices found
+      const noInvReply = `${salutation} 📋 I couldn't find any invoice records linked to your number.\n\nThis might be because:\n• Your number may not be registered with us\n• Bills may be registered under a different name\n\nPlease contact our accounts team and we will assist you right away! 📞`;
       await sendWhatsAppMessage(fromPhone, noInvReply);
       return true;
     }
@@ -435,38 +503,73 @@ async function handleInvoiceRequest(supabase, fromPhone, contactName, conversati
     const fmtAmount = (n) => '₹' + Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 });
     const fmtDate = (d) => { try { return new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }); } catch { return d || '—'; } };
 
-    // Build invoice list lines
-    const invLines = invoices.map((inv, i) => {
+    // Build invoice list lines (up to 5 most recent)
+    const invLines = invoices.slice(0, 5).map((inv) => {
+      const invNum = inv.invoice_number || inv.tally_voucher_number || 'Bill';
       const statusIcon = inv.status === 'Paid' ? '✅' : inv.status === 'Overdue' ? '🔴' : '🟡';
-      return `${statusIcon} *${inv.invoice_number}*\n   Dated: ${fmtDate(inv.invoice_date || inv.due_date)}\n   Amount: ${fmtAmount(inv.amount)} | ${inv.status}`;
+      return `${statusIcon} *${invNum}*\n   Dated: ${fmtDate(inv.invoice_date || inv.due_date)}\n   Amount: ${fmtAmount(inv.amount)} | ${inv.status || 'Pending'}`;
     }).join('\n\n');
 
+    // 3. Find authentic PDF document to send
+    let primaryPdfUrl = null;
+    let primaryPdfName = null;
+
+    // Check invoices for direct pdf_url
+    for (const inv of invoices) {
+      const url = inv.pdf_url || inv.metadata?.pdf_url;
+      if (url && url.startsWith('http')) {
+        primaryPdfUrl = url;
+        const safeNum = (inv.invoice_number || inv.tally_voucher_number || 'Invoice').replace(/[^a-zA-Z0-9_-]/g, '_');
+        primaryPdfName = `Invoice_${safeNum}.pdf`;
+        break;
+      }
+    }
+
+    // Fallback: check recent outbound statement/invoice PDF sent in this conversation
+    if (!primaryPdfUrl && conversationId) {
+      try {
+        const { data: recentDoc } = await supabase
+          .from('whatsapp_messages')
+          .select('media_url')
+          .eq('conversation_id', conversationId)
+          .eq('direction', 'outbound')
+          .eq('message_type', 'document')
+          .not('media_url', 'is', null)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (recentDoc?.media_url && recentDoc.media_url.startsWith('http')) {
+          primaryPdfUrl = recentDoc.media_url;
+          const safeCust = (matchedCompanyName || 'Account').replace(/[^a-zA-Z0-9_-]/g, '_');
+          primaryPdfName = `Statement_${safeCust}.pdf`;
+        }
+      } catch (docErr) {}
+    }
+
     const summaryMsg = [
-      `${salutation} 📄 Here are your invoice records:\n`,
+      `${salutation} 📄 Here is your official account billing & ledger records:\n`,
       invLines,
       `\n📊 *Summary:*`,
       `• Total Outstanding: *${fmtAmount(totalDue)}*`,
       totalPaid > 0 ? `• Paid Till Date: *${fmtAmount(totalPaid)}*` : null,
       overdue > 0 ? `• ⚠️ Overdue Bills: *${overdue}*` : null,
-      `\nPlease contact us if you have any queries! 📞`,
+      primaryPdfUrl ? `\n📄 Your official PDF document is attached below.` : `\n📄 Our accounts desk has been notified to share an updated copy with you.`,
+      `\nPlease contact us if you need any clarification or banking details! 📞`,
     ].filter(Boolean).join('\n');
 
     await sendWhatsAppMessage(fromPhone, summaryMsg);
 
-    // Send the most recent PDF(s) if available
-    let pdfsSent = 0;
-    for (const inv of invoices.slice(0, 2)) {  // Max 2 most recent PDFs
-      const pdfUrl = inv.pdf_url || inv.metadata?.pdf_url;
-      if (pdfUrl && pdfUrl.startsWith('http')) {
-        const safeName = (inv.invoice_number || 'Invoice').replace(/[^a-zA-Z0-9_-]/g, '_');
-        const caption = `Invoice ${inv.invoice_number} | ${fmtAmount(inv.amount)} | ${inv.status}`;
-        const docResult = await sendWhatsAppDocument(fromPhone, pdfUrl, `${safeName}.pdf`, caption);
-        if (docResult.success) pdfsSent++;
-        await new Promise(r => setTimeout(r, 400)); // small delay between sends
-      }
+    // 4. Dispatch PDF document if available
+    let pdfSent = false;
+    if (primaryPdfUrl) {
+      await new Promise(r => setTimeout(r, 600)); // Small delay between text and document
+      const caption = `Official Statement / Tax Invoice — ${matchedCompanyName || 'Sobhainfra Tech'}`;
+      const docRes = await sendWhatsAppDocument(fromPhone, primaryPdfUrl, primaryPdfName || 'Statement_Invoice.pdf', caption);
+      pdfSent = Boolean(docRes.success);
     }
 
-    // Log outbound message
+    // 5. Log outbound message to conversation
     if (conversationId) {
       try {
         await supabase.from('whatsapp_messages').insert([{
@@ -474,13 +577,21 @@ async function handleInvoiceRequest(supabase, fromPhone, contactName, conversati
           conversation_id: conversationId,
           direction: 'outbound',
           sender_type: 'system',
-          body: `[Invoice Request Fulfilled] ${invoices.length} bill(s) sent. PDFs sent: ${pdfsSent}`,
-          status: 'sent',
+          message_type: pdfSent ? 'document' : 'text',
+          body: summaryMsg,
+          media_url: pdfSent ? primaryPdfUrl : null,
+          status: 'delivered',
         }]);
-      } catch {}
+
+        await supabase.from('whatsapp_conversations').update({
+          last_message_text: summaryMsg.slice(0, 150),
+          last_message_at: new Date().toISOString(),
+          unread_count: 0,
+        }).eq('id', conversationId);
+      } catch (logErr) {}
     }
 
-    console.log(JSON.stringify({ step: 'invoice_request', invoicesFound: invoices.length, pdfsSent }));
+    console.log(JSON.stringify({ step: 'invoice_request_fulfilled', matchedCompany: matchedCompanyName, invoicesCount: invoices.length, pdfSent }));
     return true; // handled — skip AI
   } catch (err) {
     console.warn(JSON.stringify({ step: 'invoice_request', error: err.message }));

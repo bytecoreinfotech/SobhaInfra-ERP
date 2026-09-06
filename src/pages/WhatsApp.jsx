@@ -148,8 +148,17 @@ const WhatsApp = () => {
       }
       if (selectedConvRef.current?.id) {
         const liveMsgs = await fetchLiveMessages(selectedConvRef.current.id);
-        if (liveMsgs.length > 0) {
-          setMessages(liveMsgs);
+        if (liveMsgs && liveMsgs.length > 0) {
+          setMessages(prev => {
+            if (
+              prev.length === liveMsgs.length &&
+              prev[prev.length - 1]?.id === liveMsgs[liveMsgs.length - 1]?.id &&
+              prev[prev.length - 1]?.status === liveMsgs[liveMsgs.length - 1]?.status
+            ) {
+              return prev;
+            }
+            return liveMsgs;
+          });
         }
       }
     }, 4000);
@@ -193,6 +202,7 @@ const WhatsApp = () => {
 
   useEffect(() => {
     if (selectedConv?.id) {
+      isUserScrolledUpRef.current = false;
       loadMessages(selectedConv.id);
       setConversations(prev => prev.map(c => c.id === selectedConv.id ? { ...c, unread_count: 0 } : c));
       if (supabase) {
@@ -204,8 +214,20 @@ const WhatsApp = () => {
   }, [selectedConv?.id]);
 
   const messagesEndRef = useRef(null);
+  const chatContainerRef = useRef(null);
+  const isUserScrolledUpRef = useRef(false);
+
+  const handleChatScroll = (e) => {
+    const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
+    const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+    isUserScrolledUpRef.current = distanceFromBottom > 120;
+  };
+
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    // Only auto-scroll to bottom if user has NOT scrolled up to read earlier history
+    if (!isUserScrolledUpRef.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [messages]);
 
   const handleFileSelect = (file) => {
@@ -350,10 +372,14 @@ const WhatsApp = () => {
       clearAttachment();
 
       if (newMsg) {
+        isUserScrolledUpRef.current = false;
         setMessages(prev => [...prev, newMsg]);
         if (selectedConv.conversation_mode === 'AI ACTIVE') {
           handleModeChange('HUMAN ACTIVE');
         }
+        setTimeout(() => {
+          messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        }, 50);
       }
     } catch (err) {
       console.error('[WhatsApp Page] Send error:', err);
@@ -1079,7 +1105,12 @@ const WhatsApp = () => {
                 </div>
 
                 {/* Messages List */}
-                <div className="whatsapp-chat-messages" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.85rem', flex: 1, overflowY: 'auto', background: 'var(--bg-primary)' }}>
+                <div
+                  ref={chatContainerRef}
+                  onScroll={handleChatScroll}
+                  className="whatsapp-chat-messages"
+                  style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.85rem', flex: 1, overflowY: 'auto', background: 'var(--bg-primary)' }}
+                >
                   {messages.map(m => {
                     const isOutbound = m.direction === 'outbound';
                     const parsed = parseMessageMedia(m);
