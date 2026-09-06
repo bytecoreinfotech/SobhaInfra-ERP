@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   X, Send, ShieldCheck, AlertTriangle, FileText, CheckCircle2,
   RefreshCw, Sparkles, MessageCircle, ExternalLink, Building2,
-  Calendar, IndianRupee, Clock, ArrowRight
+  Calendar, IndianRupee, Clock, ArrowRight, Pencil
 } from 'lucide-react';
 import { useCompany } from '../context/CompanyContext';
 
@@ -26,6 +26,10 @@ export default function PaymentReminderModal({
   const effectiveInvoices = isConsolidated ? invoices : (invoice ? [invoice] : []);
   const primaryInvoice = invoice || effectiveInvoices[0];
 
+  const defaultPhone = customer?.contact_number || primaryInvoice?._verified_phone || primaryInvoice?.client_phone || '';
+  const [targetPhone, setTargetPhone] = useState(defaultPhone);
+  const [isEditingPhone, setIsEditingPhone] = useState(false);
+
   const [selectedTemplateKey, setSelectedTemplateKey] = useState(isConsolidated ? 'consolidated' : 'gentle');
   const [customMessage, setCustomMessage] = useState('');
   const [attachPdf, setAttachPdf] = useState(true);
@@ -36,7 +40,7 @@ export default function PaymentReminderModal({
 
   const clientName = customer?.company_name || customer?.customer_name || primaryInvoice?.client_name || primaryInvoice?.party_name || 'Valued Client';
   const contactPerson = customer?.contact_person || primaryInvoice?._contact_person || '';
-  const verifiedPhone = customer?.contact_number || primaryInvoice?._verified_phone || primaryInvoice?.client_phone || '';
+  const verifiedPhone = targetPhone || defaultPhone;
   const invNumber = primaryInvoice?.invoice_number || primaryInvoice?.tally_voucher_number || 'N/A';
 
   const totalAmount = effectiveInvoices.reduce((s, i) => s + Number(i.amount || 0), 0);
@@ -281,14 +285,40 @@ export default function PaymentReminderModal({
                 )}
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                <span style={{
-                  fontSize: '0.72rem', fontWeight: 600, padding: '0.2rem 0.55rem',
-                  borderRadius: 20, background: 'rgba(16, 185, 129, 0.12)', color: '#10b981',
-                  border: '1px solid rgba(16, 185, 129, 0.3)',
-                  display: 'inline-flex', alignItems: 'center', gap: '0.25rem'
-                }}>
-                  <ShieldCheck size={12} /> {verifiedPhone}
-                </span>
+                {isEditingPhone ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                    <input
+                      type="tel"
+                      value={targetPhone}
+                      onChange={e => setTargetPhone(e.target.value)}
+                      placeholder="+91..."
+                      className="form-control"
+                      style={{ fontSize: '0.74rem', padding: '0.18rem 0.4rem', width: 130, height: 26 }}
+                      autoFocus
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setIsEditingPhone(false)}
+                      className="btn btn-secondary btn-sm"
+                      style={{ fontSize: '0.68rem', padding: '0.15rem 0.45rem', height: 26 }}
+                    >
+                      Done
+                    </button>
+                  </div>
+                ) : (
+                  <span
+                    onClick={() => setIsEditingPhone(true)}
+                    title="Click to edit or set test recipient phone number"
+                    style={{
+                      fontSize: '0.72rem', fontWeight: 600, padding: '0.2rem 0.55rem',
+                      borderRadius: 20, background: 'rgba(16, 185, 129, 0.12)', color: '#10b981',
+                      border: '1px solid rgba(16, 185, 129, 0.3)',
+                      display: 'inline-flex', alignItems: 'center', gap: '0.3rem', cursor: 'pointer'
+                    }}
+                  >
+                    <ShieldCheck size={12} /> {verifiedPhone || 'Set Test Phone'} <Pencil size={10} style={{ opacity: 0.7 }} />
+                  </span>
+                )}
                 <span className={`badge ${isOverdue ? 'badge-danger' : 'badge-warning'}`} style={{ fontSize: '0.72rem' }}>
                   {isOverdue ? `Overdue (${overdueDays}d)` : 'Pending'}
                 </span>

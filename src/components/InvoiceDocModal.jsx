@@ -152,7 +152,8 @@ export default function InvoiceDocModal({
   const approxDistance = meta.approx_distance || `${140 + (seed % 80)} KM`;
   const transporterName = meta.transporter_name || 'SHOBHA TRANSPORT';
 
-  const recipientPhone = invoice._verified_phone || invoice.client_phone;
+  const recipientPhone = invoice._verified_phone || invoice.client_phone || '';
+  const [targetPhone, setTargetPhone] = useState(recipientPhone);
 
   // ── Dynamic Scannable QR Code Payloads (Order Specific) ────────────────────
   const einvoiceQrPayload = JSON.stringify({
@@ -288,8 +289,9 @@ export default function InvoiceDocModal({
 
   // ── On-Demand Send via WhatsApp ─────────────────────────────────────────────
   const handleSendWhatsApp = async () => {
-    if (!recipientPhone) {
-      setStatusMessage({ type: 'error', text: 'No verified phone number found for this customer.' });
+    const activePhone = targetPhone || recipientPhone;
+    if (!activePhone) {
+      setStatusMessage({ type: 'error', text: 'Please enter a target phone number for WhatsApp dispatch.' });
       return;
     }
 
@@ -315,6 +317,7 @@ export default function InvoiceDocModal({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           invoiceId: invoice.id,
+          phone: activePhone,
           pdfUrl: publicPdfUrl,
         }),
       });
@@ -323,7 +326,7 @@ export default function InvoiceDocModal({
       if (data.success) {
         setStatusMessage({
           type: 'success',
-          text: `Exact 2-page PDF invoice sent successfully to ${recipientPhone}!`,
+          text: `Exact 2-page PDF invoice sent successfully to ${activePhone}!`,
         });
         if (onSendSuccess) onSendSuccess(invoice.id, publicPdfUrl);
       } else {
@@ -478,18 +481,35 @@ export default function InvoiceDocModal({
               <ExternalLink size={13} /> Open / Print
             </button>
 
-            {/* WhatsApp Send Button */}
-            {recipientPhone && (
+            {/* WhatsApp Send Button with editable test phone */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+              <input
+                type="tel"
+                value={targetPhone}
+                onChange={e => setTargetPhone(e.target.value)}
+                placeholder="+91..."
+                title="Target WhatsApp Phone (edit to test on any number)"
+                style={{
+                  fontSize: '0.74rem',
+                  padding: '0.22rem 0.45rem',
+                  borderRadius: '6px',
+                  border: '1px solid rgba(255,255,255,0.25)',
+                  background: 'rgba(0,0,0,0.3)',
+                  color: '#ffffff',
+                  width: 125,
+                  height: 28,
+                }}
+              />
               <button
                 onClick={handleSendWhatsApp}
-                disabled={isSendingWhatsApp}
+                disabled={isSendingWhatsApp || !targetPhone}
                 className="btn btn-whatsapp btn-sm"
-                style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.75rem', padding: '0.35rem 0.85rem' }}
+                style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.75rem', padding: '0.35rem 0.85rem', height: 28 }}
               >
                 {isSendingWhatsApp ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
-                Send to WhatsApp
+                Send PDF
               </button>
-            )}
+            </div>
 
             <button
               onClick={onClose}
