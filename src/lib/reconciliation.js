@@ -67,13 +67,12 @@ export function isSalesVoucher(inv) {
   const num = (inv?.invoice_number || inv?.tally_voucher_number || '').toLowerCase();
   const vtype = (inv?.metadata?.voucher_type || inv?.voucher_type || '').toLowerCase();
   const dir = (inv?.metadata?.direction || inv?.direction || '').toLowerCase();
-  if (num.startsWith('ledger-') || /^(rec|rcpt|rct|sb-r)-?/i.test(num)) return false;
-  if (vtype.includes('receipt') || dir === 'received') return false;
+  if (num.startsWith('ledger-') || num.startsWith('op-') || /^(rec|rcpt|rct|sb-r)-?/i.test(num)) return false;
+  if (vtype.includes('receipt') || vtype.includes('opening balance') || dir === 'received') return false;
   return (
-    ['sales', 'sales order', 'tax invoice', 'opening balance'].some(t => vtype.includes(t)) ||
+    ['sales', 'sales order', 'tax invoice'].some(t => vtype.includes(t)) ||
     /^(srp|sb)\//i.test(num) ||
     /^(inv|tax)\//i.test(num) ||
-    num.startsWith('op-') ||
     dir === 'receivable' ||
     dir === 'outgoing'
   );
@@ -173,58 +172,54 @@ export function deduplicateReceipts(rawReceipts = []) {
 export function reconcileCustomerInvoices(rawInvoices = []) {
   if (!Array.isArray(rawInvoices) || rawInvoices.length === 0) return [];
 
-  // Group by normalized party name
+  // Group by company and normalized party name so companies never collide
   const partyMap = new Map();
   for (const inv of rawInvoices) {
+    const comp = (inv.company_name || inv.tally_company || '').trim().toUpperCase();
     const p = normalizePartyName(inv.client_name);
-    if (!partyMap.has(p)) {
-      partyMap.set(p, []);
+    const key = `${comp}:::${p}`;
+    if (!partyMap.has(key)) {
+      partyMap.set(key, []);
     }
-    partyMap.get(p).push(inv);
+    partyMap.get(key).push(inv);
   }
 
   const reconciledList = [];
 
-  for (const [party, records] of partyMap.entries()) {
+  for (const [key, records] of partyMap.entries()) {
     // 1. Identify ledger closing balance marker (if any)
     const ledgerMarker = records.find(r => 
       (r.invoice_number || '').toUpperCase().startsWith('LEDGER-')
     );
     const tallyClosingBalance = ledgerMarker ? Number(ledgerMarker.amount || 0) : null;
 
-    // 2. Identify Sales invoices and Receipts (excluding LEDGER-* markers)
+    // 2. Identify Sales invoices and Receipts (excluding LEDGER-* and OP-* markers)
     const salesInvoices = [];
     const rawReceipts = [];
     const otherVouchers = [];
 
     for (const r of records) {
       const num = (r.invoice_number || '').toUpperCase();
-      if (num.startsWith('LEDGER-')) {
+      if (num.startsWith('LEDGER-') || num.startsWith('OP-')) {
         otherVouchers.push(r);
         continue;
       }
 
-      const vtype = (r.metadata?.voucher_type || r.voucher_type || '').toLowerCase();
-      const dir = (r.metadata?.direction || r.direction || '').toLowerCase();
-
-      const isSales = 
-        vtype.includes('sales') || 
-        vtype.includes('tax invoice') || 
-        /^(srp|sb)\//i.test(num) || 
-        /^(inv|tax)\//i.test(num) || 
-        dir === 'receivable';
-
-      const isReceipt = 
-        vtype.includes('receipt') || 
-        /^(rec|rcpt|rct)-/i.test(num) || 
-        dir === 'received';
-
-      if (isSales && !isReceipt) {
+      if (isSalesVoucher(r)) {
         salesInvoices.push({ ...r });
-      } else if (isReceipt) {
-        rawReceipts.push({ ...r });
       } else {
-        otherVouchers.push({ ...r });
+        const vtype = (r.metadata?.voucher_type || r.voucher_type || '').toLowerCase();
+        const dir = (r.metadata?.direction || r.direction || '').toLowerCase();
+        const isReceipt = 
+          vtype.includes('receipt') || 
+          /^(rec|rcpt|rct)-/i.test(num) || 
+          dir === 'received';
+
+        if (isReceipt) {
+          rawReceipts.push({ ...r });
+        } else {
+          otherVouchers.push({ ...r });
+        }
       }
     }
 
@@ -241,8 +236,8 @@ export function reconcileCustomerInvoices(rawInvoices = []) {
     // 3. Match Explicit Bill Allocations (Agst Ref)
     const salesMap = new Map();
     for (const s of salesInvoices) {
-      const key = (s.invoice_number || s.tally_voucher_number || '').toUpperCase().trim();
-      if (key) salesMap.set(key, s);
+      const k = (s.invoice_number || s.tally_voucher_number || '').toUpperCase().trim();
+      if (k) salesMap.set(k, s);
     }
     const salesPaid = new Map(salesInvoices.map(s => [s.id, 0]));
     let unallocatedReceiptAmt = 0;
@@ -295,10 +290,6 @@ export function reconcileCustomerInvoices(rawInvoices = []) {
     }
 
     // 5. Align with Tally Closing Balance:
-    // Determine effective closing balance accounting for transactions
-    const markerDate = ledgerMarker ? (ledgerMarker.invoice_date || '') : '';
-    const explicitOpening = Number(ledgerMarker?.metadata?.opening_balance || 0);
-
     let effectiveClosingBalance = tallyClosingBalance;
     let priorOpening = 0;
 
@@ -306,11 +297,6 @@ export function reconcileCustomerInvoices(rawInvoices = []) {
       const totalSalesAmt = salesInvoices.reduce((sum, s) => sum + Number(s.amount || 0), 0);
       const totalReceiptsAmt = receipts.reduce((sum, r) => sum + Number(r.amount || 0), 0);
       const netCurrent = totalSalesAmt - totalReceiptsAmt;
-
-      // Mathematical derivation of prior-period opening balance:
-      // In double-entry accounting: Closing Balance = Opening Balance + Debits - Credits
-      // => Opening Balance = Closing Balance - (Debits - Credits)
-      // When Tally master closing balance is available, it is the ground truth.
       priorOpening = Math.round((tallyClosingBalance - netCurrent) * 100) / 100;
       effectiveClosingBalance = tallyClosingBalance;
     }
@@ -345,56 +331,16 @@ export function reconcileCustomerInvoices(rawInvoices = []) {
             inv.paid_amount = Number(inv.amount || 0);
           }
         }
-      } else if (priorOpening > 0.5) {
-        // Prepend opening balance invoice so pending sum equals effective closing balance
-        const cleanPartyCode = party.slice(0, 12).replace(/[^A-Z0-9]/gi, '').toUpperCase();
-        const opInvoice = {
-          id: `op-${party.replace(/\s+/g, '-').toLowerCase()}`,
-          invoice_number: `OP-${cleanPartyCode}`,
-          tally_voucher_number: `OP-${cleanPartyCode}`,
-          client_name: records[0]?.client_name || party,
-          amount: priorOpening,
-          status: 'Overdue',
-          due_date: '2026-04-01',
-          invoice_date: '2026-04-01',
-          pending_amount: priorOpening,
-          paid_amount: 0,
-          voucher_type: 'Opening Balance',
-          direction: 'receivable',
-          company_name: records[0]?.company_name || 'SHOBHA READY PLAST',
-          metadata: {
-            voucher_type: 'Opening Balance',
-            direction: 'receivable',
-            pending_amount: priorOpening,
-            is_opening_balance: true,
-            description: 'Opening Balance brought forward from prior financial years'
-          },
-          _reconciled: true,
-        };
-        salesInvoices.unshift(opInvoice);
-
-        // Re-align if total pending exceeds effective closing balance
-        const updatedPendingSum = salesInvoices.reduce((sum, inv) => sum + (inv.status !== 'Paid' ? Number(inv.pending_amount || 0) : 0), 0);
-        if (updatedPendingSum > effectiveClosingBalance) {
-          let allowed = effectiveClosingBalance;
-          for (let i = salesInvoices.length - 1; i >= 0; i--) {
-            const inv = salesInvoices[i];
-            const curP = Number(inv.pending_amount || 0);
-            if (curP <= 0) continue;
-            if (allowed >= curP) {
-              allowed -= curP;
-            } else if (allowed > 0) {
-              inv.pending_amount = Math.round(allowed * 100) / 100;
-              inv.paid_amount = Math.round((Number(inv.amount || 0) - allowed) * 100) / 100;
-              allowed = 0;
-            } else {
-              inv.status = 'Paid';
-              inv.pending_amount = 0;
-              inv.paid_amount = Number(inv.amount || 0);
-            }
-          }
-        }
       }
+      // Note: If effectiveClosingBalance >= currentPendingSum, current bills retain their
+      // genuine pending balances. Prior opening balance is NOT injected as fake sales invoices.
+      // It is accounted for separately in ledger statements and KPI metrics.
+    }
+
+    // Attach customer opening and closing balance metadata to vouchers for reference
+    for (const s of salesInvoices) {
+      s._party_opening_balance = priorOpening;
+      s._party_closing_balance = effectiveClosingBalance;
     }
 
     // Receipts are always Paid / Settled
@@ -582,17 +528,8 @@ export function getCustomerPendingBills(partyName, allInvoices = []) {
     if (num.startsWith('LEDGER-')) return false;
     if (normalizePartyName(inv.client_name) !== normParty) return false;
     
-    // Include sales invoices and opening balance entries that are not Paid and pending > 0
-    const vtype = (inv.metadata?.voucher_type || inv.voucher_type || '').toLowerCase();
-    const isSales = 
-      vtype.includes('sales') || 
-      vtype.includes('tax invoice') || 
-      vtype.includes('opening balance') || 
-      /^(srp|sb|op)\//i.test(num) || 
-      num.startsWith('OP-');
-      
-    if (!isSales) return false;
-
+    // Include sales invoices that are not Paid and pending > 0
+    if (!isSalesVoucher(inv)) return false;
     return inv.status !== 'Paid' && Number(inv.pending_amount ?? inv.amount) > 0;
   });
 
@@ -629,8 +566,25 @@ export function getCustomerPendingBills(partyName, allInvoices = []) {
     };
   });
 
+  // Include prior period opening balance as row 1 if applicable
+  const sampleVch = pendingBills[0] || reconciled.find(i => normalizePartyName(i.client_name) === normParty);
+  const priorOp = Number(sampleVch?._party_opening_balance || 0);
+  if (priorOp > 0.5) {
+    bills.unshift({
+      date: '01 Apr 26',
+      ref: 'Opening Balance (Prior Period)',
+      opening: priorOp,
+      pending: priorOp,
+      due: '01 Apr 26',
+      overdue: getDaysOverdue('2026-04-01'),
+      isOpeningBalance: true,
+    });
+    totalOpening += priorOp;
+    totalPending += priorOp;
+  }
+
   return {
-    partyName: pendingBills[0]?.client_name || partyName,
+    partyName: sampleVch?.client_name || partyName,
     bills,
     totalOpening,
     totalPending,

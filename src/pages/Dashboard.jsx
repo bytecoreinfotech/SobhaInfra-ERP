@@ -191,18 +191,22 @@ const Dashboard = () => {
   const hotLeads = leads.filter(l => l.status === 'Hot').length;
   const convertedLeads = leads.filter(l => l.status === 'Converted').length;
 
-  // Filter invoices strictly to Google Sheet verified customers:
-  // 1. Exclude LEDGER- closing balances
-  // 2. Exclude vendor payables
-  // 3. Strictly require match in customer_master (Google Sheet directory)
+  // Customer Invoices:
+  // 1. Exclude LEDGER- closing balances and OP- fake records
+  // 2. Exclude vendor payables (purchases, payments out)
+  // 3. Annotate _is_sheet_customer for reference
   const customerInvoices = useMemo(() => {
-    if (!customerIndex || !customerIndex.all || customerIndex.all.length === 0) return [];
     return invoices.filter(inv => {
       const num = (inv?.invoice_number || inv?.tally_voucher_number || '').toUpperCase();
-      if (num.startsWith('LEDGER-')) return false;
+      if (num.startsWith('LEDGER-') || num.startsWith('OP-')) return false;
       if (getDirection(inv).isVendor) return false;
-      const match = matchCustomer(inv, customerIndex);
-      return match.status === 'verified';
+      return true;
+    }).map(inv => {
+      const match = customerIndex ? matchCustomer(inv, customerIndex) : { status: 'unverified' };
+      return {
+        ...inv,
+        _is_sheet_customer: match.status === 'verified',
+      };
     });
   }, [invoices, customerIndex]);
 
@@ -218,6 +222,32 @@ const Dashboard = () => {
   const overdueAmount = customerSales.filter(i => i.status === 'Overdue').reduce((s, i) => s + Number(i.pending_amount ?? i.amount ?? 0), 0);
   const paidInvoicesCount = customerSales.filter(i => i.status === 'Paid').length;
   const collectionRate = totalInvoiced > 0 ? ((totalPaid / totalInvoiced) * 100).toFixed(1) : '0.0';
+
+  // Total Prior Opening Balance across active customers
+  const totalOpeningBalance = useMemo(() => {
+    const seen = new Set();
+    let sum = 0;
+    for (const inv of customerSales) {
+      const p = (inv.client_name || '').trim().toUpperCase();
+      if (!seen.has(p)) {
+        seen.add(p);
+        sum += Number(inv._party_opening_balance || 0);
+      }
+    }
+    // Also include customer closing balances from master ledgers not represented in customerSales
+    const ledgers = invoices.filter(i => {
+      const num = (i?.invoice_number || '').toUpperCase();
+      return num.startsWith('LEDGER-') && !getDirection(i).isVendor;
+    });
+    for (const l of ledgers) {
+      const p = (l.client_name || '').trim().toUpperCase();
+      if (!seen.has(p)) {
+        seen.add(p);
+        sum += Number(l.amount || 0);
+      }
+    }
+    return Math.max(0, sum);
+  }, [customerSales, invoices]);
 
   const tasksDueCt = taskList.filter(t => t.status !== 'Done').length;
   const totalWaSent = campaigns.reduce((s, c) => s + (c.total_sent || c.sent || 0), 0);
@@ -323,7 +353,9 @@ const Dashboard = () => {
       `"Total Collected Paid (${fyLabel})","₹${fyTotalPaid.toLocaleString('en-IN')}"`,
       `"Not Yet Due Receivables","₹${pendingAmount.toLocaleString('en-IN')}"`,
       `"Overdue Receivables","₹${overdueAmount.toLocaleString('en-IN')}"`,
-      `"Total Outstanding Receivables","₹${(pendingAmount + overdueAmount).toLocaleString('en-IN')}"`,
+      `"Current Bills Outstanding","₹${(pendingAmount + overdueAmount).toLocaleString('en-IN')}"`,
+      `"Prior Period Opening Balance","₹${totalOpeningBalance.toLocaleString('en-IN')}"`,
+      `"Total Outstanding (Current Bills + Op. Bal)","₹${(pendingAmount + overdueAmount + totalOpeningBalance).toLocaleString('en-IN')}"`,
       `"Overdue Invoices Count","${overdueInvoices}"`,
       `"Collection Rate","${collectionRate}%"`,
       `"Active CRM Leads","${totalLeads}"`,
@@ -441,7 +473,7 @@ const Dashboard = () => {
             <div className="stat-card animate-slide-up" style={{ '--card-accent': 'var(--danger)' }}>
               <div className="stat-header">
                 <div>
-                  <div className="stat-label">Outstanding Receivables</div>
+                  <div className="stat-label">Current Bills Outstanding</div>
                   <div className="stat-value">{fmtAmount(overdueAmount + pendingAmount)}</div>
                 </div>
                 <div className="stat-icon" style={{ background: 'var(--danger-bg)' }}>
@@ -454,7 +486,13 @@ const Dashboard = () => {
                 ) : (
                   <span className="stat-trend up" style={{ color: 'var(--success)' }}><CheckCircle2 size={13} /> 0 Overdue</span>
                 )}
-                <span className="stat-period">{fmtAmount(pendingAmount)} Not Yet Due</span>
+                {totalOpeningBalance > 0 ? (
+                  <span className="stat-period" title={`Opening Balance (Prior FY): ₹${totalOpeningBalance.toLocaleString('en-IN')}`}>
+                    Op. Bal: {fmtAmount(totalOpeningBalance)}
+                  </span>
+                ) : (
+                  <span className="stat-period">{fmtAmount(pendingAmount)} Not Yet Due</span>
+                )}
               </div>
             </div>
           )}

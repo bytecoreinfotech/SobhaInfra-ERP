@@ -132,15 +132,19 @@ const Reports = () => {
         });
   }, [reconciledInvoices, activeCompany, isConsolidated]);
 
-  // ── Customer-only invoices (strictly verified against Google Sheet customer directory) ──
+  // ── Customer-only invoices (excludes vendor payables and LEDGER- records) ──
   const invoices = useMemo(() => {
-    if (!customerIndex || !customerIndex.all || customerIndex.all.length === 0) return [];
     return companyFilteredInvoices.filter(inv => {
       const num = (inv?.invoice_number || inv?.tally_voucher_number || '').toUpperCase();
-      if (num.startsWith('LEDGER-')) return false;
+      if (num.startsWith('LEDGER-') || num.startsWith('OP-')) return false;
       if (getDirection(inv).isVendor) return false;
-      const match = matchCustomer(inv, customerIndex);
-      return match.status === 'verified';
+      return true;
+    }).map(inv => {
+      const match = customerIndex ? matchCustomer(inv, customerIndex) : { status: 'unverified' };
+      return {
+        ...inv,
+        _is_sheet_customer: match.status === 'verified',
+      };
     });
   }, [companyFilteredInvoices, customerIndex]);
 

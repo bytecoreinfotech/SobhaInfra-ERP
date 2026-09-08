@@ -7,13 +7,18 @@
  * Tier 4: Levenshtein similarity >= 85% → auto-verified
  */
 
-const SUFFIX_PATTERN = /\b(private\s+limited|pvt\.?\s*ltd\.?|ltd\.?|llp|inc\.?|corp\.?|corporation|enterprises?|enterprise|traders?|trading\s+co\.?|trading\s+company|trading|agency|agencies|associates?|builders?|developer|developers?|infrasolutions?|infracon|infratech|infra|constructions?|construction|contractor|contractors?|suppliers?|supplier|store|depot|co\.?|huf|aop|lp|m\/s)\b/gi;
+const SUFFIX_PATTERN = /\b(private\s+limited|pvt\.?\s*ltd\.?|ltd\.?|llp|inc\.?|corp\.?|corporation|enterprises?|enterprise|traders?|trading\s+co\.?|trading\s+company|trading|agency|agencies|associates?|builders?|developer|developers?|infrasolutions?|infracon|infratech|infra|constructions?|construction|contractor|contractors?|suppliers?|supplier|store|depot|co\.?|company|huf|aop|lp|m\/s)\b/gi;
+const PREFIX_PATTERN = /^(m\/s\.?|ms\.?|shree\s+|shri\s+)/i;
 
 export function normalizeName(name) {
   if (!name || typeof name !== 'string') return '';
   let n = name.toLowerCase().trim();
+  n = n.replace(PREFIX_PATTERN, '');
   n = n.replace(/\s*&\s*/g, ' and ');
   n = n.replace(SUFFIX_PATTERN, ' ');
+  // Phonetic normalization for common spelling variants
+  n = n.replace(/livspace/g, 'lifespace');
+  n = n.replace(/ph/g, 'f');
   n = n.replace(/[^a-z0-9]/g, '');
   return n;
 }
@@ -45,8 +50,9 @@ export function buildCustomerIndex(customers) {
   for (const c of customers) {
     if (!c.company_name) continue;
     exactMap.set(c.company_name.toLowerCase().trim(), c);
-    const nk = c.normalized_key || normalizeName(c.company_name);
+    const nk = normalizeName(c.company_name);
     if (nk) normMap.set(nk, c);
+    if (c.normalized_key && c.normalized_key !== nk) normMap.set(c.normalized_key, c);
     if (c.contact_number) {
       const digits = c.contact_number.replace(/\D/g, '').slice(-10);
       if (digits.length === 10) phoneMap.set(digits, c);
@@ -91,15 +97,15 @@ export function matchCustomer(inv, index) {
     return res;
   }
 
-  // Tier 4: Fuzzy Levenshtein >= 85% (Optimized with length pruning for large customer scale)
-  if (normKey && normKey.length >= 4) {
+  // Tier 4: Fuzzy Levenshtein >= 80% (Optimized with length pruning for large customer scale)
+  if (normKey && normKey.length >= 3) {
     let bestScore = 0, bestCustomer = null;
     const keyLen = normKey.length;
     for (const c of all) {
-      const cNorm = c.normalized_key || normalizeName(c.company_name);
-      if (!cNorm || cNorm.length < 4) continue;
-      // Mathematical prune: if length difference > 3, similarity cannot be >= 85%
-      if (Math.abs(keyLen - cNorm.length) > 3) continue;
+      const cNorm = normalizeName(c.company_name) || c.normalized_key;
+      if (!cNorm || cNorm.length < 3) continue;
+      // Mathematical prune: if length difference > 4, similarity cannot be >= 80%
+      if (Math.abs(keyLen - cNorm.length) > 4) continue;
 
       const score = levenshteinSimilarity(normKey, cNorm);
       if (score > bestScore) {
@@ -108,7 +114,7 @@ export function matchCustomer(inv, index) {
       }
       if (score >= 0.95) break; // Near-perfect match, exit early
     }
-    if (bestScore >= 0.85 && bestCustomer) {
+    if (bestScore >= 0.80 && bestCustomer) {
       const res = { status: 'verified', customer: bestCustomer };
       if (index.memoCache) index.memoCache.set(cacheKey, res);
       return res;

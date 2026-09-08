@@ -7,7 +7,7 @@ import {
   ChevronDown, ChevronUp, Users, Download, Printer
 } from 'lucide-react';
 import { getInvoices, getCustomerMaster, triggerSheetSync, getSheetSyncLog, invalidateInvoicesCache, invalidateCustomerMasterCache } from '../lib/db';
-import { reconcileCustomerInvoices } from '../lib/reconciliation';
+import { reconcileCustomerInvoices, isSalesVoucher } from '../lib/reconciliation';
 import { buildCustomerIndex, matchCustomer } from '../lib/customerMatcher';
 import { useCompany } from '../context/CompanyContext';
 import InvoiceDocModal from '../components/InvoiceDocModal';
@@ -118,31 +118,36 @@ const Payments = () => {
     });
   }, [allInvoices, activeCompany, isConsolidated]);
 
-  // Exclude non-transactional ledger closing balance lines
+  // Exclude non-transactional ledger closing balance lines and OP- fake invoices; strictly sales vouchers
   const transactionalInvoices = useMemo(() => {
     return invoices.filter(inv => {
       const num = (inv?.invoice_number || inv?.tally_voucher_number || '').toUpperCase();
-      return !num.startsWith('LEDGER-');
+      if (num.startsWith('LEDGER-') || num.startsWith('OP-')) return false;
+      return isSalesVoucher(inv);
     });
   }, [invoices]);
 
-  // Enriched Customer Invoices: If matched in Google Sheet, they are guaranteed CUSTOMERS (never vendor)
+  // Enriched Customer Invoices: All legitimate customer sales bills
   const enrichedInvoices = useMemo(() => {
     return transactionalInvoices
       .map(inv => {
         const match = matchCustomer(inv, customerIndex);
-        if (match.status !== 'verified' || !match.customer) return null;
+        const isSheetVerified = match.status === 'verified' && !!match.customer;
+        const sheetCustomer = isSheetVerified ? match.customer : null;
 
-        const rawPhone = (match.customer.contact_number || '').trim();
-        const digits = rawPhone.replace(/\D/g, '');
+        const sheetPhone = (sheetCustomer?.contact_number || '').trim();
+        const tallyPhone = (inv.client_phone || '').trim();
+        const activePhone = sheetPhone || tallyPhone;
+        const digits = activePhone.replace(/\D/g, '');
         const hasVerifiedPhone = digits.length >= 10;
 
         return {
           ...inv,
-          _sheet_customer: match.customer,
+          _sheet_customer: sheetCustomer,
+          _is_sheet_customer: isSheetVerified,
           _has_verified_phone: hasVerifiedPhone,
-          _verified_phone: hasVerifiedPhone ? rawPhone : '', // STRICTLY Google Sheet phone
-          _contact_person: match.customer.contact_person || '',
+          _verified_phone: hasVerifiedPhone ? activePhone : '',
+          _contact_person: sheetCustomer?.contact_person || '',
         };
       })
       .filter(Boolean);

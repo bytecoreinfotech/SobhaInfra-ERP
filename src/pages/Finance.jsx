@@ -201,6 +201,7 @@ const Finance = () => {
   const [customerMaster, setCustomerMaster] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('All');
+  const [sheetCustomerFilter, setSheetCustomerFilter] = useState('all'); // 'all' | 'verified_only' | 'tally_only'
   const [search, setSearch] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
@@ -217,7 +218,7 @@ const Finance = () => {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [filter, search, dateFrom, dateTo, sortBy, financeView, activeTab, dateFilterField, activeCompanyId]);
+  }, [filter, sheetCustomerFilter, search, dateFrom, dateTo, sortBy, financeView, activeTab, dateFilterField, activeCompanyId]);
 
   // Tally Connector State
   const [tallyStatus, setTallyStatus] = useState(null);
@@ -497,10 +498,10 @@ const Finance = () => {
 
   // ══════════════════════════════════════════════════════════════════════════
   // SPLIT: Customer Receivables (incoming) vs Vendor Payables (outgoing)
-  // Customer Receivables: Must strictly match Google Sheet customer master directory.
+  // Customer Receivables: Includes all sales invoices from Tally (with sheet verification tags)
   // Vendor Payables: 100% preserved for vendor bills and purchases.
   // ══════════════════════════════════════════════════════════════════════════
-  const customerInvoices = voucherOnlyInvoices.filter(i => !getDirection(i).isVendor && i._is_sheet_customer);
+  const customerInvoices = voucherOnlyInvoices.filter(i => !getDirection(i).isVendor);
   const vendorInvoices   = voucherOnlyInvoices.filter(i => getDirection(i).isVendor);
 
   // Active view determines which dataset feeds KPI cards and table
@@ -519,6 +520,32 @@ const Finance = () => {
   const totalOverdue  = activeBills.filter(i => i.status === 'Overdue').reduce((s, i) => s + Number(i.pending_amount ?? i.amount ?? 0), 0);
   const totalPending  = activeBills.filter(i => i.status === 'Pending').reduce((s, i) => s + Number(i.pending_amount ?? i.amount ?? 0), 0);
 
+  // Total Prior Opening Balance across active customers
+  const totalOpeningBalance = useMemo(() => {
+    if (financeView === 'payables') return 0;
+    const seen = new Set();
+    let sum = 0;
+    for (const inv of activeBills) {
+      const p = (inv.client_name || '').trim().toUpperCase();
+      if (!seen.has(p)) {
+        seen.add(p);
+        sum += Number(inv._party_opening_balance || 0);
+      }
+    }
+    // Also include customer closing balances from master ledgers not represented in activeBills
+    const ledgers = dateFilteredInvoices.filter(i => {
+      const num = (i?.invoice_number || '').toUpperCase();
+      return num.startsWith('LEDGER-') && !getDirection(i).isVendor;
+    });
+    for (const l of ledgers) {
+      const p = (l.client_name || '').trim().toUpperCase();
+      if (!seen.has(p)) {
+        seen.add(p);
+        sum += Number(l.amount || 0);
+      }
+    }
+    return Math.max(0, sum);
+  }, [activeBills, dateFilteredInvoices, financeView]);
 
   // 3. Search & Status Filter — also filtered by active financeView (receivables vs payables)
   const filtered = dateFilteredInvoices.filter(inv => {
@@ -526,8 +553,8 @@ const Finance = () => {
     const dirInfo = getDirection(inv);
     if (financeView === 'receivables') {
       if (dirInfo.isVendor) return false;
-      // Strictly exclude any party that is not verified in Google Sheet customer master
-      if (!inv._is_sheet_customer) return false;
+      if (sheetCustomerFilter === 'verified_only' && !inv._is_sheet_customer) return false;
+      if (sheetCustomerFilter === 'tally_only' && inv._is_sheet_customer) return false;
     }
     if (financeView === 'payables' && !dirInfo.isVendor) return false;
 
@@ -816,7 +843,7 @@ const Finance = () => {
           {/* KPI Summary Cards — dynamically show per active view */}
           <div className="stats-grid">
             {(financeView === 'receivables' ? [
-              { label: 'Total Billed to Customers', value: fmtCurrency(totalInvoiced), sub: `${activeBills.length} invoices`, icon: <DollarSign size={20} />, color: '#6366f1', bg: 'rgba(99,102,241,0.12)' },
+              { label: 'Total Billed to Customers', value: fmtCurrency(totalInvoiced), sub: `${activeBills.length} sales invoices (matches Tally)`, icon: <DollarSign size={20} />, color: '#6366f1', bg: 'rgba(99,102,241,0.12)' },
               { label: 'Collected (Paid)', value: fmtCurrency(totalPaid), sub: `${activeBills.filter(i => i.status === 'Paid').length} paid`, icon: <TrendingUp size={20} />, color: '#10b981', bg: 'rgba(16,185,129,0.12)' },
             ] : [
               { label: 'Total Vendor Bills', value: fmtCurrency(totalInvoiced), sub: `${activeBills.length} bills`, icon: <DollarSign size={20} />, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)' },
@@ -834,7 +861,7 @@ const Finance = () => {
               </div>
             ))}
 
-            {/* ═══ TOTAL OUTSTANDING BOX — groups Overdue + Not Yet Due ═══ */}
+            {/* ═══ TOTAL OUTSTANDING BOX — groups Current Bills + Prior Opening Balance ═══ */}
             <div style={{
               gridColumn: 'span 2',
               background: 'var(--bg-secondary)',
@@ -854,7 +881,8 @@ const Finance = () => {
                     {fmtCurrency(totalOverdue + totalPending)}
                   </div>
                   <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '0.1rem' }}>
-                    {activeBills.filter(i => i.status === 'Overdue' || i.status === 'Pending').length} unpaid {financeView === 'receivables' ? 'invoices' : 'bills'} — Outstanding = Overdue + Not Yet Due
+                    {activeBills.filter(i => i.status === 'Overdue' || i.status === 'Pending').length} unpaid {financeView === 'receivables' ? 'sales bills (Current Outstanding)' : 'bills'}
+                    {financeView === 'receivables' && totalOpeningBalance > 0 && ` • Prior Opening Balance: ${fmtCurrency(totalOpeningBalance)} • Total Tally Closing Balance: ${fmtCurrency(totalOverdue + totalPending + totalOpeningBalance)}`}
                   </div>
                 </div>
                 <div style={{
@@ -865,10 +893,10 @@ const Finance = () => {
                   <AlertTriangle size={22} style={{ color: '#ef4444' }} />
                 </div>
               </div>
-              <div style={{ display: 'flex', gap: '0.75rem' }}>
+              <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
                 {/* Overdue sub-card */}
                 <div style={{
-                  flex: 1,
+                  flex: 1, minWidth: 150,
                   background: 'rgba(239,68,68,0.08)',
                   border: '1px solid rgba(239,68,68,0.2)',
                   borderRadius: 'var(--radius-md)',
@@ -877,7 +905,7 @@ const Finance = () => {
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', marginBottom: '0.3rem' }}>
                     <AlertTriangle size={14} style={{ color: '#ef4444' }} />
                     <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#ef4444', textTransform: 'uppercase', letterSpacing: '0.3px' }}>
-                      {financeView === 'receivables' ? 'Overdue (Past Due Date)' : 'Overdue Vendor Bills'}
+                      {financeView === 'receivables' ? 'Overdue (Past Due)' : 'Overdue Vendor Bills'}
                     </span>
                   </div>
                   <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#ef4444' }}>
@@ -889,7 +917,7 @@ const Finance = () => {
                 </div>
                 {/* Not Yet Due sub-card */}
                 <div style={{
-                  flex: 1,
+                  flex: 1, minWidth: 150,
                   background: 'rgba(245,158,11,0.08)',
                   border: '1px solid rgba(245,158,11,0.2)',
                   borderRadius: 'var(--radius-md)',
@@ -908,6 +936,29 @@ const Finance = () => {
                     {activeBills.filter(i => i.status === 'Pending').length} {financeView === 'receivables' ? 'invoices' : 'bills'} not yet due
                   </div>
                 </div>
+                {/* Prior Opening Balance sub-card */}
+                {financeView === 'receivables' && totalOpeningBalance > 0 && (
+                  <div style={{
+                    flex: 1, minWidth: 150,
+                    background: 'rgba(99,102,241,0.08)',
+                    border: '1px solid rgba(99,102,241,0.2)',
+                    borderRadius: 'var(--radius-md)',
+                    padding: '0.65rem 0.85rem',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', marginBottom: '0.3rem' }}>
+                      <CalendarClock size={14} style={{ color: '#6366f1' }} />
+                      <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#6366f1', textTransform: 'uppercase', letterSpacing: '0.3px' }}>
+                        Opening Balance (Prior FY)
+                      </span>
+                    </div>
+                    <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#6366f1' }}>
+                      {fmtCurrency(totalOpeningBalance)}
+                    </div>
+                    <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
+                      Brought forward prior to current bills
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -940,12 +991,26 @@ const Finance = () => {
               <option value="amount_asc">⬆ Amount (Low)</option>
             </select>
 
+            {/* Customer Verification Filter */}
+            {financeView === 'receivables' && (
+              <select
+                className="input-field"
+                style={{ padding: '0.35rem 0.55rem', fontSize: '0.78rem', width: 175 }}
+                value={sheetCustomerFilter}
+                onChange={e => setSheetCustomerFilter(e.target.value)}
+              >
+                <option value="all">👥 All Customers ({customerInvoices.length})</option>
+                <option value="verified_only">✅ Sheet Verified ({customerInvoices.filter(i => i._is_sheet_customer).length})</option>
+                <option value="tally_only">📋 Tally Only ({customerInvoices.filter(i => !i._is_sheet_customer).length})</option>
+              </select>
+            )}
+
             {/* Clear Filters */}
-            {(search || dateFrom || dateTo || sortBy !== 'date_desc' || filter !== 'All') && (
+            {(search || dateFrom || dateTo || sortBy !== 'date_desc' || filter !== 'All' || sheetCustomerFilter !== 'all') && (
               <button
                 className="btn btn-secondary"
                 style={{ fontSize: '0.75rem', padding: '0.35rem 0.65rem', whiteSpace: 'nowrap' }}
-                onClick={() => { setSearch(''); setDateFrom(''); setDateTo(''); setSortBy('date_desc'); setFilter('All'); setActiveDatePreset(''); }}
+                onClick={() => { setSearch(''); setDateFrom(''); setDateTo(''); setSortBy('date_desc'); setFilter('All'); setSheetCustomerFilter('all'); setActiveDatePreset(''); }}
               >
                 ✕ Clear All
               </button>
@@ -1282,8 +1347,19 @@ const Finance = () => {
                                     display: 'inline-flex',
                                     alignItems: 'center',
                                     gap: '0.2rem',
+                                    flexWrap: 'wrap',
                                   }}>
                                     {dir.isVendor ? '🏢 Vendor' : '👤 Customer'}
+                                    {!dir.isVendor && inv._is_sheet_customer && (
+                                      <span style={{ color: '#10b981', background: 'rgba(16,185,129,0.12)', padding: '1px 5px', borderRadius: 4, marginLeft: 4, fontWeight: 700 }}>
+                                        ✅ Sheet Verified
+                                      </span>
+                                    )}
+                                    {!dir.isVendor && !inv._is_sheet_customer && (
+                                      <span style={{ color: '#6366f1', background: 'rgba(99,102,241,0.12)', padding: '1px 5px', borderRadius: 4, marginLeft: 4, fontWeight: 700 }}>
+                                        📋 Tally Customer
+                                      </span>
+                                    )}
                                   </span>
                                 </div>
                               </td>
