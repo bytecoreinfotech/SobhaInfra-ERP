@@ -268,7 +268,19 @@ export async function getTallyConnectionStatus() {
   if (!isSupabaseConfigured) return { data: MOCK_STORE.tally_connection, error: null };
   try {
     const { data, error } = await supabase.from('tally_connections').select('*').limit(1).maybeSingle();
-    if (!error && data) return { data, error: null };
+    if (!error && data) {
+      const isOnline = data.sync_status === 'Connected' || data.status === 'ONLINE' || data.sync_progress_phase === 'done';
+      return {
+        data: {
+          ...data,
+          status: isOnline ? 'ONLINE' : (data.status || data.sync_status || 'DISCONNECTED'),
+          tally_company: data.company_name || data.tally_company || 'SHOBHA READY PLAST',
+          tally_host: data.tally_host || 'Client Office PC (Port 9000)',
+          last_sync_at: data.last_sync_at || data.updated_at,
+        },
+        error: null,
+      };
+    }
   } catch {}
   return { data: MOCK_STORE.tally_connection, error: null };
 }
