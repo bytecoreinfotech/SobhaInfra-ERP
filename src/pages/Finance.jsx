@@ -462,6 +462,19 @@ const Finance = () => {
   const totalOverdue  = activeBills.filter(i => i.status === 'Overdue').reduce((s, i) => s + Number(i.pending_amount ?? i.amount ?? 0), 0);
   const totalPending  = activeBills.filter(i => i.status === 'Pending').reduce((s, i) => s + Number(i.pending_amount ?? i.amount ?? 0), 0);
 
+  // Outgoing payments made to vendors (from Tally Payment vouchers)
+  const vendorPayments = useMemo(() => {
+    return vendorInvoices.filter(i => {
+      const vtype = (i.voucher_type || i.metadata?.voucher_type || '').toLowerCase();
+      const dir = (i.direction || i.metadata?.direction || '').toLowerCase();
+      const num = (i.invoice_number || '').toLowerCase();
+      return vtype.includes('payment') || dir === 'paid_out' || /^(pay|pmt|sb-pay|srp-pay)-/i.test(num);
+    });
+  }, [vendorInvoices]);
+  const totalVendorPayments = useMemo(() => {
+    return vendorPayments.reduce((s, i) => s + Number(i.amount || 0), 0);
+  }, [vendorPayments]);
+
   // Total Prior Opening Balance across active customers
   const totalOpeningBalance = useMemo(() => {
     if (financeView === 'payables') return 0;
@@ -788,8 +801,8 @@ const Finance = () => {
               { label: 'Total Billed to Customers', value: fmtCurrency(totalInvoiced), sub: `${activeBills.length} sales invoices (matches Tally)`, icon: <DollarSign size={20} />, color: '#6366f1', bg: 'rgba(99,102,241,0.12)' },
               { label: 'Collected (Paid)', value: fmtCurrency(totalPaid), sub: `${activeBills.filter(i => i.status === 'Paid').length} paid`, icon: <TrendingUp size={20} />, color: '#10b981', bg: 'rgba(16,185,129,0.12)' },
             ] : [
-              { label: 'Total Vendor Bills', value: fmtCurrency(totalInvoiced), sub: `${activeBills.length} bills`, icon: <DollarSign size={20} />, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)' },
-              { label: 'Paid Out to Vendors', value: fmtCurrency(totalPaid), sub: `${activeBills.filter(i => i.status === 'Paid').length} paid`, icon: <TrendingUp size={20} />, color: '#10b981', bg: 'rgba(16,185,129,0.12)' },
+              { label: 'Total Vendor Bills', value: fmtCurrency(totalInvoiced), sub: `${activeBills.length} bills (matches Tally Purchase Register)`, icon: <DollarSign size={20} />, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)' },
+              { label: 'Paid Out to Vendors', value: fmtCurrency(totalVendorPayments), sub: `${vendorPayments.length} payment vouchers in Tally`, icon: <TrendingUp size={20} />, color: '#10b981', bg: 'rgba(16,185,129,0.12)' },
             ]).map(s => (
               <div key={s.label} className="stat-card" style={{ '--card-accent': s.color }}>
                 <div className="stat-header">
