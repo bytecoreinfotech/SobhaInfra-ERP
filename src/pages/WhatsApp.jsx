@@ -35,28 +35,38 @@ const statusConfig = {
 
 const AI_FEEDBACK_TAGS = ['AI Helpful', 'Wrong Information', 'Premature Handoff', 'Late Handoff', 'Customer Annoyed'];
 
-// ── Live polling helpers ────────────────────────────────────────────────────
+// ── Live query helpers (Direct to Supabase — 0 Netlify Function invocations) ──
 async function fetchLiveConversations() {
+  if (!supabase) return [];
   try {
-    const res = await fetch('/.netlify/functions/get-conversations');
-    const json = await res.json();
-    return json.conversations || [];
+    const { data } = await supabase
+      .from('whatsapp_conversations')
+      .select('*')
+      .order('last_message_at', { ascending: false });
+    return data || [];
   } catch { return []; }
 }
 
 async function fetchLiveMessages(convId) {
+  if (!supabase || !convId) return [];
   try {
-    const res = await fetch(`/.netlify/functions/get-conversations?conv_id=${convId}`);
-    const json = await res.json();
-    return json.messages || [];
+    const { data } = await supabase
+      .from('whatsapp_messages')
+      .select('*')
+      .eq('conversation_id', convId)
+      .order('created_at', { ascending: true });
+    return data || [];
   } catch { return []; }
 }
 
 async function fetchLiveCampaigns() {
+  if (!supabase) return [];
   try {
-    const res = await fetch('/.netlify/functions/get-campaigns');
-    const json = await res.json();
-    return json.campaigns || [];
+    const { data } = await supabase
+      .from('wa_campaigns')
+      .select('*')
+      .order('created_at', { ascending: false });
+    return data || [];
   } catch { return []; }
 }
 
@@ -134,7 +144,7 @@ const WhatsApp = () => {
     selectedConvRef.current = selectedConv;
   }, [selectedConv]);
 
-  // Polling for live incoming WhatsApp messages every 4 seconds
+  // Relaxed background fallback refresh directly against Supabase (0 Netlify calls)
   useEffect(() => {
     const interval = setInterval(async () => {
       const liveConvs = await fetchLiveConversations();
@@ -161,34 +171,53 @@ const WhatsApp = () => {
           });
         }
       }
-    }, 4000);
+    }, 20000);
     return () => clearInterval(interval);
   }, []);
 
-  // Supabase Realtime subscription
+  // Supabase Realtime subscription (instant updates via WebSockets — 0 Netlify calls)
   useEffect(() => {
     if (!supabase) return;
     const channel = supabase
       .channel('whatsapp_live_inbox')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'whatsapp_messages' }, payload => {
-        const newMsg = payload.new;
-        if (selectedConvRef.current && newMsg.conversation_id === selectedConvRef.current.id) {
-          setMessages(prev => {
-            if (prev.some(m => m.id === newMsg.id)) return prev;
-            return [...prev, newMsg];
-          });
-        }
-        setConversations(prev => prev.map(c => {
-          if (c.id === newMsg.conversation_id) {
-            return {
-              ...c,
-              last_message_text: newMsg.body,
-              last_message_at: newMsg.created_at,
-              unread_count: selectedConvRef.current?.id === c.id ? 0 : (c.unread_count || 0) + 1,
-            };
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'whatsapp_messages' }, payload => {
+        if (payload.eventType === 'INSERT') {
+          const newMsg = payload.new;
+          if (selectedConvRef.current && newMsg.conversation_id === selectedConvRef.current.id) {
+            setMessages(prev => {
+              if (prev.some(m => m.id === newMsg.id)) return prev;
+              return [...prev, newMsg];
+            });
           }
-          return c;
-        }));
+          setConversations(prev => prev.map(c => {
+            if (c.id === newMsg.conversation_id) {
+              return {
+                ...c,
+                last_message_text: newMsg.body,
+                last_message_at: newMsg.created_at,
+                unread_count: selectedConvRef.current?.id === c.id ? 0 : (c.unread_count || 0) + 1,
+              };
+            }
+            return c;
+          }));
+          refreshLiveCounts();
+        } else if (payload.eventType === 'UPDATE') {
+          const updatedMsg = payload.new;
+          if (selectedConvRef.current && updatedMsg.conversation_id === selectedConvRef.current.id) {
+            setMessages(prev => prev.map(m => m.id === updatedMsg.id ? { ...m, ...updatedMsg } : m));
+          }
+        }
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'whatsapp_conversations' }, payload => {
+        const conv = payload.new;
+        if (!conv) return;
+        setConversations(prev => {
+          const exists = prev.some(c => c.id === conv.id);
+          if (exists) {
+            return prev.map(c => c.id === conv.id ? { ...c, ...conv } : c);
+          }
+          return [conv, ...prev];
+        });
         refreshLiveCounts();
       })
       .subscribe();

@@ -8,9 +8,9 @@
 
 # ─── Scheduled Functions (Cron Jobs) ──────────────────────────────────────────
 
-# Run automations scheduler every hour (overdue invoices, scheduled campaigns)
+# Run automations scheduler every 12 hours (overdue invoices, scheduled campaigns)
 [functions.scheduled-automations]
-  schedule = "0 * * * *"
+  schedule = "0 */12 * * *"
 
 # Run data retention cleanup daily at 3 AM UTC
 [functions.data-retention]

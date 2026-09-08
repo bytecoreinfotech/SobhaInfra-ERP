@@ -260,6 +260,7 @@ exports.handler = async (event) => {
           'Access-Control-Allow-Origin': '*',
           'Content-Type': 'text/csv; charset=utf-8',
           'Content-Disposition': `attachment; filename="erppro_${tabName}.csv"`,
+          'Cache-Control': 'public, max-age=1800, s-maxage=1800',
         },
         body: csvText,
       };

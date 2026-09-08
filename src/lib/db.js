@@ -2474,18 +2474,6 @@ export async function clearWhatsAppChat(conversationId) {
 
 
 export async function updateConversationMode(conversationId, newMode) {
-  try {
-    const res = await fetch('/.netlify/functions/get-conversations', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'update_conversation_mode', conversationId, conversationMode: newMode })
-    });
-    const json = await res.json();
-    if (json.data) return { data: json.data, error: null };
-  } catch (err) {
-    console.warn('[db] updateConversationMode proxy error:', err.message);
-  }
-
   if (!isSupabaseConfigured) {
     const conv = MOCK_STORE.whatsapp_conversations.find(c => c.id === conversationId);
     if (conv) {
@@ -2495,24 +2483,17 @@ export async function updateConversationMode(conversationId, newMode) {
     }
     return { data: null, error: { message: 'Conversation not found' } };
   }
-  const { data, error } = await supabase.from('whatsapp_conversations').update({ conversation_mode: newMode }).eq('id', conversationId).select().single();
+  const { data, error } = await supabase
+    .from('whatsapp_conversations')
+    .update({ conversation_mode: newMode, updated_at: new Date().toISOString() })
+    .eq('id', conversationId)
+    .select()
+    .single();
   return { data, error };
 }
 
 /** Update a conversation's contact_name (custom label set by ERP user) */
 export async function updateConversationContactName(conversationId, newName) {
-  try {
-    const res = await fetch('/.netlify/functions/get-conversations', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'update_contact_name', conversationId, contactName: newName })
-    });
-    const json = await res.json();
-    if (json.data) return { data: json.data, error: null };
-  } catch (err) {
-    console.warn('[db] updateConversationContactName proxy error:', err.message);
-  }
-
   if (!isSupabaseConfigured) {
     const conv = MOCK_STORE.whatsapp_conversations.find(c => c.id === conversationId);
     if (conv) { conv.contact_name = newName; return { data: conv, error: null }; }
