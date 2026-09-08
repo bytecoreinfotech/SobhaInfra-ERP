@@ -265,7 +265,7 @@ DAYBOOK_XML = f"""<?xml version="1.0" encoding="utf-8"?>
             <TYPE>Voucher</TYPE>
             <FETCH>DATE, VOUCHERNUMBER, VOUCHERTYPENAME, PARTYLEDGERNAME, BASICBUYERNAME,
                    AMOUNT, NARRATION, PARTYGSTIN, BASICBUYERADDRESS,
-                   ALLLEDGERENTRIES.LIST</FETCH>
+                   ALLLEDGERENTRIES.LIST, BILLALLOCATIONS.LIST</FETCH>
             <FILTER>SalesDayBookFilter</FILTER>
           </COLLECTION>
           <SYSTEM TYPE="Formulae" NAME="SalesDayBookFilter">
@@ -304,7 +304,7 @@ VOUCHERS_XML = f"""<?xml version="1.0" encoding="utf-8"?>
             <TYPE>Voucher</TYPE>
             <FETCH>DATE, VOUCHERNUMBER, VOUCHERTYPENAME, PARTYLEDGERNAME, BASICBUYERNAME,
                    AMOUNT, NARRATION, PARTYGSTIN, BASICBUYERADDRESS,
-                   ALLLEDGERENTRIES.LIST</FETCH>
+                   ALLLEDGERENTRIES.LIST, BILLALLOCATIONS.LIST</FETCH>
             <FILTER>ReceiptPaymentFilter</FILTER>
           </COLLECTION>
           <SYSTEM TYPE="Formulae" NAME="ReceiptPaymentFilter">

@@ -59,13 +59,20 @@ export function getDaysOverdue(dueDateStr) {
   }
 }
 
+// Helper: treat JS stringified 'undefined'/'null' stored in DB as truly empty
+function cleanMeta(v) {
+  if (v === null || v === undefined) return '';
+  const s = String(v).trim();
+  return (s === 'undefined' || s === 'null' || s === 'NaN') ? '' : s;
+}
+
 /**
  * Accurately determines if a voucher is a customer sales bill / debit entry (Receivable).
  * Excludes receipts, master ledger markers, and vendor payables.
  */
 export function isSalesVoucher(inv) {
   const num = (inv?.invoice_number || inv?.tally_voucher_number || '').toLowerCase();
-  const vtype = (inv?.voucher_type || inv?.metadata?.voucher_type || '').toLowerCase().trim();
+  const vtype = (cleanMeta(inv?.voucher_type) || cleanMeta(inv?.metadata?.voucher_type) || '').toLowerCase().trim();
 
   // Exclude ledger master closing balances and opening balance markers
   if (num.startsWith('ledger-') || num.startsWith('op-') || vtype.includes('opening balance') || vtype === 'ledger balance') {
@@ -78,7 +85,14 @@ export function isSalesVoucher(inv) {
   }
 
   // Fallback ONLY when voucher_type is completely missing:
-  if (/^(rec|rcpt|rct|sb-r|pay|pmt|sb-pay|pur|po|sb-pur|cn|dn|jou|vch)-/i.test(num)) return false;
+  const dir = (cleanMeta(inv?.direction) || cleanMeta(inv?.metadata?.direction) || '').toLowerCase().trim();
+  // Strong negatives by prefix — never sales (regardless of direction)
+  if (/^(rec|rcpt|rct|sb-r|pay|pmt|sb-pay|pur|po|sb-pur|cn|dn|jou)-/i.test(num)) return false;
+  // VCH-* with no vtype: trust direction if present
+  if (/^vch-/i.test(num)) return dir === 'receivable';
+  // Any other number — trust direction if present, else check srp/sb prefix
+  if (dir === 'receivable') return true;
+  if (dir === 'payable' || dir === 'paid_out') return false;
   return /^(srp|sb)\//i.test(num);
 }
 
@@ -87,8 +101,8 @@ export function isSalesVoucher(inv) {
  */
 export function isReceiptVoucher(inv) {
   const num = (inv?.invoice_number || inv?.tally_voucher_number || '').toLowerCase();
-  const vtype = (inv?.voucher_type || inv?.metadata?.voucher_type || '').toLowerCase().trim();
-  const dir = (inv?.direction || inv?.metadata?.direction || '').toLowerCase().trim();
+  const vtype = (cleanMeta(inv?.voucher_type) || cleanMeta(inv?.metadata?.voucher_type) || '').toLowerCase().trim();
+  const dir = (cleanMeta(inv?.direction) || cleanMeta(inv?.metadata?.direction) || '').toLowerCase().trim();
 
   if (num.startsWith('ledger-') || num.startsWith('op-')) return false;
 
@@ -105,8 +119,8 @@ export function isReceiptVoucher(inv) {
  */
 export function isPurchaseVoucher(inv) {
   const num = (inv?.invoice_number || inv?.tally_voucher_number || '').toLowerCase();
-  const vtype = (inv?.voucher_type || inv?.metadata?.voucher_type || '').toLowerCase().trim();
-  const dir = (inv?.direction || inv?.metadata?.direction || '').toLowerCase().trim();
+  const vtype = (cleanMeta(inv?.voucher_type) || cleanMeta(inv?.metadata?.voucher_type) || '').toLowerCase().trim();
+  const dir = (cleanMeta(inv?.direction) || cleanMeta(inv?.metadata?.direction) || '').toLowerCase().trim();
 
   if (num.startsWith('ledger-') || num.startsWith('op-')) return false;
 
@@ -114,7 +128,8 @@ export function isPurchaseVoucher(inv) {
     return ['purchase', 'purchase order'].some(t => vtype === t || vtype.includes(t));
   }
 
-  if (vtype.includes('payment') || /^(pay|pmt|sb-pay|sb-p)-?/i.test(num) || dir === 'paid_out') return false;
+  // When vtype is empty: use direction and number prefix
+  if (dir === 'paid_out' || /^(pay|pmt|sb-pay|sb-p)-?/i.test(num)) return false;
   if (/^(pur|po)-/i.test(num) || /^(sb-pur|kbs\/|idak|ne0k|sb-i|ipaa|ybs\/|lcr|v00[2-9])/i.test(num)) return true;
   return dir === 'payable';
 }
@@ -217,11 +232,11 @@ export function reconcileCustomerInvoices(rawInvoices = []) {
       if (isSalesVoucher(r)) {
         salesInvoices.push({ ...r });
       } else {
-        const vtype = (r.metadata?.voucher_type || r.voucher_type || '').toLowerCase();
-        const dir = (r.metadata?.direction || r.direction || '').toLowerCase();
+        const vtype = (cleanMeta(r.metadata?.voucher_type) || cleanMeta(r.voucher_type) || '').toLowerCase();
+        const dir = (cleanMeta(r.metadata?.direction) || cleanMeta(r.direction) || '').toLowerCase();
         const isReceipt = 
           vtype.includes('receipt') || 
-          /^(rec|rcpt|rct)-/i.test(num) || 
+          /^(rec|rcpt|rct|srp-rec)-/i.test(num) || 
           dir === 'received';
 
         if (isReceipt) {

@@ -5,6 +5,13 @@
 
 const { createClient } = require('@supabase/supabase-js');
 
+// Strip literal 'undefined' / 'null' / 'NaN' strings that Python may send
+function cleanVal(v) {
+  if (v === null || v === undefined) return '';
+  const s = String(v).trim();
+  return (s === 'undefined' || s === 'null' || s === 'NaN') ? '' : s;
+}
+
 const EXPECTED_TOKEN = process.env.TALLY_CONNECTOR_TOKEN || 'erppro_tally_sec_token_2026';
 const SUPABASE_URL   = process.env.SUPABASE_URL || 'https://mcgmppnvnwnilioapbli.supabase.co';
 const SUPABASE_KEY   = process.env.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1jZ21wcG52bnduaWxpb2FwYmxpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc1NzE5ODIsImV4cCI6MjEwMzE0Nzk4Mn0.27BrkeNVxcEfG0R1W2gzlV2ueuK6NBS7MuD98Y5iDME';
@@ -138,8 +145,8 @@ exports.handler = async (event) => {
             }
           }
           // Derive direction from voucher_type — NEVER assume 'receivable' by default
-          const rawVoucherType = (v.voucher_type || v.metadata?.voucher_type || '').toLowerCase().trim();
-          const rawDirection = (v.direction || v.metadata?.direction || '').toLowerCase().trim();
+          const rawVoucherType = cleanVal(v.voucher_type || v.metadata?.voucher_type).toLowerCase().trim();
+          const rawDirection = cleanVal(v.direction || v.metadata?.direction).toLowerCase().trim();
           let derivedDirection = rawDirection;
           if (!derivedDirection) {
             if (['payment', 'bank payment', 'cash payment'].some(t => rawVoucherType.includes(t))) {
@@ -176,8 +183,8 @@ exports.handler = async (event) => {
               tally_ledger: v.ledger_name,
               tally_company: v.company_name || companyName || '',
               sync_source: 'TallyPrime XML Bridge',
-              voucher_type: rawVoucherType,
-              direction:    derivedDirection,
+              voucher_type: rawVoucherType || null,
+              direction:    derivedDirection || null,
               pending_amount: v.pending_amount ?? v.metadata?.pending_amount,
               paid_amount: v.paid_amount ?? v.metadata?.paid_amount,
               bill_allocations: v.bill_allocations || v.metadata?.bill_allocations || [],
