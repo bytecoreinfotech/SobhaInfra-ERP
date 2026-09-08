@@ -87,9 +87,7 @@ export function isSalesVoucher(inv) {
   // Fallback ONLY when voucher_type is completely missing:
   const dir = (cleanMeta(inv?.direction) || cleanMeta(inv?.metadata?.direction) || '').toLowerCase().trim();
   // Strong negatives by prefix — never sales (regardless of direction)
-  if (/^(rec|rcpt|rct|sb-r|pay|pmt|sb-pay|pur|po|sb-pur|cn|dn|jou)-/i.test(num)) return false;
-  // VCH-* with no vtype: trust direction if present
-  if (/^vch-/i.test(num)) return dir === 'receivable';
+  if (/^(rec|rcpt|rct|sb-r|pay|pmt|sb-pay|pur|po|sb-pur|cn|dn|jou|vch)-/i.test(num)) return false;
   // Any other number — trust direction if present, else check srp/sb prefix
   if (dir === 'receivable') return true;
   if (dir === 'payable' || dir === 'paid_out') return false;
