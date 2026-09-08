@@ -14,7 +14,7 @@ import {
   getCustomerMaster
 } from '../lib/db';
 import { buildCustomerIndex, matchCustomer } from '../lib/customerMatcher';
-import { reconcileCustomerInvoices, getCustomerLedgerStatement, getCustomerPendingBills, isSalesVoucher, isPurchaseVoucher } from '../lib/reconciliation';
+import { reconcileCustomerInvoices, getCustomerLedgerStatement, getCustomerPendingBills, isSalesVoucher, isPurchaseVoucher, isReceiptVoucher } from '../lib/reconciliation';
 import { supabase } from '../lib/supabase';
 import { useCompany } from '../context/CompanyContext';
 import LedgerDetailDrawer from '../components/LedgerDetailDrawer';
@@ -43,20 +43,6 @@ const decodeHtml = (str) => {
 };
 
 /**
- * Enhanced Accounting Transaction Classifier
- * Differentiates Customer (Receivable / Collected / Received) vs Vendor (Payable / Paid Out)
- * 
- * Rules:
- *   1. Vendor Payment / Purchase (We pay someone):
- *      - If Paid / Settled -> 'Paid Out' (↗ amber arrow) — Money went OUT to vendor
- *      - If Pending / Overdue -> 'Payable' (↗ red arrow) — Money we owe to vendor
- *   2. Customer Receipt / Settlement (Customer pays us):
- *      - 'Received' (↙ green arrow) — Money came IN from customer
- *   3. Customer Sales Invoice:
- *      - If Paid -> 'Collected' (↙ green arrow) — Customer invoice settled
- *      - If Pending / Overdue -> 'Receivable' (↙ indigo arrow) — Customer owes us money
- */
-/**
  * Pure Logical Accounting Flow Classifier (Zero Hardcoding)
  * Evaluates standard Tally voucher types, prefix patterns, and flow direction.
  */
@@ -69,28 +55,12 @@ const getDirection = (inv) => {
 
   // 1. Master Ledger Closing Balances → Excluded from transactional cards & tables
   if (numUpper.startsWith('LEDGER-')) {
-    return { isLedger: true, isVendor: false, label: 'Ledger Balance', canRemind: false };
-  }
-
-  // 1.5. Master Google Sheet Customer Priority:
-  // If matched in Google Sheet Master, this party is 1000% a CUSTOMER — NEVER a vendor!
-  if (inv?._is_sheet_customer) {
-    if (status === 'Paid') {
-      return { label: 'Collected', ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', title: 'Customer Payment Settled', canRemind: false, isVendor: false };
-    }
-    return { label: 'Receivable', ArrowIcon: ArrowDownRight, color: '#6366f1', bg: 'rgba(99,102,241,0.12)', title: 'Customer Receivable (Sheet Verified)', canRemind: true, isVendor: false };
+    const isVendor = dir === 'payable' || dir === 'paid_out';
+    return { isLedger: true, isVendor, label: 'Ledger Balance', canRemind: false };
   }
 
   // 2. Sales Invoices (Customer Receivables) — money the customer owes US
-  // Voucher types: Sales, Sales Order, Tax Invoice
-  // Number prefixes: SRP/, SB/0, INV/, TAX/
-  const isSales =
-    ['sales', 'sales order', 'tax invoice'].some(t => vtype.includes(t)) ||
-    /^(srp|sb)\/./.test(num) ||
-    /^inv\//.test(num) ||
-    /^tax\//.test(num);
-
-  if (isSales) {
+  if (isSalesVoucher(inv)) {
     if (status === 'Paid') {
       return { label: 'Collected', ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', title: 'Sales Invoice Settled', canRemind: false, isVendor: false };
     }
@@ -98,25 +68,12 @@ const getDirection = (inv) => {
   }
 
   // 3. Customer Receipts (Money IN from customer) — direction=received is definitive
-  const isReceipt =
-    ['receipt', 'bank receipt', 'cash receipt'].some(t => vtype.includes(t)) ||
-    /^(rec|rcpt|rct)-/.test(num) ||
-    /^sb-r/.test(num) ||
-    dir === 'received';
-
-  if (isReceipt) {
+  if (isReceiptVoucher(inv)) {
     return { label: 'Received', ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', title: 'Customer Payment Received', canRemind: false, isVendor: false };
   }
 
   // 4. Vendor Purchases (We owe the supplier — money going OUT)
-  const isPurchase =
-    ['purchase', 'purchase order'].some(t => vtype.includes(t)) ||
-    /^(pur|po)-/.test(num) ||
-    /^(sb-pur|sb-p)/.test(num) ||
-    /^(kbs\/|idak|ne0k|sb-i|ipaa|ybs\/|ism|lcr|v00[2-9])/.test(num) ||
-    dir === 'payable';
-
-  if (isPurchase) {
+  if (isPurchaseVoucher(inv)) {
     if (status === 'Paid') {
       return { label: 'Paid Out', ArrowIcon: ArrowUpRight, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', title: 'Vendor Purchase Settled', canRemind: false, isVendor: true };
     }
@@ -144,35 +101,19 @@ const getDirection = (inv) => {
     return { label: 'Receivable', ArrowIcon: ArrowDownRight, color: '#6366f1', bg: 'rgba(99,102,241,0.12)', title: 'Debit Note Receivable', canRemind: true, isVendor: false };
   }
 
-  // 8. Journal Entries — only mark as paid_out if:
-  //    (a) direction=paid_out was explicitly set, OR
-  //    (b) party name starts with "Driver-" (wage advance — outgoing)
-  if (vtype === 'journal' || /^(sb-jou|jou)-/.test(num)) {
-    const partyName = (inv?.client_name || '').toLowerCase();
-    const isDriverPayment = partyName.startsWith('driver-') || partyName.startsWith('driver ');
-    if (dir === 'paid_out' || isDriverPayment) {
-      return { label: 'Paid Out', ArrowIcon: ArrowUpRight, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', title: 'Journal Payment', canRemind: false, isVendor: true };
-    }
-    // Other journal entries (inter-company, adjustments) → treat as receivable
-    if (status === 'Paid') {
-      return { label: 'Collected', ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', title: 'Journal Settled', canRemind: false, isVendor: false };
-    }
-    return { label: 'Receivable', ArrowIcon: ArrowDownRight, color: '#6366f1', bg: 'rgba(99,102,241,0.12)', title: 'Journal Receivable', canRemind: true, isVendor: false };
+  // 8. Journal Entries (Internal adjustments/wages) — always non-sales / vendor expense
+  if (vtype === 'journal' || /^(sb-jou|jou|srp-jou)-/.test(num)) {
+    return { label: 'Paid Out', ArrowIcon: ArrowUpRight, color: '#64748b', bg: 'rgba(100,116,139,0.12)', title: 'Journal Entry', canRemind: false, isVendor: true };
   }
 
-  // 9. VCH-* prefix with NO voucher_type and NO direction
-  //    These come from Tally as generic voucher journal entries — typically outgoing payments
-  //    (wages, advances, misc expenses). If direction was set on these, the earlier checks above caught it.
+  // 9. VCH-* with no voucher_type and no direction = outgoing payment voucher
   if (numUpper.startsWith('VCH-') && !vtype && !dir) {
-    return { label: 'Paid Out', ArrowIcon: ArrowUpRight, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', title: 'Outgoing Voucher Payment', canRemind: false, isVendor: true };
+    return { label: 'Paid Out', ArrowIcon: ArrowUpRight, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', title: 'Outgoing Payment Completed', canRemind: false, isVendor: true };
   }
 
-  // 10. Fallback by explicit flow direction field
+  // 10. Fallback by explicit direction field
   if (dir === 'paid_out' || dir === 'payable') {
-    if (dir === 'payable' && status !== 'Paid') {
-      return { label: 'Payable', ArrowIcon: ArrowUpRight, color: '#ef4444', bg: 'rgba(239,68,68,0.12)', title: 'Vendor Payable', canRemind: false, isVendor: true };
-    }
-    return { label: 'Paid Out', ArrowIcon: ArrowUpRight, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', title: 'Vendor Payment', canRemind: false, isVendor: true };
+    return { label: 'Payable', ArrowIcon: ArrowUpRight, color: '#ef4444', bg: 'rgba(239,68,68,0.12)', title: 'Vendor Payable', canRemind: false, isVendor: true };
   }
   if (dir === 'received') {
     return { label: 'Received', ArrowIcon: ArrowDownRight, color: '#10b981', bg: 'rgba(16,185,129,0.12)', title: 'Customer Payment Received', canRemind: false, isVendor: false };

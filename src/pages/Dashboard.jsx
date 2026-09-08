@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import { getDashboardStats, getActivityFeed, getTasks, getLeads, getCampaigns, getInvoices, getTeamMembers, getEmployeeLivePings, getSiteVisits, getCustomerMaster, triggerSheetSync, invalidateCustomerMasterCache } from '../lib/db';
 import { buildCustomerIndex, matchCustomer } from '../lib/customerMatcher';
-import { reconcileCustomerInvoices, isSalesVoucher } from '../lib/reconciliation';
+import { reconcileCustomerInvoices, isSalesVoucher, isReceiptVoucher, isPurchaseVoucher } from '../lib/reconciliation';
 import { isSupabaseConfigured } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { useCompany } from '../context/CompanyContext';
@@ -28,17 +28,17 @@ const getDirection = (inv) => {
   if (numUpper.startsWith('LEDGER-')) return { isVendor: false, isLedger: true };
 
   // 2. Sales Invoices (Customer Receivables)
-  if (['sales', 'sales order', 'tax invoice'].some(t => vtype.includes(t)) || /^(srp|sb)\/./.test(num) || /^(inv|tax)\//.test(num)) {
+  if (isSalesVoucher(inv)) {
     return { isVendor: false, isLedger: false };
   }
 
   // 3. Customer Receipts (Money IN from customer)
-  if (['receipt', 'bank receipt', 'cash receipt'].some(t => vtype.includes(t)) || /^(rec|rcpt|rct)-/.test(num) || /^sb-r/.test(num) || dir === 'received') {
+  if (isReceiptVoucher(inv)) {
     return { isVendor: false, isLedger: false };
   }
 
   // 4. Vendor Purchases (Money OUT to supplier)
-  if (['purchase', 'purchase order'].some(t => vtype.includes(t)) || /^(pur|po)-/.test(num) || /^(sb-pur|kbs\/|idak|ne0k|sb-i|ipaa|ybs\/|lcr|v00[2-9])/.test(num) || dir === 'payable') {
+  if (isPurchaseVoucher(inv)) {
     return { isVendor: true, isLedger: false };
   }
 
@@ -57,13 +57,9 @@ const getDirection = (inv) => {
     return { isVendor: false, isLedger: false };
   }
 
-  // 8. Journal Entries — Driver-* party names are outgoing wage payments
-  if (vtype === 'journal' || /^(sb-jou|jou)-/.test(num)) {
-    const partyName = (inv?.client_name || '').toLowerCase();
-    if (dir === 'paid_out' || partyName.startsWith('driver-') || partyName.startsWith('driver ')) {
-      return { isVendor: true, isLedger: false };
-    }
-    return { isVendor: false, isLedger: false };
+  // 8. Journal Entries (Internal adjustments/wages) — always non-sales
+  if (vtype === 'journal' || /^(sb-jou|jou|srp-jou)-/.test(num)) {
+    return { isVendor: true, isLedger: false };
   }
 
   // 9. VCH-* with no voucher_type and no direction = outgoing payment voucher

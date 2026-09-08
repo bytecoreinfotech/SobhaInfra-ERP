@@ -65,17 +65,21 @@ export function getDaysOverdue(dueDateStr) {
  */
 export function isSalesVoucher(inv) {
   const num = (inv?.invoice_number || inv?.tally_voucher_number || '').toLowerCase();
-  const vtype = (inv?.metadata?.voucher_type || inv?.voucher_type || '').toLowerCase();
-  const dir = (inv?.metadata?.direction || inv?.direction || '').toLowerCase();
-  if (num.startsWith('ledger-') || num.startsWith('op-') || /^(rec|rcpt|rct|sb-r)-?/i.test(num)) return false;
-  if (vtype.includes('receipt') || vtype.includes('opening balance') || dir === 'received') return false;
-  return (
-    ['sales', 'sales order', 'tax invoice'].some(t => vtype.includes(t)) ||
-    /^(srp|sb)\//i.test(num) ||
-    /^(inv|tax)\//i.test(num) ||
-    dir === 'receivable' ||
-    dir === 'outgoing'
-  );
+  const vtype = (inv?.voucher_type || inv?.metadata?.voucher_type || '').toLowerCase().trim();
+
+  // Exclude ledger master closing balances and opening balance markers
+  if (num.startsWith('ledger-') || num.startsWith('op-') || vtype.includes('opening balance') || vtype === 'ledger balance') {
+    return false;
+  }
+
+  // If authoritative Tally voucher_type is present:
+  if (vtype) {
+    return ['sales', 'tax invoice', 'sales order'].some(t => vtype === t || vtype.includes(t));
+  }
+
+  // Fallback ONLY when voucher_type is completely missing:
+  if (/^(rec|rcpt|rct|sb-r|pay|pmt|sb-pay|pur|po|sb-pur|cn|dn|jou|vch)-/i.test(num)) return false;
+  return /^(srp|sb)\//i.test(num);
 }
 
 /**
@@ -83,14 +87,17 @@ export function isSalesVoucher(inv) {
  */
 export function isReceiptVoucher(inv) {
   const num = (inv?.invoice_number || inv?.tally_voucher_number || '').toLowerCase();
-  const vtype = (inv?.metadata?.voucher_type || inv?.voucher_type || '').toLowerCase();
-  const dir = (inv?.metadata?.direction || inv?.direction || '').toLowerCase();
-  if (num.startsWith('ledger-')) return false;
-  return (
-    ['receipt', 'bank receipt', 'cash receipt'].some(t => vtype.includes(t)) ||
-    /^(rec|rcpt|rct|sb-r)-?/i.test(num) ||
-    dir === 'received'
-  );
+  const vtype = (inv?.voucher_type || inv?.metadata?.voucher_type || '').toLowerCase().trim();
+  const dir = (inv?.direction || inv?.metadata?.direction || '').toLowerCase().trim();
+
+  if (num.startsWith('ledger-') || num.startsWith('op-')) return false;
+
+  if (vtype) {
+    return ['receipt', 'bank receipt', 'cash receipt'].some(t => vtype === t || vtype.includes(t));
+  }
+
+  if (/^(rec|rcpt|rct|sb-r)-?/i.test(num)) return true;
+  return dir === 'received';
 }
 
 /**
@@ -98,16 +105,18 @@ export function isReceiptVoucher(inv) {
  */
 export function isPurchaseVoucher(inv) {
   const num = (inv?.invoice_number || inv?.tally_voucher_number || '').toLowerCase();
-  const vtype = (inv?.metadata?.voucher_type || inv?.voucher_type || '').toLowerCase();
-  const dir = (inv?.metadata?.direction || inv?.direction || '').toLowerCase();
-  if (num.startsWith('ledger-')) return false;
+  const vtype = (inv?.voucher_type || inv?.metadata?.voucher_type || '').toLowerCase().trim();
+  const dir = (inv?.direction || inv?.metadata?.direction || '').toLowerCase().trim();
+
+  if (num.startsWith('ledger-') || num.startsWith('op-')) return false;
+
+  if (vtype) {
+    return ['purchase', 'purchase order'].some(t => vtype === t || vtype.includes(t));
+  }
+
   if (vtype.includes('payment') || /^(pay|pmt|sb-pay|sb-p)-?/i.test(num) || dir === 'paid_out') return false;
-  return (
-    ['purchase', 'purchase order'].some(t => vtype.includes(t)) ||
-    /^(pur|po)-/.test(num) ||
-    /^(sb-pur|kbs\/|idak|ne0k|sb-i|ipaa|ybs\/|lcr|v00[2-9])/.test(num) ||
-    dir === 'payable'
-  );
+  if (/^(pur|po)-/i.test(num) || /^(sb-pur|kbs\/|idak|ne0k|sb-i|ipaa|ybs\/|lcr|v00[2-9])/i.test(num)) return true;
+  return dir === 'payable';
 }
 
 /**

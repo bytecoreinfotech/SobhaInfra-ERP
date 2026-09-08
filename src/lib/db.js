@@ -518,6 +518,9 @@ export async function getInvoices(options = {}) {
 
     const normalized = (allData.length > 0 ? allData : []).map(inv => ({
       ...inv,
+      voucher_type: inv.voucher_type || inv.metadata?.voucher_type || '',
+      direction: inv.direction || inv.metadata?.direction || '',
+      company_name: inv.company_name || inv.metadata?.tally_company || inv.tally_company || '',
       invoice_number: inv.invoice_number || inv.tally_voucher_number || `INV-${inv.id?.slice(0, 8)}`,
       tally_voucher_number: inv.tally_voucher_number || inv.invoice_number || '',
     }));
