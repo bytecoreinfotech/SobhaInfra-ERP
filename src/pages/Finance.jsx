@@ -14,7 +14,7 @@ import {
   getCustomerMaster
 } from '../lib/db';
 import { buildCustomerIndex, matchCustomer } from '../lib/customerMatcher';
-import { reconcileCustomerInvoices, getCustomerLedgerStatement, getCustomerPendingBills, isSalesVoucher, isPurchaseVoucher, isReceiptVoucher } from '../lib/reconciliation';
+import { reconcileCustomerInvoices, reconcileVendorInvoices, getCustomerLedgerStatement, getCustomerPendingBills, isSalesVoucher, isPurchaseVoucher, isReceiptVoucher } from '../lib/reconciliation';
 import { supabase } from '../lib/supabase';
 import { useCompany } from '../context/CompanyContext';
 import LedgerDetailDrawer from '../components/LedgerDetailDrawer';
@@ -235,11 +235,15 @@ const Finance = () => {
 
   // Re-filter when company switcher changes + tag verified sheet customers
   const invoices = useMemo(() => {
-    // Authoritatively reconcile vouchers: apply customer receipts & closing balance
-    const reconciled = reconcileCustomerInvoices(allInvoices);
+    // Authoritatively reconcile vouchers:
+    // 1. Customer sales reconciled against customer receipts & ledger closing balances
+    const customerReconciled = reconcileCustomerInvoices(allInvoices);
+    // 2. Vendor purchase bills reconciled against outgoing payments & bill allocations
+    const fullyReconciled = reconcileVendorInvoices(customerReconciled);
+
     const base = isConsolidated
-      ? reconciled
-      : reconciled.filter(inv => {
+      ? fullyReconciled
+      : fullyReconciled.filter(inv => {
           if (!activeCompany) return true;
           const compName = (activeCompany.company_name || '').toUpperCase();
           const aliases = Array.isArray(activeCompany.alias_names)

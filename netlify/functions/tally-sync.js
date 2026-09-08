@@ -188,6 +188,8 @@ exports.handler = async (event) => {
               pending_amount: v.pending_amount ?? v.metadata?.pending_amount,
               paid_amount: v.paid_amount ?? v.metadata?.paid_amount,
               bill_allocations: v.bill_allocations || v.metadata?.bill_allocations || [],
+              raw_voucher_number: v.raw_voucher_number || v.metadata?.raw_voucher_number || '',
+              supplier_invoice_number: v.supplier_invoice_number || v.metadata?.supplier_invoice_number || '',
               eway_pdf_url:    v.metadata?.eway_pdf_url    || null,
               pending_pdf_url: v.metadata?.pending_pdf_url || null,
               ledger_pdf_url:  v.metadata?.ledger_pdf_url  || null,
@@ -195,22 +197,29 @@ exports.handler = async (event) => {
             company_name: v.company_name || companyName || '',
           };
 
-          // Check if invoice already exists
+          // Check if invoice already exists within the target company
           let existing = null;
+          const targetCompany = v.company_name || companyName || '';
           try {
-            const { data } = await supabase
+            let q = supabase
               .from('invoices')
-              .select('id')
-              .eq('tally_voucher_number', invNum)
-              .maybeSingle();
+              .select('id, company_name')
+              .eq('tally_voucher_number', invNum);
+            if (targetCompany) {
+              q = q.eq('company_name', targetCompany);
+            }
+            const { data } = await q.maybeSingle();
             existing = data;
           } catch (e) {
             try {
-              const { data } = await supabase
+              let q2 = supabase
                 .from('invoices')
-                .select('id')
-                .eq('invoice_number', invNum)
-                .maybeSingle();
+                .select('id, company_name')
+                .eq('invoice_number', invNum);
+              if (targetCompany) {
+                q2 = q2.eq('company_name', targetCompany);
+              }
+              const { data } = await q2.maybeSingle();
               existing = data;
             } catch (e2) {}
           }

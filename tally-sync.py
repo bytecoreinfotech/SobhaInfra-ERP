@@ -762,14 +762,6 @@ def parse_voucher_block(block, fallback_company: str = "", ledger_phone_map: dic
     vch_number = (extract_tag_value(block, "VOUCHERNUMBER") or
                   extract_tag_value(block, "NUMBER") or
                   extract_tag_value(block, "VCHKEY"))
-    party = (extract_tag_value(block, "BASICBUYERNAME") or
-             extract_tag_value(block, "PARTYLEDGERNAME") or
-             extract_tag_value(block, "PARTYNAME") or
-             extract_tag_value(block, "LEDGERNAME"))
-    amount_str = (extract_tag_value(block, "AMOUNT") or
-                  extract_tag_value(block, "CLOSINGBALANCE") or "0")
-    raw_date = (extract_tag_value(block, "DATE") or
-                extract_tag_value(block, "VOUCHERDATE") or "")
     vch_type = (extract_tag_value(block, "VOUCHERTYPENAME") or
                 extract_tag_value(block, "VOUCHERTYPE") or "Sales")
     comp_name = (extract_tag_value(block, "SVCURRENTCOMPANY") or
@@ -777,6 +769,41 @@ def parse_voucher_block(block, fallback_company: str = "", ledger_phone_map: dic
                  extract_tag_value(block, "SVCOMPANYNAME") or
                  extract_tag_value(block, "BASICCOMPANYNAME") or
                  fallback_company)
+
+    vch_type_lower = vch_type.lower()
+    is_purchase = any(k in vch_type_lower for k in ["purchase", "purchase order"])
+    is_payment  = any(k in vch_type_lower for k in ["payment", "bank payment", "cash payment"])
+    is_receipt  = any(k in vch_type_lower for k in ["receipt", "bank receipt", "cash receipt"])
+
+    # 1. Authoritative Accounting Party Ledger from Tally:
+    # In Tally Prime, PARTYLEDGERNAME is the official accounting ledger in the chart of accounts.
+    party = (extract_tag_value(block, "PARTYLEDGERNAME") or
+             extract_tag_value(block, "PARTYNAME"))
+
+    # 2. For Sales / Receipts only, BASICBUYERNAME is a valid fallback:
+    # On Purchase/Payment, BASICBUYERNAME is the buyer's own company name — NEVER use it!
+    if not party and not (is_purchase or is_payment):
+        party = extract_tag_value(block, "BASICBUYERNAME")
+
+    # 3. If still empty, or if party resolved to the company's own name on Purchase/Payment:
+    clean_comp = (comp_name or fallback_company or "").strip().upper()
+    if not party or (clean_comp and party.strip().upper() == clean_comp and (is_purchase or is_payment)):
+        # Scan voucher ledger entries to find the counterpart vendor party ledger
+        for ledger_entry in re.findall(r'<(?:ALLLLEDGERENTRIES|ALLLEDGERENTRIES|LEDGERENTRIES)\.LIST[^>]*>([\s\S]*?)</(?:ALLLLEDGERENTRIES|ALLLEDGERENTRIES|LEDGERENTRIES)\.LIST>', block, re.IGNORECASE):
+            l_name = extract_tag_value(ledger_entry, "LEDGERNAME")
+            l_upper = l_name.upper()
+            skip_kw = ["BANK", "CASH", "PURCHASE", "SALES", "CGST", "SGST", "IGST", "GST", "TDS", "TAX", "ROUND OFF", clean_comp]
+            if l_name and not any(sk in l_upper for sk in skip_kw):
+                party = l_name
+                break
+
+    if not party:
+        party = extract_tag_value(block, "LEDGERNAME") or (extract_tag_value(block, "BASICBUYERNAME") if not (is_purchase or is_payment) else "")
+
+    amount_str = (extract_tag_value(block, "AMOUNT") or
+                  extract_tag_value(block, "CLOSINGBALANCE") or "0")
+    raw_date = (extract_tag_value(block, "DATE") or
+                extract_tag_value(block, "VOUCHERDATE") or "")
     narration = extract_tag_value(block, "NARRATION") or ""
     buyer_addr = extract_tag_value(block, "BASICBUYERADDRESS") or extract_tag_value(block, "ADDRESS") or ""
     buyer_gstin = extract_tag_value(block, "PARTYGSTIN") or extract_tag_value(block, "GSTIN") or extract_tag_value(block, "INCOMETAXNUMBER") or ""
@@ -957,21 +984,52 @@ def parse_voucher_block(block, fallback_company: str = "", ledger_phone_map: dic
                 "amount": b_amt
             })
 
-    # Smart unique invoice numbering with company scoping to prevent cross-company overwrite
+    # Smart unique invoice numbering with company & voucher type scoping
+    # Guarantees ZERO cross-company and ZERO cross-voucher-type collisions in Supabase!
     comp_prefix = ""
     if comp_name:
         words = [w for w in re.split(r'[^a-zA-Z0-9]', comp_name) if w]
         comp_prefix = "".join(w[0].upper() for w in words if len(w) > 1)[:4] or comp_name[:3].upper()
 
-    if vch_number:
-        # If invoice number is already company-prefixed like SRP/0570/26-27 or SB/081/26-27, keep it as is!
-        if "/" in str(vch_number) or "-" in str(vch_number):
-            inv_code = str(vch_number)
-        elif vch_type and not any(c.isalpha() for c in str(vch_number)):
-            # Purely numeric voucher e.g. 560 for Receipt -> SB-REC-560 or SRP-REC-560
-            inv_code = f"{comp_prefix}-{vch_type[:3].upper()}-{vch_number}" if comp_prefix else f"{vch_type[:3].upper()}-{vch_number}"
+    vch_str = str(vch_number or "").strip()
+    clean_vnum = re.sub(r'[^a-zA-Z0-9_-]', '-', vch_str).strip('-')
+
+    if vch_str:
+        if "sales" in vch_type_lower or "tax invoice" in vch_type_lower:
+            # Sales vouchers: preserve registered tax series (e.g. SRP/0570/26-27 or SB/0216/26-27)
+            if comp_prefix and (vch_str.upper().startswith(comp_prefix + "/") or vch_str.upper().startswith(comp_prefix + "-")):
+                inv_code = vch_str
+            elif not any(c.isalpha() for c in vch_str):
+                inv_code = f"{comp_prefix}-SALES-{vch_str}" if comp_prefix else f"SALES-{vch_str}"
+            else:
+                inv_code = f"{comp_prefix}-{vch_str}" if comp_prefix and not vch_str.upper().startswith(comp_prefix) else vch_str
+        elif is_purchase:
+            # Purchase vouchers: scope with comp_prefix-PUR- so inter-company bills (e.g. SB/034 in SRP) never collide with sales invoices!
+            if vch_str.upper().startswith(f"{comp_prefix}-PUR-") or vch_str.upper().startswith(f"{comp_prefix}/PUR/"):
+                inv_code = vch_str
+            else:
+                inv_code = f"{comp_prefix}-PUR-{clean_vnum}" if comp_prefix else f"PUR-{clean_vnum}"
+        elif is_payment:
+            if vch_str.upper().startswith(f"{comp_prefix}-PAY-"):
+                inv_code = vch_str
+            else:
+                inv_code = f"{comp_prefix}-PAY-{clean_vnum}" if comp_prefix else f"PAY-{clean_vnum}"
+        elif is_receipt:
+            if vch_str.upper().startswith(f"{comp_prefix}-REC-"):
+                inv_code = vch_str
+            else:
+                inv_code = f"{comp_prefix}-REC-{clean_vnum}" if comp_prefix else f"REC-{clean_vnum}"
+        elif "journal" in vch_type_lower:
+            if vch_str.upper().startswith(f"{comp_prefix}-JOU-"):
+                inv_code = vch_str
+            else:
+                inv_code = f"{comp_prefix}-JOU-{clean_vnum}" if comp_prefix else f"JOU-{clean_vnum}"
+        elif "credit note" in vch_type_lower:
+            inv_code = f"{comp_prefix}-CN-{clean_vnum}" if comp_prefix and not vch_str.upper().startswith(f"{comp_prefix}-CN") else vch_str
+        elif "debit note" in vch_type_lower:
+            inv_code = f"{comp_prefix}-DN-{clean_vnum}" if comp_prefix and not vch_str.upper().startswith(f"{comp_prefix}-DN") else vch_str
         else:
-            inv_code = f"{comp_prefix}-{vch_number}" if comp_prefix and not str(vch_number).upper().startswith(comp_prefix) else str(vch_number)
+            inv_code = f"{comp_prefix}-{vch_str}" if comp_prefix and not vch_str.upper().startswith(comp_prefix) else vch_str
     else:
         inv_code = f"VCH-{(comp_prefix or 'X')}-{(party or 'X')[:6]}-{abs(hash((party or '') + (comp_name or ''))) % 10000}"
 
@@ -996,6 +1054,8 @@ def parse_voucher_block(block, fallback_company: str = "", ledger_phone_map: dic
 
     return {
         "invoice_number": inv_code,
+        "raw_voucher_number": str(vch_number or ""),
+        "supplier_invoice_number": str(vch_number or ""),
         "invoice_date": inv_date_str,
         "ledger_name": clean_party or "Client",
         "company_name": comp_name or fallback_company or "Tally Company",
@@ -3249,8 +3309,57 @@ def push_to_cloud(vouchers):
                         sv["_force_status_update"] = True
                         reconciled_paid_updates += 1
 
+        # 4. Reconcile Vendor Purchase Vouchers against Payments
+        pur_vchs = [
+            v for v in p_vchs
+            if not str(v.get("invoice_number", "")).upper().startswith("LEDGER-")
+            and ("purchase" in str(v.get("voucher_type", "")).lower() or "payable" in str(v.get("direction", "")).lower())
+        ]
+        pmt_vchs = [
+            v for v in p_vchs
+            if "payment" in str(v.get("voucher_type", "")).lower() or "paid_out" in str(v.get("direction", "")).lower()
+        ]
+        if pur_vchs:
+            total_pmts = sum(float(v.get("amount") or 0) for v in pmt_vchs)
+            pur_vchs.sort(key=lambda x: str(x.get("invoice_date") or x.get("date") or ""))
+
+            # Explicit Agst Ref bill allocations for vendor payments
+            for pv in pmt_vchs:
+                for alloc in pv.get("bill_allocations", []):
+                    ref_name = str(alloc.get("name", "")).strip().upper()
+                    ref_type = str(alloc.get("type", "")).strip().lower()
+                    if "agst" in ref_type or not ref_type:
+                        for pb in pur_vchs:
+                            pb_num = str(pb.get("invoice_number", "")).strip().upper()
+                            pb_raw = str(pb.get("raw_voucher_number", "")).strip().upper()
+                            if (ref_name and pb_num and (ref_name in pb_num or pb_num in ref_name)) or (ref_name and pb_raw and (ref_name in pb_raw or pb_raw in ref_name)):
+                                if pb.get("status") != "Paid":
+                                    pb["status"] = "Paid"
+                                    pb["pending_amount"] = 0.0
+                                    pb["paid_amount"] = float(pb.get("amount") or 0)
+                                    pb["_force_status_update"] = True
+                                    reconciled_paid_updates += 1
+
+            # FIFO settlement for remaining vendor payments
+            rem_pmts = total_pmts
+            for pb in pur_vchs:
+                amt = float(pb.get("amount") or 0)
+                cur_paid = float(pb.get("paid_amount") or 0)
+                needed = max(0.0, amt - cur_paid)
+                if needed > 0 and rem_pmts > 0:
+                    applied = min(needed, rem_pmts)
+                    new_paid = cur_paid + applied
+                    pb["paid_amount"] = new_paid
+                    pb["pending_amount"] = max(0.0, amt - new_paid)
+                    if pb["pending_amount"] <= 0.01:
+                        pb["status"] = "Paid"
+                    pb["_force_status_update"] = True
+                    rem_pmts -= applied
+                elif cur_paid == 0 and pb.get("status") != "Paid":
+                    pb["pending_amount"] = amt
+
     if reconciled_paid_updates > 0:
-        log.info(f"  [Reconciliation] ✅ Marked {reconciled_paid_updates} sales voucher(s) as Settled/Paid via incoming receipts!")
+        log.info(f"  [Reconciliation] ✅ Marked {reconciled_paid_updates} voucher(s) as Settled/Paid via allocations & FIFO!")
 
     # ── Enterprise Cryptographic Change Detection (Industry Standard) ─────────
     # Evaluates MD5 fingerprint of ALL critical business fields (amount, status, date,
@@ -3402,6 +3511,8 @@ def push_to_cloud(vouchers):
                     "pdf_url":          v.get("pdf_url") or None,
                     "pdf_generation":   "server-side" if v.get("pdf_url") else "browser-side",
                     "sync_source":      "TallyPrime XML Bridge v5.0",
+                    "raw_voucher_number": v.get("raw_voucher_number") or "",
+                    "supplier_invoice_number": v.get("supplier_invoice_number") or "",
                     "synced_at":        datetime.now().isoformat(),
                 },
             }

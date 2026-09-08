@@ -123,13 +123,32 @@ export function isPurchaseVoucher(inv) {
   if (num.startsWith('ledger-') || num.startsWith('op-')) return false;
 
   if (vtype) {
-    return ['purchase', 'purchase order'].some(t => vtype === t || vtype.includes(t));
+    if (['purchase', 'purchase order', 'tax purchase'].some(t => vtype === t || vtype.includes(t))) return true;
+    if (['payment', 'bank payment', 'cash payment', 'receipt', 'sales', 'tax invoice'].some(t => vtype.includes(t))) return false;
   }
 
-  // When vtype is empty: use direction and number prefix
-  if (dir === 'paid_out' || /^(pay|pmt|sb-pay|sb-p)-?/i.test(num)) return false;
-  if (/^(pur|po)-/i.test(num) || /^(sb-pur|kbs\/|idak|ne0k|sb-i|ipaa|ybs\/|lcr|v00[2-9])/i.test(num)) return true;
+  // When vtype is empty or ambiguous:
+  if (dir === 'paid_out' || /^(pay|pmt|sb-pay|srp-pay)-?/i.test(num)) return false;
+  if (/^(pur|po)-/i.test(num) || /^(sb-pur|srp-pur|kbs\/|idak|ne0k|sb-i|ipaa|ybs\/|lcr|v00[2-9])/i.test(num)) return true;
   return dir === 'payable';
+}
+
+/**
+ * Accurately determines if a voucher is an outgoing payment to a vendor (Payment voucher).
+ */
+export function isPaymentVoucher(inv) {
+  const num = (inv?.invoice_number || inv?.tally_voucher_number || '').toLowerCase();
+  const vtype = (cleanMeta(inv?.voucher_type) || cleanMeta(inv?.metadata?.voucher_type) || '').toLowerCase().trim();
+  const dir = (cleanMeta(inv?.direction) || cleanMeta(inv?.metadata?.direction) || '').toLowerCase().trim();
+
+  if (num.startsWith('ledger-') || num.startsWith('op-')) return false;
+
+  if (vtype) {
+    return ['payment', 'bank payment', 'cash payment'].some(t => vtype === t || vtype.includes(t));
+  }
+
+  if (/^(pay|pmt|sb-pay|srp-pay)-?/i.test(num)) return true;
+  return dir === 'paid_out';
 }
 
 /**
@@ -373,6 +392,140 @@ export function reconcileCustomerInvoices(rawInvoices = []) {
     }
 
     reconciledList.push(...salesInvoices, ...receipts, ...otherVouchers);
+  }
+
+  return reconciledList;
+}
+
+/**
+ * Reconcile Vendor Purchase Invoices against Payment vouchers across all vendors:
+ * - Group vouchers by company and normalized vendor name.
+ * - Match outgoing payments to purchase bills via explicit Agst Ref bill allocations.
+ * - Chronological FIFO settlement for remaining unallocated payments.
+ * - Accurately updates paid_amount, pending_amount, days overdue, and status ('Paid', 'Pending', or 'Overdue').
+ */
+export function reconcileVendorInvoices(rawInvoices = []) {
+  if (!Array.isArray(rawInvoices) || rawInvoices.length === 0) return [];
+
+  // Group by company and normalized vendor name
+  const vendorMap = new Map();
+  for (const inv of rawInvoices) {
+    const comp = (inv.company_name || inv.tally_company || '').trim().toUpperCase();
+    const p = normalizePartyName(inv.client_name);
+    const key = `${comp}:::${p}`;
+    if (!vendorMap.has(key)) {
+      vendorMap.set(key, []);
+    }
+    vendorMap.get(key).push(inv);
+  }
+
+  const reconciledList = [];
+
+  for (const [key, records] of vendorMap.entries()) {
+    const purchaseBills = [];
+    const paymentVouchers = [];
+    const otherVouchers = [];
+
+    for (const r of records) {
+      const num = (r.invoice_number || '').toUpperCase();
+      if (num.startsWith('LEDGER-') || num.startsWith('OP-')) {
+        otherVouchers.push(r);
+        continue;
+      }
+
+      if (isPurchaseVoucher(r)) {
+        purchaseBills.push({ ...r });
+      } else if (isPaymentVoucher(r)) {
+        paymentVouchers.push({ ...r });
+      } else {
+        otherVouchers.push({ ...r });
+      }
+    }
+
+    // Sort purchase bills chronologically (oldest first for FIFO)
+    purchaseBills.sort((a, b) => {
+      const da = parseDate(a.invoice_date || a.created_at).getTime();
+      const db = parseDate(b.invoice_date || b.created_at).getTime();
+      return da - db;
+    });
+
+    // 1. Build lookup maps for purchase bills (support invoice_number, tally_voucher_number, raw_voucher_number)
+    const billMap = new Map();
+    for (const pb of purchaseBills) {
+      const k1 = (pb.invoice_number || '').toUpperCase().trim();
+      const k2 = (pb.tally_voucher_number || '').toUpperCase().trim();
+      const k3 = (pb.metadata?.raw_voucher_number || '').toUpperCase().trim();
+      const k4 = (pb.metadata?.supplier_invoice_number || '').toUpperCase().trim();
+      if (k1) billMap.set(k1, pb);
+      if (k2) billMap.set(k2, pb);
+      if (k3) billMap.set(k3, pb);
+      if (k4) billMap.set(k4, pb);
+    }
+
+    const billPaidMap = new Map(purchaseBills.map(b => [b.id, 0]));
+    let unallocatedPaymentAmt = 0;
+
+    // 2. Match Explicit Bill Allocations (Agst Ref)
+    for (const pv of paymentVouchers) {
+      const meta = pv.metadata || {};
+      const allocs = meta.bill_allocations || [];
+      const pvAmt = Number(pv.amount || 0);
+      let allocatedForThis = 0;
+
+      for (const a of allocs) {
+        const refName = (a.name || '').toUpperCase().trim();
+        const aAmt = Math.abs(Number(a.amount || 0));
+        const matchedBill = billMap.get(refName);
+        if (matchedBill && aAmt > 0) {
+          const bTotal = Number(matchedBill.amount || 0);
+          const curPaid = billPaidMap.get(matchedBill.id) || 0;
+          const available = Math.max(0, bTotal - curPaid);
+          const applied = Math.min(available, aAmt);
+          billPaidMap.set(matchedBill.id, curPaid + applied);
+          allocatedForThis += applied;
+        }
+      }
+      const rem = pvAmt - allocatedForThis;
+      if (rem > 0.5) unallocatedPaymentAmt += rem;
+    }
+
+    // 3. FIFO Settlement for unallocated payments
+    let remPayments = unallocatedPaymentAmt;
+    for (const pb of purchaseBills) {
+      const billAmt = Number(pb.amount || 0);
+      const curPaid = billPaidMap.get(pb.id) || 0;
+      const needed = Math.max(0, billAmt - curPaid);
+      if (needed > 0 && remPayments > 0) {
+        const applied = Math.min(needed, remPayments);
+        billPaidMap.set(pb.id, curPaid + applied);
+        remPayments -= applied;
+      }
+    }
+
+    // 4. Update purchase bills with final status & balances
+    for (const pb of purchaseBills) {
+      const totalAmt = Number(pb.amount || 0);
+      const paid = Math.round((billPaidMap.get(pb.id) || 0) * 100) / 100;
+      const pending = Math.max(0, Math.round((totalAmt - paid) * 100) / 100);
+      pb.paid_amount = paid;
+      pb.pending_amount = pending;
+
+      if (pending <= 0.01) {
+        pb.status = 'Paid';
+      } else {
+        const overdueDays = getDaysOverdue(pb.due_date);
+        pb.status = overdueDays > 0 ? 'Overdue' : 'Pending';
+      }
+    }
+
+    // 5. Payment vouchers are always Paid / Settled
+    for (const pv of paymentVouchers) {
+      pv.status = 'Paid';
+      pv.pending_amount = 0;
+      pv.paid_amount = Number(pv.amount || 0);
+    }
+
+    reconciledList.push(...purchaseBills, ...paymentVouchers, ...otherVouchers);
   }
 
   return reconciledList;
