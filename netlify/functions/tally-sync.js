@@ -166,6 +166,19 @@ exports.handler = async (event) => {
             // The frontend classifier will then fall back to voucher number prefix analysis.
           }
 
+          let resolvedDueDate = v.due_date || null;
+          const rawCreditDays = v.credit_period_days ?? v.metadata?.credit_period_days ?? null;
+          if (!resolvedDueDate && rawCreditDays) {
+            const cDays = Number(rawCreditDays);
+            if (!isNaN(cDays) && cDays > 0) {
+              try {
+                const baseDate = new Date(invoiceDateStr);
+                baseDate.setDate(baseDate.getDate() + cDays);
+                resolvedDueDate = baseDate.toISOString().split('T')[0];
+              } catch {}
+            }
+          }
+
           const invoiceRow = {
             organization_id: '00000000-0000-0000-0000-000000000001',
             tally_voucher_number: invNum,
@@ -174,10 +187,11 @@ exports.handler = async (event) => {
             client_phone: normVoucherPhone || (matchedLead ? matchedLead.phone : ''),
             amount: Number(v.amount) || 0,
             status: v.status || 'Pending',
-            due_date: v.due_date || null,
+            due_date: resolvedDueDate,
             invoice_date: invoiceDateStr,
             pdf_url: finalPdfUrl || null,
             metadata: {
+              ...(v.metadata || {}),
               pdf_url: finalPdfUrl,
               pdf_generated_at: new Date().toISOString(),
               tally_ledger: v.ledger_name,
@@ -187,6 +201,7 @@ exports.handler = async (event) => {
               direction:    derivedDirection || null,
               pending_amount: v.pending_amount ?? v.metadata?.pending_amount,
               paid_amount: v.paid_amount ?? v.metadata?.paid_amount,
+              credit_period_days: rawCreditDays,
               bill_allocations: v.bill_allocations || v.metadata?.bill_allocations || [],
               raw_voucher_number: v.raw_voucher_number || v.metadata?.raw_voucher_number || '',
               supplier_invoice_number: v.supplier_invoice_number || v.metadata?.supplier_invoice_number || '',

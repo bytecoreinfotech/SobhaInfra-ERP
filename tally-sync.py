@@ -265,8 +265,7 @@ DAYBOOK_XML = f"""<?xml version="1.0" encoding="utf-8"?>
             <TYPE>Voucher</TYPE>
             <FETCH>DATE, VOUCHERNUMBER, VOUCHERTYPENAME, PARTYLEDGERNAME, BASICBUYERNAME,
                    AMOUNT, NARRATION, PARTYGSTIN, BASICBUYERADDRESS,
-                   ALLLEDGERENTRIES.LIST, BILLALLOCATIONS.LIST,
-                   ALLLEDGERENTRIES.*, BILLALLOCATIONS.*</FETCH>
+                   ALLLEDGERENTRIES.LIST, BILLALLOCATIONS.LIST</FETCH>
             <FILTER>SalesDayBookFilter</FILTER>
           </COLLECTION>
           <SYSTEM TYPE="Formulae" NAME="SalesDayBookFilter">
@@ -305,8 +304,7 @@ VOUCHERS_XML = f"""<?xml version="1.0" encoding="utf-8"?>
             <TYPE>Voucher</TYPE>
             <FETCH>DATE, VOUCHERNUMBER, VOUCHERTYPENAME, PARTYLEDGERNAME, BASICBUYERNAME,
                    AMOUNT, NARRATION, PARTYGSTIN, BASICBUYERADDRESS,
-                   ALLLEDGERENTRIES.LIST, BILLALLOCATIONS.LIST,
-                   ALLLEDGERENTRIES.*, BILLALLOCATIONS.*</FETCH>
+                   ALLLEDGERENTRIES.LIST, BILLALLOCATIONS.LIST</FETCH>
             <FILTER>ReceiptPaymentFilter</FILTER>
           </COLLECTION>
           <SYSTEM TYPE="Formulae" NAME="ReceiptPaymentFilter">
@@ -436,7 +434,7 @@ SALES_VOUCHER_OBJECT_XML = """<?xml version="1.0" encoding="utf-8"?>
 # HELPERS
 # ==============================================================================
 
-def query_tally(xml_payload, label="", timeout=12):
+def query_tally(xml_payload, label="", timeout=30):
     """Send XML request to Tally and return raw response text."""
     try:
         resp = requests.post(
@@ -1177,7 +1175,7 @@ def parse_voucher_block(block, fallback_company: str = "", ledger_phone_map: dic
     }
 
 
-def parse_ledger_block(block, fallback_company: str = "", ledger_phone_map: dict = None):
+def parse_ledger_block(block, fallback_company: str = "", ledger_phone_map: dict = None, ledger_credit_map: dict = None):
     """Parse a single LEDGER XML block into a dict."""
     name = (extract_tag_value(block, "NAME") or
             extract_tag_value(block, "LEDGERNAME"))
@@ -1241,6 +1239,19 @@ def parse_ledger_block(block, fallback_company: str = "", ledger_phone_map: dict
     if not phone_val:
         phone_val = extract_phone_from_party_fields(block)
 
+    # Dynamic credit terms from master ledger registry or ledger block
+    credit_days = None
+    if ledger_credit_map:
+        credit_days = (ledger_credit_map.get(clean_name.lower()) or
+                       ledger_credit_map.get(norm_key))
+    if credit_days is None:
+        raw_credit = extract_tag_value(block, "BILLCREDITPERIOD") or extract_tag_value(block, "CREDITPERIOD") or ""
+        credit_days = parse_credit_period_to_days(raw_credit)
+
+    due_date = datetime.now().strftime("%Y-%m-%d")
+    if credit_days is not None and credit_days > 0:
+        due_date = (datetime.now() + timedelta(days=credit_days)).strftime("%Y-%m-%d")
+
     return {
         "invoice_number": f"LEDGER-{clean_name.replace(' ', '')[:12]}",
         "invoice_date": datetime.now().strftime("%d-%b-%y"),
@@ -1249,11 +1260,13 @@ def parse_ledger_block(block, fallback_company: str = "", ledger_phone_map: dict
         "phone": phone_val,
         "amount": amount,
         "status": "Pending",
-        "due_date": datetime.now().strftime("%Y-%m-%d"),
+        "due_date": due_date,
+        "credit_period_days": credit_days,
         "metadata": {
             "voucher_type": "Ledger Balance",
             "opening_balance": opening_amt,
             "closing_balance": amount,
+            "credit_period_days": credit_days,
             "tally_company": fallback_company or "Tally Company",
         }
     }
@@ -1414,7 +1427,7 @@ def parse_any_tally_xml(xml_text, fallback_company: str = "", ledger_phone_map: 
         ledger_blocks = re.findall(r'<LEDGER[^>]*>([\s\S]*?)</LEDGER>', xml_text, re.IGNORECASE)
         log.info(f"  Parser: Found {len(ledger_blocks)} LEDGER blocks")
         for lblock in ledger_blocks:
-            rec = parse_ledger_block(lblock, fallback_company, ledger_phone_map)
+            rec = parse_ledger_block(lblock, fallback_company, ledger_phone_map, ledger_credit_map)
             _add_rec(rec)
 
     # --- Pass 5: DSPACCNAME (Balance Sheet display names with amounts) ---
@@ -1653,7 +1666,9 @@ def fetch_from_tally():
             log.info(f"  Strategy [{strat_idx+1}/{total_strategies}] {label}...")
             print(f"  [{strat_idx+1}/{total_strategies}] Trying strategy: {label}", flush=True)
 
-            xml_data = query_tally(xml_payload, label, timeout=12)
+            # Allow 45s for voucher queries (Sales & Receipts across multiple FYs) so Tally can assemble XML without timing out
+            strat_timeout = 45 if any(k in label.lower() for k in ["sales", "receipt", "voucher", "daybook"]) else 25
+            xml_data = query_tally(xml_payload, label, timeout=strat_timeout)
 
             if not xml_data or len(xml_data) < 50:
                 consecutive_timeouts += 1
