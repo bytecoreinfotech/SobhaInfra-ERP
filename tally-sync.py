@@ -508,6 +508,7 @@ def compute_voucher_hash(v):
         str(v.get("phone") or v.get("client_phone") or "").strip(),
         str(v.get("ledger_name") or v.get("client_name") or "").strip(),
         str(v.get("due_date") or ""),
+        str(v.get("credit_period_days") or ""),
         str(v.get("truck_no") or ""),
         str(v.get("challan_no") or ""),
         str(v.get("eway_bill_no") or ""),
@@ -1168,6 +1169,11 @@ def parse_voucher_block(block, fallback_company: str = "", ledger_phone_map: dic
         "sgst_amount": sgst_amount,
         "line_items": line_items,
         "bill_allocations": bill_allocations,
+        "metadata": {
+            "credit_period_days": applied_credit_days,
+            "voucher_type": vch_type,
+            "direction": direction,
+        },
     }
 
 
