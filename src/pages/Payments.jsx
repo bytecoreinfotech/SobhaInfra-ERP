@@ -4,9 +4,10 @@ import {
   MessageCircle, Phone, RefreshCw, IndianRupee,
   ArrowUpRight, ArrowDownRight, FileText, ShieldCheck,
   RotateCcw, Search, AlertCircle, X, ExternalLink, ChevronLeft, ChevronRight,
-  ChevronDown, ChevronUp, Users, Download, Printer
+  ChevronDown, ChevronUp, Users, Download, Printer,
+  PauseCircle, PlayCircle, CalendarClock, MessageSquare
 } from 'lucide-react';
-import { getInvoices, getCustomerMaster, triggerSheetSync, getSheetSyncLog, invalidateInvoicesCache, invalidateCustomerMasterCache } from '../lib/db';
+import { getInvoices, getCustomerMaster, triggerSheetSync, getSheetSyncLog, invalidateInvoicesCache, invalidateCustomerMasterCache, pauseInvoiceReminder, resumeInvoiceReminder } from '../lib/db';
 import { reconcileCustomerInvoices, isSalesVoucher } from '../lib/reconciliation';
 import { buildCustomerIndex, matchCustomer } from '../lib/customerMatcher';
 import { useCompany } from '../context/CompanyContext';
@@ -82,11 +83,52 @@ const Payments = () => {
   const [reminderModalData, setReminderModalData]     = useState(null); // { invoice, customer, invoices, statementPdfUrl }
   const [statementModalData, setStatementModalData]   = useState(null); // { customer, invoices }
 
+  // Pause Reminder State
+  const [pauseModal, setPauseModal]                   = useState(null);
+  const [pauseReason, setPauseReason]                 = useState('');
+  const [pausePromisedDate, setPausePromisedDate]     = useState('');
+  const [pauseNotes, setPauseNotes]                   = useState('');
+  const [pausingSaving, setPausingSaving]             = useState(false);
+
   // Pagination state (prevents DOM lag)
   const [currentPage, setCurrentPage]         = useState(1);
   const [pageSize, setPageSize]               = useState(50); // 25, 50, 100, -1 (All)
 
   useEffect(() => { loadAll(); }, []);
+
+  const handlePauseReminder = async (e) => {
+    e.preventDefault();
+    if (!pauseModal?.invoice) return;
+    setPausingSaving(true);
+
+    let committedBy = 'admin_manual';
+    if (pauseReason?.includes('phone call')) committedBy = 'admin_phone_call';
+    else if (pauseReason?.includes('in-person')) committedBy = 'admin_in_person';
+    else if (pauseReason?.includes('WhatsApp message')) committedBy = 'admin_whatsapp_manual';
+    else if (pauseReason?.includes('Email')) committedBy = 'admin_email';
+
+    const { data } = await pauseInvoiceReminder(pauseModal.invoice.id, {
+      reason: pauseReason || 'Paused by admin',
+      promisedDate: pausePromisedDate || null,
+      committedBy,
+      notes: pauseNotes,
+    });
+    if (data) {
+      setAllInvoices(prev => prev.map(i => i.id === pauseModal.invoice.id ? { ...i, ...data } : i));
+    }
+    setPauseModal(null);
+    setPauseReason('');
+    setPausePromisedDate('');
+    setPauseNotes('');
+    setPausingSaving(false);
+  };
+
+  const handleResumeReminder = async (inv) => {
+    const { data } = await resumeInvoiceReminder(inv.id);
+    if (data) {
+      setAllInvoices(prev => prev.map(i => i.id === inv.id ? { ...i, ...data } : i));
+    }
+  };
 
   const loadAll = async (forceRefresh = false) => {
     setLoading(true);
@@ -1024,9 +1066,32 @@ const Payments = () => {
 
                       {/* Reminders Count */}
                       <td>
-                        <span className="badge badge-neutral">
-                          {(isSent ? (inv.reminder_count || 0) + 1 : (inv.reminder_count || 0))} sent
-                        </span>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                          <span className="badge badge-neutral">
+                            {(isSent ? (inv.reminder_count || 0) + 1 : (inv.reminder_count || 0))} sent
+                          </span>
+                          {(inv.reminder_paused === true || inv.reminder_paused === 'true') && (
+                            <span
+                              style={{
+                                fontSize: '0.62rem',
+                                padding: '1px 5px',
+                                borderRadius: '4px',
+                                background: '#fffbeb',
+                                color: '#92400e',
+                                fontWeight: 700,
+                                border: '1px solid #fde68a',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '2px',
+                                width: 'fit-content'
+                              }}
+                              data-tooltip={inv.payment_promised_date ? `Promised payment by ${new Date(inv.payment_promised_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}` : 'Indefinitely paused'}
+                              data-tooltip-pos="top"
+                            >
+                              ⏸ Paused {inv.payment_promised_date && `until ${new Date(inv.payment_promised_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}`}
+                            </span>
+                          )}
+                        </div>
                       </td>
 
                       {/* Actions */}
@@ -1049,6 +1114,16 @@ const Payments = () => {
                             </span>
                           ) : inv.status === 'Paid' ? (
                             <span style={{ fontSize: '0.78rem', color: 'var(--success)', fontWeight: 600 }}>✓ Cleared</span>
+                          ) : (inv.reminder_paused === true || inv.reminder_paused === 'true') ? (
+                            <button
+                              className="btn btn-secondary btn-sm"
+                              style={{ padding: '0.2rem 0.5rem', fontSize: '0.7rem', color: '#10b981', display: 'inline-flex', alignItems: 'center', gap: '0.2rem', borderColor: 'rgba(16,185,129,0.4)' }}
+                              onClick={() => handleResumeReminder(inv)}
+                              data-tooltip="Resume automated payment reminders for this invoice"
+                              data-tooltip-pos="left"
+                            >
+                              <PlayCircle size={12} /> Resume
+                            </button>
                           ) : !hasPhone ? (
                             /* Disabled Remind Button when phone is missing in Google Sheet */
                             <span
@@ -1086,6 +1161,15 @@ const Payments = () => {
                                 data-tooltip-pos="left"
                               >
                                 {isSent ? <><CheckCircle2 size={13} /> Sent</> : isReminding ? 'Sending...' : <><Send size={13} /> Remind</>}
+                              </button>
+                              <button
+                                className="btn btn-secondary btn-sm"
+                                style={{ padding: '0.2rem 0.4rem', fontSize: '0.68rem', color: 'var(--text-muted)', display: 'inline-flex', alignItems: 'center' }}
+                                onClick={() => { setPauseModal({ invoice: inv }); setPausePromisedDate(''); setPauseReason(''); setPauseNotes(''); }}
+                                data-tooltip="Pause automatic reminders (set customer promised payment date)"
+                                data-tooltip-pos="left"
+                              >
+                                <PauseCircle size={12} />
                               </button>
                               <a
                                 href={`tel:${inv._verified_phone}`}
@@ -1248,6 +1332,95 @@ const Payments = () => {
             } : i));
           }}
         />
+      )}
+      {/* ── Pause Reminder Modal ── */}
+      {pauseModal?.invoice && (
+        <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) setPauseModal(null); }} style={{ zIndex: 9999 }}>
+          <div className="modal-content animate-fade-in" style={{ maxWidth: 500, padding: '1.5rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'rgba(255,165,0,0.15)', color: 'var(--warning)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <PauseCircle size={20} />
+                </div>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: '1rem' }}>Pause Auto-Reminders</div>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{pauseModal.invoice.client_name} — {pauseModal.invoice.invoice_number}</div>
+                </div>
+              </div>
+              <button className="modal-close-btn" onClick={() => setPauseModal(null)}>✕</button>
+            </div>
+
+            <div style={{ padding: '0.75rem 1rem', background: 'rgba(255,165,0,0.06)', border: '1px solid rgba(255,165,0,0.25)', borderRadius: 8, fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: '1.25rem', lineHeight: 1.5 }}>
+              Pausing will stop automatic WhatsApp reminders for this bill. If the client promised payment by a certain date (e.g. 10 days, 25th), set it below &mdash; reminders will <strong>automatically resume</strong> if unpaid after that date.
+            </div>
+
+            <form onSubmit={handlePauseReminder} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div>
+                <label style={{ fontSize: '0.78rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>
+                  <MessageSquare size={13} style={{ display: 'inline', marginRight: 4 }} />
+                  How was payment promise communicated? *
+                </label>
+                <select
+                  className="input-field"
+                  value={pauseReason}
+                  onChange={e => setPauseReason(e.target.value)}
+                  required
+                >
+                  <option value="">-- Select Channel --</option>
+                  <option value="Client committed date on phone call">📞 Phone call with admin/manager</option>
+                  <option value="Client in-person payment promise">🤝 In-person / Office visit promise</option>
+                  <option value="Client committed via WhatsApp message">💬 WhatsApp message</option>
+                  <option value="Email commitment received">📧 Email commitment received</option>
+                  <option value="Partial payment received, balance pending">💰 Partial payment received — balance pending</option>
+                  <option value="Payment arrangement under discussion">🗓️ Under payment arrangement discussion</option>
+                  <option value="Client requested pause">📩 Client specifically requested pause</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={{ fontSize: '0.78rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>
+                  <CalendarClock size={13} style={{ display: 'inline', marginRight: 4 }} />
+                  Payment Promised By (Date)
+                </label>
+                <input
+                  type="date"
+                  className="input-field"
+                  value={pausePromisedDate}
+                  min={new Date().toISOString().split('T')[0]}
+                  onChange={e => setPausePromisedDate(e.target.value)}
+                />
+                <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
+                  {pausePromisedDate
+                    ? `⚡ Auto-reminders will resume on ${new Date(pausePromisedDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} if payment is still pending.`
+                    : 'Leave blank for indefinite pause (must manually resume).'}
+                </div>
+              </div>
+
+              <div>
+                <label style={{ fontSize: '0.78rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>Internal Notes (Optional)</label>
+                <textarea
+                  className="input-field textarea-field"
+                  rows={2}
+                  placeholder="e.g. Spoke with client, will clear balance by next week via RTGS..."
+                  value={pauseNotes}
+                  onChange={e => setPauseNotes(e.target.value)}
+                />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+                <button type="button" className="btn btn-secondary" onClick={() => setPauseModal(null)}>Cancel</button>
+                <button
+                  type="submit"
+                  className="btn"
+                  disabled={pausingSaving}
+                  style={{ background: 'var(--warning)', color: 'black', fontWeight: 700 }}
+                >
+                  {pausingSaving ? 'Pausing...' : '⏸ Pause Auto-Reminders'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </div>
   );

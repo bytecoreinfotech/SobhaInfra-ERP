@@ -315,6 +315,66 @@ function detectStatementIntent(text, buttonId = '') {
   return triggers.some(t => lower.includes(t));
 }
 
+// ─── 3c-2b. Detect Payment Promise / Extension & Payment Done Intent ────────
+function detectPaymentPromise(text) {
+  if (!text || typeof text !== 'string') return { isPromise: false };
+  const t = text.toLowerCase().trim();
+
+  // "paid" / "payment done"
+  if (/\b(paid|payment done|pay kar diya|payment kiya|kar diya|ho gaya|cleared|settled|jama kar diya|transfer kar diya|kar diye)\b/.test(t)) {
+    return { isPromise: false, isPaidConfirmation: true };
+  }
+
+  // "pay in N days" / "10 din mein" / "next 10 days" / "10 days"
+  const daysPattern = /(?:pay|paid|payment|karunga|karugi|dunga|dungi|bharunga|kar dunga|agle|next|in).*?(\d+)\s*(?:day|din|d\b)/i;
+  const daysMatch = t.match(daysPattern) || t.match(/(\d+)\s*(?:day|din|d\b).*?(?:pay|paid|bhar|mein|mai|baad)/i);
+  if (daysMatch) {
+    const days = parseInt(daysMatch[1], 10);
+    if (days > 0 && days <= 180) {
+      const promisedDate = new Date();
+      promisedDate.setDate(promisedDate.getDate() + days);
+      return { isPromise: true, daysFromNow: days, promisedDate };
+    }
+  }
+
+  // Specific dates: "by 25th", "25 tarikh tak", "on 15th", "15 ko", "30 aug tak"
+  const datePatterns = [
+    /by (\d{1,2}(?:st|nd|rd|th)?\s+(?:january|february|march|april|may|june|july|august|september|october|november|december))/i,
+    /by (\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?(?:this month|this week)/i,
+    /on (\d{1,2})(?:st|nd|rd|th)/i,
+    /(\d{1,2})\s*tarikh\s*(?:tak|ko|se pehle)/i,
+    /(\d{1,2})\s*(?:ko|tak)\s*(?:dunga|kar dunga|pay|bhej dunga)/i,
+    /(\d{1,2})[\/\-](\d{1,2})[\/\-]?(\d{2,4})?/,
+  ];
+
+  for (const pattern of datePatterns) {
+    const m = t.match(pattern);
+    if (m) {
+      const dayNum = parseInt(m[1], 10);
+      if (dayNum >= 1 && dayNum <= 31) {
+        const now = new Date();
+        const promisedDate = new Date(now.getFullYear(), now.getMonth(), dayNum);
+        if (promisedDate <= now) {
+          promisedDate.setMonth(promisedDate.getMonth() + 1);
+        }
+        const daysFromNow = Math.max(1, Math.round((promisedDate - now) / (1000 * 60 * 60 * 24)));
+        return { isPromise: true, daysFromNow, promisedDate };
+      }
+    }
+  }
+
+  // General vague commitment: "kal", "parso", "next week", "agle hafte", "thoda time" -> courtesy pause
+  if (/(?:will pay|pay kar dunga|de dunga|bhejta hoon|thoda time|kuch time|kal|parso|next week|agle hafte|soon|jaldi)/i.test(t) &&
+      !/(catalog|quote|price|rate|brochure)/i.test(t)) {
+    const days = /kal/i.test(t) ? 1 : /parso/i.test(t) ? 2 : 7;
+    const promisedDate = new Date();
+    promisedDate.setDate(promisedDate.getDate() + days);
+    return { isPromise: true, daysFromNow: days, promisedDate, isVague: true };
+  }
+
+  return { isPromise: false };
+}
+
 // ─── 3c-3. Fetch & Send Dynamic Bank Remittance Card + Standee QR Code ──────
 async function handleBankDetailsRequest(supabase, fromPhone, contactName, conversationId) {
   const mainName = extractMainName(contactName);
@@ -1639,6 +1699,121 @@ exports.handler = async (event) => {
     }
 
 
+    // ── Payment Promise & Follow-up Auto-Pause Detection ────────────────────────
+    const paymentPromise = detectPaymentPromise(messageText);
+
+    if (paymentPromise.isPaidConfirmation || paymentPromise.isPromise) {
+      try {
+        const clean10 = String(fromPhone || '').replace(/[^\d]/g, '').slice(-10);
+        let matchingInvoices = [];
+
+        if (supabase && clean10) {
+          const { data: invRows } = await supabase
+            .from('invoices')
+            .select('id, invoice_number, tally_voucher_number, amount, status, due_date, client_name, reminder_paused, metadata')
+            .in('status', ['Pending', 'Overdue'])
+            .ilike('client_phone', `%${clean10}%`);
+          
+          matchingInvoices = invRows || [];
+
+          // If not matched by phone, check customer_master
+          if (matchingInvoices.length === 0) {
+            const { data: cmList } = await supabase
+              .from('customer_master')
+              .select('company_name')
+              .ilike('contact_number', `%${clean10}%`);
+
+            if (cmList && cmList.length > 0) {
+              const compNames = cmList.map(c => c.company_name);
+              const { data: invByComp } = await supabase
+                .from('invoices')
+                .select('id, invoice_number, tally_voucher_number, amount, status, due_date, client_name, reminder_paused, metadata')
+                .in('status', ['Pending', 'Overdue'])
+                .in('client_name', compNames);
+              matchingInvoices = invByComp || [];
+            }
+          }
+        }
+
+        if (matchingInvoices.length > 0) {
+          const mainName = extractMainName(contactName);
+          const firstInv = matchingInvoices[0];
+          const invDisplay = matchingInvoices.length === 1
+            ? `Invoice *${firstInv.invoice_number || firstInv.tally_voucher_number || 'N/A'}*`
+            : `${matchingInvoices.length} outstanding invoices`;
+
+          if (paymentPromise.isPaidConfirmation) {
+            const nowIso = new Date().toISOString();
+            const invIds = matchingInvoices.map(i => i.id);
+            await supabase.from('invoices').update({
+              status: 'Paid',
+              reminder_paused: false,
+              reminder_paused_reason: null,
+            }).in('id', invIds);
+
+            const paidAckMsg = `✅ *Payment Confirmation Recorded*\n\nNamaste ${mainName || 'Sir/Madam'}! 🙏\n\nThank you for confirming your payment for ${invDisplay}.\n\nOur accounts department will verify the bank remittance and update the ledger records accordingly.\n\nThank you for your valued business with *Sobhainfra Tech*! 🙏`;
+            await sendWhatsAppMessage(fromPhone, paidAckMsg);
+
+            if (supabase && conversationId) {
+              await supabase.from('whatsapp_messages').insert([{
+                organization_id: DEFAULT_ORG_ID,
+                conversation_id: conversationId,
+                direction: 'outbound',
+                sender_type: 'system',
+                body: paidAckMsg,
+                status: 'sent',
+              }]);
+              await supabase.from('whatsapp_conversations').update({
+                last_message_text: paidAckMsg,
+                last_message_at: nowIso,
+                conversation_mode: 'HUMAN ACTIVE',
+              }).eq('id', conversationId);
+            }
+
+            return { statusCode: 200, headers, body: JSON.stringify({ status: 'payment_confirmed_updated', count: matchingInvoices.length }) };
+          }
+
+          if (paymentPromise.isPromise && paymentPromise.promisedDate) {
+            const promisedDateStr = paymentPromise.promisedDate.toISOString().split('T')[0];
+            const fmtPromisedDate = new Date(paymentPromise.promisedDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+            const nowIso = new Date().toISOString();
+            const invIds = matchingInvoices.map(i => i.id);
+
+            await supabase.from('invoices').update({
+              reminder_paused: true,
+              payment_promised_date: promisedDateStr,
+              payment_promised_at: nowIso,
+              reminder_paused_reason: `Client promised payment by ${fmtPromisedDate} via WhatsApp message: "${messageText.slice(0, 100)}"`,
+              promise_committed_by: 'whatsapp_auto',
+            }).in('id', invIds);
+
+            const pauseAckMsg = `🙏 *Payment Reminder Paused*\n\nNamaste ${mainName || 'Sir/Madam'}!\n\nThank you for letting us know. We have noted your payment commitment for *${fmtPromisedDate}*.\n\nAutomatic payment reminders for ${invDisplay} have been *paused until ${fmtPromisedDate}*.\n\n💡 If payment is made earlier, simply reply *"paid"* to this chat. Thank you for your cooperation and continued partnership! 🙏\n_Sobhainfra Tech_`;
+            await sendWhatsAppMessage(fromPhone, pauseAckMsg);
+
+            if (supabase && conversationId) {
+              await supabase.from('whatsapp_messages').insert([{
+                organization_id: DEFAULT_ORG_ID,
+                conversation_id: conversationId,
+                direction: 'outbound',
+                sender_type: 'system',
+                body: pauseAckMsg,
+                status: 'sent',
+              }]);
+              await supabase.from('whatsapp_conversations').update({
+                last_message_text: pauseAckMsg,
+                last_message_at: nowIso,
+                conversation_mode: 'HUMAN ACTIVE',
+              }).eq('id', conversationId);
+            }
+
+            return { statusCode: 200, headers, body: JSON.stringify({ status: 'payment_promise_paused', promisedDate: promisedDateStr, count: matchingInvoices.length }) };
+          }
+        }
+      } catch (promiseErr) {
+        console.warn('[webhook] Payment promise processing notice:', promiseErr.message);
+      }
+    }
+
     // ── Human Handover, Brochure PDF Dispatch & Interactive Action Buttons Router ──
     const buttonId = msg.interactive?.button_reply?.id || msg.interactive?.list_reply?.id || '';
     const buttonTitle = msg.interactive?.button_reply?.title || msg.interactive?.list_reply?.title || '';
@@ -2004,3 +2179,6 @@ exports.handler = async (event) => {
     return { statusCode: 200, headers, body: JSON.stringify({ status: 'error_acknowledged' }) };
   }
 };
+
+exports.detectPaymentPromise = detectPaymentPromise;
+

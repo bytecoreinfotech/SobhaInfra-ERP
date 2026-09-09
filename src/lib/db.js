@@ -679,7 +679,7 @@ const DEFAULT_ORG_SETTINGS = {
   bank_name: 'HDFC Bank Ltd.',
   bank_account_no: '50200088991122',
   bank_ifsc: 'HDFC0001234',
-  reminder_interval_days: '3',
+  reminder_interval_days: '7',
   max_reminders_per_invoice: '7',
   auto_pause_on_promise: 'true',
   storage_auto_clean_enabled: 'true',

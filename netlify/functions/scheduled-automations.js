@@ -203,6 +203,29 @@ exports.handler = async (event) => {
   // Step 3: Process scheduled campaigns
   await processScheduledCampaigns(supabase);
 
+  // Step 4: Bill-by-Bill Automated Payment Reminders (1-day before due date + interval loop)
+  try {
+    const { runAutomatedPaymentReminders } = require('./send-reminder');
+    if (typeof runAutomatedPaymentReminders === 'function') {
+      results.paymentReminders = await runAutomatedPaymentReminders(supabase);
+    } else {
+      throw new Error('runAutomatedPaymentReminders is not a function');
+    }
+  } catch (err) {
+    console.warn('[Scheduler] Direct require notice, falling back to HTTP fetch:', err.message);
+    try {
+      const res = await fetch(`${SITE_URL}/.netlify/functions/send-reminder`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isCronTrigger: true }),
+      });
+      results.paymentReminders = await res.json();
+    } catch (httpErr) {
+      console.warn('[Scheduler] HTTP fallback failed:', httpErr.message);
+      results.paymentReminders = { error: httpErr.message };
+    }
+  }
+
   console.log('[Scheduler] Completed:', JSON.stringify(results));
 
   return {

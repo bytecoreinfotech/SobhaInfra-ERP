@@ -204,7 +204,7 @@ SUNDRY_DEBTORS_XML = """<?xml version="1.0" encoding="utf-8"?>
           <COLLECTION NAME="Sundry Debtors List" ISMODIFY="No">
             <TYPE>Ledger</TYPE>
             <BELONGSTO>Sundry Debtors</BELONGSTO>
-            <FETCH>NAME, PARENT, CLOSINGBALANCE, OPENINGBALANCE, LEDPHONENO, LEDMOBILE, ADDRESS, PINCODE, EMAIL, GSTIN</FETCH>
+            <FETCH>NAME, PARENT, CLOSINGBALANCE, OPENINGBALANCE, LEDPHONENO, LEDMOBILE, ADDRESS, PINCODE, EMAIL, GSTIN, BILLCREDITPERIOD, CREDITPERIOD</FETCH>
           </COLLECTION>
         </TDLMESSAGE>
       </TDL>
@@ -232,7 +232,7 @@ ACCOUNTS_XML = """<?xml version="1.0" encoding="utf-8"?>
         <TDLMESSAGE>
           <COLLECTION NAME="AllPartyLedgers" ISMODIFY="No">
             <TYPE>Ledger</TYPE>
-            <FETCH>NAME, PARENT, CLOSINGBALANCE, OPENINGBALANCE, LEDPHONENO, LEDMOBILE, ADDRESS, PINCODE, EMAIL, GSTIN</FETCH>
+            <FETCH>NAME, PARENT, CLOSINGBALANCE, OPENINGBALANCE, LEDPHONENO, LEDMOBILE, ADDRESS, PINCODE, EMAIL, GSTIN, BILLCREDITPERIOD, CREDITPERIOD</FETCH>
           </COLLECTION>
         </TDLMESSAGE>
       </TDL>
@@ -265,7 +265,8 @@ DAYBOOK_XML = f"""<?xml version="1.0" encoding="utf-8"?>
             <TYPE>Voucher</TYPE>
             <FETCH>DATE, VOUCHERNUMBER, VOUCHERTYPENAME, PARTYLEDGERNAME, BASICBUYERNAME,
                    AMOUNT, NARRATION, PARTYGSTIN, BASICBUYERADDRESS,
-                   ALLLEDGERENTRIES.LIST, BILLALLOCATIONS.LIST</FETCH>
+                   ALLLEDGERENTRIES.LIST, BILLALLOCATIONS.LIST,
+                   ALLLEDGERENTRIES.*, BILLALLOCATIONS.*</FETCH>
             <FILTER>SalesDayBookFilter</FILTER>
           </COLLECTION>
           <SYSTEM TYPE="Formulae" NAME="SalesDayBookFilter">
@@ -304,7 +305,8 @@ VOUCHERS_XML = f"""<?xml version="1.0" encoding="utf-8"?>
             <TYPE>Voucher</TYPE>
             <FETCH>DATE, VOUCHERNUMBER, VOUCHERTYPENAME, PARTYLEDGERNAME, BASICBUYERNAME,
                    AMOUNT, NARRATION, PARTYGSTIN, BASICBUYERADDRESS,
-                   ALLLEDGERENTRIES.LIST, BILLALLOCATIONS.LIST</FETCH>
+                   ALLLEDGERENTRIES.LIST, BILLALLOCATIONS.LIST,
+                   ALLLEDGERENTRIES.*, BILLALLOCATIONS.*</FETCH>
             <FILTER>ReceiptPaymentFilter</FILTER>
           </COLLECTION>
           <SYSTEM TYPE="Formulae" NAME="ReceiptPaymentFilter">
@@ -623,39 +625,95 @@ def extract_party_phone_from_voucher(block, party_name):
     return ""
 
 
-def fetch_tally_ledger_phone_master(company_name: str = "") -> dict:
+def parse_credit_period_to_days(val) -> int | None:
     """
-    MASTER LEDGER PHONE REGISTRY:
-    Queries Tally's Master Ledger Collection to fetch the official registered
-    phone/mobile number for EVERY party ledger in Tally.
-    Returns a dictionary mapping normalized ledger names -> phone numbers.
-    This guarantees 100% accurate phone matching without cross-contamination.
+    Parses Tally credit period representations such as:
+      - '45 Days' -> 45
+      - '60 Days' -> 60
+      - '30'      -> 30
+      - '2 Months' -> 60
+      - '1 Month'  -> 30
+      - '15 Days'  -> 15
+    Returns integer days, or None if not parseable.
+    """
+    if not val:
+        return None
+    val_clean = str(val).strip().lower()
+    m_match = re.search(r'(\d+)\s*month', val_clean)
+    if m_match:
+        return int(m_match.group(1)) * 30
+    w_match = re.search(r'(\d+)\s*week', val_clean)
+    if w_match:
+        return int(w_match.group(1)) * 7
+    d_match = re.search(r'(\d+)', val_clean)
+    if d_match:
+        return int(d_match.group(1))
+    return None
 
-    Strategy:
-      1. TDL Collection (works in TallyPrime 2.x+, fetches all fields)
-      2. Fallback: "List of Accounts" standard report (works on all versions)
+
+def parse_tally_date_str(d_str: str) -> str | None:
+    """
+    Parse a Tally date string into standard 'YYYY-MM-DD'.
+    Handles:
+      - '20260930' (8-digit YYYYMMDD)
+      - '30-Aug-2026' or '30-Aug-26'
+      - '30-08-2026' or '2026-08-30'
+      - '30/08/2026'
+    """
+    if not d_str:
+        return None
+    s = str(d_str).strip()
+    if len(s) == 8 and s.isdigit():
+        try:
+            return f"{s[:4]}-{s[4:6]}-{s[6:8]}"
+        except Exception:
+            pass
+    for fmt in ("%d-%b-%Y", "%d-%b-%y", "%d-%m-%Y", "%Y-%m-%d", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(s, fmt).strftime("%Y-%m-%d")
+        except Exception:
+            pass
+    return None
+
+
+def fetch_tally_ledger_master(company_name: str = "") -> tuple:
+    """
+    MASTER LEDGER PHONE & CREDIT TERMS REGISTRY:
+    Queries Tally's Master Ledger Collection to fetch:
+      1. Official registered phone/mobile number for EVERY party ledger.
+      2. Official default credit period (e.g. 45 days, 60 days) for EVERY party ledger.
+    Returns (phone_map, credit_map).
     """
     phone_map = {}
+    credit_map = {}
 
     def _build_map_from_xml(resp_xml):
-        """Parse LEDGER blocks from any XML response and build a phone map."""
-        result = {}
+        """Parse LEDGER blocks from any XML response and build phone & credit maps."""
+        p_map = {}
+        c_map = {}
         ledger_blocks = re.findall(r'<LEDGER[^>]*>([\s\S]*?)</LEDGER>', resp_xml, re.IGNORECASE)
         for lblock in ledger_blocks:
             name = extract_tag_value(lblock, "NAME") or extract_tag_value(lblock, "LEDGERNAME")
             if not name:
                 continue
 
-            # Dedicated phone fields ONLY: LEDMOBILE, LEDPHONENO, PHONENO, MOBILENO, CONTACTNO
             phone = extract_phone_from_party_fields(lblock)
+            raw_credit = extract_tag_value(lblock, "BILLCREDITPERIOD") or extract_tag_value(lblock, "CREDITPERIOD")
+            credit_days = parse_credit_period_to_days(raw_credit)
+
+            name_clean = name.strip().lower()
+            name_norm = re.sub(r'[^a-z0-9]', '', name_clean)
 
             if phone:
-                name_clean = name.strip().lower()
-                name_norm = re.sub(r'[^a-z0-9]', '', name_clean)
-                result[name_clean] = phone
+                p_map[name_clean] = phone
                 if name_norm:
-                    result[name_norm] = phone
-        return result
+                    p_map[name_norm] = phone
+
+            if credit_days is not None:
+                c_map[name_clean] = credit_days
+                if name_norm:
+                    c_map[name_norm] = credit_days
+        return p_map, c_map
 
     # ── Strategy 1: TDL Collection (richest data, TallyPrime 2.x+) ─────────────
     tdl_xml = """<?xml version="1.0" encoding="utf-8"?>
@@ -675,7 +733,7 @@ def fetch_tally_ledger_phone_master(company_name: str = "") -> dict:
         <TDLMESSAGE>
           <COLLECTION NAME="MasterLedgerPhoneList" ISMODIFY="No">
             <TYPE>Ledger</TYPE>
-            <FETCH>NAME, PARENT, LEDGERMOBILE, LEDGERPHONE, LEDGERCONTACT, LEDMOBILE, LEDPHONENO, MOBILENO, PHONENO, CONTACTNO, MOBILENUMBER, PHONENUMBER, PARTYPHONE, ADDRESS, PINCODE, EMAIL, GSTIN</FETCH>
+            <FETCH>NAME, PARENT, LEDGERMOBILE, LEDGERPHONE, LEDGERCONTACT, LEDMOBILE, LEDPHONENO, MOBILENO, PHONENO, CONTACTNO, MOBILENUMBER, PHONENUMBER, PARTYPHONE, ADDRESS, PINCODE, EMAIL, GSTIN, BILLCREDITPERIOD, CREDITPERIOD</FETCH>
           </COLLECTION>
         </TDLMESSAGE>
       </TDL>
@@ -686,15 +744,17 @@ def fetch_tally_ledger_phone_master(company_name: str = "") -> dict:
     if company_name:
         tdl_xml = inject_company_into_xml(tdl_xml, company_name)
 
-    log.info(f"  [Master Phone Map] Strategy 1: Fetching master party contact registry from Tally TDL...")
+    log.info(f"  [Master Ledger Registry] Strategy 1: Fetching master party contacts & credit terms from Tally TDL...")
     resp1 = query_tally(tdl_xml, f"MasterLedgerPhones_{company_name or 'Default'}")
     if resp1 and len(resp1) > 100:
-        phone_map.update(_build_map_from_xml(resp1))
-        log.info(f"  [Master Phone Map] Strategy 1 result: {len(phone_map)} parties with phones")
+        p1, c1 = _build_map_from_xml(resp1)
+        phone_map.update(p1)
+        credit_map.update(c1)
+        log.info(f"  [Master Ledger Registry] Strategy 1 result: {len(phone_map)} parties with phones, {len(credit_map)} with credit terms")
 
     # ── Strategy 2: Standard "List of Accounts" report (fallback for older Tally) ─
     if len(phone_map) < 3:
-        log.info(f"  [Master Phone Map] Strategy 2: Trying standard List of Accounts report...")
+        log.info(f"  [Master Ledger Registry] Strategy 2: Trying standard List of Accounts report...")
         accts_xml = """<?xml version="1.0" encoding="utf-8"?>
 <ENVELOPE>
   <HEADER>
@@ -715,49 +775,26 @@ def fetch_tally_ledger_phone_master(company_name: str = "") -> dict:
             accts_xml = inject_company_into_xml(accts_xml, company_name)
         resp2 = query_tally(accts_xml, f"ListOfAccounts_{company_name or 'Default'}")
         if resp2 and len(resp2) > 100:
-            extra = _build_map_from_xml(resp2)
-            for k, v in extra.items():
+            p2, c2 = _build_map_from_xml(resp2)
+            for k, v in p2.items():
                 if k not in phone_map:
                     phone_map[k] = v
-            log.info(f"  [Master Phone Map] Strategy 2 added {len(extra)} extra parties; total: {len(phone_map)}")
+            for k, v in c2.items():
+                if k not in credit_map:
+                    credit_map[k] = v
+            log.info(f"  [Master Ledger Registry] Strategy 2 added extra parties; total phones: {len(phone_map)}, total credit terms: {len(credit_map)}")
 
-    log.info(f"  [Master Phone Map] Final registry before purge: {len(phone_map)} party phone number(s)")
-
-    # ---- DIAGNOSTIC REPORT: shows phone data from Tally per party ---------------
-    MAX_SHARED_PHONE_THRESHOLD = 3
-
-    # Group distinct ledger names per phone (avoid duplicate normalized keys)
-    phone_to_parties = {}
-    for k, ph in phone_map.items():
-        # Only process natural name keys (skip stripped norm keys to prevent false duplicates)
-        if ' ' in k or not any(k == re.sub(r'[^a-z0-9]', '', orig) for orig in phone_map if ' ' in orig):
-            if ph not in phone_to_parties:
-                phone_to_parties[ph] = set()
-            phone_to_parties[ph].add(k)
-
-    print("\n" + "=" * 68)
-    print("  TALLY MASTER LEDGER PHONE AUDIT & DIAGNOSTIC REPORT")
-    print("  Shows registered phone/mobile number for each party in Tally.")
-    print("  Note: Duplicate/repeated numbers are fetched exactly as-is from Tally.")
-    print("=" * 68)
-    has_dups = False
-    for ph, parties in sorted(phone_to_parties.items(), key=lambda x: -len(x[1])):
-        count = len(parties)
-        if count > 1:
-            has_dups = True
-            print(f"  [REPEATED x{count}] Phone: {ph} -> Ledgers: {', '.join(sorted(parties))}")
-    if not has_dups:
-        print("  CLEAN: All party phones in Tally are unique.")
-    print(f"  Total registered party phones in Tally: {len(phone_map)}")
-    print("=" * 68 + "\n")
-
-    log.info(f"  [Master Phone Map] Exact party phone registry: {len(phone_map)} contact(s) mapped directly from Tally")
-    return phone_map
+    log.info(f"  [Master Ledger Registry] Final registry: {len(phone_map)} party phone(s), {len(credit_map)} party credit term(s)")
+    return phone_map, credit_map
 
 
+def fetch_tally_ledger_phone_master(company_name: str = "") -> dict:
+    """Backwards-compatible wrapper returning only the phone map."""
+    phones, _ = fetch_tally_ledger_master(company_name)
+    return phones
 
 
-def parse_voucher_block(block, fallback_company: str = "", ledger_phone_map: dict = None):
+def parse_voucher_block(block, fallback_company: str = "", ledger_phone_map: dict = None, ledger_credit_map: dict = None):
     """Parse a single VOUCHER XML block into a rich dict with real Tally data."""
     vch_number = (extract_tag_value(block, "VOUCHERNUMBER") or
                   extract_tag_value(block, "NUMBER") or
@@ -846,15 +883,75 @@ def parse_voucher_block(block, fallback_company: str = "", ledger_phone_map: dic
     else:
         taxable_amount = None  # Will fall back to amount/1.05 formula in PDF generator
 
-    due_date = datetime.now().strftime("%Y-%m-%d")
+    # Extract bill allocations (Agst Ref, New Ref) and credit terms from Tally
+    bill_allocations = []
+    bill_due_date = None
+    bill_credit_days = None
+
+    for ablock in re.findall(r'<BILLALLOCATIONS\.LIST[^>]*>([\s\S]*?)</BILLALLOCATIONS\.LIST>', block, re.IGNORECASE):
+        b_name = extract_tag_value(ablock, "NAME") or extract_tag_value(ablock, "BILLNAME")
+        b_type = extract_tag_value(ablock, "BILLTYPE") or ""
+        b_amt  = parse_number(extract_tag_value(ablock, "AMOUNT") or "0")
+        b_due_raw = extract_tag_value(ablock, "BILLDUEDATE") or extract_tag_value(ablock, "DUEDATE") or ""
+        b_credit_raw = extract_tag_value(ablock, "BILLCREDITPERIOD") or extract_tag_value(ablock, "CREDITPERIOD") or ""
+
+        parsed_b_due = parse_tally_date_str(b_due_raw)
+        parsed_b_days = parse_credit_period_to_days(b_credit_raw)
+
+        if not bill_due_date and parsed_b_due:
+            bill_due_date = parsed_b_due
+        if bill_credit_days is None and parsed_b_days is not None:
+            bill_credit_days = parsed_b_days
+
+        if b_name:
+            bill_allocations.append({
+                "name": b_name,
+                "type": b_type,
+                "amount": b_amt,
+                "due_date": parsed_b_due,
+                "credit_period": b_credit_raw,
+                "credit_days": parsed_b_days,
+            })
+
+    # Resolve invoice date
     inv_date_str = datetime.now().strftime("%d-%b-%y")
+    dt_obj = None
     if raw_date and len(raw_date) == 8:
         try:
             dt_obj = datetime.strptime(raw_date, "%Y%m%d")
             inv_date_str = dt_obj.strftime("%d-%b-%y")
-            due_date = (dt_obj + timedelta(days=30)).strftime("%Y-%m-%d")
         except ValueError:
             pass
+
+    # Dynamic credit terms and due date calculation
+    due_date = None
+    applied_credit_days = None
+
+    if bill_due_date:
+        due_date = bill_due_date
+        if dt_obj:
+            try:
+                due_dt = datetime.strptime(bill_due_date, "%Y-%m-%d")
+                applied_credit_days = max(0, (due_dt - dt_obj).days)
+            except Exception:
+                pass
+    elif bill_credit_days is not None and dt_obj:
+        applied_credit_days = bill_credit_days
+        due_date = (dt_obj + timedelta(days=bill_credit_days)).strftime("%Y-%m-%d")
+    elif ledger_credit_map and dt_obj:
+        party_key = (party or "").strip().lower()
+        party_norm = re.sub(r'[^a-z0-9]', '', party_key)
+        l_days = ledger_credit_map.get(party_key) or ledger_credit_map.get(party_norm)
+        if l_days is not None:
+            applied_credit_days = l_days
+            due_date = (dt_obj + timedelta(days=l_days)).strftime("%Y-%m-%d")
+
+    # Fallback to default 30 days if still unassigned and dt_obj is valid
+    if not due_date and dt_obj:
+        applied_credit_days = 30
+        due_date = (dt_obj + timedelta(days=30)).strftime("%Y-%m-%d")
+    elif not due_date:
+        due_date = datetime.now().strftime("%Y-%m-%d")
 
     # Voucher type classification
     SKIP_TYPES = {"contra", "bank contra", "cash contra"}
@@ -971,19 +1068,6 @@ def parse_voucher_block(block, fallback_company: str = "", ledger_phone_map: dic
             "hsn": hsn,
         })
 
-    # Extract bill allocations (Agst Ref, New Ref)
-    bill_allocations = []
-    for ablock in re.findall(r'<BILLALLOCATIONS\.LIST[^>]*>([\s\S]*?)</BILLALLOCATIONS\.LIST>', block, re.IGNORECASE):
-        b_name = extract_tag_value(ablock, "NAME") or extract_tag_value(ablock, "BILLNAME")
-        b_type = extract_tag_value(ablock, "BILLTYPE") or ""
-        b_amt  = parse_number(extract_tag_value(ablock, "AMOUNT") or "0")
-        if b_name:
-            bill_allocations.append({
-                "name": b_name,
-                "type": b_type,
-                "amount": b_amt
-            })
-
     # Smart unique invoice numbering with company & voucher type scoping
     # Guarantees ZERO cross-company and ZERO cross-voucher-type collisions in Supabase!
     comp_prefix = ""
@@ -1065,6 +1149,7 @@ def parse_voucher_block(block, fallback_company: str = "", ledger_phone_map: dic
         "voucher_type": vch_type,     # store raw Tally voucher type
         "direction": direction,        # receivable | received | payable | paid_out
         "due_date": due_date,
+        "credit_period_days": applied_credit_days,
         "buyer_address": buyer_addr,
         "gstin": buyer_gstin or "27ALPRP4116L1ZM",
         "truck_no": truck_no,
@@ -1168,7 +1253,7 @@ def parse_ledger_block(block, fallback_company: str = "", ledger_phone_map: dict
     }
 
 
-def parse_any_tally_xml(xml_text, fallback_company: str = "", ledger_phone_map: dict = None):
+def parse_any_tally_xml(xml_text, fallback_company: str = "", ledger_phone_map: dict = None, ledger_credit_map: dict = None):
     """
     Parse ANY XML response from Tally by trying multiple block types in order:
       1. <VOUCHER> blocks (DayBook / Vouchers)
@@ -1195,7 +1280,7 @@ def parse_any_tally_xml(xml_text, fallback_company: str = "", ledger_phone_map: 
     if voucher_blocks:
         log.info(f"  Parser: Found {len(voucher_blocks)} VOUCHER blocks")
         for vblock in voucher_blocks:
-            rec = parse_voucher_block(vblock, fallback_company, ledger_phone_map)
+            rec = parse_voucher_block(vblock, fallback_company, ledger_phone_map, ledger_credit_map)
             _add_rec(rec)
         log.info(f"  Parser: {len(records)} vouchers kept after type filter+dedup (of {len(voucher_blocks)} found)")
         if records:
@@ -1235,14 +1320,40 @@ def parse_any_tally_xml(xml_text, fallback_company: str = "", ledger_phone_map: 
                 extract_tag_value(bblock, "CLOSINGBALANCE") or
                 extract_tag_value(bblock, "AMOUNT")
             )
-            raw_due = extract_tag_value(bblock, "BILLDATED") or ""
-            due_date = datetime.now().strftime("%Y-%m-%d")
-            if raw_due and len(raw_due) == 8:
+            raw_due = extract_tag_value(bblock, "BILLDUEDATE") or extract_tag_value(bblock, "BILLOVERDUEDATE") or ""
+            raw_date = extract_tag_value(bblock, "BILLDATED") or ""
+            raw_credit = extract_tag_value(bblock, "BILLCREDITPERIOD") or extract_tag_value(bblock, "CREDITPERIOD") or ""
+
+            parsed_due = parse_tally_date_str(raw_due)
+            credit_days = parse_credit_period_to_days(raw_credit)
+
+            due_date = None
+            if parsed_due:
+                due_date = parsed_due
+            elif credit_days is not None and raw_date and len(raw_date) == 8:
                 try:
-                    dt = datetime.strptime(raw_due, "%Y%m%d")
-                    due_date = (dt + timedelta(days=30)).strftime("%Y-%m-%d")
+                    dt = datetime.strptime(raw_date, "%Y%m%d")
+                    due_date = (dt + timedelta(days=credit_days)).strftime("%Y-%m-%d")
                 except ValueError:
                     pass
+            elif ledger_credit_map and clean_party and raw_date and len(raw_date) == 8:
+                l_days = ledger_credit_map.get(clean_party.lower()) or ledger_credit_map.get(norm_key)
+                if l_days is not None:
+                    try:
+                        dt = datetime.strptime(raw_date, "%Y%m%d")
+                        due_date = (dt + timedelta(days=l_days)).strftime("%Y-%m-%d")
+                    except ValueError:
+                        pass
+
+            if not due_date:
+                if raw_date and len(raw_date) == 8:
+                    try:
+                        dt = datetime.strptime(raw_date, "%Y%m%d")
+                        due_date = (dt + timedelta(days=30)).strftime("%Y-%m-%d")
+                    except ValueError:
+                        due_date = datetime.now().strftime("%Y-%m-%d")
+                else:
+                    due_date = datetime.now().strftime("%Y-%m-%d")
 
             if (bill_name or clean_party) and amount > 0:
                 _add_rec({
@@ -1254,6 +1365,7 @@ def parse_any_tally_xml(xml_text, fallback_company: str = "", ledger_phone_map: 
                     "amount": amount,
                     "status": "Overdue",
                     "due_date": due_date,
+                    "credit_period_days": credit_days,
                 })
         if records:
             return records
@@ -1499,11 +1611,11 @@ def fetch_from_tally():
         print(f"\n[Company {comp_idx+1}/{total_companies}] {comp or 'Default'}", flush=True)
 
         # ─────────────────────────────────────────────────────────────────────────
-        # STEP 0: Fetch Master Ledger Phone Registry FIRST for this company
+        # STEP 0: Fetch Master Ledger Phone & Credit Registry FIRST for this company
         # ─────────────────────────────────────────────────────────────────────────
-        ledger_phone_map = fetch_tally_ledger_phone_master(comp)
+        ledger_phone_map, ledger_credit_map = fetch_tally_ledger_master(comp)
         if ledger_phone_map:
-            print(f"  📞 Master Ledger Phone Registry: {len(ledger_phone_map)} party contact(s) loaded", flush=True)
+            print(f"  📞 Master Ledger Registry: {len(ledger_phone_map)} contact(s), {len(ledger_credit_map)} credit term(s) loaded", flush=True)
 
         strategies = [
             # Strategy 1 (Fast & Proven): Sundry Debtors ledger closing balances & master records
@@ -1557,7 +1669,7 @@ def fetch_from_tally():
                              extract_tag_value(xml_data, "SVCOMPANYNAME") or
                              "Tally Company")
 
-            recs = parse_any_tally_xml(xml_data, fallback_company=detected_comp, ledger_phone_map=ledger_phone_map)
+            recs = parse_any_tally_xml(xml_data, fallback_company=detected_comp, ledger_phone_map=ledger_phone_map, ledger_credit_map=ledger_credit_map)
             if recs:
                 # Merge new records (dedup by invoice_number)
                 new_count = 0
@@ -3507,6 +3619,7 @@ def push_to_cloud(vouchers):
                     "buyer_state_code": v.get("buyer_state_code", ""),
                     "pending_amount":   v.get("pending_amount"),
                     "paid_amount":      v.get("paid_amount"),
+                    "credit_period_days": v.get("credit_period_days"),
                     "bill_allocations": v.get("bill_allocations", []),
                     "pdf_url":          v.get("pdf_url") or None,
                     "pdf_generation":   "server-side" if v.get("pdf_url") else "browser-side",

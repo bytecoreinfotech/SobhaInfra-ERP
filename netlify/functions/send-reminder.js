@@ -245,22 +245,31 @@ async function logToLiveInbox(supabase, phone, clientName, message, pdfUrl, prov
 const REMINDER_TEXT = (inv, reminderNum) => {
   const isOverdue = inv.status === 'Overdue';
   const urgency = reminderNum >= 5 ? '⚠️ FINAL NOTICE ⚠️\n\n' : reminderNum >= 3 ? '⚡ Urgent: ' : '';
+  const invNumber = inv.tally_voucher_number || inv.invoice_number || 'N/A';
+  const company = inv.company_name || 'Sobhainfra Tech';
+
   return `${urgency}Dear ${inv.client_name || 'Valued Customer'},
 
-This is payment reminder #${reminderNum} for Invoice *${inv.tally_voucher_number || inv.invoice_number || 'N/A'}*.
+This is payment reminder #${reminderNum} regarding Invoice *${invNumber}* from ${company}.
 
+📋 *Bill / Invoice No:* ${invNumber}
 💰 *Amount Due: ${fmtAmount(inv.amount)}*
-📅 Due Date: ${fmtDate(inv.due_date)}
-📌 Status: *${inv.status || 'Pending'}*${isOverdue ? ' — OVERDUE' : ''}
+📅 *Due Date:* ${fmtDate(inv.due_date)}
+📌 *Status:* ${inv.status || 'Pending'}${isOverdue ? ' (OVERDUE)' : ''}
 
-Please clear the outstanding amount at your earliest convenience.
-📞 Contact us: Mon–Sat, 10AM–7PM
+🏦 *Bank Details for Payment (NEFT/RTGS/IMPS):*
+• *Bank:* ICICI Bank
+• *A/C Name:* SobhaInfra Tech
+• *A/C No:* 001905012691
+• *IFSC:* ICIC0000019
 
-💬 *Reply "paid"* if you have already made the payment.
-💬 *Reply "pay in [N] days"* to pause reminders and give us your payment date.
+Please find your official Tax Invoice attached with this message. Kindly arrange to clear this bill at your earliest convenience.
 
-Thank you! 🙏
-_ERPPro Automation_`;
+💬 *Reply "paid"* if you have already cleared this bill.
+💬 *Reply "pay in [N] days"* (e.g. "pay in 10 days" or "pay by 25th") to pause reminders until that date.
+
+Thank you for your business! 🙏
+_${company}_`;
 };
 
 // ── Payment promise keyword detector ─────────────────────────────────────────
@@ -505,205 +514,172 @@ exports.handler = async (event) => {
       }
     }
 
-    let invoices = [];
-    const isSingleManual = Boolean(body.invoiceId);
-
-    if (body.invoiceId) {
-      // Single invoice reminder (manual trigger from UI)
-      const { data } = await supabase.from('invoices').select('*').eq('id', body.invoiceId).maybeSingle();
-      if (data) {
-        if (body.phone) {
-          data.client_phone = body.phone;
-        }
-        if (body.pdfUrl) {
-          data.pdf_url = body.pdfUrl;
-          try {
-            await supabase.from('invoices').update({ pdf_url: body.pdfUrl }).eq('id', data.id);
-          } catch (err) {
-            console.warn('[Reminder] Failed to cache pdf_url:', err.message);
-          }
-        }
-        if (body.attachPdf === false) {
-          data.pdf_url = null;
-        }
-        invoices = [data];
-      }
-    } else {
-      // Auto: find all overdue/pending invoices
-      const { data } = await supabase
-        .from('invoices')
-        .select('*')
-        .in('status', ['Overdue', 'Pending'])
-        .not('client_phone', 'is', null);
-
-      invoices = (data || []).filter(inv => {
-        // Has exceeded max reminders
-        if ((inv.reminder_count || 0) >= maxReminders) return false;
-        // Not yet due for reminder by interval
-        if (inv.last_reminder_at && new Date(inv.last_reminder_at) > cutoffDate) return false;
-        return true;
-      });
+    // ── Automated Scan Run (Bill-by-Bill Loop) ──────────────────────────────────
+    if (!body.invoiceId) {
+      const autoResults = await runAutomatedPaymentReminders(supabase);
+      return {
+        statusCode: 200,
+        headers: cors,
+        body: JSON.stringify({
+          success: true,
+          intervalDays,
+          maxReminders,
+          results: autoResults,
+        }),
+      };
     }
 
-    const results = {
-      total: invoices.length,
-      sent: 0,
-      failed: 0,
-      skipped: 0,
-      autoResumed: 0,
-      skippedDetails: [],
-    };
+    // ── Single Invoice Manual Trigger (from UI) ─────────────────────────────────
+    const { data: singleInv } = await supabase.from('invoices').select('*').eq('id', body.invoiceId).maybeSingle();
+    if (!singleInv) {
+      return {
+        statusCode: 404,
+        headers: cors,
+        body: JSON.stringify({ success: false, error: 'Invoice not found' }),
+      };
+    }
 
-    for (const inv of invoices) {
-      if (!inv.client_phone) { results.skipped++; continue; }
-
-      // ── Smart Pause Check (Only for automated bulk runs; single manual clicks can bypass) ─
-      if (!isSingleManual) {
-        const pauseCheck = shouldSkipInvoice(inv, todayMs);
-
-        if (pauseCheck.skip) {
-          results.skipped++;
-          results.skippedDetails.push({ invoice: inv.invoice_number || inv.id, reason: pauseCheck.reason });
-          console.log(`[Reminder] SKIPPED ${inv.invoice_number || inv.id}: ${pauseCheck.reason}`);
-          continue;
-        }
-
-        // Auto-resume if promise date passed
-        if (pauseCheck.autoResume) {
-          results.autoResumed++;
-          console.log(`[Reminder] AUTO-RESUME: ${inv.invoice_number || inv.id} — promise date passed, resuming reminders`);
-          await supabase.from('invoices').update({
-            reminder_paused: false,
-            reminder_paused_reason: null,
-            payment_promised_date: null,
-            payment_promised_at: null,
-            promise_committed_by: null,
-            promise_notes: null,
-          }).eq('id', inv.id);
-        }
+    if (body.phone) {
+      singleInv.client_phone = body.phone;
+    }
+    if (body.pdfUrl) {
+      singleInv.pdf_url = body.pdfUrl;
+      try {
+        await supabase.from('invoices').update({ pdf_url: body.pdfUrl }).eq('id', singleInv.id);
+      } catch (err) {
+        console.warn('[Reminder] Failed to cache pdf_url:', err.message);
       }
+    }
+    if (body.attachPdf === false) {
+      singleInv.pdf_url = null;
+    }
 
-      const reminderNum = (inv.reminder_count || 0) + 1;
-      const message = customText || REMINDER_TEXT(inv, reminderNum);
+    const inv = singleInv;
+    if (!inv.client_phone) {
+      return {
+        statusCode: 400,
+        headers: cors,
+        body: JSON.stringify({ success: false, error: 'Recipient phone number is missing' }),
+      };
+    }
 
-      const isWithin24h = await check24hWindow(supabase, inv.client_phone);
-      const clean10 = String(inv.client_phone).replace(/[^\d]/g, '').slice(-10);
-      const waMeUrl = `https://wa.me/91${clean10}?text=${encodeURIComponent(message)}`;
+    const reminderNum = (inv.reminder_count || 0) + 1;
+    const message = customText || REMINDER_TEXT(inv, reminderNum);
 
-      let result;
-      let sentAsTemplate = false;
+    const isWithin24h = await check24hWindow(supabase, inv.client_phone);
+    const clean10 = String(inv.client_phone).replace(/[^\d]/g, '').slice(-10);
+    const waMeUrl = `https://wa.me/91${clean10}?text=${encodeURIComponent(message)}`;
 
-      if (!isWithin24h) {
-        const tplRes = await sendWhatsAppTemplate(inv.client_phone, 'payment_reminder_v1', 'en', [
-          inv.client_name || 'Valued Customer',
-          'Sobhainfra Tech',
-          inv.invoice_number || inv.tally_voucher_number || 'Inv',
-          fmtAmount(inv.amount),
-          fmtDate(inv.due_date),
-          inv.status || 'Pending',
-          'ICICI Bank',
-          '001905012691',
-          'ICIC0000019',
-        ]);
-        if (tplRes.success) {
-          result = tplRes;
-          sentAsTemplate = true;
-          console.log(`[Reminder] Dispatched single reminder via Meta Template to ${inv.client_phone}`);
-        } else {
-          console.warn('[Reminder] Template payment_reminder_v1 pending or unavailable:', tplRes.error);
-        }
+    let result;
+    let sentAsTemplate = false;
+
+    if (!isWithin24h) {
+      const tplRes = await sendWhatsAppTemplate(inv.client_phone, 'payment_reminder_v1', 'en', [
+        inv.client_name || 'Valued Customer',
+        inv.company_name || 'Sobhainfra Tech',
+        inv.invoice_number || inv.tally_voucher_number || 'Inv',
+        fmtAmount(inv.amount),
+        fmtDate(inv.due_date),
+        inv.status || 'Pending',
+        'ICICI Bank',
+        '001905012691',
+        'ICIC0000019',
+      ]);
+      if (tplRes.success) {
+        result = tplRes;
+        sentAsTemplate = true;
+        console.log(`[Reminder] Dispatched single reminder via Meta Template to ${inv.client_phone}`);
+      } else {
+        console.warn('[Reminder] Template payment_reminder_v1 pending or unavailable:', tplRes.error);
       }
+    }
 
-      const hasValidPdf = inv.pdf_url && typeof inv.pdf_url === 'string' && (inv.pdf_url.startsWith('http://') || inv.pdf_url.startsWith('https://'));
+    const hasValidPdf = inv.pdf_url && typeof inv.pdf_url === 'string' && (inv.pdf_url.startsWith('http://') || inv.pdf_url.startsWith('https://'));
 
-      if (!sentAsTemplate) {
-        if (hasValidPdf && isWithin24h) {
-          const pdfFileName = `Invoice_${inv.invoice_number || inv.id}.pdf`;
-          result = await sendDocumentMessage(inv.client_phone, inv.pdf_url, pdfFileName, message);
-          if (!result.success) {
-            console.warn('[Reminder] Document send failed, falling back to text:', result.error);
-            result = await sendTextMessage(inv.client_phone, message);
-          }
-        } else {
+    if (!sentAsTemplate) {
+      if (hasValidPdf && isWithin24h) {
+        const pdfFileName = `Invoice_${inv.invoice_number || inv.id}.pdf`;
+        result = await sendDocumentMessage(inv.client_phone, inv.pdf_url, pdfFileName, message);
+        if (!result.success) {
+          console.warn('[Reminder] Document send failed, falling back to text:', result.error);
           result = await sendTextMessage(inv.client_phone, message);
         }
-      }
-
-      // If single manual trigger from UI and outside 24h window with no template
-      if (isSingleManual && !isWithin24h && !sentAsTemplate) {
-        await logToLiveInbox(
-          supabase,
-          inv.client_phone,
-          inv.client_name,
-          message,
-          hasValidPdf ? inv.pdf_url : null,
-          result?.messageId,
-          'failed',
-          '131047: Meta 24-Hour Service Window Closed'
-        );
-
-        return {
-          statusCode: 200,
-          headers: cors,
-          body: JSON.stringify({
-            success: false,
-            is24hWindowClosed: true,
-            waMeUrl,
-            error: 'Meta 24-Hour Policy Window is closed for this number (recipient has not replied in 24h). Click "Open in WhatsApp Web" below to send directly.',
-            messageId: result?.messageId,
-          }),
-        };
-      }
-
-      if (result.success) {
-        results.sent++;
-
-        // Update invoice reminder tracking
-        const updatePayload = {
-          reminder_count: reminderNum,
-          last_reminder_at: new Date().toISOString(),
-        };
-        // Auto-mark overdue if past due date
-        if (inv.due_date && new Date(inv.due_date) < new Date() && inv.status !== 'Overdue') {
-          updatePayload.status = 'Overdue';
-        }
-        await supabase.from('invoices').update(updatePayload).eq('id', inv.id);
-
-        // 1. Log to WhatsApp Live Inbox (whatsapp_conversations & whatsapp_messages)
-        await logToLiveInbox(supabase, inv.client_phone, inv.client_name, message, hasValidPdf ? inv.pdf_url : null, result.messageId);
-
-        // 2. Log to payment_reminders
-        try {
-          await supabase.from('payment_reminders').insert([{
-            organization_id: DEFAULT_ORG_ID,
-            invoice_id: inv.id,
-            channel: 'WhatsApp',
-            message,
-            status: result.simulated ? 'simulated' : 'sent',
-          }]);
-        } catch {}
-
-        // 3. Log to activities
-        try {
-          await supabase.from('activities').insert([{
-            type: 'payment_reminder',
-            description: `WhatsApp reminder #${reminderNum} sent: ${fmtAmount(inv.amount)} due`,
-            lead_id: inv.lead_id || null,
-          }]);
-        } catch {}
-
       } else {
-        results.failed++;
-        console.warn('[Reminder] Failed to send to', inv.client_phone, ':', result.error);
+        result = await sendTextMessage(inv.client_phone, message);
       }
     }
 
-    console.log('[Reminder] Results:', JSON.stringify({ ...results, skippedDetails: undefined }));
-    return {
-      statusCode: 200,
-      headers: cors,
-      body: JSON.stringify({ success: results.sent > 0, intervalDays, maxReminders, results }),
-    };
+    // If single manual trigger from UI and outside 24h window with no template
+    if (!isWithin24h && !sentAsTemplate) {
+      await logToLiveInbox(
+        supabase,
+        inv.client_phone,
+        inv.client_name,
+        message,
+        hasValidPdf ? inv.pdf_url : null,
+        result?.messageId,
+        'failed',
+        '131047: Meta 24-Hour Service Window Closed'
+      );
+
+      return {
+        statusCode: 200,
+        headers: cors,
+        body: JSON.stringify({
+          success: false,
+          is24hWindowClosed: true,
+          waMeUrl,
+          error: 'Meta 24-Hour Policy Window is closed for this number (recipient has not replied in 24h). Click "Open in WhatsApp Web" below to send directly.',
+          messageId: result?.messageId,
+        }),
+      };
+    }
+
+    if (result?.success) {
+      const updatePayload = {
+        reminder_count: reminderNum,
+        last_reminder_at: new Date().toISOString(),
+      };
+      if (inv.due_date && new Date(inv.due_date) < new Date() && inv.status !== 'Overdue') {
+        updatePayload.status = 'Overdue';
+      }
+      await supabase.from('invoices').update(updatePayload).eq('id', inv.id);
+
+      // Log to WhatsApp Live Inbox
+      await logToLiveInbox(supabase, inv.client_phone, inv.client_name, message, hasValidPdf ? inv.pdf_url : null, result.messageId);
+
+      // Log to payment_reminders
+      try {
+        await supabase.from('payment_reminders').insert([{
+          organization_id: DEFAULT_ORG_ID,
+          invoice_id: inv.id,
+          channel: 'WhatsApp',
+          message,
+          status: result.simulated ? 'simulated' : 'sent',
+        }]);
+      } catch {}
+
+      // Log to activities
+      try {
+        await supabase.from('activities').insert([{
+          type: 'payment_reminder',
+          description: `WhatsApp reminder #${reminderNum} sent: ${fmtAmount(inv.amount)} due`,
+          lead_id: inv.lead_id || null,
+        }]);
+      } catch {}
+
+      return {
+        statusCode: 200,
+        headers: cors,
+        body: JSON.stringify({ success: true, messageId: result.messageId, reminderNum }),
+      };
+    } else {
+      return {
+        statusCode: 500,
+        headers: cors,
+        body: JSON.stringify({ success: false, error: result?.error || 'Failed to dispatch reminder' }),
+      };
+    }
 
   } catch (err) {
     console.error('[Reminder] Fatal error:', err.message);
@@ -714,6 +690,236 @@ exports.handler = async (event) => {
     };
   }
 };
+
+// ── Run Automated Payment Reminders Loop (Bill-by-Bill) ──────────────────────
+async function runAutomatedPaymentReminders(supabase) {
+  const rawInterval = await getOrgSetting(supabase, 'reminder_interval_days', '7');
+  const intervalDays = Math.max(1, parseInt(rawInterval, 10) || 7);
+  const rawMaxReminders = await getOrgSetting(supabase, 'max_reminders_per_invoice', '7');
+  const maxReminders = Math.max(1, parseInt(rawMaxReminders, 10) || 7);
+
+  const now = new Date();
+  const todayStr = now.toISOString().split('T')[0];
+  const todayMs = now.getTime();
+
+  // Fetch all pending and overdue receivable invoices
+  const { data: rawInvoices, error: fetchErr } = await supabase
+    .from('invoices')
+    .select('*')
+    .in('status', ['Overdue', 'Pending'])
+    .gt('amount', 0);
+
+  if (fetchErr) {
+    console.error('[Automated Reminders] Error querying invoices:', fetchErr.message);
+    return { success: false, error: fetchErr.message };
+  }
+
+  const results = {
+    totalScanned: (rawInvoices || []).length,
+    sent: 0,
+    failed: 0,
+    skippedPaused: 0,
+    skippedTooEarly: 0,
+    skippedInterval: 0,
+    skippedNoPhone: 0,
+    autoResumed: 0,
+    details: [],
+  };
+
+  for (const inv of (rawInvoices || [])) {
+    // 1. Exclude purchase bills, vendor payments, or credit notes
+    const vType = String(inv.voucher_type || inv.metadata?.voucher_type || '').toLowerCase();
+    const vDir  = String(inv.direction || inv.metadata?.direction || '').toLowerCase();
+    if (['purchase', 'payment', 'credit note'].some(t => vType.includes(t)) || vDir === 'payable' || vDir === 'paid_out') {
+      continue;
+    }
+
+    // 2. Resolve client phone (check invoice first, fallback to customer_master)
+    let phone = inv.client_phone ? String(inv.client_phone).trim() : '';
+    if (!phone && inv.client_name) {
+      try {
+        const { data: cust } = await supabase.from('customer_master')
+          .select('contact_number')
+          .ilike('company_name', `%${inv.client_name.trim()}%`)
+          .limit(1)
+          .maybeSingle();
+        if (cust?.contact_number) {
+          phone = String(cust.contact_number).trim();
+          inv.client_phone = phone;
+        }
+      } catch {}
+    }
+
+    if (!phone) {
+      results.skippedNoPhone++;
+      continue;
+    }
+
+    // 3. Smart Pause Check
+    const pauseCheck = shouldSkipInvoice(inv, todayMs);
+    if (pauseCheck.skip) {
+      results.skippedPaused++;
+      results.details.push({ invoice: inv.invoice_number || inv.id, reason: pauseCheck.reason });
+      continue;
+    }
+
+    // Auto-resume if promise date has arrived or passed
+    if (pauseCheck.autoResume) {
+      results.autoResumed++;
+      console.log(`[Automated Reminders] AUTO-RESUME: ${inv.invoice_number || inv.id} — promise date passed, resuming reminders`);
+      await supabase.from('invoices').update({
+        reminder_paused: false,
+        reminder_paused_reason: null,
+        payment_promised_date: null,
+        payment_promised_at: null,
+        promise_committed_by: null,
+        promise_notes: null,
+      }).eq('id', inv.id);
+      inv.reminder_paused = false;
+    }
+
+    // 4. Max Reminders check
+    const currentCount = Number(inv.reminder_count) || 0;
+    if (currentCount >= maxReminders) {
+      continue;
+    }
+
+    // 5. Cadence & Due Date Rules
+    // Rule A: Reminder #1 sent 1 day before due date (D - 1 day) or later
+    if (currentCount === 0 || !inv.last_reminder_at) {
+      if (inv.due_date) {
+        const dueDateObj = new Date(inv.due_date);
+        const oneDayBeforeDue = new Date(dueDateObj);
+        oneDayBeforeDue.setDate(oneDayBeforeDue.getDate() - 1);
+        const oneDayBeforeDueStr = oneDayBeforeDue.toISOString().split('T')[0];
+
+        if (todayStr < oneDayBeforeDueStr) {
+          // Too early! Due date is in future
+          results.skippedTooEarly++;
+          results.details.push({
+            invoice: inv.invoice_number || inv.id,
+            reason: `Reminder #1 scheduled for ${oneDayBeforeDueStr} (1 day before due date ${inv.due_date})`
+          });
+          continue;
+        }
+      } else if (inv.status !== 'Overdue') {
+        const invDateObj = new Date(inv.invoice_date || inv.created_at || Date.now());
+        const daysSinceInv = (todayMs - invDateObj.getTime()) / (1000 * 60 * 60 * 24);
+        if (daysSinceInv < 29) {
+          results.skippedTooEarly++;
+          continue;
+        }
+      }
+    } else {
+      // Rule B: Subsequent reminders repeated based on reminder_interval_days
+      const lastRemDate = new Date(inv.last_reminder_at);
+      const nextEligibleDate = new Date(lastRemDate);
+      nextEligibleDate.setDate(nextEligibleDate.getDate() + intervalDays);
+      const nextEligibleStr = nextEligibleDate.toISOString().split('T')[0];
+
+      if (todayStr < nextEligibleStr) {
+        results.skippedInterval++;
+        results.details.push({
+          invoice: inv.invoice_number || inv.id,
+          reason: `Next reminder due on ${nextEligibleStr} (${intervalDays}-day interval)`
+        });
+        continue;
+      }
+    }
+
+    // 6. Dispatch Individual Invoice Reminder + PDF Attachment
+    const reminderNum = currentCount + 1;
+    const message = REMINDER_TEXT(inv, reminderNum);
+
+    const isWithin24h = await check24hWindow(supabase, phone);
+    let result;
+    let sentAsTemplate = false;
+
+    if (!isWithin24h) {
+      const tplRes = await sendWhatsAppTemplate(phone, 'payment_reminder_v1', 'en', [
+        inv.client_name || 'Valued Customer',
+        inv.company_name || 'Sobhainfra Tech',
+        inv.invoice_number || inv.tally_voucher_number || 'Inv',
+        fmtAmount(inv.amount),
+        fmtDate(inv.due_date),
+        inv.status || 'Pending',
+        'ICICI Bank',
+        '001905012691',
+        'ICIC0000019',
+      ]);
+      if (tplRes.success) {
+        result = tplRes;
+        sentAsTemplate = true;
+      } else {
+        console.warn(`[Automated Reminders] Meta template warning for ${inv.invoice_number}:`, tplRes.error);
+      }
+    }
+
+    const hasValidPdf = inv.pdf_url && typeof inv.pdf_url === 'string' && (inv.pdf_url.startsWith('http://') || inv.pdf_url.startsWith('https://'));
+
+    if (!sentAsTemplate) {
+      if (hasValidPdf && isWithin24h) {
+        const pdfFileName = `Invoice_${inv.invoice_number || inv.id}.pdf`;
+        result = await sendDocumentMessage(phone, inv.pdf_url, pdfFileName, message);
+        if (!result.success) {
+          result = await sendTextMessage(phone, message);
+        }
+      } else {
+        result = await sendTextMessage(phone, message);
+      }
+    }
+
+    if (result?.success) {
+      results.sent++;
+      const updatePayload = {
+        reminder_count: reminderNum,
+        last_reminder_at: new Date().toISOString(),
+      };
+      if (inv.due_date && new Date(inv.due_date) < new Date() && inv.status !== 'Overdue') {
+        updatePayload.status = 'Overdue';
+      }
+      await supabase.from('invoices').update(updatePayload).eq('id', inv.id);
+
+      // Log to Live Inbox
+      await logToLiveInbox(supabase, phone, inv.client_name, message, hasValidPdf ? inv.pdf_url : null, result.messageId);
+
+      // Log to payment_reminders
+      try {
+        await supabase.from('payment_reminders').insert([{
+          organization_id: DEFAULT_ORG_ID,
+          invoice_id: inv.id,
+          channel: 'WhatsApp',
+          message,
+          status: result.simulated ? 'simulated' : 'sent',
+        }]);
+      } catch {}
+
+      // Log to activities
+      try {
+        await supabase.from('activities').insert([{
+          type: 'payment_reminder',
+          description: `Auto WhatsApp reminder #${reminderNum} sent for ${inv.invoice_number || inv.id} (${fmtAmount(inv.amount)})`,
+          lead_id: inv.lead_id || null,
+        }]);
+      } catch {}
+    } else {
+      results.failed++;
+    }
+  }
+
+  console.log('[Automated Reminders] Scan finished:', JSON.stringify({
+    scanned: results.totalScanned,
+    sent: results.sent,
+    failed: results.failed,
+    skippedPaused: results.skippedPaused,
+    skippedTooEarly: results.skippedTooEarly,
+    skippedInterval: results.skippedInterval,
+    skippedNoPhone: results.skippedNoPhone,
+    autoResumed: results.autoResumed,
+  }));
+
+  return results;
+}
 
 // ── Handle Inbound WhatsApp message (auto-detect payment promise) ──────────────
 async function handleInboundWhatsApp(supabase, body, cors) {
@@ -821,3 +1027,6 @@ async function handleInboundWhatsApp(supabase, body, cors) {
 
   return { statusCode: 200, headers: cors, body: JSON.stringify({ detected: detection, noAction: true }) };
 }
+
+exports.runAutomatedPaymentReminders = runAutomatedPaymentReminders;
+

@@ -287,25 +287,22 @@ exports.handler = async (event) => {
             if (matchedLead) results.mappedLedgers++;
             else results.unmappedLedgers++;
 
-            // ── 4-LAYER AIRTIGHT SAFETY GUARD FOR NEW BILL AUTO-DISPATCH ─────
-            // Rule 1: Surge Brake — payload size > 15 vouchers is classified as bulk restore / sync
-            const isBulkSync = vouchers.length > 15;
-
-            // Rule 2: Date Recency Guard — invoice must be within the last 48 hours
+            // ── AIRTIGHT SAFETY GUARD FOR NEW BILL AUTO-DISPATCH ─────
+            // Rule 1: Date Recency Guard — invoice must be same-day or within the last 48 hours
             const invDateMs = new Date(invoiceDateStr).getTime();
             const nowMs = Date.now();
             const diffHours = (nowMs - invDateMs) / (1000 * 60 * 60);
             const isRecentInvoice = diffHours >= -12 && diffHours <= 48;
 
-            // Rule 3: Idempotency Guard — never re-send if already dispatched
+            // Rule 2: Idempotency Guard — never re-send if already dispatched
             const isAlreadyDispatched = Boolean(existing?.metadata?.first_dispatched_at || existing?.metadata?.auto_dispatched_at);
 
-            // Rule 4: Must be a genuine Sales / Tax Invoice (never purchase/payment)
+            // Rule 3: Must be a genuine Sales / Tax Invoice (never purchase/payment)
             const isSalesInvoice = derivedDirection === 'receivable' ||
               ['sales', 'sales order', 'tax invoice'].some(t => rawVoucherType.includes(t)) ||
               /^(srp|sb|inv|tax)\//i.test(invNum);
 
-            // Rule 5: Authoritative Google Sheet Phone Verification
+            // Rule 4: Authoritative Google Sheet Phone Verification
             let verifiedSheetPhone = '';
             let verifiedSheetName = '';
             if (v.ledger_name) {
@@ -334,8 +331,7 @@ exports.handler = async (event) => {
             // Target recipient phone: strictly Google Sheet verified phone preferred, fallback to normalized voucher phone
             const targetPhone = verifiedSheetPhone ? `+91${verifiedSheetPhone}` : (normVoucherPhone || '');
 
-            const canAutoDispatch = !isBulkSync &&
-              isRecentInvoice &&
+            const canAutoDispatch = isRecentInvoice &&
               !isAlreadyDispatched &&
               isSalesInvoice &&
               Boolean(targetPhone) &&
@@ -478,8 +474,6 @@ exports.handler = async (event) => {
                     };
                     await supabase.from('invoices').update({
                       metadata: updatedMeta,
-                      last_reminder_at: nowDispatched,
-                      reminder_count: 1,
                     }).eq('tally_voucher_number', invNum);
                   } catch (metaUpErr) {
                     console.warn('[AutoSend] Metadata update notice:', metaUpErr.message);

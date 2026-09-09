@@ -111,7 +111,7 @@ const Settings = () => {
 
   // Payment Automation Settings State
   const [paymentSettings, setPaymentSettings] = useState({
-    reminder_interval_days: '3',
+    reminder_interval_days: '7',
     max_reminders_per_invoice: '7',
     auto_pause_on_promise: 'true',
   });
@@ -717,7 +717,7 @@ const Settings = () => {
     setPaySettingsLoading(true);
     const { data } = await getOrgSettings();
     setPaymentSettings({
-      reminder_interval_days: data?.reminder_interval_days || '3',
+      reminder_interval_days: data?.reminder_interval_days || '7',
       max_reminders_per_invoice: data?.max_reminders_per_invoice || '7',
       auto_pause_on_promise: data?.auto_pause_on_promise || 'true',
     });
