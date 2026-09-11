@@ -366,6 +366,11 @@ exports.handler = async (event) => {
                 const clientDisplayName = verifiedSheetName || v.ledger_name || 'Customer';
                 const company = v.company_name || companyName || 'SHOBHA READY PLAST';
 
+                const invoiceViewUrl = `https://sobhainfra-erp.netlify.app/invoice/${encodeURIComponent(invNum)}`;
+                const pdfSection = finalPdfUrl
+                  ? `Your official 2-Page GST Tax Invoice is attached below as a PDF.\n🔗 View Online: ${invoiceViewUrl}`
+                  : `📄 *View & Download Official 2-Page Tax Invoice & e-Way Bill:*\n👉 ${invoiceViewUrl}`;
+
                 const textMsg = [
                   `🧾 *Tax Invoice Dispatched from ${company}*`,
                   ``,
@@ -377,7 +382,8 @@ exports.handler = async (event) => {
                   `💰 *Total Amount:* *${fmtAmt(invoiceRow.amount)}*`,
                   `📌 *Status:* ${invoiceRow.status}`,
                   ``,
-                  `Your official 2-Page GST Tax Invoice is attached below as a PDF.`,
+                  pdfSection,
+                  ``,
                   `Kindly review and share confirmation once received. Thank you for your valued business! 🙏`,
                   `_${company}_`,
                 ].join('\n');

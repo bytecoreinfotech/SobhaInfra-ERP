@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { ThemeProvider } from './context/ThemeContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { LiveCountsProvider } from './context/LiveCountsContext';
@@ -21,6 +21,7 @@ import Automations from './pages/Automations';
 import FieldOps from './pages/FieldOps';
 import CampaignStudio from './pages/CampaignStudio';
 import EmailHub from './pages/EmailHub';
+import PublicInvoice from './pages/PublicInvoice';
 import { CompanyProvider } from './context/CompanyContext';
 import './index.css';
 import './App.css';
@@ -56,8 +57,18 @@ function ProtectedRoute({ module, children }) {
 
 function AppInner() {
   const { user, loading } = useAuth();
+  const location = useLocation();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+
+  // Allow public access to /invoice/:invNum without requiring ERP login
+  if (location.pathname.startsWith('/invoice/')) {
+    return (
+      <Routes>
+        <Route path="/invoice/:invNum" element={<PublicInvoice />} />
+      </Routes>
+    );
+  }
 
   if (loading) return <LoadingScreen />;
   if (!user) return <Login />;
