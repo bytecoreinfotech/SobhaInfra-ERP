@@ -24,8 +24,7 @@ if %errorlevel% neq 0 (
 echo [*] Checking and installing required Python packages...
 pip install -r requirements.txt --quiet
 if %errorlevel% neq 0 (
-    echo [!] Running pip install manually...
-    pip install requests reportlab qrcode pillow
+    pip install requests
 )
 
 echo.
