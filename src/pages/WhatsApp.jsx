@@ -449,8 +449,11 @@ const WhatsApp = () => {
     const map = new Map();
     for (const c of customerMaster) {
       if (c.contact_number) {
-        const digits = c.contact_number.replace(/\D/g, '').slice(-10);
-        if (digits.length === 10) map.set(digits, c);
+        const digits = String(c.contact_number).replace(/\D/g, '').slice(-10);
+        if (digits.length === 10) {
+          if (!map.has(digits)) map.set(digits, []);
+          map.get(digits).push(c);
+        }
       }
     }
     return map;
@@ -477,16 +480,19 @@ const WhatsApp = () => {
 
     for (const c of conversations) {
       const cDigits = (c.contact_phone || '').replace(/\D/g, '').slice(-10);
-      const sheetCust = customerPhoneMap.get(cDigits);
+      const sheetCusts = customerPhoneMap.get(cDigits) || [];
+      const primaryCust = sheetCusts[0] || null;
+      const sheetCompanies = sheetCusts.map(sc => sc.company_name).filter(Boolean);
+      const sheetCompaniesStr = sheetCompanies.join(' • ');
       const leadName = leadsPhoneMap.get(cDigits);
 
       let resolvedName = c.contact_name;
       // If contact_name is generic ("Recipient 1", "Customer", "WhatsApp User", phone digits)
       if (isGenericName(resolvedName)) {
-        if (sheetCust) {
-          resolvedName = sheetCust.contact_person
-            ? `${sheetCust.contact_person} (${sheetCust.company_name})`
-            : sheetCust.company_name;
+        if (primaryCust) {
+          resolvedName = primaryCust.contact_person
+            ? `${primaryCust.contact_person} (${primaryCust.company_name})`
+            : primaryCust.company_name;
         } else if (leadName) {
           resolvedName = leadName;
         } else {
@@ -499,8 +505,10 @@ const WhatsApp = () => {
         ...c,
         unread_count: isSelected ? 0 : (c.unread_count || 0),
         contact_name: resolvedName,
-        _sheet_customer: sheetCust || null,
-        _is_sheet_customer: !!sheetCust,
+        _sheet_customer: primaryCust,
+        _sheet_customers: sheetCusts,
+        _sheet_companies_str: sheetCompaniesStr,
+        _is_sheet_customer: sheetCusts.length > 0,
       };
 
       if (!cDigits) {
@@ -545,6 +553,7 @@ const WhatsApp = () => {
         c.contact_name?.toLowerCase().includes(s) ||
         c.contact_phone?.includes(s) ||
         c.last_message_text?.toLowerCase().includes(s) ||
+        c._sheet_companies_str?.toLowerCase().includes(s) ||
         c._sheet_customer?.company_name?.toLowerCase().includes(s)
       );
     });
@@ -945,7 +954,14 @@ const WhatsApp = () => {
                           {c.last_message_at ? new Date(c.last_message_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
                         </span>
                       </div>
-                      <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginBottom: '0.15rem' }}>{c.contact_phone}</div>
+                      <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginBottom: '0.15rem', display: 'flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap' }}>
+                        <span>{c.contact_phone}</span>
+                        {c._sheet_companies_str && (
+                          <span style={{ color: '#10b981', fontWeight: 600, fontSize: '0.66rem' }}>
+                            • 🏢 {c._sheet_companies_str}
+                          </span>
+                        )}
+                      </div>
                       <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: '0.35rem' }}>
                         {c.last_message_text}
                       </div>
@@ -1047,9 +1063,11 @@ const WhatsApp = () => {
                       <span className="badge badge-whatsapp" style={{ fontSize: '0.65rem' }}>WhatsApp</span>
                     </div>
                     <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.1rem' }}>
-                      {selectedConv._sheet_customer?.company_name && (
+                      {selectedConv._sheet_companies_str ? (
+                        <strong style={{ color: '#10b981' }}>🏢 {selectedConv._sheet_companies_str} · </strong>
+                      ) : selectedConv._sheet_customer?.company_name ? (
                         <strong style={{ color: 'var(--text-secondary)' }}>{selectedConv._sheet_customer.company_name} · </strong>
-                      )}
+                      ) : null}
                       {selectedConv.contact_phone} · {selectedConv.property_interest || 'General Product Inquiry'}
                     </div>
                   </div>
