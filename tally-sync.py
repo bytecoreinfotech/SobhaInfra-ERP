@@ -1025,12 +1025,35 @@ def parse_voucher_block(block, fallback_company: str = "", ledger_phone_map: dic
         status = "Pending"           # Debit Note, other = receivable by default
         direction = "receivable"     # Money owed TO us
 
+    # Extract e-way bill sub-block details if present
+    truck_no = ""
+    eway_bill_no = ""
+    eway_date = ""
+    approx_distance = ""
+    transporter_name = ""
+    transporter_id = ""
+    eway_list = re.findall(r'<EWAYBILLDETAILS\.LIST[^>]*>([\s\S]*?)</EWAYBILLDETAILS\.LIST>', block, re.IGNORECASE)
+    for ewb in eway_list:
+        if not eway_bill_no:
+            eway_bill_no = extract_tag_value(ewb, "BILLNO") or extract_tag_value(ewb, "EWAYBILLNO") or extract_tag_value(ewb, "EWBNO")
+        if not eway_date:
+            eway_date = extract_tag_value(ewb, "BILLDATE") or extract_tag_value(ewb, "EWAYBILLDATE")
+        if not approx_distance:
+            approx_distance = extract_tag_value(ewb, "APPROXDISTANCE") or extract_tag_value(ewb, "DISTANCE")
+        if not transporter_name:
+            transporter_name = extract_tag_value(ewb, "TRANSPORTERNAME")
+        if not transporter_id:
+            transporter_id = extract_tag_value(ewb, "TRANSPORTERID")
+        if not truck_no:
+            truck_no = extract_tag_value(ewb, "VEHICLENO") or extract_tag_value(ewb, "VEHICLENUMBER")
+
     # Extract truck / vehicle number from dedicated Tally tags or narration
-    truck_no = (
-        extract_tag_value(block, "BASICSHIPVESSELNO") or
-        extract_tag_value(block, "VEHICLENO") or
-        extract_tag_value(block, "VEHICLENUMBER")
-    )
+    if not truck_no:
+        truck_no = (
+            extract_tag_value(block, "BASICSHIPVESSELNO") or
+            extract_tag_value(block, "VEHICLENO") or
+            extract_tag_value(block, "VEHICLENUMBER")
+        )
     if not truck_no:
         truck_match = re.search(r'([A-Z]{2}[-\s]?\d{1,2}[-\s]?[A-Z]{1,3}[-\s]?\d{4})', narration or block, re.IGNORECASE)
         truck_no = truck_match.group(1).upper().replace(' ', '-') if truck_match else ""
@@ -1046,16 +1069,53 @@ def parse_voucher_block(block, fallback_company: str = "", ledger_phone_map: dic
         challan_match = re.search(r'Challan\s*(?:No\.?|#)?\s*[:=-]?\s*([0-9A-Z/-]+)', narration or block, re.IGNORECASE)
         challan_no = challan_match.group(1) if challan_match else ""
 
-    # Extract e-way bill number (12 digits)
-    eway_bill_no = (
-        extract_tag_value(block, "EWAYBILLNO") or
-        extract_tag_value(block, "BILLOFLADINGNO")
-    )
+    # Extract e-way bill number from top-level tags or narration if not in sub-list
+    if not eway_bill_no:
+        eway_bill_no = (
+            extract_tag_value(block, "EWAYBILLNO") or
+            extract_tag_value(block, "BILLOFLADINGNO")
+        )
     if not eway_bill_no:
         eway_match = re.search(r'(?:eway|e-way|ewb)[\s:#-]*(\d{12})', narration or block, re.IGNORECASE)
         if not eway_match:
             eway_match = re.search(r'\b(\d{12})\b', narration or block)
         eway_bill_no = eway_match.group(1) if eway_match else ""
+
+    # Extract approx distance & transporter details
+    if not approx_distance:
+        approx_distance = (
+            extract_tag_value(block, "APPROXDISTANCE") or
+            extract_tag_value(block, "ACTUALDISTANCE") or
+            extract_tag_value(block, "DISTANCE") or
+            ""
+        )
+    if not approx_distance:
+        dist_match = re.search(r'(?:distance|dist)[\s:#-]*(\d+)\s*(?:km)?', narration or block, re.IGNORECASE)
+        if dist_match:
+            approx_distance = f"{dist_match.group(1)} KM"
+
+    if not transporter_name:
+        transporter_name = (
+            extract_tag_value(block, "TRANSPORTERNAME") or
+            extract_tag_value(block, "CARRIERNAME") or
+            extract_tag_value(block, "BASICSHIPPEDBY") or
+            ""
+        )
+    if not transporter_id:
+        transporter_id = (
+            extract_tag_value(block, "TRANSPORTERID") or
+            extract_tag_value(block, "TRANSPORTERGSTIN") or
+            ""
+        )
+
+    # Extract order reference
+    order_no = (
+        extract_tag_value(block, "BASICPURCHASEORDERNO") or
+        extract_tag_value(block, "PURCHASEORDERNO") or
+        extract_tag_value(block, "ORDERREF") or
+        ""
+    )
+    order_date = extract_tag_value(block, "BASICORDERDATE") or ""
 
     # Extract delivery destination / site
     site = (
@@ -1172,6 +1232,12 @@ def parse_voucher_block(block, fallback_company: str = "", ledger_phone_map: dic
         "challan_date": inv_date_str if challan_no else "",
         "site": site,
         "eway_bill_no": eway_bill_no,
+        "eway_date": eway_date,
+        "approx_distance": approx_distance,
+        "transporter_name": transporter_name,
+        "transporter_id": transporter_id,
+        "order_no": order_no,
+        "order_date": order_date,
         "item_name": line_items[0]["name"] if line_items else "",
         "hsn_code": line_items[0]["hsn"] if line_items else "",
         "quantity_str": line_items[0]["qty"] if line_items else "",
@@ -1187,6 +1253,29 @@ def parse_voucher_block(block, fallback_company: str = "", ledger_phone_map: dic
             "credit_period_days": applied_credit_days,
             "voucher_type": vch_type,
             "direction": direction,
+            "truck_no": truck_no,
+            "challan_no": challan_no,
+            "challan_date": inv_date_str if challan_no else "",
+            "site": site,
+            "eway_bill_no": eway_bill_no,
+            "eway_date": eway_date,
+            "approx_distance": approx_distance,
+            "transporter_name": transporter_name,
+            "transporter_id": transporter_id,
+            "order_no": order_no,
+            "order_date": order_date,
+            "item_name": line_items[0]["name"] if line_items else "",
+            "hsn_code": line_items[0]["hsn"] if line_items else "",
+            "quantity_str": line_items[0]["qty"] if line_items else "",
+            "rate_str": f"{line_items[0]['rate']:,.2f}" if (line_items and line_items[0]['rate'] > 0) else "",
+            "unit": line_items[0]["qty"].split()[-1] if (line_items and " " in line_items[0]["qty"]) else "",
+            "taxable_amount": taxable_amount,
+            "igst_amount": igst_amount,
+            "cgst_amount": cgst_amount,
+            "sgst_amount": sgst_amount,
+            "line_items": line_items,
+            "buyer_address": buyer_addr,
+            "gstin": buyer_gstin or "",
         },
     }
 

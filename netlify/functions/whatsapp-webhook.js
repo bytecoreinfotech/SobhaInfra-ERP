@@ -19,6 +19,7 @@
 
 const { createClient } = require('@supabase/supabase-js');
 const crypto = require('crypto');
+const { buildExactInvoicePdf } = require('./utils/invoicePdfGenerator');
 
 // ─── Environment Variables ────────────────────────────────────────────────────
 const VERIFY_TOKEN   = process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN || 'erppro_webhook_2026';
@@ -611,6 +612,35 @@ async function handleInvoiceRequest(supabase, fromPhone, contactName, conversati
         const safeNum = (inv.invoice_number || inv.tally_voucher_number || 'Invoice').replace(/[^a-zA-Z0-9_-]/g, '_');
         primaryPdfName = `Invoice_${safeNum}.pdf`;
         break;
+      }
+    }
+
+    // On-demand: If invoice has no pre-generated PDF, generate exact 2-page portal replica right now
+    if (!primaryPdfUrl && invoices.length > 0) {
+      try {
+        const topInv = invoices[0];
+        const safeNum = (topInv.invoice_number || topInv.tally_voucher_number || 'Invoice').replace(/[^a-zA-Z0-9_-]/g, '_');
+        const pdfBuffer = buildExactInvoicePdf(topInv);
+        if (pdfBuffer && pdfBuffer.length > 0) {
+          const storagePath = `invoices/Invoice_${safeNum}.pdf`;
+          const { data: upData, error: upErr } = await supabase.storage
+            .from('whatsapp-media')
+            .upload(storagePath, pdfBuffer, {
+              contentType: 'application/pdf',
+              upsert: true,
+            });
+          if (!upErr && upData?.path) {
+            const { data: uData } = supabase.storage
+              .from('whatsapp-media')
+              .getPublicUrl(upData.path);
+            primaryPdfUrl = uData?.publicUrl || null;
+            primaryPdfName = `Invoice_${safeNum}.pdf`;
+            supabase.from('invoices').update({ pdf_url: primaryPdfUrl }).eq('id', topInv.id).then(() => {}).catch(() => {});
+            console.log(`[whatsapp-webhook] Generated on-demand 2-page PDF for ${safeNum}: ${primaryPdfUrl}`);
+          }
+        }
+      } catch (genErr) {
+        console.warn('[whatsapp-webhook] On-demand PDF generation notice:', genErr.message);
       }
     }
 

@@ -1130,7 +1130,7 @@ export default function InvoiceDocModal({
               <tbody>
                 <tr style={{ verticalAlign: 'top' }}>
                   <td style={{ padding: '4px 4px', fontWeight: 'bold' }}>{hsnCode}</td>
-                  <td style={{ padding: '4px 4px', fontWeight: 'bold' }}>{itemName} & {itemName}</td>
+                  <td style={{ padding: '4px 4px', fontWeight: 'bold' }}>{itemName}</td>
                   <td style={{ padding: '4px 4px', textAlign: 'center' }}>{quantityStr.replace('BAGS', 'BAG')}</td>
                   <td style={{ padding: '4px 4px', textAlign: 'right' }}>{taxableAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
                   <td style={{ padding: '4px 4px', textAlign: 'right' }}>{taxRateNum}</td>
