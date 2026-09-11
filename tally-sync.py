@@ -79,7 +79,7 @@ SYNC_INTERVAL_SEC = int(os.environ.get("SYNC_INTERVAL_MINS", "5")) * 60
 
 # Supabase Storage (for uploading invoice PDFs)
 SUPABASE_URL      = os.environ.get("SUPABASE_URL", "https://mcgmppnvnwnilioapbli.supabase.co")
-SUPABASE_KEY      = os.environ.get("SUPABASE_ANON_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1jZ21wcG52bnduaWxpb2FwYmxpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc1NzE5ODIsImV4cCI6MjEwMzE0Nzk4Mn0.27BrkeNVxcEfG0R1W2gzlV2ueuK6NBS7MuD98Y5iDME")
+SUPABASE_KEY      = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get("SUPABASE_KEY") or "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1jZ21wcG52bnduaWxpb2FwYmxpIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4NzU3MTk4MiwiZXhwIjoyMTAzMTQ3OTgyfQ.iMVtS3kZ5jkXd7wOsgviN_3Umz0Auw7vBa0NDlD9rKg"
 STORAGE_BUCKET    = "whatsapp-media"
 
 # -- Logging (ASCII only for Windows) --

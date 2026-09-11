@@ -73,6 +73,8 @@ const Payments = () => {
   const [statusFilter, setStatusFilter]       = useState('All'); // 'All' | 'Overdue' | 'Pending' | 'Paid'
   const [phoneFilter, setPhoneFilter]         = useState('all'); // 'all' | 'verified' | 'missing'
   const [searchQuery, setSearchQuery]         = useState('');
+  const [customerSortBy, setCustomerSortBy]   = useState('pending_desc'); // 'pending_desc' | 'newest_bill' | 'oldest_due' | 'name_asc' | 'amount_desc'
+  const [invoiceSortBy, setInvoiceSortBy]     = useState('date_desc'); // 'date_desc' | 'date_asc' | 'amount_desc' | 'amount_asc'
   
   // View mode: 'customer' (Group by Customer Summary) vs 'invoice' (All Invoices Detailed)
   const [viewMode, setViewMode]               = useState('customer');
@@ -256,16 +258,35 @@ const Payments = () => {
       if (inv.due_date && (!grp.oldestDueDate || new Date(inv.due_date) < new Date(grp.oldestDueDate))) {
         grp.oldestDueDate = inv.due_date;
       }
+
+      const invT = new Date(inv.invoice_date || inv.created_at || 0).getTime();
+      if (!grp.newestInvoiceTime || invT > grp.newestInvoiceTime) {
+        grp.newestInvoiceTime = invT;
+      }
     }
 
-    return Array.from(groupMap.values()).sort((a, b) => b.totalPending - a.totalPending);
-  }, [enrichedInvoices]);
+    return Array.from(groupMap.values()).sort((a, b) => {
+      if (customerSortBy === 'newest_bill') {
+        return (b.newestInvoiceTime || 0) - (a.newestInvoiceTime || 0);
+      }
+      if (customerSortBy === 'oldest_due') {
+        return (b.maxOverdueDays || 0) - (a.maxOverdueDays || 0);
+      }
+      if (customerSortBy === 'name_asc') {
+        return (a.clientName || '').localeCompare(b.clientName || '');
+      }
+      if (customerSortBy === 'amount_desc') {
+        return b.totalBilled - a.totalBilled;
+      }
+      return b.totalPending - a.totalPending;
+    });
+  }, [enrichedInvoices, customerSortBy]);
 
   // Filtered Customer Groups
   const filteredCustomerGroups = useMemo(() => {
     return allCustomerGroups.filter(grp => {
       if (statusFilter === 'Overdue' && grp.overdueCount === 0) return false;
-      if (statusFilter === 'Pending' && grp.pendingCount === 0 && grp.overdueCount === 0) return false;
+      if (statusFilter === 'Pending' && grp.pendingCount === 0) return false;
       if (statusFilter === 'Paid' && grp.totalPending > 0) return false;
 
       if (phoneFilter === 'verified' && !grp.hasPhone) return false;
@@ -286,9 +307,9 @@ const Payments = () => {
     });
   }, [allCustomerGroups, statusFilter, phoneFilter, searchQuery]);
 
-  // Multi-dimensional filtering: Status + Phone Verification + Search Query (Detailed Invoices)
+  // Multi-dimensional filtering & sorting (Detailed Invoices)
   const filtered = useMemo(() => {
-    return enrichedInvoices.filter(inv => {
+    const list = enrichedInvoices.filter(inv => {
       if (statusFilter !== 'All' && inv.status !== statusFilter) return false;
       if (phoneFilter === 'verified' && !inv._has_verified_phone) return false;
       if (phoneFilter === 'missing' && inv._has_verified_phone) return false;
@@ -305,12 +326,30 @@ const Payments = () => {
       }
       return true;
     });
-  }, [enrichedInvoices, statusFilter, phoneFilter, searchQuery]);
+
+    return list.sort((a, b) => {
+      if (invoiceSortBy === 'date_asc') {
+        const da = new Date(a.invoice_date || a.created_at || 0).getTime();
+        const db = new Date(b.invoice_date || b.created_at || 0).getTime();
+        return da - db;
+      }
+      if (invoiceSortBy === 'amount_desc') {
+        return Number(b.amount || 0) - Number(a.amount || 0);
+      }
+      if (invoiceSortBy === 'amount_asc') {
+        return Number(a.amount || 0) - Number(b.amount || 0);
+      }
+      // Default: date_desc (Newest First)
+      const da = new Date(a.invoice_date || a.created_at || 0).getTime();
+      const db = new Date(b.invoice_date || b.created_at || 0).getTime();
+      return db - da;
+    });
+  }, [enrichedInvoices, statusFilter, phoneFilter, searchQuery, invoiceSortBy]);
 
   // Reset pagination on filter or view mode changes
   useEffect(() => {
     setCurrentPage(1);
-  }, [statusFilter, phoneFilter, searchQuery, activeCompany, isConsolidated, viewMode]);
+  }, [statusFilter, phoneFilter, searchQuery, activeCompany, isConsolidated, viewMode, customerSortBy, invoiceSortBy]);
 
   // Paginated slices
   const totalInvoicePages = pageSize === -1 ? 1 : Math.max(1, Math.ceil(filtered.length / pageSize));
@@ -568,7 +607,7 @@ const Payments = () => {
         <div className="filter-bar" style={{ marginBottom: 0 }}>
           {['All', 'Overdue', 'Pending', 'Paid'].map(f => {
             const count = viewMode === 'customer'
-              ? (f === 'All' ? allCustomerGroups.length : f === 'Overdue' ? allCustomerGroups.filter(g => g.overdueCount > 0).length : f === 'Pending' ? allCustomerGroups.filter(g => g.pendingCount > 0 && g.overdueCount === 0).length : allCustomerGroups.filter(g => g.totalPending === 0).length)
+              ? (f === 'All' ? allCustomerGroups.length : f === 'Overdue' ? allCustomerGroups.filter(g => g.overdueCount > 0).length : f === 'Pending' ? allCustomerGroups.filter(g => g.pendingCount > 0).length : allCustomerGroups.filter(g => g.totalPending === 0).length)
               : (f === 'All' ? enrichedInvoices.length : enrichedInvoices.filter(i => i.status === f).length);
 
             return (
@@ -616,25 +655,55 @@ const Payments = () => {
           })}
         </div>
 
-        {/* Search Box */}
-        <div style={{ position: 'relative', minWidth: '220px' }}>
-          <Search size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-          <input
-            type="text"
-            className="form-input"
-            placeholder={viewMode === 'customer' ? 'Search customer, phone...' : 'Search voucher, client...'}
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            style={{ paddingLeft: '32px', fontSize: '0.78rem', height: '32px' }}
-          />
-          {searchQuery && (
-            <button
-              onClick={() => setSearchQuery('')}
-              style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}
+        {/* Sort & Search Controls */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+          {viewMode === 'customer' ? (
+            <select
+              className="input-field"
+              style={{ padding: '0.35rem 0.55rem', fontSize: '0.78rem', height: '32px', minWidth: '170px' }}
+              value={customerSortBy}
+              onChange={e => setCustomerSortBy(e.target.value)}
             >
-              <X size={12} />
-            </button>
+              <option value="pending_desc">⬇ Highest Balance Due</option>
+              <option value="newest_bill">🕒 Newest Activity / Bill</option>
+              <option value="oldest_due">⚠️ Oldest Due (Urgent)</option>
+              <option value="name_asc">🔤 Customer Name (A-Z)</option>
+              <option value="amount_desc">💰 Total Billed (High)</option>
+            </select>
+          ) : (
+            <select
+              className="input-field"
+              style={{ padding: '0.35rem 0.55rem', fontSize: '0.78rem', height: '32px', minWidth: '150px' }}
+              value={invoiceSortBy}
+              onChange={e => setInvoiceSortBy(e.target.value)}
+            >
+              <option value="date_desc">⬇ Date (Newest)</option>
+              <option value="date_asc">⬆ Date (Oldest)</option>
+              <option value="amount_desc">⬇ Amount (High)</option>
+              <option value="amount_asc">⬆ Amount (Low)</option>
+            </select>
           )}
+
+          {/* Search Box */}
+          <div style={{ position: 'relative', minWidth: '220px' }}>
+            <Search size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+            <input
+              type="text"
+              className="form-input"
+              placeholder={viewMode === 'customer' ? 'Search customer, phone...' : 'Search voucher, client...'}
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              style={{ paddingLeft: '32px', fontSize: '0.78rem', height: '32px' }}
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}
+              >
+                <X size={12} />
+              </button>
+            )}
+          </div>
         </div>
       </div>
 

@@ -87,7 +87,7 @@ exports.handler = async (event) => {
         console.warn('[Tally Ingestion] Connection status update:', connErr.message);
       }
 
-      // 2. Fetch existing leads for auto-mapping
+      // 2. Fetch existing leads and customer master for auto-mapping
       let allLeads = [];
       try {
         const { data: leadsData } = await supabase.from('leads').select('id, name, phone');
@@ -96,16 +96,48 @@ exports.handler = async (event) => {
         console.warn('[Tally Ingestion] Leads fetch error:', err.message);
       }
 
+      let allCustomers = [];
+      try {
+        const { data: custData } = await supabase.from('customer_master').select('company_name, contact_person, contact_number');
+        allCustomers = custData || [];
+      } catch (err) {
+        console.warn('[Tally Ingestion] Customer master fetch error:', err.message);
+      }
+
       for (const v of vouchers) {
         try {
           const invNum = v.invoice_number || v.tally_voucher_number || `INV-${Date.now()}`;
           const normVoucherPhone = normalizePhone(v.phone);
 
-          // Find matching lead by normalized phone or exact name
+          // Match against Google Sheet customer_master (authoritative contact phone)
+          let verifiedSheetPhone = '';
+          let verifiedSheetName = '';
+          const cleanLedger = String(v.ledger_name || '').trim().toUpperCase();
+          if (cleanLedger && allCustomers.length > 0) {
+            const normLedger = cleanLedger.replace(/[^A-Z0-9]/g, '');
+            const matchedCust = allCustomers.find(c => {
+              const cName = String(c.company_name || '').trim().toUpperCase();
+              const normC = cName.replace(/[^A-Z0-9]/g, '');
+              return normC && (normC === normLedger || normC.includes(normLedger) || normLedger.includes(normC));
+            });
+            if (matchedCust?.contact_number) {
+              const rawDigits = String(matchedCust.contact_number).replace(/[^\d]/g, '');
+              if (rawDigits.length >= 10) {
+                verifiedSheetPhone = `+91${rawDigits.slice(-10)}`;
+                verifiedSheetName = matchedCust.contact_person
+                  ? `${matchedCust.contact_person} (${matchedCust.company_name})`
+                  : matchedCust.company_name;
+              }
+            }
+          }
+
+          // Find matching lead by normalized phone or exact name as secondary fallback
           const matchedLead = allLeads.find(l =>
             (normVoucherPhone && normalizePhone(l.phone) === normVoucherPhone) ||
             (v.ledger_name && l.name && l.name.toLowerCase() === v.ledger_name.toLowerCase())
           );
+
+          const resolvedClientPhone = verifiedSheetPhone || normVoucherPhone || (matchedLead ? matchedLead.phone : '');
 
           let finalPdfUrl = v.pdf_url || null;
 
@@ -184,7 +216,7 @@ exports.handler = async (event) => {
             tally_voucher_number: invNum,
             invoice_number: invNum,
             client_name: v.ledger_name || 'Client',
-            client_phone: normVoucherPhone || (matchedLead ? matchedLead.phone : ''),
+            client_phone: resolvedClientPhone,
             amount: Number(v.amount) || 0,
             status: v.status || 'Pending',
             due_date: resolvedDueDate,
@@ -317,46 +349,19 @@ exports.handler = async (event) => {
               ['sales', 'sales order', 'tax invoice'].some(t => rawVoucherType.includes(t)) ||
               /^(srp|sb|inv|tax)\//i.test(invNum);
 
-            // Rule 4: Authoritative Google Sheet Phone Verification
-            let verifiedSheetPhone = '';
-            let verifiedSheetName = '';
-            if (v.ledger_name) {
-              try {
-                const cleanLedger = String(v.ledger_name || '').trim();
-                const { data: sheetCust } = await supabase.from('customer_master')
-                  .select('company_name, contact_person, contact_number')
-                  .ilike('company_name', `%${cleanLedger}%`)
-                  .limit(1)
-                  .maybeSingle();
-
-                if (sheetCust?.contact_number) {
-                  const rawDigits = String(sheetCust.contact_number).replace(/[^\d]/g, '');
-                  if (rawDigits.length >= 10) {
-                    verifiedSheetPhone = rawDigits.slice(-10);
-                    verifiedSheetName = sheetCust.contact_person
-                      ? `${sheetCust.contact_person} (${sheetCust.company_name})`
-                      : sheetCust.company_name;
-                  }
-                }
-              } catch (custErr) {
-                console.warn('[tally-sync] Customer master lookup notice:', custErr.message);
-              }
-            }
-
-            // Target recipient phone: strictly Google Sheet verified phone preferred, fallback to normalized voucher phone
-            const targetPhone = verifiedSheetPhone ? `+91${verifiedSheetPhone}` : (normVoucherPhone || '');
+            // Rule 4: Authoritative Google Sheet Phone Verification (resolved above)
+            const targetPhone = resolvedClientPhone;
 
             const canAutoDispatch = isRecentInvoice &&
               !isAlreadyDispatched &&
               isSalesInvoice &&
-              Boolean(targetPhone) &&
-              Boolean(finalPdfUrl);
+              Boolean(targetPhone);
 
             if (canAutoDispatch) {
               try {
                 const fmtAmt = (n) => '₹' + Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 });
                 const clientDisplayName = verifiedSheetName || v.ledger_name || 'Customer';
-                const company = v.company_name || companyName || 'Sobhainfra Tech';
+                const company = v.company_name || companyName || 'SHOBHA READY PLAST';
 
                 const textMsg = [
                   `🧾 *Tax Invoice Dispatched from ${company}*`,
@@ -387,7 +392,35 @@ exports.handler = async (event) => {
                   let wamid = null;
                   let sentViaTemplate = false;
 
-                  // 1. Send Text Notification (within 24h window)
+                  // 1. Send Tax Invoice PDF document directly
+                  if (finalPdfUrl) {
+                    try {
+                      const safePdfName = `Invoice_${String(invNum).replace(/[^a-zA-Z0-9_-]/g, '_')}.pdf`;
+                      const docRes = await fetch(BASE_URL, {
+                        method: 'POST',
+                        headers: waHeaders,
+                        body: JSON.stringify({
+                          messaging_product: 'whatsapp',
+                          to: cleanPhone,
+                          type: 'document',
+                          document: {
+                            link: finalPdfUrl,
+                            filename: safePdfName,
+                            caption: `🧾 Tax Invoice ${invNum} | ${fmtAmt(invoiceRow.amount)} | ${company}`,
+                          },
+                        }),
+                      });
+                      const docData = await docRes.json();
+                      if (docData?.messages?.[0]?.id) {
+                        wamid = docData.messages[0].id;
+                        console.log(`[tally-sync] Delivered PDF document to ${cleanPhone} for ${invNum}`);
+                      }
+                    } catch (docErr) {
+                      console.warn('[tally-sync] Document send notice:', docErr.message);
+                    }
+                  }
+
+                  // 2. Send Text Notification (or fallback to approved Meta template if outside 24h)
                   const textRes = await fetch(BASE_URL, {
                     method: 'POST',
                     headers: waHeaders,
@@ -417,45 +450,24 @@ exports.handler = async (event) => {
                               parameters: [
                                 { type: 'text', text: clientDisplayName || 'Valued Customer' },
                                 { type: 'text', text: String(invNum) },
-                                { type: 'text', text: 'Sobhainfra Tech' },
+                                { type: 'text', text: company || 'SHOBHA READY PLAST' },
                                 { type: 'text', text: String(v.date || new Date().toISOString().slice(0, 10)) },
                                 { type: 'text', text: fmtAmt(invoiceRow.amount) },
-                                { type: 'text', text: 'Dispatched' },
+                                { type: 'text', text: 'Pending' },
                               ]
                             }]
                           }
                         }),
                       });
                       const tplData = await tplRes.json();
-                      wamid = tplData?.messages?.[0]?.id;
+                      wamid = tplData?.messages?.[0]?.id || wamid;
                       sentViaTemplate = true;
                       console.log(`[tally-sync] Dispatched invoice_dispatch_v1 template to ${cleanPhone} for invoice ${invNum}`);
                     } catch (tplErr) {
                       console.warn('[tally-sync] Template dispatch warning:', tplErr.message);
                     }
-                  } else {
-                    wamid = textData?.messages?.[0]?.id;
-                  }
-
-                  // 2. Small delay then send Tax Invoice PDF document (only when within 24h window)
-                  if (!sentViaTemplate && finalPdfUrl) {
-                    await new Promise(r => setTimeout(r, 600));
-
-                    const safePdfName = `Invoice_${String(invNum).replace(/[^a-zA-Z0-9_-]/g, '_')}.pdf`;
-                    await fetch(BASE_URL, {
-                      method: 'POST',
-                      headers: waHeaders,
-                      body: JSON.stringify({
-                        messaging_product: 'whatsapp',
-                        to: cleanPhone,
-                        type: 'document',
-                        document: {
-                          link: finalPdfUrl,
-                          filename: safePdfName,
-                          caption: `Tax Invoice ${invNum} | ${fmtAmt(invoiceRow.amount)} | ${company}`,
-                        },
-                      }),
-                    });
+                  } else if (textData?.messages?.[0]?.id) {
+                    wamid = textData.messages[0].id;
                   }
 
                   // 3. If separate e-Way bill PDF exists, send e-Way bill too (only when within 24h window)
