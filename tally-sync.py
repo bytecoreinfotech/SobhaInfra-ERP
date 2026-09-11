@@ -1025,34 +1025,63 @@ def parse_voucher_block(block, fallback_company: str = "", ledger_phone_map: dic
         status = "Pending"           # Debit Note, other = receivable by default
         direction = "receivable"     # Money owed TO us
 
-    # Extract truck number from narration
-    truck_match = re.search(r'([A-Z]{2}[-\s]?\d{1,2}[-\s]?[A-Z]{1,3}[-\s]?\d{4})', narration or block, re.IGNORECASE)
-    truck_no = truck_match.group(1).upper() if truck_match else "MH04-4550"
+    # Extract truck / vehicle number from dedicated Tally tags or narration
+    truck_no = (
+        extract_tag_value(block, "BASICSHIPVESSELNO") or
+        extract_tag_value(block, "VEHICLENO") or
+        extract_tag_value(block, "VEHICLENUMBER")
+    )
+    if not truck_no:
+        truck_match = re.search(r'([A-Z]{2}[-\s]?\d{1,2}[-\s]?[A-Z]{1,3}[-\s]?\d{4})', narration or block, re.IGNORECASE)
+        truck_no = truck_match.group(1).upper().replace(' ', '-') if truck_match else ""
 
-    # Extract challan number
-    challan_match = re.search(r'Challan\s*(?:No\.?|#)?\s*[:=-]?\s*([0-9A-Z/-]+)', narration or block, re.IGNORECASE)
-    challan_no = challan_match.group(1) if challan_match else "10199"
+    # Extract delivery challan number
+    challan_no = (
+        extract_tag_value(block, "BASICSHIPDELIVERYNOTENO") or
+        extract_tag_value(block, "DISPATCHDOCNO") or
+        extract_tag_value(block, "DELIVERYNOTENO") or
+        extract_tag_value(block, "CHALLANNO")
+    )
+    if not challan_no:
+        challan_match = re.search(r'Challan\s*(?:No\.?|#)?\s*[:=-]?\s*([0-9A-Z/-]+)', narration or block, re.IGNORECASE)
+        challan_no = challan_match.group(1) if challan_match else ""
 
-    # Extract eway bill number (12 digits)
-    eway_match = re.search(r'(\d{12})', narration or block)
-    eway_bill_no = eway_match.group(1) if eway_match else "602165786131"
+    # Extract e-way bill number (12 digits)
+    eway_bill_no = (
+        extract_tag_value(block, "EWAYBILLNO") or
+        extract_tag_value(block, "BILLOFLADINGNO")
+    )
+    if not eway_bill_no:
+        eway_match = re.search(r'(?:eway|e-way|ewb)[\s:#-]*(\d{12})', narration or block, re.IGNORECASE)
+        if not eway_match:
+            eway_match = re.search(r'\b(\d{12})\b', narration or block)
+        eway_bill_no = eway_match.group(1) if eway_match else ""
+
+    # Extract delivery destination / site
+    site = (
+        extract_tag_value(block, "BASICSHIPTOPLACE") or
+        extract_tag_value(block, "PLACEOFSUPPLY") or
+        extract_tag_value(block, "DESTINATION") or
+        ""
+    )
 
     # Extract line items if inventory entries present
     line_items = []
     inv_blocks = re.findall(r'<INVENTORYENTRIES\.LIST[^>]*>([\s\S]*?)</INVENTORYENTRIES\.LIST>', block, re.IGNORECASE)
     for ib in inv_blocks:
-        itm_name = extract_tag_value(ib, "STOCKITEMNAME") or extract_tag_value(ib, "NAME") or "SAND"
-        itm_qty = extract_tag_value(ib, "BILLEDQTY") or extract_tag_value(ib, "ACTUALQTY") or "776 BAGS"
-        itm_rate = parse_number(extract_tag_value(ib, "RATE") or "92.00")
+        itm_name = extract_tag_value(ib, "STOCKITEMNAME") or extract_tag_value(ib, "NAME") or ""
+        itm_qty = extract_tag_value(ib, "BILLEDQTY") or extract_tag_value(ib, "ACTUALQTY") or ""
+        itm_rate = parse_number(extract_tag_value(ib, "RATE") or "0")
         itm_amt = parse_number(extract_tag_value(ib, "AMOUNT") or str(amount))
-        hsn = extract_tag_value(ib, "HSNCODE") or extract_tag_value(ib, "HSN") or "25051011"
-        line_items.append({
-            "name": itm_name,
-            "qty": itm_qty,
-            "rate": itm_rate,
-            "amount": itm_amt,
-            "hsn": hsn,
-        })
+        hsn = extract_tag_value(ib, "HSNCODE") or extract_tag_value(ib, "HSN") or ""
+        if itm_name or itm_amt:
+            line_items.append({
+                "name": itm_name,
+                "qty": itm_qty,
+                "rate": itm_rate,
+                "amount": itm_amt,
+                "hsn": hsn,
+            })
 
     # Smart unique invoice numbering with company & voucher type scoping
     # Guarantees ZERO cross-company and ZERO cross-voucher-type collisions in Supabase!
@@ -1137,17 +1166,17 @@ def parse_voucher_block(block, fallback_company: str = "", ledger_phone_map: dic
         "due_date": due_date,
         "credit_period_days": applied_credit_days,
         "buyer_address": buyer_addr,
-        "gstin": buyer_gstin or "27ALPRP4116L1ZM",
+        "gstin": buyer_gstin or "",
         "truck_no": truck_no,
         "challan_no": challan_no,
-        "challan_date": inv_date_str,
-        "site": "THANE",
+        "challan_date": inv_date_str if challan_no else "",
+        "site": site,
         "eway_bill_no": eway_bill_no,
-        "item_name": line_items[0]["name"] if line_items else "SAND",
-        "hsn_code": line_items[0]["hsn"] if line_items else "25051011",
-        "quantity_str": line_items[0]["qty"] if line_items else "776 BAGS",
-        "rate_str": f"{line_items[0]['rate']:,.2f}" if line_items else "92.00",
-        "unit": "BAGS",
+        "item_name": line_items[0]["name"] if line_items else "",
+        "hsn_code": line_items[0]["hsn"] if line_items else "",
+        "quantity_str": line_items[0]["qty"] if line_items else "",
+        "rate_str": f"{line_items[0]['rate']:,.2f}" if (line_items and line_items[0]['rate'] > 0) else "",
+        "unit": line_items[0]["qty"].split()[-1] if (line_items and " " in line_items[0]["qty"]) else "",
         "taxable_amount": taxable_amount,
         "igst_amount": igst_amount,
         "cgst_amount": cgst_amount,
