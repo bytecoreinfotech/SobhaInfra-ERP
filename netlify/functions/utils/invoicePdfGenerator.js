@@ -44,25 +44,35 @@ function numberToWordsIndian(num) {
   return `${result} Only`;
 }
 
-function buildExactInvoicePdf(invData) {
-  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-  const meta = invData.metadata || {};
+function buildExactInvoicePdf(invData = {}, invNumParam = null, extraData = {}) {
+  const meta = { ...(invData.metadata || {}), ...(extraData.metadata || {}) };
+  const combined = { ...extraData, ...invData, metadata: meta };
 
-  const invNum = invData.invoice_number || invData.tally_voucher_number || 'SRP-SALES-123456';
-  const totalAmount = Number(invData.amount) || 0;
-  const taxRate = parseFloat(meta.igst_rate || invData.igst_rate || '5') || 5;
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+
+  // Defensive monkey-patch on doc.text: jsPDF throws if passed a raw number or null
+  const origText = doc.text.bind(doc);
+  doc.text = function (text, x, y, options, ...rest) {
+    if (text === null || text === undefined) text = '';
+    else if (typeof text !== 'string' && !Array.isArray(text)) text = String(text);
+    return origText(text, x, y, options, ...rest);
+  };
+
+  const invNum = String(invNumParam || combined.invoice_number || combined.tally_voucher_number || 'INV-1001');
+  const totalAmount = Number(combined.amount) || 0;
+  const taxRate = parseFloat(meta.igst_rate || combined.igst_rate || '5') || 5;
 
   let taxableAmount = meta.taxable_value !== undefined && meta.taxable_value !== null
     ? Number(meta.taxable_value)
-    : (invData.taxable_amount !== undefined && invData.taxable_amount !== null ? Number(invData.taxable_amount) : Math.round((totalAmount / (1 + taxRate / 100)) * 100) / 100);
+    : (combined.taxable_amount !== undefined && combined.taxable_amount !== null ? Number(combined.taxable_amount) : Math.round((totalAmount / (1 + taxRate / 100)) * 100) / 100);
 
   let taxAmount = meta.tax_amount !== undefined && meta.tax_amount !== null
     ? Number(meta.tax_amount)
-    : ((invData.igst_amount || 0) + (invData.cgst_amount || 0) + (invData.sgst_amount || 0) || Math.floor((totalAmount - taxableAmount) * 100) / 100);
+    : ((combined.igst_amount || 0) + (combined.cgst_amount || 0) + (combined.sgst_amount || 0) || Math.floor((totalAmount - taxableAmount) * 100) / 100);
 
   const roundOff = Math.round((totalAmount - (taxableAmount + taxAmount)) * 100) / 100;
 
-  const rawDate = invData.invoice_date || invData.date || '';
+  const rawDate = combined.invoice_date || combined.date || '';
   let invDate = '11 Sept 26';
   let validDateStr = '13 Sept 26';
   try {
@@ -95,19 +105,19 @@ function buildExactInvoicePdf(invData) {
   const h7 = ((seed * 103 + 73) >>> 0).toString(16).padStart(8, '0');
   const h8 = ((seed * 109 + 83) >>> 0).toString(16).padStart(8, '0');
 
-  const irn = meta.irn || invData.irn || `${h1}${h2}${h3}${h4}${h5}${h6}${h7}${h8}`;
+  const irn = String(meta.irn || combined.irn || `${h1}${h2}${h3}${h4}${h5}${h6}${h7}${h8}`);
   const ackSuffix = String((seed * 31 + 17) % 10000000000000).padStart(13, '0');
-  const ackNo = meta.ack_no || invData.ack_no || `16${ackSuffix}`;
-  const ackDate = meta.ack_date || invData.ack_date || invDate;
+  const ackNo = String(meta.ack_no || combined.ack_no || `16${ackSuffix}`);
+  const ackDate = String(meta.ack_date || combined.ack_date || invDate);
 
-  const partyName = invData.client_name || invData.ledger_name || meta.party_name || 'YADAV TRADING COMPANY';
-  const buyerPhone = invData.client_phone || meta.phone || invData.phone || '+919472697849';
-  const buyerAddress = meta.buyer_address || invData.buyer_address || 'Site Delivery / Registered Office';
-  const buyerState = meta.buyer_state || 'Maharashtra';
-  const buyerStateCode = meta.buyer_state_code || '27';
-  const buyerGstin = meta.gstin || meta.buyer_gstin || invData.gstin || invData.client_gstin || '27ALPPP4116L1ZM';
+  const partyName = String(combined.client_name || combined.ledger_name || meta.party_name || 'YADAV TRADING COMPANY');
+  const buyerPhone = String(combined.client_phone || meta.phone || combined.phone || '+919472697849');
+  const buyerAddress = String(meta.buyer_address || combined.buyer_address || 'Site Delivery / Registered Office');
+  const buyerState = String(meta.buyer_state || 'Maharashtra');
+  const buyerStateCode = String(meta.buyer_state_code || '27');
+  const buyerGstin = String(meta.gstin || meta.buyer_gstin || combined.gstin || combined.client_gstin || '27ALPPP4116L1ZM');
 
-  const compName = (invData.company_name || meta.tally_company || '').toUpperCase().includes('BUILDTECH')
+  const compName = (combined.company_name || meta.tally_company || '').toUpperCase().includes('BUILDTECH')
     ? 'SHOBHA BUILDTECH'
     : 'SHOBHA READY PLAST';
   const isBuildtech = compName.includes('BUILDTECH');
@@ -122,30 +132,31 @@ function buildExactInvoicePdf(invData) {
   const baseBagRate = 92.0;
   const computedBags = Math.max(1, Math.round(taxableAmount / baseBagRate));
   const computedRate = (taxableAmount / computedBags).toFixed(2);
-  const itemName = meta.item_name || invData.item_name || 'SAND (READY PLAST)';
-  const hsnCode = meta.hsn_code || invData.hsn_code || '25051011';
-  const quantityStr = meta.quantity_str || invData.quantity_str || `${computedBags} BAGS`;
-  const rateStr = meta.rate_str || invData.rate_str || (taxableAmount > 0 ? computedRate : '92.00');
-  const unit = meta.unit || invData.unit || 'BAGS';
+  const itemName = String(meta.item_name || combined.item_name || 'SAND (READY PLAST)');
+  const hsnCode = String(meta.hsn_code || combined.hsn_code || '25051011');
+  const quantityStr = String(meta.quantity_str || combined.quantity_str || `${computedBags} BAGS`);
+  const rateStr = String(meta.rate_str || combined.rate_str || (taxableAmount > 0 ? computedRate : '92.00'));
+  const unit = String(meta.unit || combined.unit || 'BAGS');
 
   const TRUCKS = ['MH04JK-6150', 'GJ15YY-4812', 'MH04GP-8831', 'GJ15AT-3920', 'MH04EL-7104', 'GJ15BZ-5509', 'MH04KF-9218', 'GJ15CA-1142'];
-  const truckNo = meta.truck_no || invData.truck_no || TRUCKS[seed % TRUCKS.length];
+  const truckNo = String(meta.truck_no || combined.truck_no || TRUCKS[seed % TRUCKS.length]);
 
   const voucherSeq = (invNum.replace(/\D/g, '').slice(-4) || String(1000 + (seed % 9000)));
-  const challanNo = meta.challan_no || invData.challan_no || `1${voucherSeq.padStart(4, '0')}`;
-  const challanDate = meta.challan_date || invData.challan_date || invDate;
-  const siteName = meta.site || invData.site || `${partyName} Site`;
-  const refNo = meta.ref_no || (challanNo ? `Ref-${challanNo.slice(-4)}` : 'Ref-3456');
-  const creditDays = meta.credit_period_days || invData.credit_period_days ? `${meta.credit_period_days || invData.credit_period_days} Days` : '30 Days';
+  const challanNo = String(meta.challan_no || combined.challan_no || `1${voucherSeq.padStart(4, '0')}`);
+  const challanDate = String(meta.challan_date || combined.challan_date || invDate);
+  const siteName = String(meta.site || combined.site || `${partyName} Site`);
+  const refNo = String(meta.ref_no || (challanNo ? `Ref-${challanNo.slice(-4)}` : 'Ref-3456'));
+  const rawCreditDays = meta.credit_period_days ?? combined.credit_period_days ?? null;
+  const creditDays = rawCreditDays ? (String(rawCreditDays).toLowerCase().includes('day') ? String(rawCreditDays) : `${rawCreditDays} Days`) : '30 Days';
 
   // e-Way Bill fields (Completely Dynamic)
   const ewaySuffix = String((seed * 19 + 7) % 10000000000).padStart(10, '0');
-  const ewayBillNo = meta.eway_bill_no || invData.eway_bill_no || `60${ewaySuffix}`;
-  const ewayDate = meta.eway_date || invData.eway_date || `${invDate} 10:30 AM`;
-  const ewayValidUpto = meta.eway_valid_upto || invData.eway_valid_upto || `${validDateStr} 11:59 PM`;
-  const approxDistance = meta.approx_distance || invData.approx_distance || `${140 + (seed % 40)} KM`;
-  const transporterName = meta.transporter_name || invData.transporter_name || 'SHOBHA TRANSPORT';
-  const transporterId = meta.transporter_id || invData.transporter_id || '';
+  const ewayBillNo = String(meta.eway_bill_no || combined.eway_bill_no || `60${ewaySuffix}`);
+  const ewayDate = String(meta.eway_date || combined.eway_date || `${invDate} 10:30 AM`);
+  const ewayValidUpto = String(meta.eway_valid_upto || combined.eway_valid_upto || `${validDateStr} 11:59 PM`);
+  const approxDistance = String(meta.approx_distance || combined.approx_distance || `${140 + (seed % 40)} KM`);
+  const transporterName = String(meta.transporter_name || combined.transporter_name || 'SHOBHA TRANSPORT');
+  const transporterId = String(meta.transporter_id || combined.transporter_id || '');
 
   const amountInWords = numberToWordsIndian(totalAmount);
   const taxInWords = numberToWordsIndian(taxAmount);
