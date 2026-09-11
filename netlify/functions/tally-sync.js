@@ -395,46 +395,35 @@ exports.handler = async (event) => {
                   let wamid = null;
                   let sentViaTemplate = false;
 
-                  // 1. Primary Dispatch: Approved Meta Utility Template (24/7 delivery, bypasses 24h service window)
+                  // Check if recipient has an active 24-hour customer service window in database
+                  let isIn24hWindow = false;
                   try {
-                    const tplRes = await fetch(BASE_URL, {
-                      method: 'POST',
-                      headers: waHeaders,
-                      body: JSON.stringify({
-                        messaging_product: 'whatsapp',
-                        to: cleanPhone,
-                        type: 'template',
-                        template: {
-                          name: 'invoice_dispatch_v1',
-                          language: { code: 'en' },
-                          components: [{
-                            type: 'body',
-                            parameters: [
-                              { type: 'text', text: clientDisplayName || 'Valued Customer' },
-                              { type: 'text', text: String(invNum) },
-                              { type: 'text', text: company || 'SHOBHA READY PLAST' },
-                              { type: 'text', text: String(v.date || invoiceDateStr) },
-                              { type: 'text', text: fmtAmt(invoiceRow.amount) },
-                              { type: 'text', text: 'Pending' },
-                            ]
-                          }]
-                        }
-                      }),
-                    });
-                    const tplData = await tplRes.json();
-                    if (tplData?.messages?.[0]?.id) {
-                      wamid = tplData.messages[0].id;
-                      sentViaTemplate = true;
-                      console.log(`[tally-sync] Successfully dispatched invoice_dispatch_v1 template to ${cleanPhone} for invoice ${invNum} (wamid: ${wamid})`);
-                    } else if (tplData?.error) {
-                      console.warn(`[tally-sync] Template dispatch API notice:`, tplData.error);
-                    }
-                  } catch (tplErr) {
-                    console.warn('[tally-sync] Template dispatch exception:', tplErr.message);
-                  }
+                    const tenDigit = cleanPhone.slice(-10);
+                    const { data: convRow } = await supabase
+                      .from('whatsapp_conversations')
+                      .select('id')
+                      .or(`contact_phone.eq.+91${tenDigit},contact_phone.eq.91${tenDigit},contact_phone.eq.${tenDigit}`)
+                      .maybeSingle();
 
-                  // 2. Secondary Fallback: Direct text message if template failed
-                  if (!wamid) {
+                    if (convRow?.id) {
+                      const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+                      const { data: inboundMsg } = await supabase
+                        .from('whatsapp_messages')
+                        .select('id')
+                        .eq('conversation_id', convRow.id)
+                        .eq('direction', 'inbound')
+                        .gte('created_at', dayAgo)
+                        .limit(1)
+                        .maybeSingle();
+                      if (inboundMsg?.id) {
+                        isIn24hWindow = true;
+                        console.log(`[tally-sync] Customer ${cleanPhone} is inside 24h window. Using direct free delivery.`);
+                      }
+                    }
+                  } catch (wErr) {}
+
+                  // 1. If in 24h window, dispatch direct freeform text message (100% free, no Meta card required!)
+                  if (isIn24hWindow) {
                     try {
                       const textRes = await fetch(BASE_URL, {
                         method: 'POST',
@@ -449,10 +438,50 @@ exports.handler = async (event) => {
                       const textData = await textRes.json();
                       if (textData?.messages?.[0]?.id) {
                         wamid = textData.messages[0].id;
-                        console.log(`[tally-sync] Sent text notification to ${cleanPhone} for ${invNum}`);
+                        console.log(`[tally-sync] Delivered direct free invoice message to ${cleanPhone} for ${invNum} (wamid: ${wamid})`);
                       }
                     } catch (textErr) {
                       console.warn('[tally-sync] Text send warning:', textErr.message);
+                    }
+                  }
+
+                  // 2. If outside 24h window (or if direct text failed), dispatch approved Meta Utility Template
+                  if (!wamid) {
+                    try {
+                      const tplRes = await fetch(BASE_URL, {
+                        method: 'POST',
+                        headers: waHeaders,
+                        body: JSON.stringify({
+                          messaging_product: 'whatsapp',
+                          to: cleanPhone,
+                          type: 'template',
+                          template: {
+                            name: 'invoice_dispatch_v1',
+                            language: { code: 'en' },
+                            components: [{
+                              type: 'body',
+                              parameters: [
+                                { type: 'text', text: clientDisplayName || 'Valued Customer' },
+                                { type: 'text', text: String(invNum) },
+                                { type: 'text', text: company || 'SHOBHA READY PLAST' },
+                                { type: 'text', text: String(v.date || invoiceDateStr) },
+                                { type: 'text', text: fmtAmt(invoiceRow.amount) },
+                                { type: 'text', text: 'Pending' },
+                              ]
+                            }]
+                          }
+                        }),
+                      });
+                      const tplData = await tplRes.json();
+                      if (tplData?.messages?.[0]?.id) {
+                        wamid = tplData.messages[0].id;
+                        sentViaTemplate = true;
+                        console.log(`[tally-sync] Successfully dispatched invoice_dispatch_v1 template to ${cleanPhone} for invoice ${invNum} (wamid: ${wamid})`);
+                      } else if (tplData?.error) {
+                        console.warn(`[tally-sync] Template dispatch API notice:`, tplData.error);
+                      }
+                    } catch (tplErr) {
+                      console.warn('[tally-sync] Template dispatch exception:', tplErr.message);
                     }
                   }
 
