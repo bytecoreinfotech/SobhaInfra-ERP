@@ -806,7 +806,7 @@ const Finance = () => {
               { label: 'Collected (Paid)', value: fmtCurrency(totalPaid), sub: `${activeBills.filter(i => i.status === 'Paid').length} paid`, icon: <TrendingUp size={20} />, color: '#10b981', bg: 'rgba(16,185,129,0.12)' },
             ] : [
               { label: 'Total Vendor Bills', value: fmtCurrency(totalInvoiced), sub: `${activeBills.length} bills (matches Tally Purchase Register)`, icon: <DollarSign size={20} />, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)' },
-              { label: 'Paid Out to Vendors', value: fmtCurrency(totalVendorPayments), sub: `${vendorPayments.length} payment vouchers in Tally`, icon: <TrendingUp size={20} />, color: '#10b981', bg: 'rgba(16,185,129,0.12)' },
+              { label: 'Paid Out to Vendors', value: fmtCurrency(totalPaid), sub: `${activeBills.filter(i => i.status === 'Paid').length} bills settled (${fmtCurrency(totalVendorPayments)} total paid in Tally)`, icon: <TrendingUp size={20} />, color: '#10b981', bg: 'rgba(16,185,129,0.12)' },
             ]).map(s => (
               <div key={s.label} className="stat-card" style={{ '--card-accent': s.color }}>
                 <div className="stat-header">
