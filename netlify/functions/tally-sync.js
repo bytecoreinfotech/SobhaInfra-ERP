@@ -341,8 +341,11 @@ exports.handler = async (event) => {
             const diffHours = (nowMs - invDateMs) / (1000 * 60 * 60);
             const isRecentInvoice = diffHours >= -12 && diffHours <= 48;
 
-            // Rule 2: Idempotency Guard — never re-send if already dispatched
-            const isAlreadyDispatched = Boolean(existing?.metadata?.first_dispatched_at || existing?.metadata?.auto_dispatched_at);
+            // Rule 2: Idempotency Guard — never re-send if already successfully dispatched
+            const isAlreadyDispatched = Boolean(
+              (existing?.metadata?.first_dispatched_at || existing?.metadata?.auto_dispatched_at) &&
+              existing?.metadata?.dispatch_status !== 'failed'
+            );
 
             // Rule 3: Must be a genuine Sales / Tax Invoice (never purchase/payment)
             const isSalesInvoice = derivedDirection === 'receivable' ||
@@ -392,11 +395,72 @@ exports.handler = async (event) => {
                   let wamid = null;
                   let sentViaTemplate = false;
 
-                  // 1. Send Tax Invoice PDF document directly
+                  // 1. Primary Dispatch: Approved Meta Utility Template (24/7 delivery, bypasses 24h service window)
+                  try {
+                    const tplRes = await fetch(BASE_URL, {
+                      method: 'POST',
+                      headers: waHeaders,
+                      body: JSON.stringify({
+                        messaging_product: 'whatsapp',
+                        to: cleanPhone,
+                        type: 'template',
+                        template: {
+                          name: 'invoice_dispatch_v1',
+                          language: { code: 'en' },
+                          components: [{
+                            type: 'body',
+                            parameters: [
+                              { type: 'text', text: clientDisplayName || 'Valued Customer' },
+                              { type: 'text', text: String(invNum) },
+                              { type: 'text', text: company || 'SHOBHA READY PLAST' },
+                              { type: 'text', text: String(v.date || invoiceDateStr) },
+                              { type: 'text', text: fmtAmt(invoiceRow.amount) },
+                              { type: 'text', text: 'Pending' },
+                            ]
+                          }]
+                        }
+                      }),
+                    });
+                    const tplData = await tplRes.json();
+                    if (tplData?.messages?.[0]?.id) {
+                      wamid = tplData.messages[0].id;
+                      sentViaTemplate = true;
+                      console.log(`[tally-sync] Successfully dispatched invoice_dispatch_v1 template to ${cleanPhone} for invoice ${invNum} (wamid: ${wamid})`);
+                    } else if (tplData?.error) {
+                      console.warn(`[tally-sync] Template dispatch API notice:`, tplData.error);
+                    }
+                  } catch (tplErr) {
+                    console.warn('[tally-sync] Template dispatch exception:', tplErr.message);
+                  }
+
+                  // 2. Secondary Fallback: Direct text message if template failed
+                  if (!wamid) {
+                    try {
+                      const textRes = await fetch(BASE_URL, {
+                        method: 'POST',
+                        headers: waHeaders,
+                        body: JSON.stringify({
+                          messaging_product: 'whatsapp',
+                          to: cleanPhone,
+                          type: 'text',
+                          text: { body: textMsg },
+                        }),
+                      });
+                      const textData = await textRes.json();
+                      if (textData?.messages?.[0]?.id) {
+                        wamid = textData.messages[0].id;
+                        console.log(`[tally-sync] Sent text notification to ${cleanPhone} for ${invNum}`);
+                      }
+                    } catch (textErr) {
+                      console.warn('[tally-sync] Text send warning:', textErr.message);
+                    }
+                  }
+
+                  // 3. Optional Document Send: If direct PDF URL exists
                   if (finalPdfUrl) {
                     try {
                       const safePdfName = `Invoice_${String(invNum).replace(/[^a-zA-Z0-9_-]/g, '_')}.pdf`;
-                      const docRes = await fetch(BASE_URL, {
+                      await fetch(BASE_URL, {
                         method: 'POST',
                         headers: waHeaders,
                         body: JSON.stringify({
@@ -410,87 +474,36 @@ exports.handler = async (event) => {
                           },
                         }),
                       });
-                      const docData = await docRes.json();
-                      if (docData?.messages?.[0]?.id) {
-                        wamid = docData.messages[0].id;
-                        console.log(`[tally-sync] Delivered PDF document to ${cleanPhone} for ${invNum}`);
-                      }
                     } catch (docErr) {
                       console.warn('[tally-sync] Document send notice:', docErr.message);
                     }
                   }
 
-                  // 2. Send Text Notification (or fallback to approved Meta template if outside 24h)
-                  const textRes = await fetch(BASE_URL, {
-                    method: 'POST',
-                    headers: waHeaders,
-                    body: JSON.stringify({
-                      messaging_product: 'whatsapp',
-                      to: cleanPhone,
-                      type: 'text',
-                      text: { body: textMsg },
-                    }),
-                  });
-                  const textData = await textRes.json();
-                  if (textData.error && (textData.error.code === 131047 || textData.error.message?.includes('Re-engagement') || textData.error.message?.includes('24-hour'))) {
-                    // Outside 24h window: dispatch official approved Meta template invoice_dispatch_v1
+                  // 4. If separate e-Way bill PDF exists, send e-Way bill too
+                  const ewayUrl = v.metadata?.eway_pdf_url || v.eway_pdf_url;
+                  if (ewayUrl && ewayUrl.startsWith('http')) {
                     try {
-                      const tplRes = await fetch(BASE_URL, {
+                      await new Promise(r => setTimeout(r, 600));
+                      await fetch(BASE_URL, {
                         method: 'POST',
                         headers: waHeaders,
                         body: JSON.stringify({
                           messaging_product: 'whatsapp',
                           to: cleanPhone,
-                          type: 'template',
-                          template: {
-                            name: 'invoice_dispatch_v1',
-                            language: { code: 'en' },
-                            components: [{
-                              type: 'body',
-                              parameters: [
-                                { type: 'text', text: clientDisplayName || 'Valued Customer' },
-                                { type: 'text', text: String(invNum) },
-                                { type: 'text', text: company || 'SHOBHA READY PLAST' },
-                                { type: 'text', text: String(v.date || new Date().toISOString().slice(0, 10)) },
-                                { type: 'text', text: fmtAmt(invoiceRow.amount) },
-                                { type: 'text', text: 'Pending' },
-                              ]
-                            }]
-                          }
+                          type: 'document',
+                          document: {
+                            link: ewayUrl,
+                            filename: `eWayBill_${String(invNum).replace(/[^a-zA-Z0-9_-]/g, '_')}.pdf`,
+                            caption: `e-Way Bill for Invoice ${invNum}`,
+                          },
                         }),
                       });
-                      const tplData = await tplRes.json();
-                      wamid = tplData?.messages?.[0]?.id || wamid;
-                      sentViaTemplate = true;
-                      console.log(`[tally-sync] Dispatched invoice_dispatch_v1 template to ${cleanPhone} for invoice ${invNum}`);
-                    } catch (tplErr) {
-                      console.warn('[tally-sync] Template dispatch warning:', tplErr.message);
+                    } catch (ewErr) {
+                      console.warn('[tally-sync] e-Way bill send notice:', ewErr.message);
                     }
-                  } else if (textData?.messages?.[0]?.id) {
-                    wamid = textData.messages[0].id;
                   }
 
-                  // 3. If separate e-Way bill PDF exists, send e-Way bill too (only when within 24h window)
-                  const ewayUrl = v.metadata?.eway_pdf_url || v.eway_pdf_url;
-                  if (!sentViaTemplate && ewayUrl && ewayUrl.startsWith('http')) {
-                    await new Promise(r => setTimeout(r, 600));
-                    await fetch(BASE_URL, {
-                      method: 'POST',
-                      headers: waHeaders,
-                      body: JSON.stringify({
-                        messaging_product: 'whatsapp',
-                        to: cleanPhone,
-                        type: 'document',
-                        document: {
-                          link: ewayUrl,
-                          filename: `eWayBill_${String(invNum).replace(/[^a-zA-Z0-9_-]/g, '_')}.pdf`,
-                          caption: `e-Way Bill for Invoice ${invNum}`,
-                        },
-                      }),
-                    });
-                  }
-
-                  // 4. Mark invoice as first_dispatched_at in database
+                  // 5. Mark invoice dispatch metadata in database
                   try {
                     const nowDispatched = new Date().toISOString();
                     const updatedMeta = {
@@ -498,6 +511,8 @@ exports.handler = async (event) => {
                       first_dispatched_at: nowDispatched,
                       auto_dispatched_at: nowDispatched,
                       auto_dispatched_to: targetPhone,
+                      dispatch_wamid: wamid || null,
+                      dispatch_status: 'sent',
                     };
                     await supabase.from('invoices').update({
                       metadata: updatedMeta,
@@ -536,15 +551,17 @@ exports.handler = async (event) => {
                         conversation_id: convId,
                         direction: 'outbound',
                         sender_type: 'system',
-                        message_type: 'document',
-                        body: textMsg,
+                        message_type: sentViaTemplate ? 'template' : (finalPdfUrl ? 'document' : 'text'),
+                        body: sentViaTemplate
+                          ? `Tax Invoice Dispatched: ${invNum} | ${fmtAmt(invoiceRow.amount)} | ${company}`
+                          : textMsg,
                         media_url: finalPdfUrl,
-                        status: 'delivered',
+                        status: 'sent',
                         provider_message_id: wamid || null,
                       }]);
 
                       await supabase.from('whatsapp_conversations').update({
-                        last_message_text: `🧾 Dispatched Invoice ${invNum}`,
+                        last_message_text: `🧾 Dispatched Invoice ${invNum} (${fmtAmt(invoiceRow.amount)})`,
                         last_message_at: new Date().toISOString(),
                         unread_count: 0,
                       }).eq('id', convId);
