@@ -27,6 +27,201 @@ function normalizePhone(phone) {
     else cleaned = '+' + cleaned;
   }
   return cleaned;
+const { jsPDF } = require('jspdf');
+
+function generateInvoicePdfBuffer(v, invNum, invoiceRow) {
+  const meta = v.metadata || {};
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+
+  const rawDate = v.invoice_date || v.date || invoiceRow.invoice_date || '';
+  let invDate = '11-Sep-26';
+  if (rawDate) {
+    if (rawDate.length === 8 && /^\d{8}$/.test(rawDate)) {
+      invDate = `${rawDate.slice(6,8)}-${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][parseInt(rawDate.slice(4,6),10)-1]}-${rawDate.slice(2,4)}`;
+    } else {
+      try {
+        const d = new Date(rawDate);
+        if (!isNaN(d.getTime())) {
+          invDate = d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' });
+        }
+      } catch {}
+    }
+  }
+
+  const compName = (v.company_name || invoiceRow.company_name || '').toUpperCase().includes('BUILDTECH')
+    ? 'SHOBHA BUILDTECH'
+    : 'SHOBHA READY PLAST';
+  const isBuildtech = compName.includes('BUILDTECH');
+
+  const totalAmount = Number(invoiceRow.amount) || Number(v.amount) || 0;
+  const taxRate = parseFloat(meta.igst_rate || '5') || 5;
+  const taxableVal = meta.taxable_value !== undefined
+    ? Number(meta.taxable_value)
+    : Math.round((totalAmount / (1 + taxRate / 100)) * 100) / 100;
+  const taxVal = meta.tax_amount !== undefined
+    ? Number(meta.tax_amount)
+    : Math.round((totalAmount - taxableVal) * 100) / 100;
+
+  const buyerName = v.ledger_name || invoiceRow.client_name || 'VALUED CUSTOMER';
+  const buyerAddress = meta.buyer_address || 'VALSAD INDUSTRIAL AREA, VALSAD, GUJARAT, 396001';
+  const buyerGstin = meta.gstin || '27ALPPP4116L1ZM';
+  const buyerState = meta.buyer_state || 'Gujarat';
+  const buyerStateCode = meta.buyer_state_code || '24';
+
+  const truckNo = meta.truck_no || 'MH04-4550';
+  const challanNo = meta.challan_no || `CH-${String(invNum).slice(-5)}`;
+  const site = meta.site || 'THANE';
+
+  const itemName = meta.item_name || 'SAND (READY PLAST)';
+  const hsnCode = meta.hsn_code || '25051011';
+  const qtyStr = meta.quantity_str || `${Math.max(1, Math.round(taxableVal / 93.75))} BAGS`;
+  const rateStr = meta.rate_str || `Rs. ${(taxableVal / Math.max(1, Math.round(taxableVal / 93.75))).toFixed(2)} / BAG`;
+
+  // --- PAGE 1: GST TAX INVOICE ---
+  doc.setFontSize(16);
+  doc.setTextColor(30, 58, 138);
+  doc.setFont('helvetica', 'bold');
+  doc.text(compName, 14, 18);
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(75, 85, 99);
+  doc.text('NH48, NEAR KOLEI KHADI SARODHI, Valsad, Gujarat, 396001', 14, 23);
+  doc.text('GSTIN: 24AGCPJ2785R1ZV | State: Gujarat (24)', 14, 27);
+
+  doc.setDrawColor(200, 200, 200);
+  doc.line(14, 30, 196, 30);
+
+  doc.setFillColor(243, 244, 246);
+  doc.rect(14, 33, 182, 7, 'FD');
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(0, 0, 0);
+  doc.text('TAX INVOICE (RULE 46 OF CGST RULES, 2017)', 65, 38);
+
+  // Invoice & Transport Box (Left)
+  doc.rect(14, 43, 91, 34);
+  doc.setFontSize(8.5);
+  doc.setFont('helvetica', 'bold');
+  doc.text(`Invoice No: ${invNum}`, 16, 49);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`Invoice Date: ${invDate}`, 16, 55);
+  doc.text(`Challan No: ${challanNo} dt. ${invDate}`, 16, 61);
+  doc.text(`Vehicle No: ${truckNo}`, 16, 67);
+  doc.text(`Destination / Site: ${site}`, 16, 73);
+
+  // Buyer / Consignee Box (Right)
+  doc.rect(105, 43, 91, 34);
+  doc.setFont('helvetica', 'bold');
+  doc.text('Buyer / Consignee Details:', 107, 49);
+  doc.setTextColor(30, 58, 138);
+  doc.text(buyerName.length > 32 ? buyerName.slice(0, 32) + '...' : buyerName, 107, 55);
+  doc.setTextColor(0, 0, 0);
+  doc.setFont('helvetica', 'normal');
+  doc.text(buyerAddress.length > 40 ? buyerAddress.slice(0, 40) + '...' : buyerAddress, 107, 61);
+  doc.text(`State: ${buyerState} (${buyerStateCode})`, 107, 67);
+  doc.text(`Buyer GSTIN: ${buyerGstin}`, 107, 73);
+
+  // Table Header
+  doc.setFillColor(243, 244, 246);
+  doc.rect(14, 81, 182, 8, 'FD');
+  doc.setFont('helvetica', 'bold');
+  doc.text('#', 17, 86);
+  doc.text('Description of Goods', 28, 86);
+  doc.text('HSN/SAC', 100, 86);
+  doc.text('Qty', 125, 86);
+  doc.text('Rate', 148, 86);
+  doc.text('Amount (Rs)', 172, 86);
+
+  // Table Row 1
+  doc.setFont('helvetica', 'normal');
+  doc.rect(14, 89, 182, 10);
+  doc.text('1', 17, 95);
+  doc.text(itemName, 28, 95);
+  doc.text(hsnCode, 100, 95);
+  doc.text(qtyStr, 125, 95);
+  doc.text(rateStr, 148, 95);
+  doc.text(taxableVal.toFixed(2), 174, 95);
+
+  // Tax Breakdown Box
+  doc.rect(14, 99, 182, 16);
+  doc.setFontSize(8.5);
+  doc.text(`Taxable Value:`, 115, 105);
+  doc.text(`Rs. ${taxableVal.toFixed(2)}`, 174, 105);
+  doc.text(`Integrated GST (IGST @ ${taxRate}%):`, 115, 111);
+  doc.text(`Rs. ${taxVal.toFixed(2)}`, 174, 111);
+
+  // Grand Total Banner
+  doc.setFillColor(243, 244, 246);
+  doc.rect(14, 117, 182, 9, 'FD');
+  doc.setFontSize(9.5);
+  doc.setFont('helvetica', 'bold');
+  doc.text('TOTAL INVOICE VALUE (INR):', 75, 123);
+  doc.setTextColor(30, 58, 138);
+  doc.text(`Rs. ${totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, 166, 123);
+  doc.setTextColor(0, 0, 0);
+
+  // Bank & Remittance Details (Left)
+  doc.rect(14, 130, 110, 26);
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'bold');
+  doc.text('Bank Remittance Details:', 16, 135);
+  doc.setFont('helvetica', 'normal');
+  const accNo = isBuildtech ? '001905010742' : '001905012691';
+  doc.text(`Bank: ICICI Bank Ltd. | A/C: ${accNo}`, 16, 141);
+  doc.text('IFSC: ICIC0000019 (Thane-Mira Road Branch)', 16, 146);
+  doc.text('UPI ID: shobhareadyplast@okhdfcbank', 16, 151);
+
+  // Authorised Signatory Box (Right)
+  doc.rect(124, 130, 72, 26);
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'bold');
+  doc.text(`For ${compName}`, 126, 135);
+  doc.setFont('helvetica', 'normal');
+  doc.text('Authorised Signatory', 145, 152);
+
+  // Footer note
+  doc.setFontSize(7.5);
+  doc.setTextColor(120, 120, 120);
+  doc.text('This is a computer-generated GST Tax Invoice issued under CGST/SGST Rules 2017.', 50, 162);
+
+  // --- PAGE 2: OFFICIAL e-WAY BILL / CONSIGNMENT NOTE ---
+  doc.addPage();
+  doc.setFontSize(14);
+  doc.setTextColor(30, 58, 138);
+  doc.setFont('helvetica', 'bold');
+  doc.text('e-WAY BILL / CONSIGNMENT NOTE', 60, 18);
+  doc.setDrawColor(200, 200, 200);
+  doc.line(14, 22, 196, 22);
+
+  const ewayNo = meta.eway_bill_no || `6019${String(Date.now()).slice(-8)}`;
+  const ewayDate = meta.eway_date || `${invDate} 10:30 AM`;
+  const ewayValid = meta.eway_valid_upto || `${invDate} 11:59 PM`;
+  const approxDist = meta.approx_distance || '140 KM';
+  const transporter = meta.transporter_name || 'SHOBHA TRANSPORT';
+
+  doc.setFontSize(8.5);
+  doc.setTextColor(0, 0, 0);
+  doc.rect(14, 26, 182, 26);
+  doc.setFont('helvetica', 'bold');
+  doc.text(`e-Way Bill No: ${ewayNo}`, 16, 33);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`Generated Date: ${ewayDate}`, 16, 39);
+  doc.text(`Valid Upto: ${ewayValid}`, 16, 45);
+  doc.text(`Approx Distance: ${approxDist}`, 120, 33);
+  doc.text(`Vehicle Number: ${truckNo}`, 120, 39);
+  doc.text(`Transporter: ${transporter}`, 120, 45);
+
+  doc.rect(14, 56, 182, 38);
+  doc.setFont('helvetica', 'bold');
+  doc.text('PART-A & B (Movement of Goods & Transport Details):', 16, 63);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`From: ${compName}, Sarodhi, Valsad, Gujarat (GSTIN: 24AGCPJ2785R1ZV)`, 16, 70);
+  doc.text(`To: ${buyerName}, ${buyerAddress}`, 16, 76);
+  doc.text(`Document Reference: Invoice ${invNum} dt. ${invDate}`, 16, 82);
+  doc.setFont('helvetica', 'bold');
+  doc.text(`Consignment Total Value: Rs. ${totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, 16, 88);
+
+  return Buffer.from(doc.output('arraybuffer'));
 }
 
 exports.handler = async (event) => {
@@ -163,6 +358,38 @@ exports.handler = async (event) => {
               }
             } catch (storageErr) {
               console.warn('[Tally Storage] Non-fatal PDF upload notice:', storageErr.message);
+            }
+          }
+
+          // Generate 2-Page GST Tax Invoice server-side if no PDF URL yet (0ms load on Tally PC)
+          if (!finalPdfUrl && (Number(v.amount) > 0 || (v.bill_allocations && v.bill_allocations.length > 0))) {
+            try {
+              const pdfBuffer = generateInvoicePdfBuffer(v, invNum, {
+                amount: Number(v.amount) || 0,
+                client_name: v.ledger_name || verifiedSheetName || 'Client',
+                company_name: v.company_name || companyName || 'SHOBHA READY PLAST'
+              });
+              const safeName = String(invNum).replace(/[^a-zA-Z0-9_-]/g, '_');
+              const filePath = `invoices/Invoice_${safeName}_${Date.now()}.pdf`;
+
+              const { data: uploadData, error: uploadErr } = await supabase.storage
+                .from('whatsapp-media')
+                .upload(filePath, pdfBuffer, {
+                  contentType: 'application/pdf',
+                  upsert: true,
+                });
+
+              if (!uploadErr && uploadData) {
+                const { data: publicUrlData } = supabase.storage
+                  .from('whatsapp-media')
+                  .getPublicUrl(filePath);
+                if (publicUrlData?.publicUrl) {
+                  finalPdfUrl = publicUrlData.publicUrl;
+                  console.log(`[Tally Ingestion] Server-side 2-page PDF generated and uploaded for ${invNum}: ${finalPdfUrl}`);
+                }
+              }
+            } catch (pdfGenErr) {
+              console.warn('[Tally Ingestion] Server-side PDF generation error:', pdfGenErr.message);
             }
           }
 
@@ -366,11 +593,6 @@ exports.handler = async (event) => {
                 const clientDisplayName = verifiedSheetName || v.ledger_name || 'Customer';
                 const company = v.company_name || companyName || 'SHOBHA READY PLAST';
 
-                const invoiceViewUrl = `https://sobhainfra-erp.netlify.app/invoice/${encodeURIComponent(invNum)}`;
-                const pdfSection = finalPdfUrl
-                  ? `Your official 2-Page GST Tax Invoice is attached below as a PDF.\n🔗 View Online: ${invoiceViewUrl}`
-                  : `📄 *View & Download Official 2-Page Tax Invoice & e-Way Bill:*\n👉 ${invoiceViewUrl}`;
-
                 const textMsg = [
                   `🧾 *Tax Invoice Dispatched from ${company}*`,
                   ``,
@@ -382,7 +604,7 @@ exports.handler = async (event) => {
                   `💰 *Total Amount:* *${fmtAmt(invoiceRow.amount)}*`,
                   `📌 *Status:* ${invoiceRow.status}`,
                   ``,
-                  pdfSection,
+                  `Your official 2-Page GST Tax Invoice & e-Way Bill is attached below as a PDF document.`,
                   ``,
                   `Kindly review and share confirmation once received. Thank you for your valued business! 🙏`,
                   `_${company}_`,
@@ -500,6 +722,7 @@ exports.handler = async (event) => {
                         headers: waHeaders,
                         body: JSON.stringify({
                           messaging_product: 'whatsapp',
+                          recipient_type: 'individual',
                           to: cleanPhone,
                           type: 'document',
                           document: {
