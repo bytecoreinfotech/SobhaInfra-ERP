@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   DollarSign, TrendingUp, AlertTriangle, CheckCircle2,
   Clock, Plus, Search, Filter, ArrowUpRight, ArrowDownRight,
