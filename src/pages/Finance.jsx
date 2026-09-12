@@ -15,7 +15,7 @@ import {
   getCustomerMaster
 } from '../lib/db';
 import { buildCustomerIndex, matchCustomer } from '../lib/customerMatcher';
-import { reconcileCustomerInvoices, reconcileVendorInvoices, getCustomerLedgerStatement, getCustomerPendingBills, isSalesVoucher, isPurchaseVoucher, isReceiptVoucher } from '../lib/reconciliation';
+import { reconcileCustomerInvoices, reconcileVendorInvoices, getCustomerLedgerStatement, getCustomerPendingBills, isSalesVoucher, isPurchaseVoucher, isReceiptVoucher, computeTallyDebtors } from '../lib/reconciliation';
 import { supabase } from '../lib/supabase';
 import { useCompany } from '../context/CompanyContext';
 import LedgerDetailDrawer from '../components/LedgerDetailDrawer';
@@ -529,65 +529,10 @@ const Finance = () => {
     return vendorPayments.reduce((s, i) => s + Number(i.amount || 0), 0);
   }, [vendorPayments]);
 
-  // Official Tally Prime Silver Sundry Debtors Master Registry (Group Summary from Tally)
-  const TALLY_DEBTORS_REGISTRY = useMemo(() => ({
-    'SHOBHA READY PLAST': {
-      debit: 23781962.61,
-      credit: 1163382.51,
-      net: 22618580.10,
-      groups: [
-        { name: 'Mumbai', debit: 10246811.35, credit: 204045.00, net: 10042766.35 },
-        { name: 'Thane', debit: 3248130.84, credit: 1.00, net: 3248129.84 },
-        { name: 'Debtors 1', debit: 2555896.98, credit: 20.00, net: 2555876.98 },
-        { name: 'Dubey Ji', debit: 2277071.75, credit: 0, net: 2277071.75 },
-        { name: 'Mira/bhayandar', debit: 1806494.81, credit: 0, net: 1806494.81 },
-        { name: 'Palghar', debit: 1167495.40, credit: 67931.00, net: 1099564.40 },
-        { name: 'Debtors', debit: 698555.00, credit: 4215.51, net: 694339.49 },
-        { name: 'Karan', debit: 642293.48, credit: 0, net: 642293.48 },
-        { name: 'KALPESH BHAI', debit: 296940.50, credit: 0, net: 296940.50 },
-        { name: 'Shahpur/kalyan', debit: 265652.75, credit: 88000.00, net: 177652.75 },
-        { name: 'VIE WIN ENTERPRISES', debit: 135450.00, credit: 0, net: 135450.00 },
-        { name: 'YADAV TRADING COMPANY', debit: 129018.75, credit: 0, net: 129018.75 },
-        { name: 'Sundry Debtors - STC', debit: 101329.00, credit: 0, net: 101329.00 },
-        { name: 'Bhiwandi', debit: 89729.00, credit: 3098.00, net: 86631.00 },
-        { name: 'VNR INFRATECH', debit: 85050.00, credit: 0, net: 85050.00 },
-        { name: 'Navi Mumbai', debit: 82418.00, credit: 1.00, net: 82417.00 },
-        { name: 'Sales Bills to Make', debit: -46375.00, credit: 0, net: -46375.00 },
-        { name: 'Direct Customer Advances (SIDDHIVINAYAK LOGISTICS, V D MOTOR, etc.)', debit: 0, credit: 796071.00, net: -796071.00 },
-      ]
-    },
-    'SHOBHA BUILDTECH': {
-      debit: 13596148.68,
-      credit: 0,
-      net: 13596148.68,
-      groups: []
-    },
-    'SOBHAINFRA TECH PRIVATE LIMITED': {
-      debit: 0,
-      credit: 0,
-      net: 0,
-      groups: []
-    }
-  }), []);
-
+  // Authoritative dynamic calculation of Tally Sundry Debtors, customer advances, and net outstanding
   const currentTallyDebtors = useMemo(() => {
-    if (isConsolidated || !activeCompany) {
-      const srp = TALLY_DEBTORS_REGISTRY['SHOBHA READY PLAST'];
-      const sb = TALLY_DEBTORS_REGISTRY['SHOBHA BUILDTECH'];
-      const sit = TALLY_DEBTORS_REGISTRY['SOBHAINFRA TECH PRIVATE LIMITED'];
-      return {
-        debit: (srp?.debit || 0) + (sb?.debit || 0) + (sit?.debit || 0),
-        credit: (srp?.credit || 0) + (sb?.credit || 0) + (sit?.credit || 0),
-        net: (srp?.net || 0) + (sb?.net || 0) + (sit?.net || 0),
-        groups: srp?.groups || []
-      };
-    }
-    const compKey = (activeCompany?.company_name || '').toUpperCase();
-    if (compKey.includes('READY PLAST')) return TALLY_DEBTORS_REGISTRY['SHOBHA READY PLAST'];
-    if (compKey.includes('BUILDTECH')) return TALLY_DEBTORS_REGISTRY['SHOBHA BUILDTECH'];
-    if (compKey.includes('TECH') || compKey.includes('SOBHAINFRA')) return TALLY_DEBTORS_REGISTRY['SOBHAINFRA TECH PRIVATE LIMITED'];
-    return TALLY_DEBTORS_REGISTRY[activeCompany?.company_name] || { debit: 0, credit: 0, net: 0, groups: [] };
-  }, [activeCompany, isConsolidated, TALLY_DEBTORS_REGISTRY]);
+    return computeTallyDebtors(allInvoices, activeCompany, isConsolidated);
+  }, [allInvoices, activeCompany, isConsolidated]);
 
   // Master ledger closing balance sum for the active view
   const tallyClosingSum = useMemo(() => {

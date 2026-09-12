@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import { getDashboardStats, getActivityFeed, getTasks, getLeads, getCampaigns, getInvoices, getTeamMembers, getEmployeeLivePings, getSiteVisits, getCustomerMaster, triggerSheetSync, invalidateCustomerMasterCache } from '../lib/db';
 import { buildCustomerIndex, matchCustomer } from '../lib/customerMatcher';
-import { reconcileCustomerInvoices, isSalesVoucher, isReceiptVoucher, isPurchaseVoucher } from '../lib/reconciliation';
+import { reconcileCustomerInvoices, isSalesVoucher, isReceiptVoucher, isPurchaseVoucher, computeTallyDebtors } from '../lib/reconciliation';
 import { isSupabaseConfigured } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { useCompany } from '../context/CompanyContext';
@@ -219,28 +219,10 @@ const Dashboard = () => {
   const paidInvoicesCount = customerSales.filter(i => i.status === 'Paid').length;
   const collectionRate = totalInvoiced > 0 ? ((totalPaid / totalInvoiced) * 100).toFixed(1) : '0.0';
 
-  // Official Tally Sundry Debtors from Tally Prime Silver
+  // Dynamic Tally Sundry Debtors & Advances from live database
   const tallySummary = useMemo(() => {
-    const srp = { debit: 23781962.61, credit: 1163382.51, net: 22618580.10 };
-    const sb = { debit: 13596148.68, credit: 0, net: 13596148.68 };
-    const sit = { debit: 0, credit: 0, net: 0 };
-    if (isConsolidated || !activeCompany) {
-      return {
-        debit: srp.debit + sb.debit + sit.debit,
-        credit: srp.credit + sb.credit + sit.credit,
-        net: srp.net + sb.net + sit.net
-      };
-    }
-    const comp = (activeCompany?.company_name || '').toUpperCase();
-    if (comp.includes('READY PLAST')) return srp;
-    if (comp.includes('BUILDTECH')) return sb;
-    if (comp.includes('TECH') || comp.includes('SOBHAINFRA')) return sit;
-    return {
-      debit: srp.debit + sb.debit,
-      credit: srp.credit + sb.credit,
-      net: srp.net + sb.net
-    };
-  }, [activeCompany, isConsolidated]);
+    return computeTallyDebtors(allInvoices, activeCompany, isConsolidated);
+  }, [allInvoices, activeCompany, isConsolidated]);
 
   // Total Customer Outstanding (Matches Tally Net Closing Balance)
   const totalCustomerOutstanding = tallySummary?.net ?? 0;

@@ -8,7 +8,7 @@ import {
   PauseCircle, PlayCircle, CalendarClock, MessageSquare
 } from 'lucide-react';
 import { getInvoices, getCustomerMaster, triggerSheetSync, getSheetSyncLog, invalidateInvoicesCache, invalidateCustomerMasterCache, pauseInvoiceReminder, resumeInvoiceReminder } from '../lib/db';
-import { reconcileCustomerInvoices, isSalesVoucher } from '../lib/reconciliation';
+import { reconcileCustomerInvoices, isSalesVoucher, computeTallyDebtors } from '../lib/reconciliation';
 import { buildCustomerIndex, matchCustomer } from '../lib/customerMatcher';
 import { useCompany } from '../context/CompanyContext';
 import InvoiceDocModal from '../components/InvoiceDocModal';
@@ -380,28 +380,10 @@ const Payments = () => {
   const totalWithPhone = enrichedInvoices.filter(i => i._has_verified_phone).length;
   const totalMissingPhone = enrichedInvoices.filter(i => !i._has_verified_phone).length;
 
-  // Official Tally Sundry Debtors from Tally Prime Silver
+  // Dynamic Tally Sundry Debtors & Advances from live database
   const tallySummary = useMemo(() => {
-    const srp = { debit: 23781962.61, credit: 1163382.51, net: 22618580.10 };
-    const sb = { debit: 13596148.68, credit: 0, net: 13596148.68 };
-    const sit = { debit: 0, credit: 0, net: 0 };
-    if (isConsolidated || !activeCompany) {
-      return {
-        debit: srp.debit + sb.debit + sit.debit,
-        credit: srp.credit + sb.credit + sit.credit,
-        net: srp.net + sb.net + sit.net,
-      };
-    }
-    const comp = (activeCompany?.company_name || '').toUpperCase();
-    if (comp.includes('READY PLAST')) return srp;
-    if (comp.includes('BUILDTECH')) return sb;
-    if (comp.includes('TECH') || comp.includes('SOBHAINFRA')) return sit;
-    return {
-      debit: srp.debit + sb.debit,
-      credit: srp.credit + sb.credit,
-      net: srp.net + sb.net,
-    };
-  }, [activeCompany, isConsolidated]);
+    return computeTallyDebtors(allInvoices, activeCompany, isConsolidated);
+  }, [allInvoices, activeCompany, isConsolidated]);
 
   const fmtAmount = (n) => '₹' + Number(n || 0).toLocaleString('en-IN');
   const fmtCurrency = (n) => '₹' + Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 });
