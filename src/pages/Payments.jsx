@@ -380,6 +380,27 @@ const Payments = () => {
   const totalWithPhone = enrichedInvoices.filter(i => i._has_verified_phone).length;
   const totalMissingPhone = enrichedInvoices.filter(i => !i._has_verified_phone).length;
 
+  // Official Tally Sundry Debtors from Tally Prime Silver
+  const tallySummary = useMemo(() => {
+    const srp = { debit: 23781962.61, credit: 1163382.51, net: 22618580.10 };
+    const sb = { debit: 13596148.68, credit: 0, net: 13596148.68 };
+    if (isConsolidated || !activeCompany) {
+      return {
+        debit: srp.debit + sb.debit,
+        credit: srp.credit + sb.credit,
+        net: srp.net + sb.net,
+      };
+    }
+    const comp = (activeCompany?.company_name || '').toUpperCase();
+    if (comp.includes('READY PLAST')) return srp;
+    if (comp.includes('BUILDTECH')) return sb;
+    return {
+      debit: srp.debit + sb.debit,
+      credit: srp.credit + sb.credit,
+      net: srp.net + sb.net,
+    };
+  }, [activeCompany, isConsolidated]);
+
   const fmtAmount = (n) => '₹' + Number(n || 0).toLocaleString('en-IN');
   const fmtCurrency = (n) => '₹' + Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 });
 
@@ -544,11 +565,12 @@ const Payments = () => {
 
       {/* KPI Stats Grid */}
       {loading ? (
-        <SkeletonStats count={4} />
+        <SkeletonStats count={5} />
       ) : (
         <div className="stats-grid">
           {[
-            { label: 'Overdue Amount', value: fmtAmount(totalOverdue), color: 'var(--danger)', bg: 'var(--danger-bg)', icon: <AlertTriangle size={20} />, count: enrichedInvoices.filter(i => i.status === 'Overdue').length + ' invoices' },
+            { label: 'Total Tally Outstanding', value: fmtAmount(tallySummary.net), color: '#ef4444', bg: 'rgba(239,68,68,0.1)', icon: <CreditCard size={20} />, count: `Dr: ${fmtAmount(tallySummary.debit)} · Adv: ${fmtAmount(tallySummary.credit)}` },
+            { label: 'Actionable Overdue', value: fmtAmount(totalOverdue), color: 'var(--danger)', bg: 'var(--danger-bg)', icon: <AlertTriangle size={20} />, count: enrichedInvoices.filter(i => i.status === 'Overdue').length + ' invoices' },
             { label: 'Not Yet Due', value: fmtAmount(totalPending), color: 'var(--warning)', bg: 'var(--warning-bg)', icon: <Clock size={20} />, count: enrichedInvoices.filter(i => i.status === 'Pending').length + ' invoices' },
             { label: 'Collected (Paid)', value: fmtAmount(totalPaid), color: 'var(--success)', bg: 'var(--success-bg)', icon: <CheckCircle2 size={20} />, count: enrichedInvoices.filter(i => i.status === 'Paid').length + ' invoices' },
             { label: 'Reminders Sent', value: sentIds.length + enrichedInvoices.reduce((s, i) => s + (i.reminder_count || 0), 0), color: '#6366f1', bg: 'rgba(99,102,241,0.1)', icon: <MessageCircle size={20} />, count: 'total logged' },
