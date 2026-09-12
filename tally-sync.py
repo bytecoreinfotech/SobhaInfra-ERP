@@ -1357,6 +1357,15 @@ def parse_ledger_block(block, fallback_company: str = "", ledger_phone_map: dict
     if credit_days is not None and credit_days > 0:
         due_date = (datetime.now() + timedelta(days=credit_days)).strftime("%Y-%m-%d")
 
+    # Determine direction based on ledger parent group
+    parent_lower = (parent or '').lower()
+    if 'sundry creditor' in parent_lower or 'creditor' in parent_lower:
+        dir_val = 'payable'
+    elif 'sundry debtor' in parent_lower or 'debtor' in parent_lower:
+        dir_val = 'receivable'
+    else:
+        dir_val = ''
+
     return {
         "invoice_number": f"LEDGER-{clean_name.replace(' ', '')[:12]}",
         "invoice_date": datetime.now().strftime("%d-%b-%y"),
@@ -1367,8 +1376,11 @@ def parse_ledger_block(block, fallback_company: str = "", ledger_phone_map: dict
         "status": "Pending",
         "due_date": due_date,
         "credit_period_days": credit_days,
+        "direction": dir_val,
         "metadata": {
             "voucher_type": "Ledger Balance",
+            "direction": dir_val,
+            "parent": parent or "",
             "opening_balance": opening_amt,
             "closing_balance": amount,
             "credit_period_days": credit_days,

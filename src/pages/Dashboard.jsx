@@ -25,7 +25,7 @@ const getDirection = (inv) => {
   const numUpper= (inv?.invoice_number || inv?.tally_voucher_number || '').toUpperCase().trim();
 
   // 1. Master Ledger Closing Balances
-  if (numUpper.startsWith('LEDGER-')) return { isVendor: false, isLedger: true };
+  if (numUpper.startsWith('LEDGER-')) return { isVendor: dir === 'payable' || dir === 'paid_out', isCustomer: dir === 'receivable', isLedger: true };
 
   // 2. Sales Invoices (Customer Receivables)
   if (isSalesVoucher(inv)) {
@@ -219,8 +219,22 @@ const Dashboard = () => {
   const paidInvoicesCount = customerSales.filter(i => i.status === 'Paid').length;
   const collectionRate = totalInvoiced > 0 ? ((totalPaid / totalInvoiced) * 100).toFixed(1) : '0.0';
 
+  // Master customer ledger closing balances from Tally (Sundry Debtors)
+  const totalCustomerTallyClosing = useMemo(() => {
+    return invoices
+      .filter(i => {
+        const num = (i?.invoice_number || '').toUpperCase();
+        return num.startsWith('LEDGER-') && (i?.metadata?.direction === 'receivable' || i?.direction === 'receivable');
+      })
+      .reduce((s, l) => s + Number(l.amount || 0), 0);
+  }, [invoices]);
+
   // Total Prior Opening Balance across active customers
   const totalOpeningBalance = useMemo(() => {
+    const currentPending = overdueAmount + pendingAmount;
+    if (totalCustomerTallyClosing > 0) {
+      return Math.max(0, Math.round((totalCustomerTallyClosing - currentPending) * 100) / 100);
+    }
     const seen = new Set();
     let sum = 0;
     for (const inv of customerSales) {
@@ -230,20 +244,11 @@ const Dashboard = () => {
         sum += Number(inv._party_opening_balance || 0);
       }
     }
-    // Also include customer closing balances from master ledgers not represented in customerSales
-    const ledgers = invoices.filter(i => {
-      const num = (i?.invoice_number || '').toUpperCase();
-      return num.startsWith('LEDGER-') && !getDirection(i).isVendor;
-    });
-    for (const l of ledgers) {
-      const p = (l.client_name || '').trim().toUpperCase();
-      if (!seen.has(p)) {
-        seen.add(p);
-        sum += Number(l.amount || 0);
-      }
-    }
     return Math.max(0, sum);
-  }, [customerSales, invoices]);
+  }, [totalCustomerTallyClosing, overdueAmount, pendingAmount, customerSales]);
+
+  // Total Customer Outstanding (Primary Metric, matches Tally)
+  const totalCustomerOutstanding = totalCustomerTallyClosing > 0 ? totalCustomerTallyClosing : (overdueAmount + pendingAmount + totalOpeningBalance);
 
   const tasksDueCt = taskList.filter(t => t.status !== 'Done').length;
   const totalWaSent = campaigns.reduce((s, c) => s + (c.total_sent || c.sent || 0), 0);
@@ -469,8 +474,8 @@ const Dashboard = () => {
             <div className="stat-card animate-slide-up" style={{ '--card-accent': 'var(--danger)' }}>
               <div className="stat-header">
                 <div>
-                  <div className="stat-label">Current Bills Outstanding</div>
-                  <div className="stat-value">{fmtAmount(overdueAmount + pendingAmount)}</div>
+                  <div className="stat-label">Total Customer Outstanding</div>
+                  <div className="stat-value">{fmtAmount(totalCustomerOutstanding)}</div>
                 </div>
                 <div className="stat-icon" style={{ background: 'var(--danger-bg)' }}>
                   <CreditCard size={22} style={{ color: 'var(--danger)' }} />
@@ -483,7 +488,7 @@ const Dashboard = () => {
                   <span className="stat-trend up" style={{ color: 'var(--success)' }}><CheckCircle2 size={13} /> 0 Overdue</span>
                 )}
                 {totalOpeningBalance > 0 ? (
-                  <span className="stat-period" title={`Opening Balance (Prior FY): ₹${totalOpeningBalance.toLocaleString('en-IN')}`}>
+                  <span className="stat-period" title={`Prior Opening Balance: ₹${totalOpeningBalance.toLocaleString('en-IN')}`}>
                     Op. Bal: {fmtAmount(totalOpeningBalance)}
                   </span>
                 ) : (

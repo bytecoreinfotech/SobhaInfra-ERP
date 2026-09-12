@@ -19,7 +19,7 @@ const getDirection = (inv) => {
   const numUpper= (inv?.invoice_number || inv?.tally_voucher_number || '').toUpperCase().trim();
 
   // 1. Master Ledger Closing Balances
-  if (numUpper.startsWith('LEDGER-')) return { isVendor: false, isLedger: true };
+  if (numUpper.startsWith('LEDGER-')) return { isVendor: dir === 'payable' || dir === 'paid_out', isCustomer: dir === 'receivable', isLedger: true };
 
   // 2. Sales Invoices (Customer Receivables)
   if (['sales', 'sales order', 'tax invoice'].some(t => vtype.includes(t)) || /^(srp|sb)\/./.test(num) || /^(inv|tax)\//.test(num)) {

@@ -55,8 +55,9 @@ const getDirection = (inv) => {
 
   // 1. Master Ledger Closing Balances → Excluded from transactional cards & tables
   if (numUpper.startsWith('LEDGER-')) {
+    const isCustomer = dir === 'receivable';
     const isVendor = dir === 'payable' || dir === 'paid_out';
-    return { isLedger: true, isVendor, label: 'Ledger Balance', canRemind: false };
+    return { isLedger: true, isCustomer, isVendor, isOther: !isCustomer && !isVendor, label: 'Ledger Balance', canRemind: false };
   }
 
   // 2. Sales Invoices (Customer Receivables) — money the customer owes US
@@ -453,6 +454,52 @@ const Finance = () => {
   // Active view determines which dataset feeds KPI cards and table
   const activeViewInvoices = financeView === 'payables' ? vendorInvoices : customerInvoices;
 
+  // Sets of verified customer and vendor parties to accurately distinguish ledgers
+  const customerPartySet = useMemo(() => {
+    const set = new Set();
+    allInvoices.forEach(inv => {
+      const num = (inv?.invoice_number || '').toUpperCase();
+      if (!num.startsWith('LEDGER-') && !num.startsWith('OP-') && isSalesVoucher(inv)) {
+        set.add((inv.client_name || '').trim().toUpperCase());
+      }
+    });
+    (customerMaster || []).forEach(cm => {
+      if (cm?.company_name) set.add(cm.company_name.trim().toUpperCase());
+    });
+    return set;
+  }, [allInvoices, customerMaster]);
+
+  const vendorPartySet = useMemo(() => {
+    const set = new Set();
+    allInvoices.forEach(inv => {
+      const num = (inv?.invoice_number || '').toUpperCase();
+      if (!num.startsWith('LEDGER-') && !num.startsWith('OP-') && isPurchaseVoucher(inv)) {
+        set.add((inv.client_name || '').trim().toUpperCase());
+      }
+    });
+    return set;
+  }, [allInvoices]);
+
+  const isCustomerLedger = useCallback((inv) => {
+    const num = (inv?.invoice_number || inv?.tally_voucher_number || '').toUpperCase();
+    if (!num.startsWith('LEDGER-')) return false;
+    const dir = (inv?.metadata?.direction || inv?.direction || '').toLowerCase();
+    if (dir === 'receivable') return true;
+    if (dir === 'payable' || dir === 'other') return false;
+    const p = (inv?.client_name || '').trim().toUpperCase();
+    return customerPartySet.has(p);
+  }, [customerPartySet]);
+
+  const isVendorLedger = useCallback((inv) => {
+    const num = (inv?.invoice_number || inv?.tally_voucher_number || '').toUpperCase();
+    if (!num.startsWith('LEDGER-')) return false;
+    const dir = (inv?.metadata?.direction || inv?.direction || '').toLowerCase();
+    if (dir === 'payable') return true;
+    if (dir === 'receivable' || dir === 'other') return false;
+    const p = (inv?.client_name || '').trim().toUpperCase();
+    return vendorPartySet.has(p) && !customerPartySet.has(p);
+  }, [vendorPartySet, customerPartySet]);
+
   // Actual bills for the active view (Sales bills for receivables, Purchase bills for payables — excludes receipt & payment vouchers from billing totals)
   const activeBills = useMemo(() => {
     return financeView === 'payables'
@@ -465,6 +512,7 @@ const Finance = () => {
   const totalPaid     = activeBills.reduce((s, i) => s + (i.status === 'Paid' ? Number(i.amount || 0) : Number(i.paid_amount || 0)), 0);
   const totalOverdue  = activeBills.filter(i => i.status === 'Overdue').reduce((s, i) => s + Number(i.pending_amount ?? i.amount ?? 0), 0);
   const totalPending  = activeBills.filter(i => i.status === 'Pending').reduce((s, i) => s + Number(i.pending_amount ?? i.amount ?? 0), 0);
+  const currentBillsOutstanding = totalOverdue + totalPending;
 
   // Outgoing payments made to vendors (from Tally Payment vouchers)
   const vendorPayments = useMemo(() => {
@@ -479,8 +527,21 @@ const Finance = () => {
     return vendorPayments.reduce((s, i) => s + Number(i.amount || 0), 0);
   }, [vendorPayments]);
 
-  // Total Prior Opening Balance across active customers
+  // Master ledger closing balance sum for the active view (matches Tally's Closing Balance for Sundry Debtors or Creditors)
+  const tallyClosingSum = useMemo(() => {
+    if (financeView === 'payables') {
+      const vendLedgers = dateFilteredInvoices.filter(isVendorLedger);
+      return vendLedgers.reduce((s, l) => s + Number(l.amount || 0), 0);
+    }
+    const custLedgers = dateFilteredInvoices.filter(isCustomerLedger);
+    return custLedgers.reduce((s, l) => s + Number(l.amount || 0), 0);
+  }, [dateFilteredInvoices, financeView, isCustomerLedger, isVendorLedger]);
+
+  // Total Prior Opening Balance across active customers/vendors (cleanly isolated, zero ledger pollution)
   const totalOpeningBalance = useMemo(() => {
+    if (tallyClosingSum > 0) {
+      return Math.max(0, Math.round((tallyClosingSum - currentBillsOutstanding) * 100) / 100);
+    }
     if (financeView === 'payables') return 0;
     const seen = new Set();
     let sum = 0;
@@ -491,20 +552,13 @@ const Finance = () => {
         sum += Number(inv._party_opening_balance || 0);
       }
     }
-    // Also include customer closing balances from master ledgers not represented in activeBills
-    const ledgers = dateFilteredInvoices.filter(i => {
-      const num = (i?.invoice_number || '').toUpperCase();
-      return num.startsWith('LEDGER-') && !getDirection(i).isVendor;
-    });
-    for (const l of ledgers) {
-      const p = (l.client_name || '').trim().toUpperCase();
-      if (!seen.has(p)) {
-        seen.add(p);
-        sum += Number(l.amount || 0);
-      }
-    }
     return Math.max(0, sum);
-  }, [activeBills, dateFilteredInvoices, financeView]);
+  }, [tallyClosingSum, currentBillsOutstanding, financeView, activeBills]);
+
+  // Total Outstanding (Primary Headline Metric) — accurately matches Tally's Closing Balance
+  const totalOutstanding = useMemo(() => {
+    return tallyClosingSum > 0 ? tallyClosingSum : (currentBillsOutstanding + totalOpeningBalance);
+  }, [tallyClosingSum, currentBillsOutstanding, totalOpeningBalance]);
 
   // 3. Search & Status Filter — also filtered by active financeView (receivables vs payables)
   const filtered = dateFilteredInvoices.filter(inv => {
@@ -837,11 +891,11 @@ const Finance = () => {
                     {financeView === 'receivables' ? 'Total Outstanding from Customers' : 'Total Outstanding to Vendors'}
                   </div>
                   <div style={{ fontSize: '1.65rem', fontWeight: 800, color: 'var(--text-primary)', marginTop: '0.15rem' }}>
-                    {fmtCurrency(totalOverdue + totalPending)}
+                    {fmtCurrency(totalOutstanding)}
                   </div>
                   <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '0.1rem' }}>
-                    {activeBills.filter(i => i.status === 'Overdue' || i.status === 'Pending').length} unpaid {financeView === 'receivables' ? 'sales bills (Current Outstanding)' : 'bills'}
-                    {financeView === 'receivables' && totalOpeningBalance > 0 && ` • Prior Opening Balance: ${fmtCurrency(totalOpeningBalance)} • Total Tally Closing Balance: ${fmtCurrency(totalOverdue + totalPending + totalOpeningBalance)}`}
+                    {activeBills.filter(i => i.status === 'Overdue' || i.status === 'Pending').length} unpaid {financeView === 'receivables' ? 'sales bills' : 'bills'} ({fmtCurrency(currentBillsOutstanding)})
+                    {totalOpeningBalance > 0 && ` + Prior Opening Balance (${fmtCurrency(totalOpeningBalance)}) • Matches Tally Closing Balance`}
                   </div>
                 </div>
                 <div style={{
@@ -896,7 +950,7 @@ const Finance = () => {
                   </div>
                 </div>
                 {/* Prior Opening Balance sub-card */}
-                {financeView === 'receivables' && totalOpeningBalance > 0 && (
+                {totalOpeningBalance > 0 && (
                   <div style={{
                     flex: 1, minWidth: 150,
                     background: 'rgba(99,102,241,0.08)',
@@ -907,7 +961,7 @@ const Finance = () => {
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', marginBottom: '0.3rem' }}>
                       <CalendarClock size={14} style={{ color: '#6366f1' }} />
                       <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#6366f1', textTransform: 'uppercase', letterSpacing: '0.3px' }}>
-                        Opening Balance (Prior FY)
+                        {financeView === 'receivables' ? 'Opening Balance (Prior FY)' : 'Vendor Opening Balance'}
                       </span>
                     </div>
                     <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#6366f1' }}>
