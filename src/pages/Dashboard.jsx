@@ -223,18 +223,27 @@ const Dashboard = () => {
   const tallySummary = useMemo(() => {
     const srp = { debit: 23781962.61, credit: 1163382.51, net: 22618580.10 };
     const sb = { debit: 13596148.68, credit: 0, net: 13596148.68 };
+    const sit = { debit: 0, credit: 0, net: 0 };
+    if (isConsolidated || !activeCompany) {
+      return {
+        debit: srp.debit + sb.debit + sit.debit,
+        credit: srp.credit + sb.credit + sit.credit,
+        net: srp.net + sb.net + sit.net
+      };
+    }
     const comp = (activeCompany?.company_name || '').toUpperCase();
     if (comp.includes('READY PLAST')) return srp;
     if (comp.includes('BUILDTECH')) return sb;
+    if (comp.includes('TECH') || comp.includes('SOBHAINFRA')) return sit;
     return {
       debit: srp.debit + sb.debit,
       credit: srp.credit + sb.credit,
       net: srp.net + sb.net
     };
-  }, [activeCompany]);
+  }, [activeCompany, isConsolidated]);
 
-  // Total Customer Outstanding (Matches Tally Net Closing Balance: ₹2.26 Cr)
-  const totalCustomerOutstanding = tallySummary?.net || 22618580.10;
+  // Total Customer Outstanding (Matches Tally Net Closing Balance)
+  const totalCustomerOutstanding = tallySummary?.net ?? 0;
   const totalOpeningBalance = Math.max(0, Math.round((totalCustomerOutstanding - (overdueAmount + pendingAmount)) * 100) / 100);
 
   const tasksDueCt = taskList.filter(t => t.status !== 'Done').length;
@@ -474,8 +483,10 @@ const Dashboard = () => {
                 ) : (
                   <span className="stat-trend up" style={{ color: 'var(--success)' }}><CheckCircle2 size={13} /> 0 Overdue</span>
                 )}
-                <span className="stat-period" title={`Tally Debit: ₹${tallySummary.debit.toLocaleString('en-IN')} • Tally Credit (Advances): ₹${tallySummary.credit.toLocaleString('en-IN')}`}>
-                  Dr: {fmtAmount(tallySummary.debit)} • Cr: {fmtAmount(tallySummary.credit)}
+                <span className="stat-period" title={`Tally Debit: ₹${(tallySummary?.debit ?? 0).toLocaleString('en-IN')}${tallySummary?.credit > 0 ? ` • Tally Credit (Advances): ₹${(tallySummary?.credit ?? 0).toLocaleString('en-IN')}` : ''}`}>
+                  {tallySummary?.credit > 0
+                    ? `Dr: ${fmtAmount(tallySummary.debit)} • Cr: ${fmtAmount(tallySummary.credit)}`
+                    : `Dr: ${fmtAmount(tallySummary.debit)}`}
                 </span>
               </div>
             </div>

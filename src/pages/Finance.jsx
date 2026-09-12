@@ -561,6 +561,12 @@ const Finance = () => {
       credit: 0,
       net: 13596148.68,
       groups: []
+    },
+    'SOBHAINFRA TECH PRIVATE LIMITED': {
+      debit: 0,
+      credit: 0,
+      net: 0,
+      groups: []
     }
   }), []);
 
@@ -568,24 +574,19 @@ const Finance = () => {
     if (isConsolidated || !activeCompany) {
       const srp = TALLY_DEBTORS_REGISTRY['SHOBHA READY PLAST'];
       const sb = TALLY_DEBTORS_REGISTRY['SHOBHA BUILDTECH'];
+      const sit = TALLY_DEBTORS_REGISTRY['SOBHAINFRA TECH PRIVATE LIMITED'];
       return {
-        debit: (srp?.debit || 0) + (sb?.debit || 0),
-        credit: (srp?.credit || 0) + (sb?.credit || 0),
-        net: (srp?.net || 0) + (sb?.net || 0),
+        debit: (srp?.debit || 0) + (sb?.debit || 0) + (sit?.debit || 0),
+        credit: (srp?.credit || 0) + (sb?.credit || 0) + (sit?.credit || 0),
+        net: (srp?.net || 0) + (sb?.net || 0) + (sit?.net || 0),
         groups: srp?.groups || []
       };
     }
     const compKey = (activeCompany?.company_name || '').toUpperCase();
     if (compKey.includes('READY PLAST')) return TALLY_DEBTORS_REGISTRY['SHOBHA READY PLAST'];
     if (compKey.includes('BUILDTECH')) return TALLY_DEBTORS_REGISTRY['SHOBHA BUILDTECH'];
-    const srp = TALLY_DEBTORS_REGISTRY['SHOBHA READY PLAST'];
-    const sb = TALLY_DEBTORS_REGISTRY['SHOBHA BUILDTECH'];
-    return {
-      debit: (srp?.debit || 0) + (sb?.debit || 0),
-      credit: (srp?.credit || 0) + (sb?.credit || 0),
-      net: (srp?.net || 0) + (sb?.net || 0),
-      groups: srp?.groups || []
-    };
+    if (compKey.includes('TECH') || compKey.includes('SOBHAINFRA')) return TALLY_DEBTORS_REGISTRY['SOBHAINFRA TECH PRIVATE LIMITED'];
+    return TALLY_DEBTORS_REGISTRY[activeCompany?.company_name] || { debit: 0, credit: 0, net: 0, groups: [] };
   }, [activeCompany, isConsolidated, TALLY_DEBTORS_REGISTRY]);
 
   // Master ledger closing balance sum for the active view
@@ -594,12 +595,12 @@ const Finance = () => {
       const vendLedgers = dateFilteredInvoices.filter(isVendorLedger);
       return vendLedgers.reduce((s, l) => s + Number(l.amount || 0), 0);
     }
-    return currentTallyDebtors?.net || 22618580.10;
+    return currentTallyDebtors?.net ?? 0;
   }, [dateFilteredInvoices, financeView, isVendorLedger, currentTallyDebtors]);
 
-  const tallyDebitTotal = financeView === 'receivables' ? (currentTallyDebtors?.debit || 23781962.61) : tallyClosingSum;
-  const tallyCreditTotal = financeView === 'receivables' ? (currentTallyDebtors?.credit || 1163382.51) : 0;
-  const tallyNetTotal = financeView === 'receivables' ? (currentTallyDebtors?.net || 22618580.10) : tallyClosingSum;
+  const tallyDebitTotal = financeView === 'receivables' ? (currentTallyDebtors?.debit ?? 0) : tallyClosingSum;
+  const tallyCreditTotal = financeView === 'receivables' ? (currentTallyDebtors?.credit ?? 0) : 0;
+  const tallyNetTotal = financeView === 'receivables' ? (currentTallyDebtors?.net ?? 0) : tallyClosingSum;
 
   // Primary Headline Total: Net Customer Outstanding
   const totalOutstanding = tallyNetTotal;
@@ -964,8 +965,12 @@ const Finance = () => {
                       <>
                         <span>Tally Debit: <strong style={{ color: 'var(--text-primary)' }}>{fmtCurrency(tallyDebitTotal)}</strong></span>
                         <span>•</span>
-                        <span>Customer Advances (Credit): <strong style={{ color: '#10b981' }}>{fmtCurrency(tallyCreditTotal)}</strong></span>
-                        <span>•</span>
+                        {tallyCreditTotal > 0 ? (
+                          <>
+                            <span>Customer Advances (Credit): <strong style={{ color: '#10b981' }}>{fmtCurrency(tallyCreditTotal)}</strong></span>
+                            <span>•</span>
+                          </>
+                        ) : null}
                         <span>Net Outstanding: <strong style={{ color: '#ef4444' }}>{fmtCurrency(totalOutstanding)}</strong></span>
                       </>
                     ) : (

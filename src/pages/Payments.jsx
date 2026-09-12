@@ -384,16 +384,18 @@ const Payments = () => {
   const tallySummary = useMemo(() => {
     const srp = { debit: 23781962.61, credit: 1163382.51, net: 22618580.10 };
     const sb = { debit: 13596148.68, credit: 0, net: 13596148.68 };
+    const sit = { debit: 0, credit: 0, net: 0 };
     if (isConsolidated || !activeCompany) {
       return {
-        debit: srp.debit + sb.debit,
-        credit: srp.credit + sb.credit,
-        net: srp.net + sb.net,
+        debit: srp.debit + sb.debit + sit.debit,
+        credit: srp.credit + sb.credit + sit.credit,
+        net: srp.net + sb.net + sit.net,
       };
     }
     const comp = (activeCompany?.company_name || '').toUpperCase();
     if (comp.includes('READY PLAST')) return srp;
     if (comp.includes('BUILDTECH')) return sb;
+    if (comp.includes('TECH') || comp.includes('SOBHAINFRA')) return sit;
     return {
       debit: srp.debit + sb.debit,
       credit: srp.credit + sb.credit,
@@ -569,7 +571,7 @@ const Payments = () => {
       ) : (
         <div className="stats-grid">
           {[
-            { label: 'Total Tally Outstanding', value: fmtAmount(tallySummary.net), color: '#ef4444', bg: 'rgba(239,68,68,0.1)', icon: <CreditCard size={20} />, count: `Dr: ${fmtAmount(tallySummary.debit)} · Adv: ${fmtAmount(tallySummary.credit)}` },
+            { label: 'Total Tally Outstanding', value: fmtAmount(tallySummary.net), color: '#ef4444', bg: 'rgba(239,68,68,0.1)', icon: <CreditCard size={20} />, count: tallySummary.credit > 0 ? `Dr: ${fmtAmount(tallySummary.debit)} · Adv: ${fmtAmount(tallySummary.credit)}` : `Dr: ${fmtAmount(tallySummary.debit)} (Net)` },
             { label: 'Actionable Overdue', value: fmtAmount(totalOverdue), color: 'var(--danger)', bg: 'var(--danger-bg)', icon: <AlertTriangle size={20} />, count: enrichedInvoices.filter(i => i.status === 'Overdue').length + ' invoices' },
             { label: 'Not Yet Due', value: fmtAmount(totalPending), color: 'var(--warning)', bg: 'var(--warning-bg)', icon: <Clock size={20} />, count: enrichedInvoices.filter(i => i.status === 'Pending').length + ' invoices' },
             { label: 'Collected (Paid)', value: fmtAmount(totalPaid), color: 'var(--success)', bg: 'var(--success-bg)', icon: <CheckCircle2 size={20} />, count: enrichedInvoices.filter(i => i.status === 'Paid').length + ' invoices' },
