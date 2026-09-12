@@ -138,24 +138,24 @@ function buildExactInvoicePdf(invData = {}, invNumParam = null, extraData = {}) 
   const rateStr = String(meta.rate_str || combined.rate_str || (taxableAmount > 0 ? computedRate : '92.00'));
   const unit = String(meta.unit || combined.unit || 'BAGS');
 
-  const TRUCKS = ['MH04JK-6150', 'GJ15YY-4812', 'MH04GP-8831', 'GJ15AT-3920', 'MH04EL-7104', 'GJ15BZ-5509', 'MH04KF-9218', 'GJ15CA-1142'];
-  const truckNo = String(meta.truck_no || combined.truck_no || TRUCKS[seed % TRUCKS.length]);
-
-  const voucherSeq = (invNum.replace(/\D/g, '').slice(-4) || String(1000 + (seed % 9000)));
-  const challanNo = String(meta.challan_no || combined.challan_no || `1${voucherSeq.padStart(4, '0')}`);
-  const challanDate = String(meta.challan_date || combined.challan_date || invDate);
-  const siteName = String(meta.site || combined.site || `${partyName} Site`);
-  const refNo = String(meta.ref_no || (challanNo ? `Ref-${challanNo.slice(-4)}` : 'Ref-3456'));
+  // Authentic vehicle / transport details from Tally
+  const truckNo = String(meta.truck_no || combined.truck_no || '');
+  const challanNo = String(meta.challan_no || combined.challan_no || '');
+  const challanDate = String(meta.challan_date || combined.challan_date || (challanNo ? invDate : ''));
+  const siteName = String(meta.site || combined.site || partyName);
+  const refNo = String(meta.supplier_invoice_number || meta.ref_no || combined.supplier_invoice_number || combined.ref_no || '');
   const rawCreditDays = meta.credit_period_days ?? combined.credit_period_days ?? null;
   const creditDays = rawCreditDays ? (String(rawCreditDays).toLowerCase().includes('day') ? String(rawCreditDays) : `${rawCreditDays} Days`) : '30 Days';
 
-  // e-Way Bill fields (Completely Dynamic)
-  const ewaySuffix = String((seed * 19 + 7) % 10000000000).padStart(10, '0');
-  const ewayBillNo = String(meta.eway_bill_no || combined.eway_bill_no || `60${ewaySuffix}`);
+  // Check if a genuine e-Way Bill exists on this voucher
+  const rawEwayBillNo = String(meta.eway_bill_no || combined.eway_bill_no || '').trim();
+  const hasEwayBill = Boolean(rawEwayBillNo && rawEwayBillNo !== 'null' && rawEwayBillNo !== 'undefined' && rawEwayBillNo.length > 3);
+
+  const ewayBillNo = rawEwayBillNo;
   const ewayDate = String(meta.eway_date || combined.eway_date || `${invDate} 10:30 AM`);
   const ewayValidUpto = String(meta.eway_valid_upto || combined.eway_valid_upto || `${validDateStr} 11:59 PM`);
-  const approxDistance = String(meta.approx_distance || combined.approx_distance || `${140 + (seed % 40)} KM`);
-  const transporterName = String(meta.transporter_name || combined.transporter_name || 'SHOBHA TRANSPORT');
+  const approxDistance = String(meta.approx_distance || combined.approx_distance || '');
+  const transporterName = String(meta.transporter_name || combined.transporter_name || '');
   const transporterId = String(meta.transporter_id || combined.transporter_id || '');
 
   const amountInWords = numberToWordsIndian(totalAmount);
@@ -535,251 +535,254 @@ function buildExactInvoicePdf(invData = {}, invNumParam = null, extraData = {}) 
 
   // ═════════════════════════════════════════════════════════════════════════════
   // PAGE 2: e-Way Bill (OFFICIAL 5-SECTION EXACT PORTAL LAYOUT)
+  // Only generated if an authentic e-Way Bill was issued for this consignment
   // ═════════════════════════════════════════════════════════════════════════════
-  doc.addPage('a4', 'portrait');
+  if (hasEwayBill) {
+    doc.addPage('a4', 'portrait');
 
-  // Title Row
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(13);
-  doc.text('e-Way Bill', 105, 14, { align: 'center' });
-  doc.setFontSize(11);
-  doc.text('e-Way Bill', 188, 14, { align: 'right' });
-
-  // Doc Details & e-Way Bill QR Code
-  curY = 22;
-  doc.setFontSize(8.5);
-  doc.setFont('helvetica', 'normal');
-  doc.text('Doc No.  : ', marginX, curY);
-  doc.setFont('helvetica', 'bold');
-  doc.text(`Tax Invoice - ${invNum}`, marginX + 16, curY);
-
-  curY += 4.5;
-  doc.setFont('helvetica', 'normal');
-  doc.text('Date       : ', marginX, curY);
-  doc.setFont('helvetica', 'bold');
-  doc.text(invDate, marginX + 16, curY);
-
-  curY += 4.5;
-  doc.setFont('helvetica', 'normal');
-  doc.text('IRN        : ', marginX, curY);
-  doc.setFont('helvetica', 'bold');
-  doc.text(irn, marginX + 16, curY);
-
-  curY += 4.5;
-  doc.setFont('helvetica', 'normal');
-  doc.text('Ack No.  : ', marginX, curY);
-  doc.setFont('helvetica', 'bold');
-  doc.text(ackNo, marginX + 16, curY);
-
-  curY += 4.5;
-  doc.setFont('helvetica', 'normal');
-  doc.text('Ack Date : ', marginX, curY);
-  doc.setFont('helvetica', 'bold');
-  doc.text(ackDate, marginX + 16, curY);
-
-  // e-Way QR image on top right
-  doc.addImage(ewayQrBase64, 'JPEG', 174, 20, 26, 26);
-
-  curY += 6;
-  doc.setLineWidth(0.4);
-  doc.line(marginX, curY, marginX + contentW, curY);
-
-  // Section 1: e-Way Bill Details
-  curY += 6;
-  doc.setFontSize(9.5);
-  doc.setFont('helvetica', 'bold');
-  doc.text('1. e-Way Bill Details', marginX, curY);
-
-  curY += 5;
-  doc.setFontSize(8);
-  doc.setFont('helvetica', 'normal');
-  doc.text('e-Way Bill No. : ', marginX, curY);
-  doc.setFont('helvetica', 'bold');
-  doc.text(ewayBillNo, marginX + 22, curY);
-
-  doc.setFont('helvetica', 'normal');
-  doc.text('Mode                    : ', marginX + 75, curY);
-  doc.setFont('helvetica', 'bold');
-  doc.text('1 - Road', marginX + 104, curY);
-
-  doc.setFont('helvetica', 'normal');
-  doc.text('Generated Date : ', marginX + 130, curY);
-  doc.setFont('helvetica', 'bold');
-  doc.text(ewayDate, marginX + 153, curY);
-
-  curY += 4.5;
-  doc.setFont('helvetica', 'normal');
-  doc.text('Generated By   : ', marginX, curY);
-  doc.setFont('helvetica', 'bold');
-  doc.text(compGstin, marginX + 22, curY);
-
-  doc.setFont('helvetica', 'normal');
-  doc.text('Approx Distance   : ', marginX + 75, curY);
-  doc.setFont('helvetica', 'bold');
-  doc.text(approxDistance, marginX + 104, curY);
-
-  doc.setFont('helvetica', 'normal');
-  doc.text('Valid Upto          : ', marginX + 130, curY);
-  doc.setFont('helvetica', 'bold');
-  doc.text(ewayValidUpto, marginX + 153, curY);
-
-  curY += 4.5;
-  doc.setFont('helvetica', 'normal');
-  doc.text('Supply Type      : ', marginX, curY);
-  doc.setFont('helvetica', 'bold');
-  doc.text('Outward-Supply', marginX + 22, curY);
-
-  doc.setFont('helvetica', 'normal');
-  doc.text('Transaction Type : ', marginX + 75, curY);
-  doc.setFont('helvetica', 'bold');
-  doc.text('Regular', marginX + 104, curY);
-
-  curY += 5;
-  doc.line(marginX, curY, marginX + contentW, curY);
-
-  // Section 2: Address Details
-  curY += 5;
-  doc.setFontSize(9.5);
-  doc.setFont('helvetica', 'bold');
-  doc.text('2. Address Details', marginX, curY);
-
-  curY += 5;
-  doc.setFontSize(8);
-  doc.setFont('helvetica', 'bold');
-  doc.text('From', marginX, curY);
-  doc.text('To', marginX + 105, curY);
-
-  curY += 4;
-  doc.text(compName, marginX, curY);
-  doc.text(partyName, marginX + 105, curY);
-
-  curY += 4;
-  doc.setFont('helvetica', 'normal');
-  doc.text('GSTIN : ' + compGstin, marginX, curY);
-  doc.text('GSTIN : ' + buyerGstin, marginX + 105, curY);
-
-  curY += 4;
-  doc.text(compState, marginX, curY);
-  doc.text(buyerState, marginX + 105, curY);
-
-  curY += 5;
-  doc.setFont('helvetica', 'bold');
-  doc.text('Dispatch From', marginX, curY);
-  doc.text('Ship To', marginX + 105, curY);
-
-  curY += 4;
-  doc.setFont('helvetica', 'normal');
-  doc.text(`${compAddress}, UDYAM REG.:- ${udyamReg}`, marginX, curY, { maxWidth: 95 });
-  doc.text(`${buyerAddress}, Ph: ${buyerPhone}`, marginX + 105, curY, { maxWidth: 90 });
-
-  curY += 8;
-  doc.line(marginX, curY, marginX + contentW, curY);
-
-  // Section 3: Goods Details
-  curY += 5;
-  doc.setFontSize(9.5);
-  doc.setFont('helvetica', 'bold');
-  doc.text('3. Goods Details', marginX, curY);
-
-  curY += 4;
-  doc.setFontSize(7.5);
-  doc.text('HSN Code', marginX, curY);
-  doc.text('Product Name & Desc', marginX + 22, curY);
-  doc.text('Quantity', marginX + 120, curY, { align: 'center' });
-  doc.text('Taxable Amt', marginX + 155, curY, { align: 'right' });
-  doc.text('Tax Rate (I)', marginX + 188, curY, { align: 'right' });
-
-  curY += 2;
-  doc.line(marginX, curY, marginX + contentW, curY);
-
-  // Goods item row
-  curY += 4;
-  doc.setFontSize(8);
-  doc.setFont('helvetica', 'bold');
-  doc.text(hsnCode, marginX, curY);
-  doc.text(itemName, marginX + 22, curY);
-  doc.setFont('helvetica', 'normal');
-  doc.text(quantityStr.replace('BAGS', 'BAG'), marginX + 120, curY, { align: 'center' });
-  doc.text(taxableAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 }), marginX + 155, curY, { align: 'right' });
-  doc.text(String(taxRate), marginX + 188, curY, { align: 'right' });
-
-  curY += 3;
-  doc.line(marginX, curY, marginX + contentW, curY);
-
-  // Totals Summary
-  curY += 5;
-  doc.setFontSize(8);
-  doc.setFont('helvetica', 'normal');
-  doc.text('Tot. Taxable Amt :', marginX, curY);
-  doc.setFont('helvetica', 'bold');
-  doc.text(taxableAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 }), marginX + 26, curY);
-
-  doc.setFont('helvetica', 'normal');
-  doc.text('Other Amt :', marginX + 75, curY);
-  doc.setFont('helvetica', 'bold');
-  doc.text(roundOff.toFixed(2), marginX + 92, curY);
-
-  doc.setFont('helvetica', 'normal');
-  doc.text('Total Inv Amt :', marginX + 130, curY);
-  doc.setFont('helvetica', 'bold');
-  doc.text(totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 }), marginX + 152, curY);
-
-  curY += 5;
-  doc.setFont('helvetica', 'normal');
-  doc.text('IGST Amt          :', marginX, curY);
-  doc.setFont('helvetica', 'bold');
-  doc.text(taxAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 }), marginX + 26, curY);
-
-  curY += 5;
-  doc.line(marginX, curY, marginX + contentW, curY);
-
-  // Section 4: Transportation Details
-  curY += 5;
-  doc.setFontSize(9.5);
-  doc.setFont('helvetica', 'bold');
-  doc.text('4. Transportation Details', marginX, curY);
-
-  curY += 5;
-  doc.setFontSize(8);
-  doc.setFont('helvetica', 'normal');
-  doc.text('Transporter ID :', marginX, curY);
-  if (transporterId) {
+    // Title Row
     doc.setFont('helvetica', 'bold');
-    doc.text(transporterId, marginX + 22, curY);
+    doc.setFontSize(13);
+    doc.text('e-Way Bill', 105, 14, { align: 'center' });
+    doc.setFontSize(11);
+    doc.text('e-Way Bill', 188, 14, { align: 'right' });
+
+    // Doc Details & e-Way Bill QR Code
+    curY = 22;
+    doc.setFontSize(8.5);
     doc.setFont('helvetica', 'normal');
+    doc.text('Doc No.  : ', marginX, curY);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`Tax Invoice - ${invNum}`, marginX + 16, curY);
+
+    curY += 4.5;
+    doc.setFont('helvetica', 'normal');
+    doc.text('Date       : ', marginX, curY);
+    doc.setFont('helvetica', 'bold');
+    doc.text(invDate, marginX + 16, curY);
+
+    curY += 4.5;
+    doc.setFont('helvetica', 'normal');
+    doc.text('IRN        : ', marginX, curY);
+    doc.setFont('helvetica', 'bold');
+    doc.text(irn, marginX + 16, curY);
+
+    curY += 4.5;
+    doc.setFont('helvetica', 'normal');
+    doc.text('Ack No.  : ', marginX, curY);
+    doc.setFont('helvetica', 'bold');
+    doc.text(ackNo, marginX + 16, curY);
+
+    curY += 4.5;
+    doc.setFont('helvetica', 'normal');
+    doc.text('Ack Date : ', marginX, curY);
+    doc.setFont('helvetica', 'bold');
+    doc.text(ackDate, marginX + 16, curY);
+
+    // e-Way QR image on top right
+    doc.addImage(ewayQrBase64, 'JPEG', 174, 20, 26, 26);
+
+    curY += 6;
+    doc.setLineWidth(0.4);
+    doc.line(marginX, curY, marginX + contentW, curY);
+
+    // Section 1: e-Way Bill Details
+    curY += 6;
+    doc.setFontSize(9.5);
+    doc.setFont('helvetica', 'bold');
+    doc.text('1. e-Way Bill Details', marginX, curY);
+
+    curY += 5;
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'normal');
+    doc.text('e-Way Bill No. : ', marginX, curY);
+    doc.setFont('helvetica', 'bold');
+    doc.text(ewayBillNo, marginX + 22, curY);
+
+    doc.setFont('helvetica', 'normal');
+    doc.text('Mode                    : ', marginX + 75, curY);
+    doc.setFont('helvetica', 'bold');
+    doc.text('1 - Road', marginX + 104, curY);
+
+    doc.setFont('helvetica', 'normal');
+    doc.text('Generated Date : ', marginX + 130, curY);
+    doc.setFont('helvetica', 'bold');
+    doc.text(ewayDate, marginX + 153, curY);
+
+    curY += 4.5;
+    doc.setFont('helvetica', 'normal');
+    doc.text('Generated By   : ', marginX, curY);
+    doc.setFont('helvetica', 'bold');
+    doc.text(compGstin, marginX + 22, curY);
+
+    doc.setFont('helvetica', 'normal');
+    doc.text('Approx Distance   : ', marginX + 75, curY);
+    doc.setFont('helvetica', 'bold');
+    doc.text(approxDistance || 'As per portal', marginX + 104, curY);
+
+    doc.setFont('helvetica', 'normal');
+    doc.text('Valid Upto          : ', marginX + 130, curY);
+    doc.setFont('helvetica', 'bold');
+    doc.text(ewayValidUpto, marginX + 153, curY);
+
+    curY += 4.5;
+    doc.setFont('helvetica', 'normal');
+    doc.text('Supply Type      : ', marginX, curY);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Outward-Supply', marginX + 22, curY);
+
+    doc.setFont('helvetica', 'normal');
+    doc.text('Transaction Type : ', marginX + 75, curY);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Regular', marginX + 104, curY);
+
+    curY += 5;
+    doc.line(marginX, curY, marginX + contentW, curY);
+
+    // Section 2: Address Details
+    curY += 5;
+    doc.setFontSize(9.5);
+    doc.setFont('helvetica', 'bold');
+    doc.text('2. Address Details', marginX, curY);
+
+    curY += 5;
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'bold');
+    doc.text('From', marginX, curY);
+    doc.text('To', marginX + 105, curY);
+
+    curY += 4;
+    doc.text(compName, marginX, curY);
+    doc.text(partyName, marginX + 105, curY);
+
+    curY += 4;
+    doc.setFont('helvetica', 'normal');
+    doc.text('GSTIN : ' + compGstin, marginX, curY);
+    doc.text('GSTIN : ' + buyerGstin, marginX + 105, curY);
+
+    curY += 4;
+    doc.text(compState, marginX, curY);
+    doc.text(buyerState, marginX + 105, curY);
+
+    curY += 5;
+    doc.setFont('helvetica', 'bold');
+    doc.text('Dispatch From', marginX, curY);
+    doc.text('Ship To', marginX + 105, curY);
+
+    curY += 4;
+    doc.setFont('helvetica', 'normal');
+    doc.text(`${compAddress}, UDYAM REG.:- ${udyamReg}`, marginX, curY, { maxWidth: 95 });
+    doc.text(`${buyerAddress}, Ph: ${buyerPhone}`, marginX + 105, curY, { maxWidth: 90 });
+
+    curY += 8;
+    doc.line(marginX, curY, marginX + contentW, curY);
+
+    // Section 3: Goods Details
+    curY += 5;
+    doc.setFontSize(9.5);
+    doc.setFont('helvetica', 'bold');
+    doc.text('3. Goods Details', marginX, curY);
+
+    curY += 4;
+    doc.setFontSize(7.5);
+    doc.text('HSN Code', marginX, curY);
+    doc.text('Product Name & Desc', marginX + 22, curY);
+    doc.text('Quantity', marginX + 120, curY, { align: 'center' });
+    doc.text('Taxable Amt', marginX + 155, curY, { align: 'right' });
+    doc.text('Tax Rate (I)', marginX + 188, curY, { align: 'right' });
+
+    curY += 2;
+    doc.line(marginX, curY, marginX + contentW, curY);
+
+    // Goods item row
+    curY += 4;
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'bold');
+    doc.text(hsnCode, marginX, curY);
+    doc.text(itemName, marginX + 22, curY);
+    doc.setFont('helvetica', 'normal');
+    doc.text(quantityStr.replace('BAGS', 'BAG'), marginX + 120, curY, { align: 'center' });
+    doc.text(taxableAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 }), marginX + 155, curY, { align: 'right' });
+    doc.text(String(taxRate), marginX + 188, curY, { align: 'right' });
+
+    curY += 3;
+    doc.line(marginX, curY, marginX + contentW, curY);
+
+    // Totals Summary
+    curY += 5;
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'normal');
+    doc.text('Tot. Taxable Amt :', marginX, curY);
+    doc.setFont('helvetica', 'bold');
+    doc.text(taxableAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 }), marginX + 26, curY);
+
+    doc.setFont('helvetica', 'normal');
+    doc.text('Other Amt :', marginX + 75, curY);
+    doc.setFont('helvetica', 'bold');
+    doc.text(roundOff.toFixed(2), marginX + 92, curY);
+
+    doc.setFont('helvetica', 'normal');
+    doc.text('Total Inv Amt :', marginX + 130, curY);
+    doc.setFont('helvetica', 'bold');
+    doc.text(totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 }), marginX + 152, curY);
+
+    curY += 5;
+    doc.setFont('helvetica', 'normal');
+    doc.text('IGST Amt          :', marginX, curY);
+    doc.setFont('helvetica', 'bold');
+    doc.text(taxAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 }), marginX + 26, curY);
+
+    curY += 5;
+    doc.line(marginX, curY, marginX + contentW, curY);
+
+    // Section 4: Transportation Details
+    curY += 5;
+    doc.setFontSize(9.5);
+    doc.setFont('helvetica', 'bold');
+    doc.text('4. Transportation Details', marginX, curY);
+
+    curY += 5;
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'normal');
+    doc.text('Transporter ID :', marginX, curY);
+    if (transporterId) {
+      doc.setFont('helvetica', 'bold');
+      doc.text(transporterId, marginX + 22, curY);
+      doc.setFont('helvetica', 'normal');
+    }
+    doc.text('Doc No. :', marginX + 120, curY);
+
+    curY += 5;
+    doc.text('Name              :', marginX, curY);
+    doc.setFont('helvetica', 'bold');
+    doc.text(transporterName || 'Direct Consignment / Self', marginX + 22, curY);
+    doc.setFont('helvetica', 'normal');
+    doc.text('Date      :', marginX + 120, curY);
+
+    curY += 5;
+    doc.line(marginX, curY, marginX + contentW, curY);
+
+    // Section 5: Vehicle Details
+    curY += 5;
+    doc.setFontSize(9.5);
+    doc.setFont('helvetica', 'bold');
+    doc.text('5. Vehicle Details', marginX, curY);
+
+    curY += 5;
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'normal');
+    doc.text('Vehicle No. :', marginX, curY);
+    doc.setFont('helvetica', 'bold');
+    doc.text(truckNo ? truckNo.replace('-', '') : 'As per dispatch', marginX + 20, curY);
+
+    doc.setFont('helvetica', 'normal');
+    doc.text('From  : ', marginX + 75, curY);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Valsad,GUJARAT', marginX + 86, curY);
+
+    doc.setFont('helvetica', 'normal');
+    doc.text('CEWB No.:', marginX + 140, curY);
   }
-  doc.text('Doc No. :', marginX + 120, curY);
-
-  curY += 5;
-  doc.text('Name              :', marginX, curY);
-  doc.setFont('helvetica', 'bold');
-  doc.text(transporterName, marginX + 22, curY);
-  doc.setFont('helvetica', 'normal');
-  doc.text('Date      :', marginX + 120, curY);
-
-  curY += 5;
-  doc.line(marginX, curY, marginX + contentW, curY);
-
-  // Section 5: Vehicle Details
-  curY += 5;
-  doc.setFontSize(9.5);
-  doc.setFont('helvetica', 'bold');
-  doc.text('5. Vehicle Details', marginX, curY);
-
-  curY += 5;
-  doc.setFontSize(8);
-  doc.setFont('helvetica', 'normal');
-  doc.text('Vehicle No. :', marginX, curY);
-  doc.setFont('helvetica', 'bold');
-  doc.text(truckNo.replace('-', ''), marginX + 20, curY);
-
-  doc.setFont('helvetica', 'normal');
-  doc.text('From  : ', marginX + 75, curY);
-  doc.setFont('helvetica', 'bold');
-  doc.text('Valsad,GUJARAT', marginX + 86, curY);
-
-  doc.setFont('helvetica', 'normal');
-  doc.text('CEWB No.:', marginX + 140, curY);
 
   return Buffer.from(doc.output('arraybuffer'));
 }

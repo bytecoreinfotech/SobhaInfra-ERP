@@ -154,10 +154,10 @@ export default function PublicInvoice() {
   const quantityStr = meta.quantity_str || `${calculatedBags} BAGS`;
   const rateStr = meta.rate_str || `${(taxableAmount / calculatedBags).toFixed(2)} / BAG`;
 
-  const truckNo = meta.truck_no || 'MH04-4550';
-  const challanNo = meta.challan_no || String(10000 + (seed % 9000));
-  const challanDate = meta.challan_date || invDate;
-  const site = meta.site || 'THANE';
+  const truckNo = meta.truck_no || invoice.truck_no || '';
+  const challanNo = meta.challan_no || invoice.challan_no || '';
+  const challanDate = meta.challan_date || invoice.challan_date || (challanNo ? invDate : '');
+  const site = meta.site || invoice.site || '';
 
   const buyerAddress = meta.buyer_address || 'VALSAD INDUSTRIAL AREA, VALSAD, GUJARAT, 396001';
   const buyerState = meta.buyer_state || 'Maharashtra';
@@ -176,12 +176,14 @@ export default function PublicInvoice() {
   const compBankBranchIfsc = 'Thane-Mira Road Branch & ICIC0000019';
   const compAddress = 'NH48, NEAR KOLEI KHADI SARODHI, SARODHI, Valsad, Gujarat, 396001';
 
-  const ewaySuffix = String((seed * 19 + 7) % 10000000000).padStart(10, '0');
-  const ewayBillNo = meta.eway_bill_no || `60${ewaySuffix}`;
-  const ewayDate = meta.eway_date || `${invDate} 10:30 AM`;
-  const ewayValidUpto = meta.eway_valid_upto || `${validDateStr} 11:59 PM`;
-  const approxDistance = meta.approx_distance || `${140 + (seed % 80)} KM`;
-  const transporterName = meta.transporter_name || 'SHOBHA TRANSPORT';
+  // Authentic e-Way Bill check
+  const rawEwayBillNo = String(meta.eway_bill_no || invoice.eway_bill_no || '').trim();
+  const hasEwayBill = Boolean(rawEwayBillNo && rawEwayBillNo !== 'null' && rawEwayBillNo !== 'undefined' && rawEwayBillNo.length > 3);
+  const ewayBillNo = rawEwayBillNo;
+  const ewayDate = meta.eway_date || invoice.eway_date || `${invDate} 10:30 AM`;
+  const ewayValidUpto = meta.eway_valid_upto || invoice.eway_valid_upto || `${validDateStr} 11:59 PM`;
+  const approxDistance = meta.approx_distance || invoice.approx_distance || '';
+  const transporterName = meta.transporter_name || invoice.transporter_name || '';
 
   const einvoiceQrPayload = JSON.stringify({
     SellerGSTIN: compGstin,
@@ -210,9 +212,9 @@ export default function PublicInvoice() {
   const handleDownloadPdf = async () => {
     try {
       setIsGeneratingPdf(true);
-      setStatusMessage({ type: 'info', text: 'Generating high-resolution 2-page PDF...' });
+      setStatusMessage({ type: 'info', text: hasEwayBill ? 'Generating high-resolution 2-page PDF...' : 'Generating authentic 1-page PDF...' });
       const p1 = page1Ref.current;
-      const p2 = page2Ref.current;
+      const p2 = hasEwayBill ? page2Ref.current : null;
       const blob = await generateInvoicePdfBlob(p1, p2);
       const fileName = `Invoice_${currentInvNum.replace(/[^a-zA-Z0-9_-]/g, '_')}.pdf`;
       triggerPdfDownload(blob, fileName);
@@ -240,7 +242,7 @@ export default function PublicInvoice() {
       }}>
         <div>
           <div style={{ color: '#fff', fontWeight: 700, fontSize: '1rem' }}>
-            Tax Invoice & e-Way Bill &mdash; {currentInvNum}
+            {hasEwayBill ? 'Tax Invoice & e-Way Bill' : 'GST Tax Invoice'} &mdash; {currentInvNum}
           </div>
           <div style={{ color: '#94a3b8', fontSize: '0.8rem' }}>
             {partyName} · ₹{totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
@@ -310,9 +312,9 @@ export default function PublicInvoice() {
             <div style={{ padding: '6px', borderRight: '1px solid #000' }}>
               <div><strong>Invoice No:</strong> {currentInvNum}</div>
               <div><strong>Invoice Date:</strong> {invDate}</div>
-              <div><strong>Challan No & Date:</strong> {challanNo} dt. {challanDate}</div>
-              <div><strong>Vehicle / Truck No:</strong> {truckNo}</div>
-              <div><strong>Destination Site:</strong> {site}</div>
+              <div><strong>Challan No & Date:</strong> {challanNo ? `${challanNo} dt. ${challanDate}` : '—'}</div>
+              <div><strong>Vehicle / Truck No:</strong> {truckNo || '—'}</div>
+              <div><strong>Destination Site:</strong> {site || partyName || '—'}</div>
             </div>
             <div style={{ padding: '6px' }}>
               <div><strong>Bill to / Buyer:</strong></div>
@@ -406,47 +408,49 @@ export default function PublicInvoice() {
           </div>
         </div>
 
-        {/* PAGE 2: E-WAY BILL & TRANSPORT CONSIGNMENT */}
-        <div ref={page2Ref} style={{ padding: '16px', background: '#fff', boxSizing: 'border-box', borderTop: '2px dashed #999', marginTop: '16px' }}>
-          <div style={{ textAlign: 'center', fontWeight: 'bold', fontSize: '13px', background: '#f3f4f6', padding: '4px', border: '1px solid #000', marginBottom: '8px' }}>
-            e-WAY BILL / CONSIGNMENT NOTE
-          </div>
+        {/* PAGE 2: E-WAY BILL & TRANSPORT CONSIGNMENT (Only if authentic e-Way Bill exists) */}
+        {hasEwayBill && (
+          <div ref={page2Ref} style={{ padding: '16px', background: '#fff', boxSizing: 'border-box', borderTop: '2px dashed #999', marginTop: '16px' }}>
+            <div style={{ textAlign: 'center', fontWeight: 'bold', fontSize: '13px', background: '#f3f4f6', padding: '4px', border: '1px solid #000', marginBottom: '8px' }}>
+              e-WAY BILL / CONSIGNMENT NOTE
+            </div>
 
-          <div style={{ display: 'flex', justifyContent: 'space-between', border: '1px solid #000', padding: '8px', fontSize: '11px', marginBottom: '8px' }}>
-            <div>
-              <div><strong>e-Way Bill No:</strong> <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#1e3a8a' }}>{ewayBillNo}</span></div>
-              <div><strong>Generated Date:</strong> {ewayDate}</div>
-              <div><strong>Valid Upto:</strong> <span style={{ color: '#047857', fontWeight: 'bold' }}>{ewayValidUpto}</span></div>
-              <div><strong>Approx Distance:</strong> {approxDistance}</div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', border: '1px solid #000', padding: '8px', fontSize: '11px', marginBottom: '8px' }}>
+              <div>
+                <div><strong>e-Way Bill No:</strong> <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#1e3a8a' }}>{ewayBillNo}</span></div>
+                <div><strong>Generated Date:</strong> {ewayDate}</div>
+                <div><strong>Valid Upto:</strong> <span style={{ color: '#047857', fontWeight: 'bold' }}>{ewayValidUpto}</span></div>
+                <div><strong>Approx Distance:</strong> {approxDistance || 'As per portal'}</div>
+              </div>
+              <div style={{ textAlign: 'center' }}>
+                <img src={dynamicEwayQrUrl} alt="e-Way QR" style={{ width: '70px', height: '70px', border: '1px solid #ccc' }} />
+                <div style={{ fontSize: '9px', fontWeight: 'bold', color: '#6b7280' }}>e-Way Verification QR</div>
+              </div>
             </div>
-            <div style={{ textAlign: 'center' }}>
-              <img src={dynamicEwayQrUrl} alt="e-Way QR" style={{ width: '70px', height: '70px', border: '1px solid #ccc' }} />
-              <div style={{ fontSize: '9px', fontWeight: 'bold', color: '#6b7280' }}>e-Way Verification QR</div>
-            </div>
-          </div>
 
-          <div style={{ border: '1px solid #000', padding: '8px', fontSize: '11px', marginBottom: '8px' }}>
-            <div style={{ fontWeight: 'bold', marginBottom: '4px', textDecoration: 'underline' }}>PART-A (Vehicle & Logistics)</div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px' }}>
-              <div><strong>From GSTIN:</strong> {compGstin} ({compName})</div>
-              <div><strong>To GSTIN:</strong> {buyerGstin} ({partyName})</div>
-              <div><strong>Dispatch From:</strong> {compAddress}</div>
-              <div><strong>Ship To:</strong> {buyerAddress}</div>
-              <div><strong>Document No & Date:</strong> {currentInvNum} dt. {invDate}</div>
-              <div><strong>Total Goods Value:</strong> ₹{totalAmount.toFixed(2)}</div>
+            <div style={{ border: '1px solid #000', padding: '8px', fontSize: '11px', marginBottom: '8px' }}>
+              <div style={{ fontWeight: 'bold', marginBottom: '4px', textDecoration: 'underline' }}>PART-A (Vehicle & Logistics)</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px' }}>
+                <div><strong>From GSTIN:</strong> {compGstin} ({compName})</div>
+                <div><strong>To GSTIN:</strong> {buyerGstin} ({partyName})</div>
+                <div><strong>Dispatch From:</strong> {compAddress}</div>
+                <div><strong>Ship To:</strong> {buyerAddress}</div>
+                <div><strong>Document No & Date:</strong> {currentInvNum} dt. {invDate}</div>
+                <div><strong>Total Goods Value:</strong> ₹{totalAmount.toFixed(2)}</div>
+              </div>
             </div>
-          </div>
 
-          <div style={{ border: '1px solid #000', padding: '8px', fontSize: '11px' }}>
-            <div style={{ fontWeight: 'bold', marginBottom: '4px', textDecoration: 'underline' }}>PART-B (Transporter Details)</div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px' }}>
-              <div><strong>Mode:</strong> Road</div>
-              <div><strong>Vehicle Number:</strong> <span style={{ fontWeight: 'bold' }}>{truckNo}</span></div>
-              <div><strong>Transporter Name:</strong> {transporterName}</div>
-              <div><strong>Challan / GR No:</strong> {challanNo}</div>
+            <div style={{ border: '1px solid #000', padding: '8px', fontSize: '11px' }}>
+              <div style={{ fontWeight: 'bold', marginBottom: '4px', textDecoration: 'underline' }}>PART-B (Transporter Details)</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px' }}>
+                <div><strong>Mode:</strong> Road</div>
+                <div><strong>Vehicle Number:</strong> <span style={{ fontWeight: 'bold' }}>{truckNo || '—'}</span></div>
+                <div><strong>Transporter Name:</strong> {transporterName || 'Direct Consignment / Self'}</div>
+                <div><strong>Challan / GR No:</strong> {challanNo || '—'}</div>
+              </div>
             </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );

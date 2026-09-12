@@ -473,6 +473,12 @@ exports.handler = async (event) => {
                 const clientDisplayName = verifiedSheetName || v.ledger_name || 'Customer';
                 const company = v.company_name || companyName || 'SHOBHA READY PLAST';
 
+                const rawEwb = String(v.eway_bill_no || invoiceRow.metadata?.eway_bill_no || '').trim();
+                const hasEwb = Boolean(rawEwb && rawEwb !== 'null' && rawEwb !== 'undefined' && rawEwb.length > 3);
+                const docDesc = hasEwb
+                  ? 'Your official 2-Page GST Tax Invoice & e-Way Bill is attached below as a PDF document.'
+                  : 'Your official GST Tax Invoice is attached below as a PDF document.';
+
                 const textMsg = [
                   `🧾 *Tax Invoice Dispatched from ${company}*`,
                   ``,
@@ -484,7 +490,7 @@ exports.handler = async (event) => {
                   `💰 *Total Amount:* *${fmtAmt(invoiceRow.amount)}*`,
                   `📌 *Status:* ${invoiceRow.status}`,
                   ``,
-                  `Your official 2-Page GST Tax Invoice & e-Way Bill is attached below as a PDF document.`,
+                  docDesc,
                   ``,
                   `Kindly review and share confirmation once received. Thank you for your valued business! 🙏`,
                   `_${company}_`,
@@ -610,7 +616,9 @@ exports.handler = async (event) => {
                           document: {
                             link: finalPdfUrl,
                             filename: safePdfName,
-                            caption: `🧾 Tax Invoice ${invNum} | ${fmtAmt(invoiceRow.amount)} | ${company}`,
+                            caption: hasEwb
+                              ? `🧾 Tax Invoice & e-Way Bill ${invNum} | ${fmtAmt(invoiceRow.amount)} | ${company}`
+                              : `🧾 Tax Invoice ${invNum} | ${fmtAmt(invoiceRow.amount)} | ${company}`,
                           },
                         }),
                       });

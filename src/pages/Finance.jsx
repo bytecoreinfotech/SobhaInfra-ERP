@@ -1424,19 +1424,9 @@ const Finance = () => {
                                     className="btn btn-secondary btn-sm"
                                     style={{ padding: '0.2rem 0.45rem', fontSize: '0.68rem', color: 'var(--accent-primary)', display: 'inline-flex', alignItems: 'center', gap: '0.2rem', whiteSpace: 'nowrap' }}
                                     onClick={() => setDocModalInvoice(inv)}
-                                    title="Tax Invoice + e-Way Bill — pixel-perfect 2-page bill with PDF download & WhatsApp"
+                                    title="Official Tax Invoice / Bill — view, download PDF & dispatch WhatsApp"
                                   >
                                     <FileText size={11} /> Tax Bill
-                                  </button>
-
-                                  {/* e-Way */}
-                                  <button
-                                    className="btn btn-secondary btn-sm"
-                                    style={{ padding: '0.2rem 0.45rem', fontSize: '0.68rem', color: '#10b981', display: 'inline-flex', alignItems: 'center', gap: '0.2rem', whiteSpace: 'nowrap' }}
-                                    onClick={() => setDocModalInvoice(inv)}
-                                    title="Standalone e-Way Bill / Conveyance Note"
-                                  >
-                                    <FileText size={11} /> e-Way
                                   </button>
 
                                   {/* Pending */}

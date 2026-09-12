@@ -104,22 +104,20 @@ export default function InvoiceDocModal({
   const rateStr = meta.rate_str || (taxableAmount > 0 ? computedRate : '92.00');
   const unit = meta.unit || 'BAGS';
 
-  // Fleet & Transport: order-unique delivery truck
-  const TRUCKS = ['MH04JK-6150', 'GJ15YY-4812', 'MH04GP-8831', 'GJ15AT-3920', 'MH04EL-7104', 'GJ15BZ-5509', 'MH04KF-9218', 'GJ15CA-1142'];
-  const truckNo = meta.truck_no || TRUCKS[seed % TRUCKS.length];
+  // Fleet & Transport: authentic vehicle / transport details from Tally
+  const truckNo = meta.truck_no || invoice.truck_no || '';
 
-  // Unique challan number matching voucher sequence
-  const parts = invNumber.split('/');
-  const voucherSeq = parts.length > 1 && /^\d+$/.test(parts[1])
-    ? parts[1]
-    : (invNumber.replace(/\D/g, '').slice(-4) || String(1000 + (seed % 9000)));
-  const challanNo = meta.challan_no || `1${voucherSeq.padStart(4, '0')}`;
-  const challanDate = meta.challan_date || invDate;
+  // Authentic challan and delivery details
+  const challanNo = meta.challan_no || invoice.challan_no || '';
+  const challanDate = meta.challan_date || invoice.challan_date || (challanNo ? invDate : '');
+  const refNo = meta.supplier_invoice_number || meta.ref_no || invoice.ref_no || invoice.reference_no || '';
+  const rawCreditDays = meta.credit_period_days ?? invoice.credit_period_days ?? null;
+  const creditDays = rawCreditDays ? (String(rawCreditDays).toLowerCase().includes('day') ? String(rawCreditDays) : `${rawCreditDays} Days`) : '30 Days';
 
   // Buyer & Customer Destination details
   const contactPerson = invoice._contact_person || invoice._sheet_customer?.contact_person || '';
   const contactPhone = invoice._verified_phone || invoice.client_phone || invoice._sheet_customer?.contact_number || '';
-  const siteName = meta.site || (partyName.length > 22 ? partyName.slice(0, 20) + ' Site' : `${partyName} Site`);
+  const siteName = meta.site || invoice.site || '';
 
   const buyerAddr = meta.buyer_address || (
     contactPerson
@@ -144,13 +142,17 @@ export default function InvoiceDocModal({
   const udyamReg = meta.udyam_reg || activeCompany?.company_udyam_reg || 'UDYAM-MH-33-0123559';
   const compAddress = activeCompany?.company_address || 'NH48, NEAR KOLEI KHADI SARODHI, SARODHI, Valsad, Gujarat, 396001';
 
-  // Unique 12-digit e-Way Bill metadata per order
-  const ewaySuffix = String((seed * 19 + 7) % 10000000000).padStart(10, '0');
-  const ewayBillNo = meta.eway_bill_no || `60${ewaySuffix}`;
-  const ewayDate = meta.eway_date || `${invDate} 10:30 AM`;
-  const ewayValidUpto = meta.eway_valid_upto || `${validDateStr} 11:59 PM`;
-  const approxDistance = meta.approx_distance || `${140 + (seed % 80)} KM`;
-  const transporterName = meta.transporter_name || 'SHOBHA TRANSPORT';
+  // Authentic e-Way Bill check: strictly require genuine e-way bill number from Tally / portal
+  const rawEwayBillNo = String(meta.eway_bill_no || invoice.eway_bill_no || '').trim();
+  const hasEwayBill = Boolean(rawEwayBillNo && rawEwayBillNo !== 'null' && rawEwayBillNo !== 'undefined' && rawEwayBillNo.length > 3);
+  const ewayBillNo = rawEwayBillNo;
+  const ewayDate = meta.eway_date || invoice.eway_date || `${invDate} 10:30 AM`;
+  const ewayValidUpto = meta.eway_valid_upto || invoice.eway_valid_upto || `${validDateStr} 11:59 PM`;
+  const approxDistance = meta.approx_distance || invoice.approx_distance || '';
+  const transporterName = meta.transporter_name || invoice.transporter_name || '';
+  const transporterId = meta.transporter_id || invoice.transporter_id || '';
+
+  const effectiveTab = !hasEwayBill ? 'page1' : activeTab;
 
   const recipientPhone = invoice._verified_phone || invoice.client_phone || '';
   const [targetPhone, setTargetPhone] = useState(recipientPhone);
@@ -184,9 +186,9 @@ export default function InvoiceDocModal({
   const handleDownloadPdf = async () => {
     try {
       setIsGeneratingPdf(true);
-      setStatusMessage({ type: 'info', text: 'Generating high-resolution 2-page PDF...' });
+      setStatusMessage({ type: 'info', text: hasEwayBill ? 'Generating high-resolution 2-page PDF...' : 'Generating authentic 1-page PDF...' });
       const p1 = page1Ref.current;
-      const p2 = page2Ref.current;
+      const p2 = hasEwayBill ? page2Ref.current : null;
       const blob = await generateInvoicePdfBlob(p1, p2);
       const fileName = `Invoice_${invNumber.replace(/[^a-zA-Z0-9_-]/g, '_')}.pdf`;
       triggerPdfDownload(blob, fileName);
@@ -203,7 +205,7 @@ export default function InvoiceDocModal({
   // ── Open in New Tab for Native Ctrl+P Print ─────────────────────────────────
   const handleOpenPrintTab = () => {
     const p1Html = page1Ref.current ? page1Ref.current.innerHTML : '';
-    const p2Html = page2Ref.current ? page2Ref.current.innerHTML : '';
+    const p2Html = (hasEwayBill && page2Ref.current) ? page2Ref.current.innerHTML : '';
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
 
@@ -276,7 +278,7 @@ export default function InvoiceDocModal({
       </head>
       <body>
         <div class="no-print">
-          <span style="font-weight:700;">Tax Invoice & e-Way Bill — ${invNumber}</span>
+          <span style="font-weight:700;">${hasEwayBill ? 'Tax Invoice & e-Way Bill' : 'Tax Invoice'} — ${invNumber}</span>
           <button class="print-btn" onclick="window.print()">🖨️ Print / Save as PDF</button>
         </div>
         <div class="page-container">${p1Html}</div>
@@ -297,10 +299,10 @@ export default function InvoiceDocModal({
 
     try {
       setIsSendingWhatsApp(true);
-      setStatusMessage({ type: 'info', text: 'Generating 2-page PDF and uploading to Cloud Storage...' });
+      setStatusMessage({ type: 'info', text: hasEwayBill ? 'Generating 2-page PDF and uploading to Cloud Storage...' : 'Generating 1-page PDF and uploading to Cloud Storage...' });
 
       const p1 = page1Ref.current;
-      const p2 = page2Ref.current;
+      const p2 = hasEwayBill ? page2Ref.current : null;
       const pdfBlob = await generateInvoicePdfBlob(p1, p2);
 
       setStatusMessage({ type: 'info', text: 'Uploading authentic PDF to Supabase Storage...' });
@@ -326,7 +328,7 @@ export default function InvoiceDocModal({
       if (data.success) {
         setStatusMessage({
           type: 'success',
-          text: `Exact 2-page PDF invoice sent successfully to ${activePhone}!`,
+          text: `Exact ${hasEwayBill ? '2-page' : '1-page'} PDF invoice sent successfully to ${activePhone}!`,
         });
         if (onSendSuccess) onSendSuccess(invoice.id, publicPdfUrl);
       } else {
@@ -405,7 +407,7 @@ export default function InvoiceDocModal({
                 {invNumber} &mdash; <span style={{ color: 'var(--text-secondary, #475569)' }}>{partyName}</span>
               </div>
               <div style={{ fontSize: '0.72rem', color: 'var(--text-muted, #64748b)' }}>
-                Commercial 2-Page Consignment Document · ₹{totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                {hasEwayBill ? 'Commercial 2-Page Consignment Document' : 'Commercial GST Tax Invoice (1 Page)'} · ₹{totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
               </div>
             </div>
           </div>
@@ -413,53 +415,70 @@ export default function InvoiceDocModal({
           {/* Action Buttons */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
             {/* Page Views Toggle */}
-            <div style={{ display: 'flex', background: 'var(--bg-tertiary, #e2e8f0)', borderRadius: 6, padding: 2 }}>
-              <button
-                onClick={() => setActiveTab('both')}
-                style={{
-                  padding: '0.25rem 0.6rem',
-                  fontSize: '0.72rem',
-                  fontWeight: activeTab === 'both' ? 700 : 500,
-                  background: activeTab === 'both' ? '#fff' : 'transparent',
-                  borderRadius: 4,
-                  border: 'none',
-                  cursor: 'pointer',
-                  color: activeTab === 'both' ? '#0f172a' : '#64748b',
-                }}
-              >
-                2 Pages (All)
-              </button>
-              <button
-                onClick={() => setActiveTab('page1')}
-                style={{
-                  padding: '0.25rem 0.6rem',
-                  fontSize: '0.72rem',
-                  fontWeight: activeTab === 'page1' ? 700 : 500,
-                  background: activeTab === 'page1' ? '#fff' : 'transparent',
-                  borderRadius: 4,
-                  border: 'none',
-                  cursor: 'pointer',
-                  color: activeTab === 'page1' ? '#0f172a' : '#64748b',
-                }}
-              >
-                Tax Invoice
-              </button>
-              <button
-                onClick={() => setActiveTab('page2')}
-                style={{
-                  padding: '0.25rem 0.6rem',
-                  fontSize: '0.72rem',
-                  fontWeight: activeTab === 'page2' ? 700 : 500,
-                  background: activeTab === 'page2' ? '#fff' : 'transparent',
-                  borderRadius: 4,
-                  border: 'none',
-                  cursor: 'pointer',
-                  color: activeTab === 'page2' ? '#0f172a' : '#64748b',
-                }}
-              >
-                e-Way Bill
-              </button>
-            </div>
+            {hasEwayBill ? (
+              <div style={{ display: 'flex', background: 'var(--bg-tertiary, #e2e8f0)', borderRadius: 6, padding: 2 }}>
+                <button
+                  onClick={() => setActiveTab('both')}
+                  style={{
+                    padding: '0.25rem 0.6rem',
+                    fontSize: '0.72rem',
+                    fontWeight: effectiveTab === 'both' ? 700 : 500,
+                    background: effectiveTab === 'both' ? '#fff' : 'transparent',
+                    borderRadius: 4,
+                    border: 'none',
+                    cursor: 'pointer',
+                    color: effectiveTab === 'both' ? '#0f172a' : '#64748b',
+                  }}
+                >
+                  2 Pages (All)
+                </button>
+                <button
+                  onClick={() => setActiveTab('page1')}
+                  style={{
+                    padding: '0.25rem 0.6rem',
+                    fontSize: '0.72rem',
+                    fontWeight: effectiveTab === 'page1' ? 700 : 500,
+                    background: effectiveTab === 'page1' ? '#fff' : 'transparent',
+                    borderRadius: 4,
+                    border: 'none',
+                    cursor: 'pointer',
+                    color: effectiveTab === 'page1' ? '#0f172a' : '#64748b',
+                  }}
+                >
+                  Tax Invoice
+                </button>
+                <button
+                  onClick={() => setActiveTab('page2')}
+                  style={{
+                    padding: '0.25rem 0.6rem',
+                    fontSize: '0.72rem',
+                    fontWeight: effectiveTab === 'page2' ? 700 : 500,
+                    background: effectiveTab === 'page2' ? '#fff' : 'transparent',
+                    borderRadius: 4,
+                    border: 'none',
+                    cursor: 'pointer',
+                    color: effectiveTab === 'page2' ? '#0f172a' : '#64748b',
+                  }}
+                >
+                  e-Way Bill
+                </button>
+              </div>
+            ) : (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.35rem',
+                background: 'rgba(99, 102, 241, 0.08)',
+                borderRadius: 6,
+                padding: '0.25rem 0.6rem',
+                fontSize: '0.72rem',
+                fontWeight: 600,
+                color: '#6366f1'
+              }}>
+                <FileText size={12} />
+                Tax Invoice (1 Page)
+              </div>
+            )}
 
             {/* Download PDF Button */}
             <button
@@ -706,37 +725,37 @@ export default function InvoiceDocModal({
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', borderBottom: '1px solid #000', fontSize: '9.5px' }}>
                 <div style={{ padding: '3px 5px', borderRight: '1px solid #000' }}>
                   Dispatched through
-                  <div style={{ fontWeight: 'bold' }}>{truckNo}</div>
+                  <div style={{ fontWeight: 'bold' }}>{truckNo || '—'}</div>
                 </div>
                 <div style={{ padding: '3px 5px', borderRight: '1px solid #000' }}>
                   Destination
-                  <div style={{ fontWeight: 'bold' }}>{siteName}</div>
+                  <div style={{ fontWeight: 'bold' }}>{siteName || partyName || '—'}</div>
                 </div>
                 <div style={{ padding: '3px 5px', borderRight: '1px solid #000' }}>
                   Delivery Note
-                  <div style={{ fontWeight: 'bold' }}>{challanNo}</div>
+                  <div style={{ fontWeight: 'bold' }}>{challanNo || '—'}</div>
                 </div>
                 <div style={{ padding: '3px 5px' }}>
                   Delivery Note Date
-                  <div style={{ fontWeight: 'bold' }}>{challanDate}</div>
+                  <div style={{ fontWeight: 'bold' }}>{challanNo ? challanDate : '—'}</div>
                 </div>
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', fontSize: '9.5px' }}>
                 <div style={{ padding: '3px 5px', borderRight: '1px solid #000' }}>
                   Reference No. & Date.
-                  <div style={{ fontWeight: 'bold' }}>Ref-{voucherSeq}</div>
+                  <div style={{ fontWeight: 'bold' }}>{refNo || '—'}</div>
                 </div>
                 <div style={{ padding: '3px 5px', borderRight: '1px solid #000' }}>
                   Other References
                 </div>
                 <div style={{ padding: '3px 5px', borderRight: '1px solid #000' }}>
                   Dispatch Doc No.
-                  <div style={{ fontWeight: 'bold' }}>{challanNo}</div>
+                  <div style={{ fontWeight: 'bold' }}>{challanNo || '—'}</div>
                 </div>
                 <div style={{ padding: '3px 5px' }}>
                   CREDIT DAYS
-                  <div style={{ fontWeight: 'bold' }}>30 Days</div>
+                  <div style={{ fontWeight: 'bold' }}>{creditDays || '30 Days'}</div>
                 </div>
               </div>
             </div>
@@ -779,10 +798,10 @@ export default function InvoiceDocModal({
                     </div>
                   </td>
                   <td style={{ borderRight: '1px solid #000', textAlign: 'center', padding: '4px 2px' }}>{hsnCode}</td>
-                  <td style={{ borderRight: '1px solid #000', textAlign: 'center', padding: '4px 2px', fontSize: '9px' }}>{truckNo}</td>
-                  <td style={{ borderRight: '1px solid #000', textAlign: 'center', padding: '4px 2px' }}>{challanNo}</td>
-                  <td style={{ borderRight: '1px solid #000', textAlign: 'center', padding: '4px 2px', fontSize: '9px' }}>{challanDate}</td>
-                  <td style={{ borderRight: '1px solid #000', textAlign: 'center', padding: '4px 2px' }}>{siteName}</td>
+                  <td style={{ borderRight: '1px solid #000', textAlign: 'center', padding: '4px 2px', fontSize: '9px' }}>{truckNo || '—'}</td>
+                  <td style={{ borderRight: '1px solid #000', textAlign: 'center', padding: '4px 2px' }}>{challanNo || '—'}</td>
+                  <td style={{ borderRight: '1px solid #000', textAlign: 'center', padding: '4px 2px', fontSize: '9px' }}>{challanNo ? challanDate : '—'}</td>
+                  <td style={{ borderRight: '1px solid #000', textAlign: 'center', padding: '4px 2px' }}>{siteName || '—'}</td>
                   <td style={{ borderRight: '1px solid #000', textAlign: 'center', padding: '4px 2px', fontWeight: 'bold' }}>{quantityStr}</td>
                   <td style={{ borderRight: '1px solid #000', textAlign: 'right', padding: '4px 4px' }}>{rateStr}</td>
                   <td style={{ borderRight: '1px solid #000', textAlign: 'center', padding: '4px 2px' }}>{unit}</td>
@@ -977,203 +996,198 @@ export default function InvoiceDocModal({
 
           {/* ═════════════════════════════════════════════════════════════════
               PAGE 2: STANDARD E-WAY BILL (PIXEL-PERFECT EXACT REPLICA)
+              Only rendered if authentic e-Way Bill was issued
              ═════════════════════════════════════════════════════════════════ */}
-          <div
-            ref={page2Ref}
-            style={{
-              display: activeTab === 'both' || activeTab === 'page2' ? 'block' : 'none',
-              width: '794px',
-              minHeight: '1123px',
-              background: '#ffffff',
-              color: '#000000',
-              padding: '30px 34px',
-              boxShadow: '0 8px 30px rgba(0,0,0,0.2)',
-              fontFamily: 'Arial, Helvetica, sans-serif',
-              fontSize: '10.5px',
-              lineHeight: 1.35,
-              boxSizing: 'border-box',
-              position: 'relative',
-            }}
-          >
-            {/* Top e-Way Bill Header */}
+          {hasEwayBill && (
             <div
+              ref={page2Ref}
               style={{
-                display: 'grid',
-                gridTemplateColumns: '1fr 115px',
-                alignItems: 'center',
-                marginBottom: '10px',
+                display: effectiveTab === 'both' || effectiveTab === 'page2' ? 'block' : 'none',
+                width: '794px',
+                minHeight: '1123px',
+                background: '#ffffff',
+                color: '#000000',
+                padding: '30px 34px',
+                boxShadow: '0 8px 30px rgba(0,0,0,0.2)',
+                fontFamily: 'Arial, Helvetica, sans-serif',
+                fontSize: '10.5px',
+                lineHeight: 1.35,
+                boxSizing: 'border-box',
+                position: 'relative',
               }}
             >
-              <div style={{ textAlign: 'center', fontWeight: 'bold', fontSize: '15px', textDecoration: 'underline' }}>
-                e-Way Bill
+              {/* Top e-Way Bill Header */}
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 115px',
+                  alignItems: 'center',
+                  marginBottom: '10px',
+                }}
+              >
+                <div style={{ textAlign: 'center', fontWeight: 'bold', fontSize: '15px' }}>
+                  e-Way Bill
+                </div>
+                <div style={{ textAlign: 'center', fontWeight: 'bold', fontSize: '14px' }}>
+                  e-Way Bill
+                </div>
               </div>
-              <div style={{ textAlign: 'center', fontWeight: 'bold', fontSize: '13px' }}>
-                e-Way Bill
-              </div>
-            </div>
 
-            {/* Document Details & e-Way Bill QR */}
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: '1fr 115px',
-                alignItems: 'flex-start',
-                marginBottom: '8px',
-              }}
-            >
-              <div style={{ fontSize: '10px' }}>
-                <div style={{ marginBottom: '3px' }}>
-                  <span>Doc No. &nbsp;: </span>
-                  <span style={{ fontWeight: 'bold' }}>Tax Invoice - {invNumber}</span>
+              {/* Doc Details and QR */}
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 115px',
+                  alignItems: 'flex-start',
+                  borderBottom: '1px solid #000',
+                  paddingBottom: '10px',
+                  marginBottom: '10px',
+                }}
+              >
+                <div style={{ fontSize: '10px', lineHeight: 1.5 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '80px 1fr' }}>
+                    <div>Doc No. :</div>
+                    <div style={{ fontWeight: 'bold' }}>Tax Invoice - {invNumber}</div>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '80px 1fr' }}>
+                    <div>Date :</div>
+                    <div style={{ fontWeight: 'bold' }}>{invDate}</div>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '80px 1fr' }}>
+                    <div>IRN :</div>
+                    <div style={{ fontWeight: 'bold', wordBreak: 'break-all', fontSize: '9px' }}>{irn}</div>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '80px 1fr' }}>
+                    <div>Ack No. :</div>
+                    <div style={{ fontWeight: 'bold' }}>{ackNo}</div>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '80px 1fr' }}>
+                    <div>Ack Date :</div>
+                    <div style={{ fontWeight: 'bold' }}>{ackDate}</div>
+                  </div>
                 </div>
-                <div style={{ marginBottom: '3px' }}>
-                  <span>Date &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: </span>
-                  <span style={{ fontWeight: 'bold' }}>{invDate}</span>
+
+                <div style={{ textAlign: 'center' }}>
+                  <img
+                    src={dynamicEwayQrUrl}
+                    crossOrigin="anonymous"
+                    onError={(e) => {
+                      e.currentTarget.onerror = null;
+                      e.currentTarget.src = ewayQrImg;
+                    }}
+                    alt="e-Way Bill QR"
+                    style={{ width: '85px', height: '85px', display: 'inline-block' }}
+                  />
                 </div>
-                <div style={{ marginBottom: '3px' }}>
-                  <span>IRN &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: </span>
-                  <span style={{ fontWeight: 'bold', wordBreak: 'break-all' }}>{irn}</span>
-                </div>
-                <div style={{ marginBottom: '3px' }}>
-                  <span>Ack No. &nbsp;&nbsp;: </span>
-                  <span style={{ fontWeight: 'bold' }}>{ackNo}</span>
-                </div>
+              </div>
+
+              {/* Section 1: e-Way Bill Details */}
+              <div style={{ fontWeight: 'bold', fontSize: '11px', marginBottom: '4px' }}>
+                1. e-Way Bill Details
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.2fr 1fr', rowGap: '3px', fontSize: '9.5px', marginBottom: '10px' }}>
+                <div>e-Way Bill No. : <span style={{ fontWeight: 'bold' }}>{ewayBillNo}</span></div>
+                <div>Mode : <span style={{ fontWeight: 'bold' }}>1 - Road</span></div>
+                <div>Generated Date : <span style={{ fontWeight: 'bold' }}>{ewayDate}</span></div>
+
+                <div>Generated By : <span style={{ fontWeight: 'bold' }}>{compGstin}</span></div>
+                <div>Approx Distance : <span style={{ fontWeight: 'bold' }}>{approxDistance || 'As per portal'}</span></div>
+                <div>Valid Upto : <span style={{ fontWeight: 'bold' }}>{ewayValidUpto}</span></div>
+
+                <div>Supply Type : <span style={{ fontWeight: 'bold' }}>Outward-Supply</span></div>
+                <div>Transaction Type : <span style={{ fontWeight: 'bold' }}>Regular</span></div>
+                <div></div>
+              </div>
+
+              <hr style={{ border: 'none', borderTop: '1px solid #000', margin: '6px 0 10px' }} />
+
+              {/* Section 2: Address Details */}
+              <div style={{ fontWeight: 'bold', fontSize: '11px', marginBottom: '4px' }}>
+                2. Address Details
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', columnGap: '20px', fontSize: '9.5px', marginBottom: '10px' }}>
                 <div>
-                  <span>Ack Date : </span>
-                  <span style={{ fontWeight: 'bold' }}>{ackDate}</span>
+                  <div style={{ fontWeight: 'bold', marginBottom: '2px' }}>From</div>
+                  <div style={{ fontWeight: 'bold' }}>{compName}</div>
+                  <div>GSTIN : {compGstin}</div>
+                  <div>{compState}</div>
+                  <div style={{ fontWeight: 'bold', marginTop: '6px' }}>Dispatch From</div>
+                  <div>{compAddress}</div>
+                  <div>UDYAM REG.:- {udyamReg}</div>
                 </div>
-              </div>
-              <div style={{ textAlign: 'right' }}>
-                <img
-                  src={dynamicEwayQrUrl}
-                  crossOrigin="anonymous"
-                  onError={(e) => {
-                    e.currentTarget.onerror = null;
-                    e.currentTarget.src = ewayQrImg;
-                  }}
-                  alt="e-Way Bill QR"
-                  style={{ width: '90px', height: '90px', display: 'inline-block' }}
-                />
-              </div>
-            </div>
 
-            <hr style={{ border: 'none', borderTop: '1px solid #000', margin: '8px 0 10px' }} />
-
-            {/* Section 1: e-Way Bill Details */}
-            <div style={{ fontWeight: 'bold', fontSize: '11px', marginBottom: '4px' }}>
-              1. e-Way Bill Details
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1.2fr', rowGap: '3px', fontSize: '9.5px', marginBottom: '10px' }}>
-              <div>e-Way Bill No.: <span style={{ fontWeight: 'bold' }}>{ewayBillNo}</span></div>
-              <div>Mode &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: <span style={{ fontWeight: 'bold' }}>1 - Road</span></div>
-              <div>Generated Date &nbsp;: <span style={{ fontWeight: 'bold' }}>{ewayDate}</span></div>
-
-              <div>Generated By: <span style={{ fontWeight: 'bold' }}>{compGstin}</span></div>
-              <div>Approx Distance : <span style={{ fontWeight: 'bold' }}>{approxDistance}</span></div>
-              <div>Valid Upto &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: <span style={{ fontWeight: 'bold' }}>{ewayValidUpto}</span></div>
-
-              <div>Supply Type &nbsp;: <span style={{ fontWeight: 'bold' }}>Outward-Supply</span></div>
-              <div>Transaction Type: <span style={{ fontWeight: 'bold' }}>Regular</span></div>
-              <div></div>
-            </div>
-
-            <hr style={{ border: 'none', borderTop: '1px solid #000', margin: '6px 0 10px' }} />
-
-            {/* Section 2: Address Details */}
-            <div style={{ fontWeight: 'bold', fontSize: '11px', marginBottom: '4px' }}>
-              2. Address Details
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', columnGap: '20px', fontSize: '9.5px', marginBottom: '10px' }}>
-              {/* From */}
-              <div>
-                <div style={{ fontWeight: 'bold', fontSize: '10.5px' }}>From</div>
-                <div style={{ fontWeight: 'bold' }}>{compName}</div>
-                <div>GSTIN : {compGstin}</div>
-                <div>{compState}</div>
-
-                <div style={{ fontWeight: 'bold', marginTop: '6px' }}>Dispatch From</div>
-                <div style={{ fontSize: '9px', lineHeight: 1.25 }}>
-                  {compAddress}, UDYAM REG.:- {udyamReg}
+                <div>
+                  <div style={{ fontWeight: 'bold', marginBottom: '2px' }}>To</div>
+                  <div style={{ fontWeight: 'bold' }}>{partyName}</div>
+                  <div>GSTIN : {buyerGstin}</div>
+                  <div>{buyerState}</div>
+                  <div style={{ fontWeight: 'bold', marginTop: '6px' }}>Ship To</div>
+                  <div style={{ whiteSpace: 'pre-line' }}>{buyerAddr}</div>
                 </div>
               </div>
 
-              {/* To */}
-              <div>
-                <div style={{ fontWeight: 'bold', fontSize: '10.5px' }}>To</div>
-                <div style={{ fontWeight: 'bold' }}>{partyName}</div>
-                <div>GSTIN : {buyerGstin}</div>
-                <div>{buyerState}</div>
+              <hr style={{ border: 'none', borderTop: '1px solid #000', margin: '6px 0 10px' }} />
 
-                <div style={{ fontWeight: 'bold', marginTop: '6px' }}>Ship To</div>
-                <div style={{ fontSize: '9px', lineHeight: 1.25 }}>
-                  {buyerAddr.replace(/\n/g, ', ')}
-                </div>
+              {/* Section 3: Goods Details */}
+              <div style={{ fontWeight: 'bold', fontSize: '11px', marginBottom: '4px' }}>
+                3. Goods Details
+              </div>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '9.5px', marginBottom: '10px' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid #000', textAlign: 'left' }}>
+                    <th style={{ padding: '3px 2px' }}>HSN Code</th>
+                    <th style={{ padding: '3px 2px' }}>Product Name & Desc</th>
+                    <th style={{ padding: '3px 2px', textAlign: 'center' }}>Quantity</th>
+                    <th style={{ padding: '3px 2px', textAlign: 'right' }}>Taxable Amt (₹)</th>
+                    <th style={{ padding: '3px 2px', textAlign: 'right' }}>Tax Rate (I)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr style={{ borderBottom: '1px solid #000' }}>
+                    <td style={{ padding: '4px 2px', fontWeight: 'bold' }}>{hsnCode}</td>
+                    <td style={{ padding: '4px 2px', fontWeight: 'bold' }}>{itemName}</td>
+                    <td style={{ padding: '4px 2px', textAlign: 'center' }}>{quantityStr}</td>
+                    <td style={{ padding: '4px 2px', textAlign: 'right' }}>{taxableAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                    <td style={{ padding: '4px 2px', textAlign: 'right' }}>{taxRateNum} %</td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.2fr 1fr', rowGap: '3px', fontSize: '9.5px', marginBottom: '10px' }}>
+                <div>Tot. Taxable Amt : <span style={{ fontWeight: 'bold' }}>{taxableAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
+                <div>Other Amt : <span style={{ fontWeight: 'bold' }}>{roundOff.toFixed(2)}</span></div>
+                <div>Total Inv Amt : <span style={{ fontWeight: 'bold' }}>{totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
+                <div>IGST Amt : <span style={{ fontWeight: 'bold' }}>{taxAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
+                <div></div>
+                <div></div>
+              </div>
+
+              <hr style={{ border: 'none', borderTop: '1px solid #000', margin: '6px 0 10px' }} />
+
+              {/* Section 4: Transportation Details */}
+              <div style={{ fontWeight: 'bold', fontSize: '11px', marginBottom: '4px' }}>
+                4. Transportation Details
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', rowGap: '3px', fontSize: '9.5px', marginBottom: '10px' }}>
+                <div>Transporter ID &nbsp;: {transporterId && <span style={{ fontWeight: 'bold' }}>{transporterId}</span>}</div>
+                <div>Doc No. : </div>
+                <div>Name &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: <span style={{ fontWeight: 'bold' }}>{transporterName || 'Direct Consignment / Self'}</span></div>
+                <div>Date &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: </div>
+              </div>
+
+              <hr style={{ border: 'none', borderTop: '1px solid #000', margin: '6px 0 10px' }} />
+
+              {/* Section 5: Vehicle Details */}
+              <div style={{ fontWeight: 'bold', fontSize: '11px', marginBottom: '4px' }}>
+                5. Vehicle Details
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.2fr 1fr', rowGap: '3px', fontSize: '9.5px' }}>
+                <div>Vehicle No. &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: <span style={{ fontWeight: 'bold' }}>{truckNo ? truckNo.replace(/[^a-zA-Z0-9]/g, '') : 'As per dispatch'}</span></div>
+                <div>From &nbsp;&nbsp;&nbsp;: <span style={{ fontWeight: 'bold' }}>Valsad,GUJARAT</span></div>
+                <div>CEWB No.: </div>
               </div>
             </div>
-
-            <hr style={{ border: 'none', borderTop: '1px solid #000', margin: '6px 0 10px' }} />
-
-            {/* Section 3: Goods Details */}
-            <div style={{ fontWeight: 'bold', fontSize: '11px', marginBottom: '4px' }}>
-              3. Goods Details
-            </div>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '9.5px', marginBottom: '10px' }}>
-              <thead>
-                <tr style={{ borderBottom: '1px solid #000', textAlign: 'left' }}>
-                  <th style={{ padding: '3px 4px', width: '70px' }}>HSN Code</th>
-                  <th style={{ padding: '3px 4px' }}>Product Name & Desc</th>
-                  <th style={{ padding: '3px 4px', textAlign: 'center', width: '80px' }}>Quantity</th>
-                  <th style={{ padding: '3px 4px', textAlign: 'right', width: '90px' }}>Taxable Amt</th>
-                  <th style={{ padding: '3px 4px', textAlign: 'right', width: '80px' }}>Tax Rate (I)</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr style={{ verticalAlign: 'top' }}>
-                  <td style={{ padding: '4px 4px', fontWeight: 'bold' }}>{hsnCode}</td>
-                  <td style={{ padding: '4px 4px', fontWeight: 'bold' }}>{itemName}</td>
-                  <td style={{ padding: '4px 4px', textAlign: 'center' }}>{quantityStr.replace('BAGS', 'BAG')}</td>
-                  <td style={{ padding: '4px 4px', textAlign: 'right' }}>{taxableAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
-                  <td style={{ padding: '4px 4px', textAlign: 'right' }}>{taxRateNum}</td>
-                </tr>
-              </tbody>
-            </table>
-
-            {/* Totals Summary */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1.2fr', rowGap: '3px', fontSize: '9.5px', marginBottom: '10px' }}>
-              <div>Tot.Taxable Amt : <span style={{ fontWeight: 'bold' }}>{taxableAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
-              <div>Other Amt : <span style={{ fontWeight: 'bold' }}>{roundOff.toFixed(2)}</span></div>
-              <div>Total Inv Amt &nbsp;: <span style={{ fontWeight: 'bold' }}>{totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
-
-              <div>IGST Amt &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: <span style={{ fontWeight: 'bold' }}>{taxAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
-              <div></div>
-              <div></div>
-            </div>
-
-            <hr style={{ border: 'none', borderTop: '1px solid #000', margin: '6px 0 10px' }} />
-
-            {/* Section 4: Transportation Details */}
-            <div style={{ fontWeight: 'bold', fontSize: '11px', marginBottom: '4px' }}>
-              4. Transportation Details
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', rowGap: '3px', fontSize: '9.5px', marginBottom: '10px' }}>
-              <div>Transporter ID &nbsp;: </div>
-              <div>Doc No. : </div>
-              <div>Name &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: <span style={{ fontWeight: 'bold' }}>{transporterName}</span></div>
-              <div>Date &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: </div>
-            </div>
-
-            <hr style={{ border: 'none', borderTop: '1px solid #000', margin: '6px 0 10px' }} />
-
-            {/* Section 5: Vehicle Details */}
-            <div style={{ fontWeight: 'bold', fontSize: '11px', marginBottom: '4px' }}>
-              5. Vehicle Details
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.2fr 1fr', rowGap: '3px', fontSize: '9.5px' }}>
-              <div>Vehicle No. &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: <span style={{ fontWeight: 'bold' }}>{truckNo.replace(/[^a-zA-Z0-9]/g, '')}</span></div>
-              <div>From &nbsp;&nbsp;&nbsp;: <span style={{ fontWeight: 'bold' }}>Valsad,GUJARAT</span></div>
-              <div>CEWB No.: </div>
-            </div>
-          </div>
+          )}
         </div>
       </div>
     </div>
