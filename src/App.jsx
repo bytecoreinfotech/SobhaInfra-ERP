@@ -22,6 +22,7 @@ import FieldOps from './pages/FieldOps';
 import CampaignStudio from './pages/CampaignStudio';
 import EmailHub from './pages/EmailHub';
 import PublicInvoice from './pages/PublicInvoice';
+import GlobalTooltip from './components/GlobalTooltip';
 import { CompanyProvider } from './context/CompanyContext';
 import './index.css';
 import './App.css';
@@ -75,9 +76,11 @@ function AppInner() {
 
   return (
     <div className="app-layout">
+      <GlobalTooltip />
       <Sidebar
         collapsed={sidebarCollapsed}
         onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
+        onCollapse={() => setSidebarCollapsed(true)}
         mobileOpen={mobileOpen}
         onMobileClose={() => setMobileOpen(false)}
       />

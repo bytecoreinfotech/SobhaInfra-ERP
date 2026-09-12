@@ -21,9 +21,12 @@
 }
 
 .sidebar.collapsed .sidebar-header {
-  padding: 0.75rem 0.4rem;
+  padding: 0;
+  min-height: var(--header-height);
+  height: var(--header-height);
+  display: flex;
+  align-items: center;
   justify-content: center;
-  gap: 0.35rem;
 }
 
 .sidebar.collapsed .logo-container {
@@ -31,25 +34,156 @@
 }
 
 .sidebar.collapsed .sidebar-toggle-btn {
+  width: 36px;
+  height: 36px;
   margin: 0 auto;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: var(--bg-hover, rgba(0, 0, 0, 0.04));
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color, #e2e8f0);
+}
+
+.sidebar.collapsed .sidebar-toggle-btn:hover {
+  background: rgba(99, 102, 241, 0.12);
+  color: #6366f1;
+  border-color: rgba(99, 102, 241, 0.3);
 }
 
 .sidebar.collapsed .sidebar-nav {
-  padding: 1rem 0.35rem;
+  padding: 0.75rem 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  scrollbar-width: none;
+}
+
+.sidebar.collapsed .sidebar-nav::-webkit-scrollbar {
+  display: none;
+}
+
+.sidebar.collapsed .nav-section-label {
+  display: block;
+  opacity: 1;
+  height: 1px;
+  width: 28px;
+  margin: 6px auto 8px auto;
+  padding: 0;
+  background: var(--border-color, #e2e8f0);
+  overflow: hidden;
+  font-size: 0;
+}
+
+.sidebar.collapsed .sidebar-nav > div:first-child .nav-section-label {
+  display: none;
+}
+
+.sidebar.collapsed .nav-list {
+  width: 100%;
+  padding: 0;
+  margin: 0 0 4px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.sidebar.collapsed .nav-list li {
+  width: 100%;
+  display: flex;
+  justify-content: center;
 }
 
 .sidebar.collapsed .nav-link {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  margin: 0 auto;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
   justify-content: center;
-  padding: 0.65rem 0;
+  position: relative;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: visible;
+}
+
+.sidebar.collapsed .nav-link:hover {
+  background: rgba(99, 102, 241, 0.08);
+  color: var(--accent-primary, #6366f1);
+  transform: translateY(-1px);
+}
+
+.sidebar.collapsed .nav-link.active {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.2), rgba(139, 92, 246, 0.12));
+  color: var(--accent-primary, #6366f1);
+  border: 1.5px solid rgba(99, 102, 241, 0.35);
+  box-shadow: 0 2px 10px rgba(99, 102, 241, 0.2);
+}
+
+.sidebar.collapsed .nav-link.active::before {
+  display: none !important;
+}
+
+.sidebar.collapsed .nav-icon {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+}
+
+.sidebar.collapsed .nav-label {
+  display: none;
+}
+
+.sidebar.collapsed .nav-badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 8px;
+  height: 8px;
+  min-width: 8px;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 0;
+  display: block;
+  border: 1.5px solid var(--bg-secondary);
 }
 
 .sidebar.collapsed .sidebar-footer {
-  padding: 0.75rem 0.35rem;
+  padding: 0.75rem 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .sidebar.collapsed .sidebar-user {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  margin: 0 auto;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
   justify-content: center;
-  padding: 0.35rem 0;
+}
+
+.sidebar.collapsed .sidebar-user-avatar {
+  width: 34px;
+  height: 34px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sidebar.collapsed .sidebar-user-info {
+  display: none;
 }
 
 .sidebar.mobile-open {
@@ -149,12 +283,7 @@
   margin-top: 0.5rem;
 }
 
-.sidebar.collapsed .nav-section-label {
-  opacity: 0;
-  height: 0;
-  padding: 0;
-  margin: 0;
-}
+
 
 .nav-list {
   list-style: none;
@@ -217,11 +346,6 @@
   overflow: hidden;
 }
 
-.sidebar.collapsed .nav-label {
-  opacity: 0;
-  width: 0;
-}
-
 .nav-badge {
   background: var(--danger);
   color: white;
@@ -231,10 +355,6 @@
   border-radius: var(--radius-full);
   flex-shrink: 0;
   transition: opacity 0.2s ease;
-}
-
-.sidebar.collapsed .nav-badge {
-  display: none;
 }
 
 /* Sidebar Footer */
@@ -276,11 +396,6 @@
 .sidebar-user-info {
   overflow: hidden;
   transition: opacity 0.2s ease;
-}
-
-.sidebar.collapsed .sidebar-user-info {
-  opacity: 0;
-  width: 0;
 }
 
 .sidebar-user-name {

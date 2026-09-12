@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, Users, CheckSquare, IndianRupee,
@@ -10,11 +10,54 @@ import { useLiveCounts } from '../context/LiveCountsContext';
 import { useCompany } from '../context/CompanyContext';
 import './Sidebar.css';
 
-const Sidebar = ({ collapsed, isCollapsed, onToggle, mobileOpen, onMobileClose }) => {
+const Sidebar = ({ collapsed, isCollapsed, onToggle, onCollapse, mobileOpen, onMobileClose }) => {
   const isSideCollapsed = collapsed ?? isCollapsed ?? false;
   const { user, hasPermission } = useAuth();
   const { whatsapp, takeovers, leads, tasks, payments } = useLiveCounts();
   const { companyProfiles, activeCompanyId, setActiveCompanyId, isConsolidated, activeCompany } = useCompany();
+
+  const idleTimerRef = useRef(null);
+  const leaveTimerRef = useRef(null);
+
+  const triggerCollapse = () => {
+    if (onCollapse) onCollapse();
+    else if (onToggle && !isSideCollapsed) onToggle();
+  };
+
+  // Auto-collapse after 7s of idle time when sidebar is expanded
+  useEffect(() => {
+    if (isSideCollapsed) return;
+
+    idleTimerRef.current = setTimeout(() => {
+      triggerCollapse();
+    }, 7000);
+
+    return () => {
+      if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+      if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current);
+    };
+  }, [isSideCollapsed]);
+
+  // Keep expanded while user is hovering/interacting
+  const handleMouseEnter = () => {
+    if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+    if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current);
+  };
+
+  // Auto-collapse 2.5s after user moves cursor outside expanded sidebar
+  const handleMouseLeave = () => {
+    if (isSideCollapsed) return;
+    leaveTimerRef.current = setTimeout(() => {
+      triggerCollapse();
+    }, 2500);
+  };
+
+  const handleNavClick = () => {
+    if (onMobileClose) onMobileClose();
+    if (!isSideCollapsed) {
+      triggerCollapse();
+    }
+  };
 
   // Badge values: only show when > 0, cap display at 99
   const badge = (n) => (n > 0 ? (n > 99 ? '99+' : String(n)) : null);
@@ -78,7 +121,11 @@ const Sidebar = ({ collapsed, isCollapsed, onToggle, mobileOpen, onMobileClose }
         <div className="sidebar-mobile-overlay" onClick={onMobileClose} />
       )}
 
-      <aside className={`sidebar ${isSideCollapsed ? 'collapsed' : ''} ${mobileOpen ? 'mobile-open' : ''}`}>
+      <aside
+        className={`sidebar ${isSideCollapsed ? 'collapsed' : ''} ${mobileOpen ? 'mobile-open' : ''}`}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
+      >
         {/* Header */}
         <div className="sidebar-header">
           <div className="logo-container">
@@ -91,7 +138,8 @@ const Sidebar = ({ collapsed, isCollapsed, onToggle, mobileOpen, onMobileClose }
             className="sidebar-toggle-btn desktop-toggle"
             onClick={onToggle}
             type="button"
-            title={isSideCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            data-tooltip={isSideCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            data-tooltip-pos={isSideCollapsed ? 'right' : 'bottom'}
             aria-label={isSideCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           >
             {isSideCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
@@ -159,8 +207,9 @@ const Sidebar = ({ collapsed, isCollapsed, onToggle, mobileOpen, onMobileClose }
                       to={item.path}
                       end={item.end}
                       className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
-                      onClick={onMobileClose}
-                      title={isSideCollapsed ? item.name : undefined}
+                      onClick={handleNavClick}
+                      data-tooltip={isSideCollapsed ? item.name : undefined}
+                      data-tooltip-pos="right"
                     >
                       <span className="nav-icon">{item.icon}</span>
                       <span className="nav-label">{item.name}</span>
