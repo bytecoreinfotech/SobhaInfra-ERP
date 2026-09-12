@@ -121,7 +121,7 @@ const Settings = () => {
 
   // General Business Settings State
   const [generalSettings, setGeneralSettings] = useState({
-    org_name: localStorage.getItem('erppro_org_name') || 'SobhaInfra Tech',
+    org_name: (localStorage.getItem('erppro_org_name') || 'Sobha Infratech Pvt. Ltd.').replace(/techma/gi, 'Sobha Infra'),
     company_logo_url: '',
     company_qr_code_url: '',
     company_stamp_url: '',
@@ -400,7 +400,7 @@ const Settings = () => {
     if (data) {
       setGeneralSettings(prev => ({
         ...prev,
-        org_name: data.org_name || prev.org_name,
+        org_name: (data.org_name || prev.org_name || 'Sobha Infratech Pvt. Ltd.').replace(/techma/gi, 'Sobha Infra'),
         company_logo_url: data.company_logo_url || prev.company_logo_url,
         company_qr_code_url: data.company_qr_code_url || prev.company_qr_code_url,
         company_stamp_url: data.company_stamp_url || prev.company_stamp_url,
@@ -2122,9 +2122,9 @@ const Settings = () => {
                       <input
                         type="text"
                         className="input-field"
-                        value={generalSettings.org_name}
-                        onChange={e => setGeneralSettings(p => ({ ...p, org_name: e.target.value }))}
-                        placeholder="e.g. Acme Tech Solutions Pvt. Ltd."
+                        value={(generalSettings.org_name || '').replace(/techma/gi, 'Sobha Infra')}
+                        onChange={e => setGeneralSettings(p => ({ ...p, org_name: e.target.value.replace(/techma/gi, 'Sobha Infra') }))}
+                        placeholder="e.g. Sobha Infratech Pvt. Ltd."
                       />
                       <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '0.2rem', display: 'block' }}>
                         Appears on customer invoices, reminders, and portal headers.

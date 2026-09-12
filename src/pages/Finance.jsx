@@ -565,10 +565,19 @@ const Finance = () => {
   }), []);
 
   const currentTallyDebtors = useMemo(() => {
-    const compKey = (selectedCompany || '').toUpperCase();
+    if (isConsolidated || !activeCompany) {
+      const srp = TALLY_DEBTORS_REGISTRY['SHOBHA READY PLAST'];
+      const sb = TALLY_DEBTORS_REGISTRY['SHOBHA BUILDTECH'];
+      return {
+        debit: (srp?.debit || 0) + (sb?.debit || 0),
+        credit: (srp?.credit || 0) + (sb?.credit || 0),
+        net: (srp?.net || 0) + (sb?.net || 0),
+        groups: srp?.groups || []
+      };
+    }
+    const compKey = (activeCompany?.company_name || '').toUpperCase();
     if (compKey.includes('READY PLAST')) return TALLY_DEBTORS_REGISTRY['SHOBHA READY PLAST'];
     if (compKey.includes('BUILDTECH')) return TALLY_DEBTORS_REGISTRY['SHOBHA BUILDTECH'];
-    // Consolidated
     const srp = TALLY_DEBTORS_REGISTRY['SHOBHA READY PLAST'];
     const sb = TALLY_DEBTORS_REGISTRY['SHOBHA BUILDTECH'];
     return {
@@ -577,7 +586,7 @@ const Finance = () => {
       net: (srp?.net || 0) + (sb?.net || 0),
       groups: srp?.groups || []
     };
-  }, [selectedCompany, TALLY_DEBTORS_REGISTRY]);
+  }, [activeCompany, isConsolidated, TALLY_DEBTORS_REGISTRY]);
 
   // Master ledger closing balance sum for the active view
   const tallyClosingSum = useMemo(() => {
@@ -1100,7 +1109,7 @@ const Finance = () => {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
                     <div style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                       <Layers size={14} style={{ color: 'var(--primary-color)' }} />
-                      <span>Tally Group Summary: Sundry Debtors ({selectedCompany || 'Consolidated'})</span>
+                      <span>Tally Group Summary: Sundry Debtors ({isConsolidated ? 'Consolidated' : (activeCompany?.company_name || 'Shobha Ready Plast')})</span>
                     </div>
                     <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>Period: 01-Apr-2026 to 11-Sep-2026</span>
                   </div>
