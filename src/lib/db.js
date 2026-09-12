@@ -824,15 +824,14 @@ export async function saveCompanyProfile(profile) {
   const companyId = profile.id || `comp-${Date.now()}`;
   const now = new Date().toISOString();
 
-  const formatted = {
+  // Clean payload matching strictly the columns in Supabase public.company_profiles
+  const dbPayload = {
     id: companyId,
     organization_id: profile.organization_id || DEFAULT_ORG_ID,
     company_name: (profile.company_name || 'UNNAMED COMPANY').trim().toUpperCase(),
     alias_names: Array.isArray(profile.alias_names) ? profile.alias_names : [profile.company_name],
     company_logo_url: profile.company_logo_url || '',
     company_qr_code_url: profile.company_qr_code_url || '',
-    company_stamp_url: profile.company_stamp_url || '',
-    authorized_signature_url: profile.authorized_signature_url || '',
     company_address: profile.company_address || '',
     gstin_number: (profile.gstin_number || '').trim().toUpperCase(),
     company_udyam_reg: (profile.company_udyam_reg || '').trim().toUpperCase(),
@@ -850,10 +849,17 @@ export async function saveCompanyProfile(profile) {
     updated_at: now,
   };
 
+  // Keep in-memory representation enriched
+  const formatted = {
+    ...dbPayload,
+    company_stamp_url: profile.company_stamp_url || '',
+    authorized_signature_url: profile.authorized_signature_url || '',
+  };
+
   if (isSupabaseConfigured) {
     try {
       // If marked as default, unset others first
-      if (formatted.is_default) {
+      if (dbPayload.is_default) {
         await supabase
           .from('company_profiles')
           .update({ is_default: false })
@@ -862,18 +868,22 @@ export async function saveCompanyProfile(profile) {
 
       const { data, error } = await supabase
         .from('company_profiles')
-        .upsert(formatted, { onConflict: 'id' })
+        .upsert(dbPayload, { onConflict: 'id' })
         .select()
         .single();
 
-      if (!error && data) {
+      if (error) {
+        console.error('[db] saveCompanyProfile Supabase error:', error.message, error.details);
+      } else if (data) {
+        // Merge with local extra fields
+        const merged = { ...formatted, ...data };
         // Update local memory
         const idx = inMemoryCompanyProfiles.findIndex(c => c.id === data.id);
-        if (idx >= 0) inMemoryCompanyProfiles[idx] = data;
-        else inMemoryCompanyProfiles.push(data);
+        if (idx >= 0) inMemoryCompanyProfiles[idx] = merged;
+        else inMemoryCompanyProfiles.push(merged);
         localStorage.setItem('erppro_company_profiles', JSON.stringify(inMemoryCompanyProfiles));
         logAuditEvent('company_profile.saved', 'company_profiles', data.id, { name: data.company_name });
-        return { data, error: null };
+        return { data: merged, error: null };
       }
     } catch (err) {
       console.warn('[db] saveCompanyProfile fallback:', err.message);

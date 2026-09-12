@@ -3,7 +3,7 @@ import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, Users, CheckSquare, IndianRupee,
   MessageCircle, Bot, CreditCard, Shield, BarChart3,
-  Settings, ChevronLeft, ChevronRight, MapPin, Sparkles, Mail, Building2
+  Settings, ChevronLeft, ChevronRight, MapPin, Sparkles, Mail, Building2, X
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useLiveCounts } from '../context/LiveCountsContext';
@@ -26,7 +26,7 @@ const Sidebar = ({ collapsed, isCollapsed, onToggle, onCollapse, mobileOpen, onM
 
   // Auto-collapse after 7s of idle time when sidebar is expanded
   useEffect(() => {
-    if (isSideCollapsed) return;
+    if (isSideCollapsed || mobileOpen) return;
 
     idleTimerRef.current = setTimeout(() => {
       triggerCollapse();
@@ -36,7 +36,7 @@ const Sidebar = ({ collapsed, isCollapsed, onToggle, onCollapse, mobileOpen, onM
       if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
       if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current);
     };
-  }, [isSideCollapsed]);
+  }, [isSideCollapsed, mobileOpen]);
 
   // Keep expanded while user is hovering/interacting
   const handleMouseEnter = () => {
@@ -46,7 +46,7 @@ const Sidebar = ({ collapsed, isCollapsed, onToggle, onCollapse, mobileOpen, onM
 
   // Auto-collapse 2.5s after user moves cursor outside expanded sidebar
   const handleMouseLeave = () => {
-    if (isSideCollapsed) return;
+    if (isSideCollapsed || mobileOpen) return;
     leaveTimerRef.current = setTimeout(() => {
       triggerCollapse();
     }, 2500);
@@ -130,7 +130,7 @@ const Sidebar = ({ collapsed, isCollapsed, onToggle, onCollapse, mobileOpen, onM
         <div className="sidebar-header">
           <div className="logo-container">
             <div className="logo-icon">S</div>
-            {!isSideCollapsed && (
+            {(!isSideCollapsed || mobileOpen) && (
               <span className="logo-text">SobhaInfra <span>ERP</span></span>
             )}
           </div>
@@ -144,10 +144,18 @@ const Sidebar = ({ collapsed, isCollapsed, onToggle, onCollapse, mobileOpen, onM
           >
             {isSideCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
           </button>
+          <button
+            className="sidebar-close-btn mobile-close"
+            onClick={onMobileClose}
+            type="button"
+            aria-label="Close menu"
+          >
+            <X size={18} />
+          </button>
         </div>
 
         {/* Company Switcher (Light Theme) */}
-        {!isSideCollapsed && companyProfiles.length > 0 && (
+        {(!isSideCollapsed || mobileOpen) && companyProfiles.length > 0 && (
           <div style={{
             margin: '8px 12px 6px',
             padding: '8px 10px',

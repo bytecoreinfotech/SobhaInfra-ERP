@@ -1136,8 +1136,8 @@ const Finance = () => {
                   </select>
                 </div>
 
-                {/* Right: Unbreakable From → To Range Input Group */}
-                <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                {/* Right: From → To Range Input Group */}
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap' }}>
                   <label style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>From</label>
                   <input
                     type="date"

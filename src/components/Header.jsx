@@ -102,24 +102,13 @@ const Header = ({ onMobileMenuOpen }) => {
         </div>
 
         {/* Multi-Company Switcher Pill */}
-        <div className="company-switcher-wrap" ref={companyMenuRef} style={{ position: 'relative', marginLeft: '0.75rem' }}>
+        <div className="company-switcher-wrap" ref={companyMenuRef}>
           <button
             className="company-switcher-btn"
             onClick={() => setShowCompanyMenu(prev => !prev)}
             style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '0.45rem',
-              padding: '0.35rem 0.75rem',
-              borderRadius: '20px',
-              border: '1px solid var(--border-color)',
               background: isConsolidated ? 'rgba(99, 102, 241, 0.12)' : 'var(--bg-secondary)',
               color: isConsolidated ? 'var(--accent-primary)' : 'var(--text-primary)',
-              fontSize: '0.8rem',
-              fontWeight: 600,
-              cursor: 'pointer',
-              transition: 'all 0.2s ease',
-              maxWidth: '220px'
             }}
           >
             {isConsolidated ? (
@@ -142,19 +131,6 @@ const Header = ({ onMobileMenuOpen }) => {
           {showCompanyMenu && (
             <div
               className="company-dropdown-menu"
-              style={{
-                position: 'absolute',
-                top: 'calc(100% + 8px)',
-                left: 0,
-                width: 280,
-                background: 'var(--bg-secondary)',
-                border: '1px solid var(--border-color)',
-                borderRadius: '12px',
-                boxShadow: '0 10px 25px rgba(0,0,0,0.3)',
-                padding: '0.5rem',
-                zIndex: 9999,
-                animation: 'fadeIn 0.15s ease'
-              }}
             >
               <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', padding: '0.4rem 0.6rem' }}>
                 Active Company Workspace

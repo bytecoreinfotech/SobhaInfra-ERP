@@ -581,12 +581,15 @@ export default function InvoiceDocModal({
           style={{
             flex: 1,
             overflowY: 'auto',
+            overflowX: 'auto',
+            WebkitOverflowScrolling: 'touch',
             background: '#94a3b8',
-            padding: '1.5rem',
+            padding: '1rem 0.5rem',
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
             gap: '1.5rem',
+            width: '100%',
           }}
         >
           {/* ═════════════════════════════════════════════════════════════════
