@@ -59,8 +59,26 @@ function ProtectedRoute({ module, children }) {
 function AppInner() {
   const { user, loading } = useAuth();
   const location = useLocation();
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem('erp_sidebar_collapsed') === 'true';
+    } catch {
+      return false;
+    }
+  });
   const [mobileOpen, setMobileOpen] = useState(false);
+
+  const toggleSidebar = () => {
+    setSidebarCollapsed(prev => {
+      const next = !prev;
+      try {
+        localStorage.setItem('erp_sidebar_collapsed', String(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  };
 
   // Allow public access to /invoice/:invNum without requiring ERP login
   if (location.pathname.startsWith('/invoice/')) {
@@ -79,8 +97,7 @@ function AppInner() {
       <GlobalTooltip />
       <Sidebar
         collapsed={sidebarCollapsed}
-        onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
-        onCollapse={() => setSidebarCollapsed(true)}
+        onToggle={toggleSidebar}
         mobileOpen={mobileOpen}
         onMobileClose={() => setMobileOpen(false)}
       />

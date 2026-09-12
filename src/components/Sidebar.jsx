@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React from 'react';
 import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, Users, CheckSquare, IndianRupee,
@@ -10,53 +10,14 @@ import { useLiveCounts } from '../context/LiveCountsContext';
 import { useCompany } from '../context/CompanyContext';
 import './Sidebar.css';
 
-const Sidebar = ({ collapsed, isCollapsed, onToggle, onCollapse, mobileOpen, onMobileClose }) => {
+const Sidebar = ({ collapsed, isCollapsed, onToggle, mobileOpen, onMobileClose }) => {
   const isSideCollapsed = collapsed ?? isCollapsed ?? false;
   const { user, hasPermission } = useAuth();
   const { whatsapp, takeovers, leads, tasks, payments } = useLiveCounts();
   const { companyProfiles, activeCompanyId, setActiveCompanyId, isConsolidated, activeCompany } = useCompany();
 
-  const idleTimerRef = useRef(null);
-  const leaveTimerRef = useRef(null);
-
-  const triggerCollapse = () => {
-    if (onCollapse) onCollapse();
-    else if (onToggle && !isSideCollapsed) onToggle();
-  };
-
-  // Auto-collapse after 7s of idle time when sidebar is expanded
-  useEffect(() => {
-    if (isSideCollapsed || mobileOpen) return;
-
-    idleTimerRef.current = setTimeout(() => {
-      triggerCollapse();
-    }, 7000);
-
-    return () => {
-      if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
-      if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current);
-    };
-  }, [isSideCollapsed, mobileOpen]);
-
-  // Keep expanded while user is hovering/interacting
-  const handleMouseEnter = () => {
-    if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
-    if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current);
-  };
-
-  // Auto-collapse 2.5s after user moves cursor outside expanded sidebar
-  const handleMouseLeave = () => {
-    if (isSideCollapsed || mobileOpen) return;
-    leaveTimerRef.current = setTimeout(() => {
-      triggerCollapse();
-    }, 2500);
-  };
-
   const handleNavClick = () => {
     if (onMobileClose) onMobileClose();
-    if (!isSideCollapsed) {
-      triggerCollapse();
-    }
   };
 
   // Badge values: only show when > 0, cap display at 99
@@ -123,8 +84,6 @@ const Sidebar = ({ collapsed, isCollapsed, onToggle, onCollapse, mobileOpen, onM
 
       <aside
         className={`sidebar ${isSideCollapsed ? 'collapsed' : ''} ${mobileOpen ? 'mobile-open' : ''}`}
-        onMouseEnter={handleMouseEnter}
-        onMouseLeave={handleMouseLeave}
       >
         {/* Header */}
         <div className="sidebar-header">
