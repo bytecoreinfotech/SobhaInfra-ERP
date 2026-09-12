@@ -25,7 +25,7 @@ const getDirection = (inv, customerIndex) => {
   const numUpper = (inv?.invoice_number || inv?.tally_voucher_number || '').toUpperCase().trim();
 
   // 1. Master Ledger Balances excluded
-  if (numUpper.startsWith('LEDGER-')) return { isLedger: true, isVendor: false, canRemind: false };
+  if (numUpper.includes('LEDGER-')) return { isLedger: true, isVendor: false, canRemind: false };
 
   // 2. Google Sheet Verified Master Customer: Guaranteed 1000% CUSTOMER
   if (customerIndex) {
@@ -166,7 +166,7 @@ const Payments = () => {
   const transactionalInvoices = useMemo(() => {
     return invoices.filter(inv => {
       const num = (inv?.invoice_number || inv?.tally_voucher_number || '').toUpperCase();
-      if (num.startsWith('LEDGER-') || num.startsWith('OP-')) return false;
+      if (num.includes('LEDGER-') || num.startsWith('OP-')) return false;
       return isSalesVoucher(inv);
     });
   }, [invoices]);

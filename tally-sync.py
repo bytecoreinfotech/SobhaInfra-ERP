@@ -1289,10 +1289,20 @@ def parse_ledger_block(block, fallback_company: str = "", ledger_phone_map: dict
     opening_raw = (extract_tag_value(block, "OPENINGBALANCE") or "0")
 
     amount = parse_number(closing_raw)
+    raw_str_cl = str(closing_raw).strip()
+    is_cl_cr = 'cr' in raw_str_cl.lower()
+    is_cl_dr = 'dr' in raw_str_cl.lower()
+    is_cl_neg = raw_str_cl.startswith('-')
 
     # In Tally XML for Sundry Debtors:
     # Negative value (e.g. '-168584.00' or '... Dr') = DEBIT balance (Customer owes us, positive in ERP)
     # Positive value without minus (e.g. '6449.00' or '... Cr') = CREDIT balance (Advance from customer, negative in ERP)
+    is_credit_advance = False
+    parent_check = (parent or '').lower()
+    if 'debtor' in parent_check or 'bhiwandi' in parent_check or 'mumbai' in parent_check or 'thane' in parent_check:
+        if is_cl_cr or (amount > 0 and not is_cl_neg and not is_cl_dr and not raw_str_cl.startswith('-')):
+            is_credit_advance = True
+
     op_clean = parse_number(opening_raw)
     if op_clean != 0:
         raw_str = str(opening_raw).strip()
@@ -1357,23 +1367,27 @@ def parse_ledger_block(block, fallback_company: str = "", ledger_phone_map: dict
     if credit_days is not None and credit_days > 0:
         due_date = (datetime.now() + timedelta(days=credit_days)).strftime("%Y-%m-%d")
 
-    # Determine direction based on ledger parent group
+    # Determine direction based on ledger parent group and advance status
     parent_lower = (parent or '').lower()
     if 'sundry creditor' in parent_lower or 'creditor' in parent_lower:
         dir_val = 'payable'
     elif 'sundry debtor' in parent_lower or 'debtor' in parent_lower:
-        dir_val = 'receivable'
+        dir_val = 'credit' if is_credit_advance else 'receivable'
     else:
         dir_val = ''
 
+    comp_upper = (fallback_company or "").upper()
+    comp_prefix = "SB-" if "BUILDTECH" in comp_upper else ("SRP-" if "READY PLAST" in comp_upper else "")
+    inv_code = f"{comp_prefix}LEDGER-{clean_name.replace(' ', '')[:12]}"
+
     return {
-        "invoice_number": f"LEDGER-{clean_name.replace(' ', '')[:12]}",
+        "invoice_number": inv_code,
         "invoice_date": datetime.now().strftime("%d-%b-%y"),
         "ledger_name": clean_name,
         "company_name": fallback_company or "Tally Company",
         "phone": phone_val,
         "amount": amount,
-        "status": "Pending",
+        "status": "Credit" if is_credit_advance else "Pending",
         "due_date": due_date,
         "credit_period_days": credit_days,
         "direction": dir_val,
@@ -1383,6 +1397,8 @@ def parse_ledger_block(block, fallback_company: str = "", ledger_phone_map: dict
             "parent": parent or "",
             "opening_balance": opening_amt,
             "closing_balance": amount,
+            "is_credit_advance": is_credit_advance,
+            "closing_balance_type": "Cr" if is_credit_advance else "Dr",
             "credit_period_days": credit_days,
             "tally_company": fallback_company or "Tally Company",
         }
@@ -2320,7 +2336,8 @@ def push_to_cloud(vouchers):
         inv_num = str(v.get("invoice_number", "")).strip()
 
         # CRITICAL: Always push LEDGER-* markers so Tally master balances are 100% up-to-date
-        if inv_num.upper().startswith("LEDGER-"):
+        is_ledger = "LEDGER-" in inv_num.upper()
+        if is_ledger:
             to_process.append(v)
             altered_count += 1
             continue
@@ -2333,7 +2350,7 @@ def push_to_cloud(vouchers):
             # New voucher never seen before
             to_process.append(v)
             new_count += 1
-            is_sales = not inv_num.upper().startswith("LEDGER-") and ("sales" in str(v.get("voucher_type", "")).lower() or "receivable" in str(v.get("direction", "")).lower())
+            is_sales = not is_ledger and ("sales" in str(v.get("voucher_type", "")).lower() or "receivable" in str(v.get("direction", "")).lower())
             if is_sales:
                 new_sales_vouchers.append(v)
         elif isinstance(cached, dict):

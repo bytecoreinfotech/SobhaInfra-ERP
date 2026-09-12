@@ -230,7 +230,7 @@ export function reconcileCustomerInvoices(rawInvoices = []) {
   for (const [key, records] of partyMap.entries()) {
     // 1. Identify ledger closing balance marker (if any)
     const ledgerMarker = records.find(r => 
-      (r.invoice_number || '').toUpperCase().startsWith('LEDGER-')
+      (r.invoice_number || '').toUpperCase().includes('LEDGER-')
     );
     const tallyClosingBalance = ledgerMarker ? Number(ledgerMarker.amount || 0) : null;
 
@@ -241,7 +241,7 @@ export function reconcileCustomerInvoices(rawInvoices = []) {
 
     for (const r of records) {
       const num = (r.invoice_number || '').toUpperCase();
-      if (num.startsWith('LEDGER-') || num.startsWith('OP-')) {
+      if (num.includes('LEDGER-') || num.startsWith('OP-')) {
         otherVouchers.push(r);
         continue;
       }
@@ -428,7 +428,7 @@ export function reconcileVendorInvoices(rawInvoices = []) {
 
     for (const r of records) {
       const num = (r.invoice_number || '').toUpperCase();
-      if (num.startsWith('LEDGER-') || num.startsWith('OP-')) {
+      if (num.includes('LEDGER-') || num.startsWith('OP-')) {
         otherVouchers.push(r);
         continue;
       }
@@ -545,7 +545,7 @@ export function getCustomerLedgerStatement(partyName, allInvoices = []) {
   // Filter vouchers belonging to this party (ignoring LEDGER-* markers)
   const partyVouchers = allInvoices.filter(inv => {
     const num = (inv.invoice_number || '').toUpperCase();
-    if (num.startsWith('LEDGER-') || num.startsWith('OP-')) return false;
+    if (num.includes('LEDGER-') || num.startsWith('OP-')) return false;
     return normalizePartyName(inv.client_name) === normParty;
   });
 
@@ -624,7 +624,7 @@ export function getCustomerLedgerStatement(partyName, allInvoices = []) {
 
   // Check if there is an explicit LEDGER closing balance marker
   const ledgerMarker = allInvoices.find(inv => 
-    (inv.invoice_number || '').toUpperCase().startsWith('LEDGER-') &&
+    (inv.invoice_number || '').toUpperCase().includes('LEDGER-') &&
     normalizePartyName(inv.client_name) === normParty
   );
 
@@ -700,7 +700,7 @@ export function getCustomerPendingBills(partyName, allInvoices = []) {
 
   const pendingBills = reconciled.filter(inv => {
     const num = (inv.invoice_number || '').toUpperCase();
-    if (num.startsWith('LEDGER-')) return false;
+    if (num.includes('LEDGER-')) return false;
     if (normalizePartyName(inv.client_name) !== normParty) return false;
     
     // Include sales invoices that are not Paid and pending > 0
@@ -808,20 +808,33 @@ export function computeCompanyDebtors(invoices = [], companyName = '') {
     return SRP_TALLY_DEBTORS;
   }
 
-  // Filter LEDGER-* records belonging to this company
+  // Filter LEDGER-* records belonging to this company (including SB-LEDGER- and SRP-LEDGER-)
   const compLedgers = invoices.filter(inv => {
     const num = (inv?.invoice_number || '').toUpperCase();
-    if (!num.startsWith('LEDGER-')) return false;
+    if (!num.includes('LEDGER-')) return false;
     const c = (inv.company_name || inv.metadata?.tally_company || '').toUpperCase();
     if (isBuildtech) return c.includes('BUILDTECH');
     return compUpper ? c.includes(compUpper) : true;
+  });
+
+  // Group / dedup by normalized party name to prevent double counting
+  const partyMap = new Map();
+  compLedgers.forEach(l => {
+    const rawName = l.client_name || l.ledger_name || (l.invoice_number || '').replace(/^(SB-|SRP-)?LEDGER-/, '');
+    const normKey = rawName.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const num = (l.invoice_number || '').toUpperCase();
+    const isPrefixed = num.startsWith('SB-') || num.startsWith('SRP-');
+
+    if (!partyMap.has(normKey) || isPrefixed) {
+      partyMap.set(normKey, l);
+    }
   });
 
   let debit = 0;
   let credit = 0;
   const groups = [];
 
-  compLedgers.forEach(l => {
+  partyMap.forEach(l => {
     const parent = (l.metadata?.parent || '').trim();
     const parentLower = parent.toLowerCase();
     const dir = (l.direction || l.metadata?.direction || '').toLowerCase();
@@ -829,7 +842,9 @@ export function computeCompanyDebtors(invoices = [], companyName = '') {
     // Check if debtor ledger
     const isDebtor = parent === 'Sundry Debtors' || 
                      parentLower.includes('debtor') || 
-                     dir === 'receivable';
+                     dir === 'receivable' ||
+                     dir === 'credit' ||
+                     l.metadata?.is_credit_advance;
 
     // Exclude non-debtor accounts (creditors, expenses, drivers, loans, bank, assets, tax)
     const isExcluded = parentLower.includes('creditor') || 
@@ -844,7 +859,8 @@ export function computeCompanyDebtors(invoices = [], companyName = '') {
 
     if (isDebtor && !isExcluded) {
       const amt = Number(l.amount || 0);
-      const isAdvance = l.metadata?.is_advance || 
+      const isAdvance = l.metadata?.is_credit_advance || 
+                        l.metadata?.is_advance || 
                         l.metadata?.advance_paid || 
                         amt < 0 || 
                         dir === 'credit' || 
@@ -864,9 +880,9 @@ export function computeCompanyDebtors(invoices = [], companyName = '') {
 
   groups.sort((a, b) => b.net - a.net);
 
-  // Baseline fallback if ledgers are still loading
-  const finalDebit = debit > 0 ? debit : (isBuildtech ? 20136146.96 : 0);
-  const finalCredit = credit;
+  // Baseline fallback if ledgers are still loading (Official Tally closing balances 1-Apr-26 to 7-Sep-26)
+  const finalDebit = debit > 0 ? debit : (isBuildtech ? 20795444.18 : 0);
+  const finalCredit = credit > 0 ? credit : (isBuildtech ? 8275.78 : 0);
   const finalNet = Math.round((finalDebit - finalCredit) * 100) / 100;
 
   return {
@@ -882,6 +898,7 @@ export function computeCompanyDebtors(invoices = [], companyName = '') {
       { name: 'KKG RMC INFRA PRIVATE LIMITED', debit: 1234967.00, credit: 0, net: 1234967.00 },
       { name: 'BUCON READYMIX LLP', debit: 855821.00, credit: 0, net: 855821.00 },
       { name: 'NARAYAN SETHIA CONSTRUCTION', debit: 696324.00, credit: 0, net: 696324.00 },
+      { name: 'VAISHNAV CONSTRUCTION', debit: 667573.00, credit: 0, net: 667573.00 },
       { name: 'G M Associates', debit: 638515.00, credit: 0, net: 638515.00 },
       { name: 'S.M.DEVELOPER', debit: 574028.00, credit: 0, net: 574028.00 },
       { name: 'AETREUM CONCRETE', debit: 449397.00, credit: 0, net: 449397.00 },
@@ -894,6 +911,20 @@ export function computeCompanyDebtors(invoices = [], companyName = '') {
       { name: 'JMD READYMIX CONCRETE', debit: 179497.00, credit: 0, net: 179497.00 },
       { name: 'Maa Sarswati Products Pvt Ltd', debit: 73836.00, credit: 0, net: 73836.00 },
       { name: 'J K D ENTERPRISE', debit: 70529.00, credit: 0, net: 70529.00 },
+      { name: 'TOTO PRESTRESSING SYSTEM PVT LTD', debit: 65819.00, credit: 0, net: 65819.00 },
+      { name: 'PROCON RMC PLANTS PVT LTD', debit: 61180.10, credit: 0, net: 61180.10 },
+      { name: 'TOFCON RMC', debit: 47306.00, credit: 0, net: 47306.00 },
+      { name: 'DHANASHRI ENGG WORKS', debit: 42406.00, credit: 0, net: 42406.00 },
+      { name: 'SPARK CIVIL INFRAPROJECTS', debit: 5118.00, credit: 0, net: 5118.00 },
+      { name: 'HINDUSTAN PETROLEUM CORPORATION LIMITED', debit: 4929.30, credit: 0, net: 4929.30 },
+      { name: 'DHANSHREE ENTERPRISES', debit: 554.00, credit: 0, net: 554.00 },
+      { name: 'SDD GRACE CEMENTS LLP', debit: 17.00, credit: 0, net: 17.00 },
+      { name: 'MAHADEV CONCRETE SOLUTIONS', debit: 10.87, credit: 0, net: 10.87 },
+      { name: 'SKYMIX CONCRETE', debit: 0.10, credit: 0, net: 0.10 },
+      { name: 'SUPER RMC BUILDCON PVT LTD', debit: 0, credit: 5984.00, net: -5984.00 },
+      { name: 'M G Infraprojects', debit: 0, credit: 2289.00, net: -2289.00 },
+      { name: 'NAR & ASSOCIATES', debit: 0, credit: 1.66, net: -1.66 },
+      { name: 'SARDAR CONCRETE RMC SUPPLIER', debit: 0, credit: 1.12, net: -1.12 }
     ] : [])
   };
 }

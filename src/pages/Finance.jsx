@@ -55,8 +55,8 @@ const getDirection = (inv) => {
   const status  = inv?.status || '';
 
   // 1. Master Ledger Closing Balances → Excluded from transactional cards & tables
-  if (numUpper.startsWith('LEDGER-')) {
-    const isCustomer = dir === 'receivable';
+  if (numUpper.includes('LEDGER-')) {
+    const isCustomer = dir === 'receivable' || dir === 'credit' || inv?.metadata?.is_credit_advance;
     const isVendor = dir === 'payable' || dir === 'paid_out';
     return { isLedger: true, isCustomer, isVendor, isOther: !isCustomer && !isVendor, label: 'Ledger Balance', canRemind: false };
   }
@@ -441,7 +441,7 @@ const Finance = () => {
   // IMPORTANT: Exclude LEDGER- prefixed records from financial totals.
   const isActualVoucher = (inv) => {
     const num = (inv?.invoice_number || inv?.tally_voucher_number || '').toUpperCase();
-    return !num.startsWith('LEDGER-');
+    return !num.includes('LEDGER-');
   };
   const voucherOnlyInvoices = dateFilteredInvoices.filter(isActualVoucher);
 
@@ -461,7 +461,7 @@ const Finance = () => {
     const set = new Set();
     allInvoices.forEach(inv => {
       const num = (inv?.invoice_number || '').toUpperCase();
-      if (!num.startsWith('LEDGER-') && !num.startsWith('OP-') && isSalesVoucher(inv)) {
+      if (!num.includes('LEDGER-') && !num.startsWith('OP-') && isSalesVoucher(inv)) {
         set.add((inv.client_name || '').trim().toUpperCase());
       }
     });
@@ -475,7 +475,7 @@ const Finance = () => {
     const set = new Set();
     allInvoices.forEach(inv => {
       const num = (inv?.invoice_number || '').toUpperCase();
-      if (!num.startsWith('LEDGER-') && !num.startsWith('OP-') && isPurchaseVoucher(inv)) {
+      if (!num.includes('LEDGER-') && !num.startsWith('OP-') && isPurchaseVoucher(inv)) {
         set.add((inv.client_name || '').trim().toUpperCase());
       }
     });
@@ -484,9 +484,9 @@ const Finance = () => {
 
   const isCustomerLedger = useCallback((inv) => {
     const num = (inv?.invoice_number || inv?.tally_voucher_number || '').toUpperCase();
-    if (!num.startsWith('LEDGER-')) return false;
+    if (!num.includes('LEDGER-')) return false;
     const dir = (inv?.metadata?.direction || inv?.direction || '').toLowerCase();
-    if (dir === 'receivable') return true;
+    if (dir === 'receivable' || dir === 'credit' || inv?.metadata?.is_credit_advance) return true;
     if (dir === 'payable' || dir === 'other') return false;
     const p = (inv?.client_name || '').trim().toUpperCase();
     return customerPartySet.has(p);
@@ -494,10 +494,10 @@ const Finance = () => {
 
   const isVendorLedger = useCallback((inv) => {
     const num = (inv?.invoice_number || inv?.tally_voucher_number || '').toUpperCase();
-    if (!num.startsWith('LEDGER-')) return false;
+    if (!num.includes('LEDGER-')) return false;
     const dir = (inv?.metadata?.direction || inv?.direction || '').toLowerCase();
     if (dir === 'payable') return true;
-    if (dir === 'receivable' || dir === 'other') return false;
+    if (dir === 'receivable' || dir === 'credit' || dir === 'other') return false;
     const p = (inv?.client_name || '').trim().toUpperCase();
     return vendorPartySet.has(p) && !customerPartySet.has(p);
   }, [vendorPartySet, customerPartySet]);
@@ -571,7 +571,7 @@ const Finance = () => {
 
     // Exclude LEDGER- records from table when in either view
     const num = (inv?.invoice_number || inv?.tally_voucher_number || '').toUpperCase();
-    if (num.startsWith('LEDGER-')) return false;
+    if (num.includes('LEDGER-')) return false;
 
     const matchSearch = !search ||
       inv.invoice_number?.toLowerCase().includes(search.toLowerCase()) ||
