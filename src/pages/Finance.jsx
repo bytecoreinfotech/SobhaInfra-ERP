@@ -602,13 +602,13 @@ const Finance = () => {
   // Primary Headline Total: Net Customer Outstanding
   const totalOutstanding = tallyNetTotal;
 
-  // Prior Opening Balance: Net Closing Balance minus current unpaid bills
+  // Prior Opening Balance: Total Gross Debit minus current unpaid bills (Overdue + Pending)
   const totalOpeningBalance = useMemo(() => {
     if (financeView === 'payables') {
       return Math.max(0, Math.round((tallyClosingSum - currentBillsOutstanding) * 100) / 100);
     }
-    return Math.max(0, Math.round((totalOutstanding - currentBillsOutstanding) * 100) / 100);
-  }, [tallyClosingSum, currentBillsOutstanding, financeView, totalOutstanding]);
+    return Math.max(0, Math.round((tallyDebitTotal - currentBillsOutstanding) * 100) / 100);
+  }, [tallyDebitTotal, currentBillsOutstanding, financeView, tallyClosingSum]);
 
   // 3. Search & Status Filter — also filtered by active financeView (receivables vs payables)
   const filtered = dateFilteredInvoices.filter(inv => {
@@ -1702,8 +1702,15 @@ const Finance = () => {
                               <td style={{ fontWeight: 700, fontSize: '0.88rem', verticalAlign: 'middle', padding: '0.5rem 0.75rem', whiteSpace: 'nowrap' }}>
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
                                   <span style={{ fontWeight: 700, fontSize: '0.86rem', color: inv.status === 'Overdue' ? 'var(--danger)' : 'var(--text-primary)' }}>
-                                    {fmtCurrency(inv.amount)}
+                                    {inv.status !== 'Paid' && inv.pending_amount !== undefined && Number(inv.pending_amount) < Number(inv.amount)
+                                      ? fmtCurrency(inv.pending_amount)
+                                      : fmtCurrency(inv.amount)}
                                   </span>
+                                  {inv.status !== 'Paid' && inv.pending_amount !== undefined && Number(inv.pending_amount) < Number(inv.amount) && (
+                                    <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontWeight: 500 }}>
+                                      Bill: {fmtCurrency(inv.amount)}
+                                    </span>
+                                  )}
                                   <span title={dir.title} style={{
                                     display: 'inline-flex', alignItems: 'center', gap: '0.2rem',
                                     fontSize: '0.6rem', fontWeight: 700, padding: '0.08rem 0.35rem',

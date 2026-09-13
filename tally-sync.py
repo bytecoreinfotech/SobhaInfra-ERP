@@ -1878,10 +1878,12 @@ def build_tally_master_summary(comp: str, comp_records: list) -> dict:
 
         if "LEDGER-" in num:
             meta = r.get("metadata") or {}
-            is_adv = meta.get("is_credit_advance") or dir_val == "credit" or amt < 0
             party = r.get("client_name") or r.get("ledger_name") or num
-            parent = meta.get("parent") or ("Customer Advances" if is_adv else "Sundry Debtors")
+            parent = meta.get("parent") or ("Customer Advances" if (dir_val == "credit") else "Sundry Debtors")
             parent_lower = parent.lower().strip()
+            is_sales_bills = 'sales bills to make' in parent_lower
+
+            is_adv = not is_sales_bills and (meta.get("is_credit_advance") or dir_val == "credit" or (amt < 0 and dir_val != "debit"))
 
             # Non-debtor accounts (Loans, Fixed Assets, Creditors, Expenses, Vehicles) must NEVER enter sundry_debtors
             excluded_kw = [
@@ -1898,13 +1900,19 @@ def build_tally_master_summary(comp: str, comp_records: list) -> dict:
                 'sundry debtors', 'debtors', 'debtors 1', 'mumbai', 'thane', 'palghar',
                 'mira/bhayandar', 'bhiwandi', 'navi mumbai', 'shahpur/kalyan', 'karan',
                 'sundry debtors - stc', 'dubey ji', 'kalpesh bhai', 'customer advances',
-                'vie win enterprises', 'yadav trading company', 'vnr infratech'
+                'vie win enterprises', 'yadav trading company', 'vnr infratech', 'sales bills to make'
             }
-            if not ('debtor' in parent_lower or parent_lower in debtor_parents or dir_val == 'receivable' or is_adv):
+            if not ('debtor' in parent_lower or parent_lower in debtor_parents or dir_val == 'receivable' or is_adv or is_sales_bills):
                 continue
 
             abs_amt = abs(amt)
-            if is_adv:
+            if is_sales_bills:
+                debtor_debit -= abs_amt
+                subgroups.setdefault(parent, {"name": parent, "debit": 0.0, "credit": 0.0, "net": 0.0, "count": 0})
+                subgroups[parent]["debit"] -= abs_amt
+                subgroups[parent]["net"] -= abs_amt
+                subgroups[parent]["count"] += 1
+            elif is_adv:
                 debtor_credit += abs_amt
                 subgroups.setdefault(parent, {"name": parent, "debit": 0.0, "credit": 0.0, "net": 0.0, "count": 0})
                 subgroups[parent]["credit"] += abs_amt

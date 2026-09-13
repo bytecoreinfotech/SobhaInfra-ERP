@@ -787,7 +787,7 @@ const SRP_DEBTOR_SUBGROUPS = new Set([
   'mumbai', 'thane', 'debtors 1', 'dubey ji', 'mira/bhayandar', 
   'palghar', 'debtors', 'karan', 'kalpesh bhai', 'shahpur/kalyan', 
   'sundry debtors', 'sundry debtors - stc', 'bhiwandi', 'navi mumbai',
-  'vie win enterprises', 'yadav trading company', 'vnr infratech'
+  'vie win enterprises', 'yadav trading company', 'vnr infratech', 'sales bills to make'
 ]);
 
 /**
@@ -940,22 +940,12 @@ export function computeCompanyDebtors(invoices = [], companyName = '', masterSum
     const rawName = s.client_name || s.party_name || '';
     const normKey = rawName.toUpperCase().replace(/[^A-Z0-9]/g, '');
     const isNewParty = normKey && !partyMap.has(normKey);
-    const sDate = (s.invoice_date || s.created_at || '').slice(0, 10);
-    const isPostSnapshot = sDate > '2026-09-07';
 
-    if (isNewParty || isPostSnapshot) {
+    if (isNewParty) {
       if (s.status !== 'Paid') {
         const pAmt = Number(s.pending_amount !== undefined ? s.pending_amount : s.amount) || 0;
         unmappedSalesDebit += pAmt;
-        if (isNewParty) {
-          groups.push({ name: rawName, debit: pAmt, credit: 0, net: pAmt, parent: 'Sundry Debtors', is_new: true });
-        } else {
-          const existingGroup = groups.find(g => (g.name || '').toUpperCase().replace(/[^A-Z0-9]/g, '') === normKey);
-          if (existingGroup) {
-            existingGroup.debit += pAmt;
-            existingGroup.net += pAmt;
-          }
-        }
+        groups.push({ name: rawName, debit: pAmt, credit: 0, net: pAmt, parent: 'Sundry Debtors', is_new: true });
       }
     }
   });

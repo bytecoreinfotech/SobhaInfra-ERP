@@ -15,8 +15,8 @@ const nodemailer = require('nodemailer');
 const { createClient } = require('@supabase/supabase-js');
 
 // Supabase Connection
-const SUPABASE_URL = process.env.SUPABASE_URL || 'https://mcgmppnvnwnilioapbli.supabase.co';
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
+const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://mcgmppnvnwnilioapbli.supabase.co';
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1jZ21wcG52bnduaWxpb2FwYmxpIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4NzU3MTk4MiwiZXhwIjoyMTAzMTQ3OTgyfQ.iMVtS3kZ5jkXd7wOsgviN_3Umz0Auw7vBa0NDlD9rKg';
 
 function getSupabase() {
   return createClient(SUPABASE_URL, SUPABASE_KEY);
@@ -124,13 +124,35 @@ exports.handler = async function (event) {
     }
 
     // 1. Resolve SMTP Configuration
-    // Order: runtime payload -> environment variables -> fallback defaults
-    const host = smtpConfig?.host || process.env.SMTP_HOST || 'smtp.gmail.com';
-    const port = Number(smtpConfig?.port || process.env.SMTP_PORT || 465);
+    // Order: runtime payload -> Supabase org_settings -> environment variables -> fallback defaults
+    let host = smtpConfig?.host || process.env.SMTP_HOST || 'smtp.gmail.com';
+    let port = Number(smtpConfig?.port || process.env.SMTP_PORT || 465);
+    let user = smtpConfig?.user || process.env.GMAIL_USER || process.env.SMTP_USER || '';
+    let pass = smtpConfig?.pass || process.env.GMAIL_APP_PASSWORD || process.env.SMTP_PASS || '';
+    let fromName = senderName || smtpConfig?.fromName || process.env.SMTP_FROM_NAME || 'Sobha Infratech Pvt. Ltd.';
+
+    if (!user || !pass) {
+      try {
+        const sb = getSupabase();
+        const { data: dbSettings } = await sb
+          .from('org_settings')
+          .select('key, value')
+          .in('key', ['gmail_user', 'gmail_app_password', 'email_sender_name', 'smtp_host', 'smtp_port']);
+        if (dbSettings && dbSettings.length > 0) {
+          const map = {};
+          dbSettings.forEach(r => { map[r.key] = r.value; });
+          if (!user && map.gmail_user) user = String(map.gmail_user).trim();
+          if (!pass && map.gmail_app_password) pass = String(map.gmail_app_password).trim().replace(/\s+/g, '');
+          if (!senderName && map.email_sender_name) fromName = String(map.email_sender_name).trim();
+          if (map.smtp_host) host = String(map.smtp_host).trim();
+          if (map.smtp_port) port = Number(map.smtp_port);
+        }
+      } catch (dbSettingsErr) {
+        console.warn('Could not read org_settings for SMTP:', dbSettingsErr.message);
+      }
+    }
+
     const secure = port === 465; // true for 465, false for 587
-    const user = smtpConfig?.user || process.env.GMAIL_USER || process.env.SMTP_USER || '';
-    const pass = smtpConfig?.pass || process.env.GMAIL_APP_PASSWORD || process.env.SMTP_PASS || '';
-    const fromName = senderName || smtpConfig?.fromName || process.env.SMTP_FROM_NAME || 'Sobha Infratech Pvt. Ltd.';
     const fromEmail = senderEmail || user || 'noreply@sobhainfra.com';
 
     if (!user || !pass) {
