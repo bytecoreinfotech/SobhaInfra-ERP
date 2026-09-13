@@ -43,7 +43,8 @@ exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') return { statusCode: 405, headers: cors, body: 'Method Not Allowed' };
 
   try {
-    const token = event.headers['x-connector-token'] || event.headers['X-Connector-Token'];
+    const hdrs = event.headers || {};
+    const token = hdrs['x-connector-token'] || hdrs['X-Connector-Token'] || hdrs['x-tally-token'];
     if (token !== EXPECTED_TOKEN) {
       return { statusCode: 401, headers: cors, body: JSON.stringify({ error: 'Unauthorized: Invalid connector token' }) };
     }
@@ -439,11 +440,13 @@ exports.handler = async (event) => {
             else results.unmappedLedgers++;
 
             // ── AIRTIGHT SAFETY GUARD FOR NEW BILL AUTO-DISPATCH ─────
-            // Rule 1: Date Recency Guard — invoice must be same-day or within the last 48 hours
+            // Rule 1: Date Recency Guard — invoice must be same-day or within the last 48 hours OR brand-new voucher
             const invDateMs = new Date(invoiceDateStr).getTime();
             const nowMs = Date.now();
             const diffHours = (nowMs - invDateMs) / (1000 * 60 * 60);
             const isRecentInvoice = diffHours >= -12 && diffHours <= 48;
+            const isNewVoucher = !existing || !existing.id;
+            const isEligibleForDispatch = isNewVoucher || isRecentInvoice;
 
             // Rule 2: Idempotency Guard — never re-send if already successfully dispatched WITH PDF
             // Rule 2: Idempotency Guard — check both WhatsApp and Email separately
@@ -464,44 +467,50 @@ exports.handler = async (event) => {
               /^(srp|sb|inv|tax)[-/]/i.test(invNum) ||
               /sales/i.test(invNum);
 
-            // Rule 4: Authoritative Google Sheet Phone & Email Verification
+            // Rule 4: Authoritative Phone & Email Verification
             const targetPhone = resolvedClientPhone || invoiceRow.client_phone || existing?.client_phone;
             const clientDisplayName = verifiedSheetName || v.ledger_name || 'Customer';
             const company = v.company_name || companyName || 'SHOBHA READY PLAST';
 
-            let targetEmail = null;
-            try {
-              targetEmail = await resolveCustomerEmail(supabase, {
-                companyName: v.ledger_name || clientDisplayName || company,
-                clientName: clientDisplayName,
-                phone: targetPhone,
-              });
-            } catch (_) {}
+            // Direct party email from voucher, metadata, or customer directory
+            let targetEmail = v.email || v.client_email || v.buyer_email || v.metadata?.email || null;
+            if (!targetEmail || !targetEmail.includes('@')) {
+              try {
+                targetEmail = await resolveCustomerEmail(supabase, {
+                  companyName: v.ledger_name || clientDisplayName || company,
+                  clientName: clientDisplayName,
+                  phone: targetPhone,
+                  email: targetEmail,
+                });
+              } catch (_) {}
+            }
 
-            const canAutoDispatchWhatsApp = isRecentInvoice &&
+            const canAutoDispatchWhatsApp = isEligibleForDispatch &&
               !isAlreadyDispatchedWhatsApp &&
               isSalesInvoice &&
               Boolean(targetPhone);
 
-            const canAutoDispatchEmail = isRecentInvoice &&
+            const canAutoDispatchEmail = isEligibleForDispatch &&
               !isAlreadyDispatchedEmail &&
               isSalesInvoice &&
               Boolean(targetEmail);
 
             const canAutoDispatch = canAutoDispatchWhatsApp || canAutoDispatchEmail;
 
+            let localPdfBuffer = null;
+
             if (canAutoDispatch) {
               try {
                 // Pre-dispatch PDF guarantee: Ensure 2-Page PDF exists before any dispatch
                 if (!finalPdfUrl && Number(invoiceRow.amount || v.amount) > 0) {
                   try {
-                    const pdfBuffer = generateInvoicePdfBuffer(v, invNum, invoiceRow);
-                    if (pdfBuffer && pdfBuffer.length > 0) {
+                    localPdfBuffer = generateInvoicePdfBuffer(v, invNum, invoiceRow);
+                    if (localPdfBuffer && localPdfBuffer.length > 0) {
                       const cleanInvFile = String(invNum).replace(/[^a-zA-Z0-9_-]/g, '_');
                       const storagePath = `invoices/Invoice_${cleanInvFile}.pdf`;
                       const { data: uploadData, error: uploadErr } = await supabase.storage
                         .from('whatsapp-media')
-                        .upload(storagePath, pdfBuffer, {
+                        .upload(storagePath, localPdfBuffer, {
                           contentType: 'application/pdf',
                           upsert: true,
                         });
@@ -525,7 +534,7 @@ exports.handler = async (event) => {
                 }
 
                 // If PDF is still missing for a sales invoice, NEVER SEND TEXT-ONLY!
-                if (!finalPdfUrl) {
+                if (!finalPdfUrl && !localPdfBuffer) {
                   console.warn(`[AutoSend Guard] PDF not available for ${invNum}. Skipping dispatch to prevent sending text without document.`);
                   continue;
                 }
@@ -805,6 +814,7 @@ exports.handler = async (event) => {
                       dueDate: invoiceRow.due_date,
                       invoiceDate: v.date || invoiceDateStr,
                       pdfUrl: finalPdfUrl,
+                      pdfBuffer: localPdfBuffer,
                     });
 
                     if (emailRes.success) {

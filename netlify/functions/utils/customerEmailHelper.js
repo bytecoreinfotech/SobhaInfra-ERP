@@ -214,7 +214,12 @@ async function getCustomerEmailDirectory(supabase, forceRefresh = false) {
 }
 
 // ── Resolve Customer Email ────────────────────────────────────────────────────
-async function resolveCustomerEmail(supabase, { companyName, clientName, phone } = {}) {
+async function resolveCustomerEmail(supabase, { companyName, clientName, phone, email } = {}) {
+  // 0. Direct email provided on voucher or party
+  if (email && typeof email === 'string' && email.includes('@')) {
+    return email.trim().toLowerCase();
+  }
+
   const directory = await getCustomerEmailDirectory(supabase);
 
   // 1. Match by normalized company name

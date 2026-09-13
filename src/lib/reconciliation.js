@@ -845,9 +845,31 @@ export function computeCompanyDebtors(invoices = [], companyName = '', masterSum
   let groups = [];
 
   if (matchedMaster?.sundry_debtors?.gross_debit !== undefined) {
-    debit = Number(matchedMaster.sundry_debtors.gross_debit || 0);
-    credit = Number(matchedMaster.sundry_debtors.gross_credit || 0);
-    groups = matchedMaster.sundry_debtors.subgroups || [];
+    const rawGroups = matchedMaster.sundry_debtors.subgroups || [];
+    // Defensive sanitization: verify subgroups against non-debtor accounts (Loans, Vehicles, Creditors, Assets)
+    const cleanGroups = rawGroups.filter(sg => {
+      const nameLower = (sg.name || '').toLowerCase().trim();
+      const isExcluded = [
+        'creditor', 'loan', 'vehicle', 'plant', 'machinery', 'building', 'land',
+        'kharchi', 'sand', 'silica', 'diesel', 'deisel', 'packing', 'staff', 'driver',
+        'maint', 'gst', 'tcs', 'tds', 'bank', 'primary', 'icipru', 'tyre',
+        'labour', 'freight', 'rent', 'printing', 'goods', 'deposit', 'sip',
+        'asset', 'liability', 'expense', 'blacklist', 'fly ash', 'spare', 'transport'
+      ].some(kw => nameLower.includes(kw));
+      if (isExcluded) return false;
+      if (nameLower.includes('debtor')) return true;
+      return SRP_DEBTOR_SUBGROUPS.has(nameLower);
+    });
+
+    if (cleanGroups.length > 0) {
+      debit = Math.round(cleanGroups.reduce((s, g) => s + Number(g.debit || 0), 0) * 100) / 100;
+      credit = Math.round(cleanGroups.reduce((s, g) => s + Number(g.credit || 0), 0) * 100) / 100;
+      groups = cleanGroups;
+    } else {
+      debit = Number(matchedMaster.sundry_debtors.gross_debit || 0);
+      credit = Number(matchedMaster.sundry_debtors.gross_credit || 0);
+      groups = rawGroups;
+    }
   } else {
     partyMap.forEach(l => {
       const parent = (l.metadata?.parent || '').trim();

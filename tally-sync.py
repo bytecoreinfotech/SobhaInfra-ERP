@@ -1288,6 +1288,11 @@ def parse_voucher_block(block, fallback_company: str = "", ledger_phone_map: dic
     if not phone_val:
         phone_val = extract_party_phone_from_voucher(block, clean_party)
 
+    email_val = (extract_tag_value(block, "BASICBUYEREMAIL") or 
+                 extract_tag_value(block, "EMAIL") or 
+                 extract_tag_value(block, "EMAILID") or 
+                 extract_tag_value(block, "PARTYEMAIL") or "").strip()
+
     return {
         "invoice_number": inv_code,
         "raw_voucher_number": str(vch_number or ""),
@@ -1296,6 +1301,7 @@ def parse_voucher_block(block, fallback_company: str = "", ledger_phone_map: dic
         "ledger_name": clean_party or "Client",
         "company_name": comp_name or fallback_company or "Tally Company",
         "phone": phone_val,
+        "email": email_val,
         "amount": amount,
         "status": status,
         "voucher_type": vch_type,     # store raw Tally voucher type
@@ -1328,6 +1334,7 @@ def parse_voucher_block(block, fallback_company: str = "", ledger_phone_map: dic
         "bill_allocations": bill_allocations,
         "metadata": {
             "credit_period_days": applied_credit_days,
+            "email": email_val,
             "voucher_type": vch_type,
             "direction": direction,
             "truck_no": truck_no,
@@ -1461,12 +1468,15 @@ def parse_ledger_block(block, fallback_company: str = "", ledger_phone_map: dict
     comp_prefix = "SB-" if "BUILDTECH" in comp_upper else ("SRP-" if "READY PLAST" in comp_upper else "")
     inv_code = f"{comp_prefix}LEDGER-{clean_name.replace(' ', '')[:12]}"
 
+    email_val = (extract_tag_value(block, "EMAIL") or extract_tag_value(block, "EMAILID") or "").strip()
+
     return {
         "invoice_number": inv_code,
         "invoice_date": datetime.now().strftime("%d-%b-%y"),
         "ledger_name": clean_name,
         "company_name": fallback_company or "Tally Company",
         "phone": phone_val,
+        "email": email_val,
         "amount": amount,
         "status": "Credit" if is_credit_advance else "Pending",
         "due_date": due_date,
@@ -1478,6 +1488,7 @@ def parse_ledger_block(block, fallback_company: str = "", ledger_phone_map: dict
             "parent": parent or "",
             "opening_balance": opening_amt,
             "closing_balance": amount,
+            "email": email_val,
             "is_credit_advance": is_credit_advance,
             "closing_balance_type": "Cr" if is_credit_advance else "Dr",
             "credit_period_days": credit_days,
@@ -1870,6 +1881,28 @@ def build_tally_master_summary(comp: str, comp_records: list) -> dict:
             is_adv = meta.get("is_credit_advance") or dir_val == "credit" or amt < 0
             party = r.get("client_name") or r.get("ledger_name") or num
             parent = meta.get("parent") or ("Customer Advances" if is_adv else "Sundry Debtors")
+            parent_lower = parent.lower().strip()
+
+            # Non-debtor accounts (Loans, Fixed Assets, Creditors, Expenses, Vehicles) must NEVER enter sundry_debtors
+            excluded_kw = [
+                'creditor', 'loan', 'vehicle', 'plant', 'machinery', 'building', 'land',
+                'kharchi', 'sand', 'silica', 'diesel', 'deisel', 'packing', 'staff', 'driver',
+                'maint', 'gst', 'tcs', 'tds', 'bank', 'primary', 'icipru', 'tyre',
+                'labour', 'freight', 'rent', 'printing', 'goods', 'deposit', 'sip',
+                'asset', 'liability', 'expense', 'blacklist', 'fly ash', 'spare', 'transport'
+            ]
+            if any(k in parent_lower for k in excluded_kw) or dir_val == "payable":
+                continue
+
+            debtor_parents = {
+                'sundry debtors', 'debtors', 'debtors 1', 'mumbai', 'thane', 'palghar',
+                'mira/bhayandar', 'bhiwandi', 'navi mumbai', 'shahpur/kalyan', 'karan',
+                'sundry debtors - stc', 'dubey ji', 'kalpesh bhai', 'customer advances',
+                'vie win enterprises', 'yadav trading company', 'vnr infratech'
+            }
+            if not ('debtor' in parent_lower or parent_lower in debtor_parents or dir_val == 'receivable' or is_adv):
+                continue
+
             abs_amt = abs(amt)
             if is_adv:
                 debtor_credit += abs_amt
