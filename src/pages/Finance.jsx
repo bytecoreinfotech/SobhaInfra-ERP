@@ -1207,7 +1207,9 @@ const Finance = () => {
                     border: '1px solid rgba(99,102,241,0.2)',
                     borderRadius: 'var(--radius-md)',
                     padding: '0.65rem 0.85rem',
-                  }}>
+                  }}
+                  title={`Mathematical Formula: Tally Gross Debit (${fmtCurrency(tallyDebitTotal)}) - Current Unpaid Invoices (${fmtCurrency(currentBillsOutstanding)}) = ${fmtCurrency(totalOpeningBalance)}`}
+                  >
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', marginBottom: '0.3rem' }}>
                       <CalendarClock size={14} style={{ color: '#6366f1' }} />
                       <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#6366f1', textTransform: 'uppercase', letterSpacing: '0.3px' }}>

@@ -3692,7 +3692,10 @@ export async function sendDirectEmail(payload) {
 
 // Fetch all email logs from Supabase with memory fallback
 export async function getEmailLogs({ limit = 50, leadId = null } = {}) {
+  let fetchedLogs = [];
+
   if (isSupabaseConfigured) {
+    // 1. Primary: query email_logs
     try {
       let q = supabase
         .from('email_logs')
@@ -3703,19 +3706,69 @@ export async function getEmailLogs({ limit = 50, leadId = null } = {}) {
       if (leadId) q = q.eq('lead_id', leadId);
 
       const { data, error } = await q;
-      if (!error && data) return { data, error: null };
+      if (!error && data && data.length > 0) {
+        fetchedLogs = data;
+      }
     } catch (e) {
-      console.warn('Supabase getEmailLogs fallback:', e.message);
+      console.warn('Supabase email_logs query notice:', e.message);
+    }
+
+    // 2. Secondary fallback: query audit_logs for email.sent actions if email_logs returned nothing
+    if (fetchedLogs.length === 0) {
+      try {
+        let aq = supabase
+          .from('audit_logs')
+          .select('*')
+          .eq('action', 'email.sent')
+          .order('created_at', { ascending: false })
+          .limit(limit);
+
+        if (leadId) aq = aq.eq('resource_id', leadId);
+
+        const { data: auditData, error: auditErr } = await aq;
+        if (!auditErr && auditData && auditData.length > 0) {
+          fetchedLogs = auditData.map(a => ({
+            id: a.id,
+            created_at: a.created_at,
+            recipient_email: a.payload?.recipient_email || a.payload?.to || 'Client',
+            recipient_name: a.payload?.recipient_name || '',
+            sender_email: a.payload?.sender_email || 'abhayk7481@gmail.com',
+            sender_name: a.payload?.sender_name || 'Sobha Infratech Pvt. Ltd.',
+            subject: a.payload?.subject || 'Tax Invoice / Payment Reminder',
+            body_text: a.payload?.body_text || a.payload?.subject || '',
+            body_html: a.payload?.body_html || `<p>${a.payload?.subject || ''}</p>`,
+            template_used: a.payload?.template_used || 'Email Dispatch',
+            status: a.payload?.status || 'SENT',
+            sent_by_name: a.payload?.sender_name || 'Sobha Sales Team',
+            metadata: a.payload || {},
+          }));
+        }
+      } catch (ae) {
+        console.warn('audit_logs email fallback notice:', ae.message);
+      }
     }
   }
 
-  // Local storage / mock fallback
-  const localLogs = JSON.parse(localStorage.getItem('erppro_email_logs') || '[]');
-  let filtered = localLogs;
-  if (leadId) {
-    filtered = localLogs.filter(l => l.lead_id === leadId);
-  }
-  return { data: filtered.slice(0, limit), error: null };
+  // 3. Merge with local storage fallback
+  try {
+    const localLogs = JSON.parse(localStorage.getItem('erppro_email_logs') || '[]');
+    let filteredLocal = localLogs;
+    if (leadId) {
+      filteredLocal = localLogs.filter(l => l.lead_id === leadId);
+    }
+
+    const seen = new Set(fetchedLogs.map(l => l.id || l.created_at));
+    filteredLocal.forEach(ll => {
+      const key = ll.id || ll.created_at;
+      if (!seen.has(key)) {
+        fetchedLogs.push(ll);
+        seen.add(key);
+      }
+    });
+  } catch (_) {}
+
+  fetchedLogs.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+  return { data: fetchedLogs.slice(0, limit), error: null };
 }
 
 // Record local email log in case offline

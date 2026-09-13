@@ -475,6 +475,23 @@ async function sendInvoiceEmail(supabase, {
           sent_by_name: smtp.fromName,
           metadata: { messageId: info.messageId, invoice_number: invNum, response: info.response },
         }]);
+        try {
+          await supabase.from('audit_logs').insert([{
+            action: 'email.sent',
+            resource: 'email',
+            payload: {
+              recipient_email: to,
+              recipient_name: recipientName,
+              sender_email: smtp.fromEmail,
+              sender_name: smtp.fromName,
+              subject,
+              template_used: 'Auto Invoice Dispatch',
+              status: 'SENT',
+              messageId: info.messageId,
+              invoice_number: invNum,
+            }
+          }]);
+        } catch (_) {}
       } catch (logErr) {
         console.warn('[customerEmailHelper] email_logs insert notice:', logErr.message);
       }
@@ -704,6 +721,24 @@ async function sendPaymentReminderEmail(supabase, {
           sent_by_name: smtp.fromName,
           metadata: { messageId: info.messageId, invoice_number: invNum, reminder_number: reminderNum },
         }]);
+        try {
+          await supabase.from('audit_logs').insert([{
+            action: 'email.sent',
+            resource: 'email',
+            payload: {
+              recipient_email: to,
+              recipient_name: recipientName,
+              sender_email: smtp.fromEmail,
+              sender_name: smtp.fromName,
+              subject,
+              template_used: 'Payment Reminder',
+              status: 'SENT',
+              messageId: info.messageId,
+              invoice_number: invNum,
+              reminder_number: reminderNum,
+            }
+          }]);
+        } catch (_) {}
       } catch (logErr) {
         console.warn('[customerEmailHelper] email_logs insert notice:', logErr.message);
       }

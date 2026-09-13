@@ -1001,7 +1001,10 @@ export function computeTallyDebtors(invoices = [], activeCompany = null, isConso
  * Reads from authoritative Tally Register if available, or dynamically groups activeBills by month.
  */
 export function computeMonthlyRegister(bills = [], isPayables = false, masterRegister = null) {
-  if (masterRegister?.monthly?.length > 0) {
+  const hasValidMasterMonthly = masterRegister?.monthly?.length > 0 &&
+    masterRegister.monthly.some(m => Number(isPayables ? (m.debit || m.credit || 0) : (m.credit || m.debit || 0)) > 0);
+
+  if (hasValidMasterMonthly) {
     const list = masterRegister.monthly;
     const peak = Math.max(...list.map(m => Number(isPayables ? (m.debit || m.credit || 0) : (m.credit || m.debit || 0))), 1);
     const total = list.reduce((s, m) => s + Number(isPayables ? (m.debit || m.credit || 0) : (m.credit || m.debit || 0)), 0);

@@ -238,6 +238,26 @@ exports.handler = async function (event) {
         metadata: { messageId: info.messageId, response: info.response },
       }]);
 
+      // Dual-logging: also record in audit_logs so emails are visible even if email_logs table is missing
+      try {
+        await sb.from('audit_logs').insert([{
+          action: 'email.sent',
+          resource: 'email',
+          resource_id: leadId || null,
+          payload: {
+            recipient_email: to,
+            recipient_name: recipientName || '',
+            sender_email: fromEmail,
+            sender_name: fromName,
+            subject,
+            template_used: templateUsed || 'Custom',
+            status: 'SENT',
+            messageId: info.messageId,
+            body_text: text || '',
+          }
+        }]);
+      } catch (_) {}
+
       // If linked to a lead, also append to CRM activities feed
       if (leadId) {
         try {
