@@ -31,6 +31,7 @@ function normalizePhone(phone) {
 
 const { buildExactInvoicePdf } = require('./utils/invoicePdfGenerator');
 const generateInvoicePdfBuffer = buildExactInvoicePdf;
+const { resolveCustomerEmail, sendInvoiceEmail } = require('./utils/customerEmailHelper');
 
 exports.handler = async (event) => {
   const cors = {
@@ -66,6 +67,8 @@ exports.handler = async (event) => {
       upsertedInvoices: 0,
       mappedLedgers: 0,
       unmappedLedgers: 0,
+      autoSentWhatsApp: 0,
+      autoSentEmail: 0,
       errors: [],
     };
 
@@ -409,10 +412,16 @@ exports.handler = async (event) => {
             const isRecentInvoice = diffHours >= -12 && diffHours <= 48;
 
             // Rule 2: Idempotency Guard — never re-send if already successfully dispatched WITH PDF
-            const isAlreadyDispatched = Boolean(
+            // Rule 2: Idempotency Guard — check both WhatsApp and Email separately
+            const isAlreadyDispatchedWhatsApp = Boolean(
               (existing?.metadata?.first_dispatched_at || existing?.metadata?.auto_dispatched_at) &&
               existing?.metadata?.dispatch_status !== 'failed' &&
               (existing?.pdf_url || existing?.metadata?.pdf_url)
+            );
+
+            const isAlreadyDispatchedEmail = Boolean(
+              existing?.metadata?.auto_email_dispatched_at &&
+              existing?.metadata?.email_dispatch_status !== 'failed'
             );
 
             // Rule 3: Must be a genuine Sales / Tax Invoice (never purchase/payment)
@@ -421,13 +430,31 @@ exports.handler = async (event) => {
               /^(srp|sb|inv|tax)[-/]/i.test(invNum) ||
               /sales/i.test(invNum);
 
-            // Rule 4: Authoritative Google Sheet Phone Verification (resolved above)
+            // Rule 4: Authoritative Google Sheet Phone & Email Verification
             const targetPhone = resolvedClientPhone || invoiceRow.client_phone || existing?.client_phone;
+            const clientDisplayName = verifiedSheetName || v.ledger_name || 'Customer';
+            const company = v.company_name || companyName || 'SHOBHA READY PLAST';
 
-            const canAutoDispatch = isRecentInvoice &&
-              !isAlreadyDispatched &&
+            let targetEmail = null;
+            try {
+              targetEmail = await resolveCustomerEmail(supabase, {
+                companyName: v.ledger_name || clientDisplayName || company,
+                clientName: clientDisplayName,
+                phone: targetPhone,
+              });
+            } catch (_) {}
+
+            const canAutoDispatchWhatsApp = isRecentInvoice &&
+              !isAlreadyDispatchedWhatsApp &&
               isSalesInvoice &&
               Boolean(targetPhone);
+
+            const canAutoDispatchEmail = isRecentInvoice &&
+              !isAlreadyDispatchedEmail &&
+              isSalesInvoice &&
+              Boolean(targetEmail);
+
+            const canAutoDispatch = canAutoDispatchWhatsApp || canAutoDispatchEmail;
 
             if (canAutoDispatch) {
               try {
@@ -503,9 +530,9 @@ exports.handler = async (event) => {
                   'Authorization': `Bearer ${WA_TOKEN_LOCAL}`,
                   'Content-Type': 'application/json',
                 };
-                const cleanPhone = String(targetPhone).replace(/[^\d]/g, '');
+                const cleanPhone = String(targetPhone || '').replace(/[^\d]/g, '');
 
-                if (WA_TOKEN_LOCAL && PHONE_ID_LOCAL) {
+                if (canAutoDispatchWhatsApp && cleanPhone && WA_TOKEN_LOCAL && PHONE_ID_LOCAL) {
                   let wamid = null;
                   let sentViaTemplate = false;
 
@@ -730,16 +757,54 @@ exports.handler = async (event) => {
                   console.log(`[AutoSend Guard] Verified new invoice ${invNum} safely auto-dispatched to ${targetPhone}`);
                   results.autoSentWhatsApp = (results.autoSentWhatsApp || 0) + 1;
                 }
+
+                // ── 5b. Automated Invoice Email Dispatch (Google Sheet Email) ───────────
+                if (canAutoDispatchEmail && targetEmail) {
+                  try {
+                    console.log(`[AutoSend Guard] Customer email resolved (${targetEmail}) for invoice ${invNum}. Dispatching invoice email...`);
+                    const emailRes = await sendInvoiceEmail(supabase, {
+                      to: targetEmail,
+                      recipientName: clientDisplayName || 'Valued Customer',
+                      companyName: company,
+                      invNum,
+                      amount: invoiceRow.amount,
+                      dueDate: invoiceRow.due_date,
+                      invoiceDate: v.date || invoiceDateStr,
+                      pdfUrl: finalPdfUrl,
+                    });
+
+                    if (emailRes.success) {
+                      console.log(`[AutoSend Guard] Auto-dispatched invoice email to ${targetEmail} for ${invNum}`);
+                      results.autoSentEmail = (results.autoSentEmail || 0) + 1;
+                      try {
+                        const nowDispatched = new Date().toISOString();
+                        const updatedMeta = {
+                          ...(invoiceRow.metadata || {}),
+                          pdf_url: finalPdfUrl,
+                          auto_email_dispatched_at: nowDispatched,
+                          auto_email_dispatched_to: targetEmail,
+                          email_dispatch_status: emailRes.simulated ? 'simulated' : 'sent',
+                          email_message_id: emailRes.messageId || null,
+                        };
+                        await supabase.from('invoices').update({
+                          metadata: updatedMeta,
+                        }).eq('tally_voucher_number', invNum);
+                      } catch (metaErr) {}
+                    }
+                  } catch (mailErr) {
+                    console.warn('[AutoSend Guard] Non-fatal email dispatch exception:', mailErr.message);
+                  }
+                }
               } catch (waSendErr) {
-                console.warn('[AutoSend Guard] Non-fatal WhatsApp dispatch error:', waSendErr.message);
+                console.warn('[AutoSend Guard] Non-fatal dispatch error:', waSendErr.message);
               }
             } else {
               if (isBulkSync) {
                 // Silently skip bulk batch
               } else if (!isRecentInvoice) {
                 console.log(`[AutoSend Guard] Invoice ${invNum} dated ${invoiceDateStr} is older than 48h. Auto-dispatch skipped.`);
-              } else if (isAlreadyDispatched) {
-                console.log(`[AutoSend Guard] Invoice ${invNum} was already dispatched previously. Skipped.`);
+              } else if (isAlreadyDispatchedWhatsApp && isAlreadyDispatchedEmail) {
+                console.log(`[AutoSend Guard] Invoice ${invNum} was already dispatched previously via WhatsApp & Email. Skipped.`);
               }
             }
           } else {

@@ -1,17 +1,21 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 
 /**
  * GlobalTooltip
  * 
  * Provides an unclipped, high-z-index, portal-rendered tooltip across the entire ERP.
- * Solves:
- * 1. Tooltips being overlapped or chopped off by table overflow-x: auto, cards, or sticky headers.
- * 2. Tooltips overflowing beyond the viewport left/right/top boundaries.
- * 3. Works seamlessly with existing data-tooltip="..." and title="..." attributes.
+ * Bulletproof positioning:
+ * 1. Dynamically measures real rendered width & height of the tooltip.
+ * 2. Checks available viewport space in all 4 directions (top, bottom, left, right).
+ * 3. Auto-flips to the side with maximum clearance if requested side doesn't fit.
+ * 4. Clamps strictly within [10px, viewportWidth - 10px] and [10px, viewportHeight - 10px].
+ * 5. Prevents any overlapping or truncation by screen edges, sidebars, or tables.
  */
 export default function GlobalTooltip() {
   const [tooltip, setTooltip] = useState(null);
+  const [coords, setCoords] = useState(null);
+  const tooltipRef = useRef(null);
   const showTimerRef = useRef(null);
   const hideTimerRef = useRef(null);
   const activeElRef = useRef(null);
@@ -33,7 +37,7 @@ export default function GlobalTooltip() {
         if (rawTitle && rawTitle.trim()) {
           text = rawTitle.trim();
           target.setAttribute('data-tooltip-original-title', text);
-          target.removeAttribute('title'); // Suppress native ugly browser tooltip
+          target.removeAttribute('title'); // Suppress native browser tooltip
         }
       } else if (!text && target.hasAttribute('data-tooltip-original-title')) {
         text = target.getAttribute('data-tooltip-original-title');
@@ -71,6 +75,7 @@ export default function GlobalTooltip() {
       activeElRef.current = null;
       hideTimerRef.current = setTimeout(() => {
         setTooltip(null);
+        setCoords(null);
       }, 60);
     }
 
@@ -79,6 +84,7 @@ export default function GlobalTooltip() {
       clearTimeout(hideTimerRef.current);
       activeElRef.current = null;
       setTooltip(null);
+      setCoords(null);
     }
 
     document.addEventListener('mouseover', handleMouseOver, true);
@@ -94,24 +100,103 @@ export default function GlobalTooltip() {
     };
   }, []);
 
+  // Dynamically compute exact pixel placement with boundary clamping
+  useLayoutEffect(() => {
+    if (!tooltip || !tooltipRef.current) {
+      setCoords(null);
+      return;
+    }
+
+    const { rect, pos } = tooltip;
+    const tooltipEl = tooltipRef.current;
+    const tooltipRect = tooltipEl.getBoundingClientRect();
+    const tooltipW = tooltipRect.width;
+    const tooltipH = tooltipRect.height;
+
+    const viewportW = window.innerWidth;
+    const viewportH = window.innerHeight;
+    const margin = 8;
+    const paddingEdge = 10;
+
+    const spaceAbove = rect.top;
+    const spaceBelow = viewportH - rect.bottom;
+    const spaceLeft = rect.left;
+    const spaceRight = viewportW - rect.right;
+
+    let chosenPos = pos;
+
+    // Smart placement flipping based on available space
+    if (chosenPos === 'top') {
+      if (spaceAbove < tooltipH + margin && spaceBelow >= tooltipH + margin) {
+        chosenPos = 'bottom';
+      }
+    } else if (chosenPos === 'bottom') {
+      if (spaceBelow < tooltipH + margin && spaceAbove >= tooltipH + margin) {
+        chosenPos = 'top';
+      }
+    } else if (chosenPos === 'left') {
+      if (spaceLeft < tooltipW + margin) {
+        if (spaceRight >= tooltipW + margin) {
+          chosenPos = 'right';
+        } else {
+          // If neither side fits horizontally, flip to vertical
+          chosenPos = spaceAbove >= spaceBelow ? 'top' : 'bottom';
+        }
+      }
+    } else if (chosenPos === 'right') {
+      if (spaceRight < tooltipW + margin) {
+        if (spaceLeft >= tooltipW + margin) {
+          chosenPos = 'left';
+        } else {
+          chosenPos = spaceAbove >= spaceBelow ? 'top' : 'bottom';
+        }
+      }
+    }
+
+    let finalLeft = 0;
+    let finalTop = 0;
+
+    if (chosenPos === 'top' || chosenPos === 'bottom') {
+      // Horizontally center relative to trigger element
+      const centerX = rect.left + rect.width / 2;
+      const idealLeft = centerX - tooltipW / 2;
+      // Clamp strictly within viewport
+      finalLeft = Math.max(paddingEdge, Math.min(viewportW - tooltipW - paddingEdge, idealLeft));
+
+      if (chosenPos === 'top') {
+        finalTop = Math.max(paddingEdge, rect.top - tooltipH - margin);
+      } else {
+        finalTop = Math.min(viewportH - tooltipH - paddingEdge, rect.bottom + margin);
+      }
+    } else {
+      // 'left' or 'right'
+      const centerY = rect.top + rect.height / 2;
+      const idealTop = centerY - tooltipH / 2;
+      // Clamp strictly within viewport
+      finalTop = Math.max(paddingEdge, Math.min(viewportH - tooltipH - paddingEdge, idealTop));
+
+      if (chosenPos === 'left') {
+        finalLeft = Math.max(paddingEdge, rect.left - tooltipW - margin);
+      } else {
+        finalLeft = Math.min(viewportW - tooltipW - paddingEdge, rect.right + margin);
+      }
+    }
+
+    setCoords({
+      left: Math.round(finalLeft),
+      top: Math.round(finalTop),
+    });
+  }, [tooltip]);
+
   if (!tooltip) return null;
-
-  const { text, rect, pos } = tooltip;
-  const viewportW = window.innerWidth;
-  const viewportH = window.innerHeight;
-
-  // Auto-flip if near edge
-  let preferredPos = pos;
-  if (preferredPos === 'top' && rect.top < 46) preferredPos = 'bottom';
-  else if (preferredPos === 'bottom' && rect.bottom > viewportH - 46) preferredPos = 'top';
-  else if (preferredPos === 'left' && rect.left < 150) preferredPos = 'right';
-  else if (preferredPos === 'right' && rect.right > viewportW - 150) preferredPos = 'left';
 
   const style = {
     position: 'fixed',
+    left: coords ? `${coords.left}px` : '-9999px',
+    top: coords ? `${coords.top}px` : '-9999px',
     zIndex: 9999999,
     pointerEvents: 'none',
-    maxWidth: 'min(300px, calc(100vw - 24px))',
+    maxWidth: 'min(340px, calc(100vw - 20px))',
     width: 'max-content',
     background: 'rgba(15, 23, 42, 0.96)',
     backdropFilter: 'blur(8px)',
@@ -120,46 +205,21 @@ export default function GlobalTooltip() {
     fontSize: '0.74rem',
     fontWeight: 500,
     lineHeight: 1.35,
-    padding: '0.38rem 0.68rem',
+    padding: '0.4rem 0.72rem',
     borderRadius: '7px',
     border: '1px solid rgba(255, 255, 255, 0.16)',
     boxShadow: '0 10px 25px -3px rgba(0, 0, 0, 0.45), 0 4px 10px -2px rgba(0, 0, 0, 0.25)',
     wordBreak: 'break-word',
     whiteSpace: 'normal',
     textAlign: 'center',
-    animation: 'globalTooltipFadeIn 0.12s ease-out',
-    transition: 'opacity 0.1s ease',
+    opacity: coords ? 1 : 0,
+    transform: 'none',
+    transition: 'opacity 0.08s ease',
   };
 
-  if (preferredPos === 'top') {
-    const rawLeft = rect.left + rect.width / 2;
-    const clampedLeft = Math.max(130, Math.min(viewportW - 130, rawLeft));
-    style.left = `${clampedLeft}px`;
-    style.top = `${Math.max(10, rect.top - 8)}px`;
-    style.transform = 'translate(-50%, -100%)';
-  } else if (preferredPos === 'bottom') {
-    const rawLeft = rect.left + rect.width / 2;
-    const clampedLeft = Math.max(130, Math.min(viewportW - 130, rawLeft));
-    style.left = `${clampedLeft}px`;
-    style.top = `${Math.min(viewportH - 10, rect.bottom + 8)}px`;
-    style.transform = 'translate(-50%, 0)';
-  } else if (preferredPos === 'left') {
-    const rawTop = rect.top + rect.height / 2;
-    const clampedTop = Math.max(20, Math.min(viewportH - 20, rawTop));
-    style.left = `${Math.max(12, rect.left - 8)}px`;
-    style.top = `${clampedTop}px`;
-    style.transform = 'translate(-100%, -50%)';
-  } else if (preferredPos === 'right') {
-    const rawTop = rect.top + rect.height / 2;
-    const clampedTop = Math.max(20, Math.min(viewportH - 20, rawTop));
-    style.left = `${Math.min(viewportW - 12, rect.right + 8)}px`;
-    style.top = `${clampedTop}px`;
-    style.transform = 'translate(0, -50%)';
-  }
-
   return createPortal(
-    <div style={style}>
-      {text}
+    <div ref={tooltipRef} style={style}>
+      {tooltip.text}
     </div>,
     document.body
   );

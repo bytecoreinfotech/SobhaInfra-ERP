@@ -1299,7 +1299,11 @@ def parse_ledger_block(block, fallback_company: str = "", ledger_phone_map: dict
     # Positive value without minus (e.g. '6449.00' or '... Cr') = CREDIT balance (Advance from customer, negative in ERP)
     is_credit_advance = False
     parent_check = (parent or '').lower()
-    if 'debtor' in parent_check or 'bhiwandi' in parent_check or 'mumbai' in parent_check or 'thane' in parent_check:
+    debtor_subgroups = {'debtor', 'sundry debtors', 'sundry debtors - stc', 'mumbai', 'thane', 'palghar', 
+                        'debtors 1', 'dubey ji', 'mira/bhayandar', 'karan', 'kalpesh bhai', 'shahpur/kalyan', 
+                        'bhiwandi', 'navi mumbai', 'vie win enterprises', 'yadav trading company', 'vnr infratech'}
+    is_debtor_group = any(g in parent_check for g in debtor_subgroups)
+    if is_debtor_group:
         if is_cl_cr or (amount > 0 and not is_cl_neg and not is_cl_dr and not raw_str_cl.startswith('-')):
             is_credit_advance = True
 
@@ -1371,7 +1375,7 @@ def parse_ledger_block(block, fallback_company: str = "", ledger_phone_map: dict
     parent_lower = (parent or '').lower()
     if 'sundry creditor' in parent_lower or 'creditor' in parent_lower:
         dir_val = 'payable'
-    elif 'sundry debtor' in parent_lower or 'debtor' in parent_lower:
+    elif is_debtor_group or 'sundry debtor' in parent_lower or 'debtor' in parent_lower:
         dir_val = 'credit' if is_credit_advance else 'receivable'
     else:
         dir_val = ''

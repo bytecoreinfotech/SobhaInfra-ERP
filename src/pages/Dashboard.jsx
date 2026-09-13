@@ -8,10 +8,10 @@ import {
   Download, Printer, FileSpreadsheet, FileText, ExternalLink, X,
   RotateCcw, ShieldCheck
 } from 'lucide-react';
-import { getDashboardStats, getActivityFeed, getTasks, getLeads, getCampaigns, getInvoices, getTeamMembers, getEmployeeLivePings, getSiteVisits, getCustomerMaster, triggerSheetSync, invalidateCustomerMasterCache } from '../lib/db';
+import { getDashboardStats, getActivityFeed, getTasks, getLeads, getCampaigns, getInvoices, getTeamMembers, getEmployeeLivePings, getSiteVisits, getCustomerMaster, triggerSheetSync, invalidateCustomerMasterCache, invalidateInvoicesCache } from '../lib/db';
 import { buildCustomerIndex, matchCustomer } from '../lib/customerMatcher';
 import { reconcileCustomerInvoices, isSalesVoucher, isReceiptVoucher, isPurchaseVoucher, computeTallyDebtors } from '../lib/reconciliation';
-import { isSupabaseConfigured } from '../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { useCompany } from '../context/CompanyContext';
 import { Skeleton, SkeletonStats } from '../components/Skeleton';
@@ -121,7 +121,24 @@ const Dashboard = () => {
   });
   const [selectedFYStart, setSelectedFYStart] = useState(_curFYStart);
 
-  useEffect(() => { loadData(); }, []);
+  useEffect(() => {
+    loadData();
+
+    if (!isSupabaseConfigured) return;
+    const channel = supabase
+      .channel('realtime:dashboard_invoices')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'invoices' }, () => {
+        invalidateInvoicesCache();
+        getInvoices({ forceRefresh: true }).then(invRes => {
+          if (invRes?.data) setAllInvoices(invRes.data);
+        });
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
 
   // Build memoized customer index for 100% strict Google Sheet customer verification
   const customerIndex = useMemo(() => buildCustomerIndex(customerMaster), [customerMaster]);
@@ -145,19 +162,20 @@ const Dashboard = () => {
   }, [reconciledInvoices, activeCompany, isConsolidated]);
 
 
-  const loadData = async () => {
+  const loadData = async (isForce = false) => {
     setLoading(true);
+    if (isForce) invalidateInvoicesCache();
     const [statsRes, actRes, taskRes, leadRes, campRes, invRes, membersRes, liveRes, visitsRes, masterRes] = await Promise.all([
       getDashboardStats(),
       getActivityFeed(8),
       getTasks(),
       getLeads(),
       getCampaigns(),
-      getInvoices(),
+      getInvoices({ forceRefresh: isForce }),
       getTeamMembers(),
       getEmployeeLivePings(),
       getSiteVisits(),
-      getCustomerMaster(),
+      getCustomerMaster({ forceRefresh: isForce }),
     ]);
     if (statsRes.data) setStats(statsRes.data);
     setActivities(actRes.data || []);

@@ -79,12 +79,14 @@ function parseCSV(text) {
   const compIdx = headers.findIndex(h => h.includes('company'));
   const custIdx = headers.findIndex(h => h.includes('customer') || h.includes('person') || h.includes('contact name'));
   const phoneIdx = headers.findIndex(h => h.includes('phone') || h.includes('mobile') || h.includes('contact number') || h.includes('number'));
+  const emailIdx = headers.findIndex(h => h.includes('email') || h.includes('mail') || h.includes('e-mail'));
 
   return rows.slice(1).map(cols => {
     return {
       'Company Name': (compIdx >= 0 ? cols[compIdx] : cols[0]) || '',
       'Customer Name': (custIdx >= 0 ? cols[custIdx] : cols[1]) || '',
       'Contact Number': (phoneIdx >= 0 ? cols[phoneIdx] : cols[2]) || '',
+      'Email Address': (emailIdx >= 0 ? cols[emailIdx] : (cols[3] || '')) || '',
     };
   }).filter(r => (r['Company Name'] || '').trim().length > 0);
 }
@@ -124,24 +126,61 @@ exports.handler = async (event) => {
     // Build rows (deduplicate strictly by exact alphanumeric company name)
     const seenNames = new Set();
     const rows = [];
+    const emailDirectory = {};
+
     parsed.forEach((row, i) => {
       const company = (row['Company Name'] || '').trim();
+      const rawEmail = (row['Email Address'] || '').trim();
+      const email = rawEmail.includes('@') ? rawEmail.toLowerCase() : null;
+
       if (!company) return;
       const identityKey = company.toLowerCase().replace(/[^a-z0-9]/g, '');
       if (!identityKey || seenNames.has(identityKey)) return;
       seenNames.add(identityKey);
 
       const nk = normalizeName(company);
+      const normalizedPhone = normalizePhone(row['Contact Number']) || null;
+
       rows.push({
         organization_id:  ORG_ID,
         company_name:     company,
         contact_person:   (row['Customer Name'] || '').trim() || null,
-        contact_number:   normalizePhone(row['Contact Number']) || null,
+        contact_number:   normalizedPhone,
         normalized_key:   nk || identityKey,
         sheet_row_index:  i + 2,
         last_synced_at:   new Date().toISOString(),
       });
+
+      if (email) {
+        const entry = {
+          email,
+          company_name: company,
+          contact_person: (row['Customer Name'] || '').trim() || null,
+          contact_number: normalizedPhone,
+        };
+        emailDirectory[identityKey] = entry;
+        if (nk && nk !== identityKey) {
+          emailDirectory[nk] = entry;
+        }
+        if (normalizedPhone) {
+          const digits = normalizedPhone.replace(/\D/g, '').slice(-10);
+          if (digits) emailDirectory[`phone_${digits}`] = email;
+        }
+      }
     });
+
+    // Save emailDirectory into org_settings under customer_email_directory
+    try {
+      await supabase.from('org_settings').upsert({
+        organization_id: ORG_ID,
+        key: 'customer_email_directory',
+        value: JSON.stringify(emailDirectory),
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'organization_id,key' });
+      console.log(`[sync-customer-master] Saved ${Object.keys(emailDirectory).length} customer emails to org_settings`);
+    } catch (dirErr) {
+      console.warn('[sync-customer-master] Email directory save notice:', dirErr.message);
+    }
 
     // Delete old records and insert fresh
     await supabase.from('customer_master').delete().eq('organization_id', ORG_ID);

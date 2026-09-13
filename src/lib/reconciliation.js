@@ -353,10 +353,26 @@ export function reconcileCustomerInvoices(rawInvoices = []) {
           s.paid_amount = Number(s.amount || 0);
         }
       } else if (effectiveClosingBalance < currentPendingSum) {
-        // Tally reflects lower pending amount than current bills
+        // Tally reflects lower pending amount than current bills.
+        // Apply Tally closing balance only to bills that were part of the ledger sync snapshot.
+        // Newly created / synced bills after the ledger snapshot retain their true pending amount.
+        const ledgerSyncTime = ledgerMarker ? parseDate(ledgerMarker.metadata?.synced_at || ledgerMarker.created_at).getTime() : 0;
+        const preSyncBills = [];
+        const postSyncBills = [];
+
+        salesInvoices.forEach(s => {
+          const sTime = parseDate(s.metadata?.synced_at || s.created_at || s.invoice_date).getTime();
+          if (ledgerSyncTime > 0 && sTime > ledgerSyncTime + 60000) {
+            postSyncBills.push(s);
+          } else {
+            preSyncBills.push(s);
+          }
+        });
+
+        const targetBills = preSyncBills.length > 0 ? preSyncBills : salesInvoices;
         let allowedPending = effectiveClosingBalance;
-        for (let i = salesInvoices.length - 1; i >= 0; i--) {
-          const inv = salesInvoices[i];
+        for (let i = targetBills.length - 1; i >= 0; i--) {
+          const inv = targetBills[i];
           const curPending = Number(inv.pending_amount || 0);
           if (curPending <= 0) continue;
 
@@ -766,37 +782,19 @@ export function getCustomerPendingBills(partyName, allInvoices = []) {
   };
 }
 
-// Exact verified Tally Prime registry for Shobha Ready Plast (100% verified by client)
-export const SRP_TALLY_DEBTORS = {
-  debit: 23781962.61,
-  credit: 1163382.51,
-  net: 22618580.10,
-  groups: [
-    { name: 'Mumbai', debit: 10246811.35, credit: 204045.00, net: 10042766.35 },
-    { name: 'Thane', debit: 3248130.84, credit: 1.00, net: 3248129.84 },
-    { name: 'Debtors 1', debit: 2555896.98, credit: 20.00, net: 2555876.98 },
-    { name: 'Dubey Ji', debit: 2277071.75, credit: 0, net: 2277071.75 },
-    { name: 'Mira/bhayandar', debit: 1806494.81, credit: 0, net: 1806494.81 },
-    { name: 'Palghar', debit: 1167495.40, credit: 67931.00, net: 1099564.40 },
-    { name: 'Debtors', debit: 698555.00, credit: 4215.51, net: 694339.49 },
-    { name: 'Karan', debit: 642293.48, credit: 0, net: 642293.48 },
-    { name: 'KALPESH BHAI', debit: 296940.50, credit: 0, net: 296940.50 },
-    { name: 'Shahpur/kalyan', debit: 265652.75, credit: 88000.00, net: 177652.75 },
-    { name: 'VIE WIN ENTERPRISES', debit: 135450.00, credit: 0, net: 135450.00 },
-    { name: 'YADAV TRADING COMPANY', debit: 129018.75, credit: 0, net: 129018.75 },
-    { name: 'Sundry Debtors - STC', debit: 101329.00, credit: 0, net: 101329.00 },
-    { name: 'Bhiwandi', debit: 89729.00, credit: 3098.00, net: 86631.00 },
-    { name: 'VNR INFRATECH', debit: 85050.00, credit: 0, net: 85050.00 },
-    { name: 'Navi Mumbai', debit: 82418.00, credit: 1.00, net: 82417.00 },
-    { name: 'Sales Bills to Make', debit: -46375.00, credit: 0, net: -46375.00 },
-    { name: 'Direct Customer Advances', debit: 0, credit: 796071.00, net: -796071.00 },
-  ]
-};
+// Verified Tally Prime regional & category debtor subgroups for Shobha Ready Plast
+const SRP_DEBTOR_SUBGROUPS = new Set([
+  'mumbai', 'thane', 'debtors 1', 'dubey ji', 'mira/bhayandar', 
+  'palghar', 'debtors', 'karan', 'kalpesh bhai', 'shahpur/kalyan', 
+  'sundry debtors', 'sundry debtors - stc', 'bhiwandi', 'navi mumbai',
+  'vie win enterprises', 'yadav trading company', 'vnr infratech'
+]);
 
 /**
  * Dynamic Tally Debtors and Customer Advances computation
  * Robustly calculates customer gross debit, advances (credit), and net outstanding
- * from live Tally-synced ledger balances for any selected company or consolidated.
+ * from live Tally-synced ledger balances and sales vouchers for any selected company or consolidated.
+ * Pure dynamic computation with ZERO hardcoded values.
  */
 export function computeCompanyDebtors(invoices = [], companyName = '') {
   const compUpper = (companyName || '').toUpperCase();
@@ -804,16 +802,13 @@ export function computeCompanyDebtors(invoices = [], companyName = '') {
   const isReadyPlast = compUpper.includes('READY PLAST') || 
                       (compUpper.includes('SHOBHA') && !isBuildtech && !compUpper.includes('TECH'));
 
-  if (isReadyPlast) {
-    return SRP_TALLY_DEBTORS;
-  }
-
-  // Filter LEDGER-* records belonging to this company (including SB-LEDGER- and SRP-LEDGER-)
+  // 1. Filter LEDGER-* records belonging to this company (including SB-LEDGER- and SRP-LEDGER-)
   const compLedgers = invoices.filter(inv => {
     const num = (inv?.invoice_number || '').toUpperCase();
     if (!num.includes('LEDGER-')) return false;
     const c = (inv.company_name || inv.metadata?.tally_company || '').toUpperCase();
     if (isBuildtech) return c.includes('BUILDTECH');
+    if (isReadyPlast) return c.includes('READY PLAST') || (c.includes('SHOBHA') && !c.includes('BUILDTECH') && !c.includes('TECH'));
     return compUpper ? c.includes(compUpper) : true;
   });
 
@@ -839,11 +834,11 @@ export function computeCompanyDebtors(invoices = [], companyName = '') {
     const parentLower = parent.toLowerCase();
     const dir = (l.direction || l.metadata?.direction || '').toLowerCase();
 
-    // Check if debtor ledger
+    // Check if debtor ledger: matches Sundry Debtors, includes debtor, or matches Ready Plast debtor sub-groups
     const isDebtor = parent === 'Sundry Debtors' || 
                      parentLower.includes('debtor') || 
+                     SRP_DEBTOR_SUBGROUPS.has(parentLower) ||
                      dir === 'receivable' ||
-                     dir === 'credit' ||
                      l.metadata?.is_credit_advance;
 
     // Exclude non-debtor accounts (creditors, expenses, drivers, loans, bank, assets, tax)
@@ -878,68 +873,49 @@ export function computeCompanyDebtors(invoices = [], companyName = '') {
     }
   });
 
+  // Dynamic incorporation of newly created or synced sales invoices
+  const salesInvoices = invoices.filter(inv => {
+    const num = (inv?.invoice_number || '').toUpperCase();
+    if (num.includes('LEDGER-') || num.startsWith('OP-')) return false;
+    const c = (inv.company_name || inv.metadata?.tally_company || '').toUpperCase();
+    const matchComp = isBuildtech ? c.includes('BUILDTECH') : (isReadyPlast ? (c.includes('READY PLAST') || (c.includes('SHOBHA') && !c.includes('BUILDTECH') && !c.includes('TECH'))) : (compUpper ? c.includes(compUpper) : true));
+    if (!matchComp) return false;
+    const vtype = (inv.voucher_type || inv.metadata?.voucher_type || '').toLowerCase();
+    return vtype.includes('sales') || /^(srp|sb)\//i.test(num);
+  });
+
+  let unmappedSalesDebit = 0;
+  salesInvoices.forEach(s => {
+    const rawName = s.client_name || s.party_name || '';
+    const normKey = rawName.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (normKey && !partyMap.has(normKey)) {
+      if (s.status !== 'Paid') {
+        const pAmt = Number(s.pending_amount !== undefined ? s.pending_amount : s.amount) || 0;
+        unmappedSalesDebit += pAmt;
+      }
+    }
+  });
+
+  debit += unmappedSalesDebit;
+
   groups.sort((a, b) => b.net - a.net);
 
-  // Baseline fallback if ledgers are still loading (Official Tally closing balances 1-Apr-26 to 7-Sep-26)
-  const finalDebit = debit > 0 ? debit : (isBuildtech ? 20795444.18 : 0);
-  const finalCredit = credit > 0 ? credit : (isBuildtech ? 8275.78 : 0);
+  const finalDebit = debit;
+  const finalCredit = credit;
   const finalNet = Math.round((finalDebit - finalCredit) * 100) / 100;
 
   return {
     debit: Math.round(finalDebit * 100) / 100,
     credit: Math.round(finalCredit * 100) / 100,
     net: finalNet,
-    groups: groups.length > 0 ? groups : (isBuildtech ? [
-      { name: 'Shobha Ready Plast -Dr.', debit: 4291383.00, credit: 0, net: 4291383.00 },
-      { name: 'SKYLAND RMC INFRA', debit: 3533211.71, credit: 0, net: 3533211.71 },
-      { name: 'NAHAR READYMIX', debit: 2814752.00, credit: 0, net: 2814752.00 },
-      { name: 'M E INFRA PROJECTS PRIVATE LIMITED', debit: 1508432.00, credit: 0, net: 1508432.00 },
-      { name: 'NOOTAN RMC INFRA LLP', debit: 1253578.10, credit: 0, net: 1253578.10 },
-      { name: 'KKG RMC INFRA PRIVATE LIMITED', debit: 1234967.00, credit: 0, net: 1234967.00 },
-      { name: 'BUCON READYMIX LLP', debit: 855821.00, credit: 0, net: 855821.00 },
-      { name: 'NARAYAN SETHIA CONSTRUCTION', debit: 696324.00, credit: 0, net: 696324.00 },
-      { name: 'VAISHNAV CONSTRUCTION', debit: 667573.00, credit: 0, net: 667573.00 },
-      { name: 'G M Associates', debit: 638515.00, credit: 0, net: 638515.00 },
-      { name: 'S.M.DEVELOPER', debit: 574028.00, credit: 0, net: 574028.00 },
-      { name: 'AETREUM CONCRETE', debit: 449397.00, credit: 0, net: 449397.00 },
-      { name: 'B AND R CONCRETE LLP', debit: 444617.00, credit: 0, net: 444617.00 },
-      { name: 'EXCELLENCE INFRA', debit: 367313.00, credit: 0, net: 367313.00 },
-      { name: 'Kesystone Infrastructure', debit: 237815.00, credit: 0, net: 237815.00 },
-      { name: 'CONVOKE INFRA LLP', debit: 231122.00, credit: 0, net: 231122.00 },
-      { name: 'SHRISTHIKRUPA INFRASTRUCTURE PVT LTD', debit: 230364.00, credit: 0, net: 230364.00 },
-      { name: 'Spark Civil Infra Projects Limited', debit: 215029.00, credit: 0, net: 215029.00 },
-      { name: 'JMD READYMIX CONCRETE', debit: 179497.00, credit: 0, net: 179497.00 },
-      { name: 'Maa Sarswati Products Pvt Ltd', debit: 73836.00, credit: 0, net: 73836.00 },
-      { name: 'J K D ENTERPRISE', debit: 70529.00, credit: 0, net: 70529.00 },
-      { name: 'TOTO PRESTRESSING SYSTEM PVT LTD', debit: 65819.00, credit: 0, net: 65819.00 },
-      { name: 'PROCON RMC PLANTS PVT LTD', debit: 61180.10, credit: 0, net: 61180.10 },
-      { name: 'TOFCON RMC', debit: 47306.00, credit: 0, net: 47306.00 },
-      { name: 'DHANASHRI ENGG WORKS', debit: 42406.00, credit: 0, net: 42406.00 },
-      { name: 'SPARK CIVIL INFRAPROJECTS', debit: 5118.00, credit: 0, net: 5118.00 },
-      { name: 'HINDUSTAN PETROLEUM CORPORATION LIMITED', debit: 4929.30, credit: 0, net: 4929.30 },
-      { name: 'DHANSHREE ENTERPRISES', debit: 554.00, credit: 0, net: 554.00 },
-      { name: 'SDD GRACE CEMENTS LLP', debit: 17.00, credit: 0, net: 17.00 },
-      { name: 'MAHADEV CONCRETE SOLUTIONS', debit: 10.87, credit: 0, net: 10.87 },
-      { name: 'SKYMIX CONCRETE', debit: 0.10, credit: 0, net: 0.10 },
-      { name: 'SUPER RMC BUILDCON PVT LTD', debit: 0, credit: 5984.00, net: -5984.00 },
-      { name: 'M G Infraprojects', debit: 0, credit: 2289.00, net: -2289.00 },
-      { name: 'NAR & ASSOCIATES', debit: 0, credit: 1.66, net: -1.66 },
-      { name: 'SARDAR CONCRETE RMC SUPPLIER', debit: 0, credit: 1.12, net: -1.12 }
-    ] : [])
+    groups: groups
   };
 }
 
 export function computeTallyDebtors(invoices = [], activeCompany = null, isConsolidated = false) {
   if (isConsolidated || !activeCompany) {
-    const srp = computeCompanyDebtors(invoices, 'SHOBHA READY PLAST');
-    const sb = computeCompanyDebtors(invoices, 'SHOBHA BUILDTECH');
-    const sit = computeCompanyDebtors(invoices, 'SOBHAINFRA TECH');
-    return {
-      debit: Math.round((srp.debit + sb.debit + sit.debit) * 100) / 100,
-      credit: Math.round((srp.credit + sb.credit + sit.credit) * 100) / 100,
-      net: Math.round((srp.net + sb.net + sit.net) * 100) / 100,
-      groups: [...(srp.groups || []), ...(sb.groups || [])]
-    };
+    // Dynamic single-pass calculation across all companies with zero hardcoded company names
+    return computeCompanyDebtors(invoices, '');
   }
 
   const compName = activeCompany?.company_name || '';

@@ -12,7 +12,7 @@ import {
   getLedgerMappings, updateLedgerMapping, getSyncErrors,
   sendPaymentReminderWhatsApp, getLeads, normalizePhone,
   pauseInvoiceReminder, resumeInvoiceReminder, createLead,
-  getCustomerMaster
+  getCustomerMaster, invalidateInvoicesCache
 } from '../lib/db';
 import { buildCustomerIndex, matchCustomer } from '../lib/customerMatcher';
 import { reconcileCustomerInvoices, reconcileVendorInvoices, getCustomerLedgerStatement, getCustomerPendingBills, isSalesVoucher, isPurchaseVoucher, isReceiptVoucher, computeTallyDebtors } from '../lib/reconciliation';
@@ -198,9 +198,21 @@ const Finance = () => {
 
   useEffect(() => {
     loadAllFinanceData();
+
+    const channel = supabase
+      .channel('realtime:finance_invoices')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'invoices' }, () => {
+        invalidateInvoicesCache();
+        getInvoices({ forceRefresh: true }).then(invRes => {
+          if (invRes?.data) setAllInvoices(invRes.data);
+        });
+      })
+      .subscribe();
+
     return () => {
       // Clear any lingering progress poll when unmounting
       if (syncPollRef.current) clearInterval(syncPollRef.current);
+      supabase.removeChannel(channel);
     };
   }, [activeCompanyId]); // reload when company changes
 
@@ -267,15 +279,16 @@ const Finance = () => {
     });
   }, [allInvoices, activeCompany, isConsolidated, customerIndex]);
 
-  const loadAllFinanceData = async (showSpinner = true) => {
+  const loadAllFinanceData = async (showSpinner = true, forceRefresh = false) => {
     if (showSpinner) setLoading(true);
+    if (forceRefresh) invalidateInvoicesCache();
     const [invRes, tallyRes, mapRes, errRes, leadsRes, masterRes] = await Promise.all([
-      getInvoices(),
+      getInvoices({ forceRefresh }),
       getTallyConnectionStatus(),
       getLedgerMappings(),
       getSyncErrors(),
       getLeads(),
-      getCustomerMaster(),
+      getCustomerMaster({ forceRefresh }),
     ]);
     setAllInvoices(invRes.data || []);
     setCustomerMaster(masterRes.data || []);
@@ -2374,36 +2387,36 @@ const Finance = () => {
               {(() => {
                 const inv = selectedInvoiceForTemplate;
                 const meta = inv?.metadata || {};
-                // Real data — falls back to clean party values if not available
-                const invNumber  = inv?.invoice_number || inv?.tally_voucher_number || 'SRP/0570/26-27';
-                const invDate    = inv?.invoice_date ? new Date(inv.invoice_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' }) : '10-Aug-26';
+                // Real data — strictly dynamic from invoice and company profile
+                const invNumber  = inv?.invoice_number || inv?.tally_voucher_number || 'INV-PREVIEW';
+                const invDate    = inv?.invoice_date ? new Date(inv.invoice_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' }) : new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' });
                 const partyName  = inv?.client_name || 'Customer';
                 const amount     = Number(inv?.amount || 0);
                 const status     = inv?.status || 'Pending';
-                const itemName   = meta.item_name || 'SAND & READY PLAST';
-                const hsnCode    = meta.hsn_code || '25051011';
-                const truckNo    = meta.truck_no || 'MH04-4550';
-                const challanNo  = meta.challan_no || '10199';
+                const itemName   = meta.item_name || 'Goods / Services';
+                const hsnCode    = meta.hsn_code || '';
+                const truckNo    = meta.truck_no || '';
+                const challanNo  = meta.challan_no || '';
                 const challanDate= meta.challan_date || invDate;
-                const site       = meta.site || 'SITE';
-                const qtyStr     = meta.quantity_str || '1 LOT';
+                const site       = meta.site || '';
+                const qtyStr     = meta.quantity_str || '1';
                 const rateStr    = meta.rate_str || (amount ? amount.toFixed(2) : '0.00');
-                const unit       = meta.unit || 'BAGS';
-                const ewayNo     = meta.eway_bill_no || '602165786131';
+                const unit       = meta.unit || 'LOT';
+                const ewayNo     = meta.eway_bill_no || '';
                 const igstRate   = meta.igst_rate || '5%';
                 const taxable    = meta.taxable_amount ? Number(meta.taxable_amount) : (amount / 1.05);
                 const igstVal    = meta.igst_amount ? Number(meta.igst_amount) : (amount - taxable);
                 const buyerAddr  = meta.buyer_address || inv?.buyer_address || (customerMaster.find(c => c.company_name?.toUpperCase() === partyName.toUpperCase())?.address) || 'Client Delivery Address';
-                const buyerState = meta.buyer_state || 'Maharashtra';
-                const buyerCode  = meta.buyer_state_code || '27';
+                const buyerState = meta.buyer_state || '';
+                const buyerCode  = meta.buyer_state_code || '';
                 const buyerGstin = meta.gstin || inv?.gstin || (customerMaster.find(c => c.company_name?.toUpperCase() === partyName.toUpperCase())?.gstin) || '';
-                const compName   = activeCompany?.company_name || 'SHOBHA READY PLAST';
-                const compAddr   = activeCompany?.company_address || 'NH48, NEAR KOLEI KHADI SARODHI, VALSAD, GUJARAT - 396001';
-                const compGstin  = activeCompany?.gstin_number || '24AGCPJ2785R1ZV';
-                const compState  = activeCompany?.state_name || 'Gujarat';
-                const compCode   = activeCompany?.state_code || '24';
-                const compPhone  = activeCompany?.contact_phone || '+91 98765 43210';
-                const compEmail  = activeCompany?.admin_email || 'shobhareadyplast@gmail.com';
+                const compName   = activeCompany?.company_name || inv?.company_name || 'SOBHAINFRA ERP';
+                const compAddr   = activeCompany?.company_address || '';
+                const compGstin  = activeCompany?.gstin_number || '';
+                const compState  = activeCompany?.state_name || '';
+                const compCode   = activeCompany?.state_code || '';
+                const compPhone  = activeCompany?.contact_phone || '';
+                const compEmail  = activeCompany?.admin_email || '';
 
                 return (
                   <>
@@ -2428,14 +2441,14 @@ const Finance = () => {
                         />
                       ) : (
                         <div style={{ width: 56, height: 56, background: '#f59e0b', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 800, fontSize: '20px' }}>
-                          {(activeCompany?.company_name || 'SG').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()}
+                          {(compName || 'SI').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()}
                         </div>
                       )}
                       <div>
-                        <div style={{ fontSize: '18px', fontWeight: 800, color: '#111', letterSpacing: 0.5 }}>{activeCompany?.company_name || 'SHOBHA READY PLAST'}</div>
-                        <div style={{ fontSize: '10px', color: '#4b5563' }}>{activeCompany?.company_address || 'NH48, NEAR KOLEI KHADI SARODHI, VALSAD, GUJARAT - 396001'}</div>
-                        <div style={{ fontSize: '10px', color: '#4b5563' }}>Email: {activeCompany?.admin_email || 'shobhareadyplast@gmail.com'} | Phone: {activeCompany?.contact_phone || '+91 98765 43210'}</div>
-                        <div style={{ fontSize: '10px', fontWeight: 700 }}>GSTIN: {activeCompany?.gstin_number || '24AGCPJ2785R1ZV'} | State: {activeCompany?.state_name || 'Gujarat'} ({activeCompany?.state_code || '24'})</div>
+                        <div style={{ fontSize: '18px', fontWeight: 800, color: '#111', letterSpacing: 0.5 }}>{compName}</div>
+                        {compAddr && <div style={{ fontSize: '10px', color: '#4b5563' }}>{compAddr}</div>}
+                        {(compEmail || compPhone) && <div style={{ fontSize: '10px', color: '#4b5563' }}>{compEmail ? `Email: ${compEmail}` : ''}{compEmail && compPhone ? ' | ' : ''}{compPhone ? `Phone: ${compPhone}` : ''}</div>}
+                        {compGstin && <div style={{ fontSize: '10px', fontWeight: 700 }}>GSTIN: {compGstin}{compState ? ` | State: ${compState} (${compCode})` : ''}</div>}
                       </div>
                     </div>
                     <div style={{ textAlign: 'right' }}>
@@ -2451,10 +2464,12 @@ const Finance = () => {
                   </div>
 
                   {/* IRN Strip */}
-                  <div style={{ background: '#f9fafb', border: '1px solid #374151', borderTop: 'none', padding: '4px 8px', fontSize: '9.5px' }}>
-                    <div><strong>IRN :</strong> a45684e7e4ef9d7c7c9b29e3cf08d0919d11d1df3db16-13f50f26c11e0e32e6c</div>
-                    <div><strong>Ack No. :</strong> 162625648066372 &nbsp;&nbsp;&nbsp;&nbsp; <strong>Ack Date :</strong> 19-Aug-26</div>
-                  </div>
+                  {(meta.irn || meta.ack_no) && (
+                    <div style={{ background: '#f9fafb', border: '1px solid #374151', borderTop: 'none', padding: '4px 8px', fontSize: '9.5px' }}>
+                      {meta.irn && <div><strong>IRN :</strong> {meta.irn}</div>}
+                      {meta.ack_no && <div><strong>Ack No. :</strong> {meta.ack_no}{meta.ack_date ? <> &nbsp;&nbsp;&nbsp;&nbsp; <strong>Ack Date :</strong> {meta.ack_date}</> : ''}</div>}
+                    </div>
+                  )}
 
                   {/* Dual Box */}
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', border: '1px solid #374151', borderTop: 'none' }}>
@@ -2551,18 +2566,18 @@ const Finance = () => {
                       <strong>TERMS & CONDITIONS:</strong><br/>
                       • Unpaid Invoice Will Be Charged 24% P.A. Interest After Given Credit Days.<br/>
                       • Goods Once Sold Will Not Be Taken Back.<br/>
-                      • All Cheque and Remittance To Be Made / Payable to "SHOBHA READY PLAST"<br/>
-                      • <strong>UDYAM REG.:-</strong> UDYAM-GJ-01-0012345
+                      • All Cheque and Remittance To Be Made / Payable to "{compName}"<br/>
+                      {activeCompany?.company_udyam_reg && <span>• <strong>UDYAM REG.:-</strong> {activeCompany.company_udyam_reg}</span>}
                     </div>
                     <div style={{ textAlign: 'right' }}>
-                      <div>For <strong>SHOBHA READY PLAST</strong></div>
+                      <div>For <strong>{compName}</strong></div>
                       <div style={{ height: 32 }}></div>
                       <strong>Authorised Signatory</strong>
                     </div>
                   </div>
 
                   <div style={{ textAlign: 'center', fontSize: '8px', color: '#6b7280', marginTop: '6px' }}>
-                    SUBJECT TO THANE JURISDICTION · This is a Computer Generated Invoice<br/>
+                    SUBJECT TO JURISDICTION · This is a Computer Generated Invoice<br/>
                     <strong>1</strong>
                   </div>
                 </div>
@@ -2578,26 +2593,26 @@ const Finance = () => {
                     </div>
                   </div>
                   <div style={{ fontSize: '9.5px', marginBottom: '12px' }}>
-                    <div><strong>Doc No. :</strong> Tax Invoice - SRP/0570/26-27 &nbsp;|&nbsp; <strong>Date :</strong> 10-Aug-26</div>
-                    <div><strong>IRN :</strong> a45684e7e4ef9d7c7c9b29e3cf08d0919d11d1df3db1613f50f26c11e0e32e6c</div>
-                    <div><strong>Ack No. :</strong> 162625648066372 &nbsp;|&nbsp; <strong>Ack Date :</strong> 19-Aug-26</div>
+                    <div><strong>Doc No. :</strong> Tax Invoice - {invNumber} &nbsp;|&nbsp; <strong>Date :</strong> {invDate}</div>
+                    {meta.irn && <div><strong>IRN :</strong> {meta.irn}</div>}
+                    {meta.ack_no && <div><strong>Ack No. :</strong> {meta.ack_no}{meta.ack_date ? ` | Ack Date : ${meta.ack_date}` : ''}</div>}
                   </div>
 
                   <div style={{ fontWeight: 700, borderBottom: '1px solid #111', paddingBottom: '2px', marginBottom: '6px' }}>1. e-Way Bill Details</div>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px', fontSize: '9.5px', marginBottom: '12px' }}>
-                    <div><strong>e-Way Bill No.:</strong> 602165786131</div>
+                    <div><strong>e-Way Bill No.:</strong> {ewayNo || '—'}</div>
                     <div><strong>Mode :</strong> 1 - Road</div>
-                    <div><strong>Generated Date :</strong> 19-Aug-26 10:30 AM</div>
-                    <div><strong>Generated By :</strong> 24AGCPJ2785R1ZV</div>
-                    <div><strong>Approx Distance :</strong> 176 KM</div>
-                    <div><strong>Valid Upto :</strong> 20-Aug-26 11:59 PM</div>
+                    <div><strong>Generated Date :</strong> {invDate}</div>
+                    <div><strong>Generated By :</strong> {compGstin || '—'}</div>
+                    <div><strong>Approx Distance :</strong> {meta.approx_distance ? `${meta.approx_distance} KM` : '—'}</div>
+                    <div><strong>Valid Upto :</strong> {inv?.due_date ? new Date(inv.due_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' }) : '—'}</div>
                   </div>
 
                   <div style={{ fontWeight: 700, borderBottom: '1px solid #111', paddingBottom: '2px', marginBottom: '6px' }}>2. Address Details</div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', fontSize: '9.5px', marginBottom: '12px' }}>
                     <div>
-                      <strong>From:</strong> SHOBHA READY PLAST (GSTIN: 24AGCPJ2785R1ZV, Gujarat)<br/>
-                      <strong>Dispatch From:</strong> NH48, NEAR KOLEI KHADI SARODHI, City/Village:Sarodhi, Valsad, Gujarat, 396001, UDYAM REG.:- UDYAM-GJ-01-0012345
+                      <strong>From:</strong> {compName} {compGstin ? `(GSTIN: ${compGstin}, ${compState || ''})` : ''}<br/>
+                      <strong>Dispatch From:</strong> {compAddr || 'Facility Office'}{activeCompany?.company_udyam_reg ? `, UDYAM REG.:- ${activeCompany.company_udyam_reg}` : ''}
                     </div>
                     <div>
                       <strong>To:</strong> {partyName} {buyerGstin ? `(GSTIN: ${buyerGstin})` : ''}<br/>
@@ -2610,7 +2625,7 @@ const Finance = () => {
                     <thead>
                       <tr style={{ borderBottom: '1px solid #cbd5e1' }}>
                         <th style={{ textAlign: 'left', padding: '3px' }}>HSN Code</th>
-                        <th style={{ textAlign: 'left', padding: '3px' }}>Product Name & Desc</th>
+                        <th style={{ textAlign: 'left', padding: '3px' }}>Product Name &amp; Desc</th>
                         <th style={{ textAlign: 'center', padding: '3px' }}>Quantity</th>
                         <th style={{ textAlign: 'right', padding: '3px' }}>Taxable Amt</th>
                         <th style={{ textAlign: 'center', padding: '3px' }}>Tax Rate (%)</th>
@@ -2618,35 +2633,34 @@ const Finance = () => {
                     </thead>
                     <tbody>
                       <tr>
-                        <td style={{ padding: '3px' }}>25051011</td>
-                        <td style={{ padding: '3px' }}>SAND & SAND</td>
-                        <td style={{ textAlign: 'center', padding: '3px' }}>776 BAG</td>
-                        <td style={{ textAlign: 'right', padding: '3px' }}>71,392.00</td>
-                        <td style={{ textAlign: 'center', padding: '3px' }}>5</td>
+                        <td style={{ padding: '3px' }}>{hsnCode || '—'}</td>
+                        <td style={{ padding: '3px' }}>{itemName}</td>
+                        <td style={{ textAlign: 'center', padding: '3px' }}>{qtyStr}</td>
+                        <td style={{ textAlign: 'right', padding: '3px' }}>₹{taxable.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                        <td style={{ textAlign: 'center', padding: '3px' }}>{igstRate}</td>
                       </tr>
                     </tbody>
                   </table>
 
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px', fontSize: '9.5px', marginBottom: '12px' }}>
-                    <div><strong>Tot. Taxable Amt :</strong> 71,392.00</div>
-                    <div><strong>Other Amt :</strong> 0.40</div>
-                    <div><strong>Total Inv Amt :</strong> 74,962.00</div>
-                    <div><strong>IGST Amt :</strong> 3,569.60</div>
+                    <div><strong>Tot. Taxable Amt :</strong> ₹{taxable.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
+                    <div><strong>Tax Amt :</strong> ₹{igstVal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
+                    <div><strong>Total Inv Amt :</strong> ₹{amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
                   </div>
 
                   <div style={{ fontWeight: 700, borderBottom: '1px solid #111', paddingBottom: '2px', marginBottom: '6px' }}>4. Transportation Details</div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', fontSize: '9.5px', marginBottom: '12px' }}>
-                    <div><strong>Transporter ID :</strong> </div>
-                    <div><strong>Doc No. :</strong> </div>
-                    <div><strong>Name :</strong> SHOBHA TRANSPORT</div>
-                    <div><strong>Date :</strong> </div>
+                    <div><strong>Transporter ID :</strong> {meta.transporter_id || '—'}</div>
+                    <div><strong>Doc No. :</strong> {challanNo || '—'}</div>
+                    <div><strong>Name :</strong> {meta.transporter_name || '—'}</div>
+                    <div><strong>Date :</strong> {challanDate || invDate}</div>
                   </div>
 
                   <div style={{ fontWeight: 700, borderBottom: '1px solid #111', paddingBottom: '2px', marginBottom: '6px' }}>5. Vehicle Details</div>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px', fontSize: '9.5px' }}>
-                    <div><strong>Vehicle No. :</strong> MH04-4550</div>
-                    <div><strong>From :</strong> Valsad, GUJARAT</div>
-                    <div><strong>CEWB No. :</strong> </div>
+                    <div><strong>Vehicle No. :</strong> {truckNo || '—'}</div>
+                    <div><strong>From :</strong> {compAddr ? compAddr.split(',').slice(-2).join(',').trim() : (compState || '—')}</div>
+                    <div><strong>CEWB No. :</strong> {meta.cewb_no || '—'}</div>
                   </div>
 
                   <div style={{ textAlign: 'center', fontSize: '8px', color: '#6b7280', marginTop: '14px' }}>

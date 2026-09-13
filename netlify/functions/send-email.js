@@ -218,12 +218,14 @@ exports.handler = async function (event) {
 
       // If linked to a lead, also append to CRM activities feed
       if (leadId) {
-        await sb.from('activities').insert([{
-          lead_id: leadId,
-          type: 'email',
-          description: `Sent email "${subject}" to ${to}`,
-          created_by: fromName,
-        }]).catch(() => {}); // Gracefully ignore if activities table schema varies
+        try {
+          await sb.from('activities').insert([{
+            lead_id: leadId,
+            type: 'email',
+            description: `Sent email "${subject}" to ${to}`,
+            created_by: fromName,
+          }]);
+        } catch {}
       }
     } catch (dbErr) {
       console.warn('Could not write email log to Supabase:', dbErr.message);

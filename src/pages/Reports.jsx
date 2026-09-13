@@ -4,7 +4,8 @@ import {
   Bot, Zap, RefreshCw, IndianRupee, Target, Phone, CheckCircle2,
   FileSpreadsheet, ExternalLink, Printer, Calendar
 } from 'lucide-react';
-import { getDashboardStats, getLeads, getCampaigns, getInvoices, getAutomationRuns, syncToGoogleSheets, exportLiveTableCsv, getCustomerMaster } from '../lib/db';
+import { getDashboardStats, getLeads, getCampaigns, getInvoices, getAutomationRuns, syncToGoogleSheets, exportLiveTableCsv, getCustomerMaster, invalidateInvoicesCache } from '../lib/db';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { buildCustomerIndex, matchCustomer } from '../lib/customerMatcher';
 import { reconcileCustomerInvoices, isSalesVoucher } from '../lib/reconciliation';
 import { useCompany } from '../context/CompanyContext';
@@ -148,7 +149,24 @@ const Reports = () => {
     });
   }, [companyFilteredInvoices, customerIndex]);
 
-  useEffect(() => { loadData(); }, []);
+  useEffect(() => { 
+    loadData(); 
+
+    if (!isSupabaseConfigured) return;
+    const channel = supabase
+      .channel('realtime:reports_invoices')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'invoices' }, () => {
+        invalidateInvoicesCache();
+        getInvoices({ forceRefresh: true }).then(invRes => {
+          if (invRes?.data) setAllInvoices(invRes.data);
+        });
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
 
   const loadData = async () => {
     setLoading(true);

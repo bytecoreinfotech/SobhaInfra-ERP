@@ -10,6 +10,7 @@ import {
 import { getInvoices, getCustomerMaster, triggerSheetSync, getSheetSyncLog, invalidateInvoicesCache, invalidateCustomerMasterCache, pauseInvoiceReminder, resumeInvoiceReminder } from '../lib/db';
 import { reconcileCustomerInvoices, isSalesVoucher, computeTallyDebtors } from '../lib/reconciliation';
 import { buildCustomerIndex, matchCustomer } from '../lib/customerMatcher';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { useCompany } from '../context/CompanyContext';
 import InvoiceDocModal from '../components/InvoiceDocModal';
 import PaymentReminderModal from '../components/PaymentReminderModal';
@@ -96,7 +97,22 @@ const Payments = () => {
   const [currentPage, setCurrentPage]         = useState(1);
   const [pageSize, setPageSize]               = useState(50); // 25, 50, 100, -1 (All)
 
-  useEffect(() => { loadAll(); }, []);
+  useEffect(() => {
+    loadAll();
+
+    if (!isSupabaseConfigured) return;
+    const channel = supabase
+      .channel('realtime:payments_invoices')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'invoices' }, () => {
+        invalidateInvoicesCache();
+        loadAll(true);
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
 
   const handlePauseReminder = async (e) => {
     e.preventDefault();

@@ -418,6 +418,17 @@ const Settings = () => {
         bank_ifsc: data.bank_ifsc || prev.bank_ifsc,
         upi_id: data.upi_id || prev.upi_id,
       }));
+
+      if (data.gmail_user || data.gmail_app_password || data.email_sender_name) {
+        setEmailConfig(prev => ({
+          ...prev,
+          gmail_user: data.gmail_user || prev.gmail_user,
+          gmail_app_password: data.gmail_app_password || prev.gmail_app_password,
+          sender_name: data.email_sender_name || prev.sender_name,
+          smtp_host: data.smtp_host || prev.smtp_host,
+          smtp_port: data.smtp_port || prev.smtp_port,
+        }));
+      }
     }
     setGeneralLoading(false);
   };
@@ -903,8 +914,11 @@ const Settings = () => {
     localStorage.setItem('erppro_email_sender_name', emailConfig.sender_name);
 
     if (isSupabaseConfigured) {
-      await updateOrgSetting('gmail_user', emailConfig.gmail_user);
-      await updateOrgSetting('email_sender_name', emailConfig.sender_name);
+      await updateOrgSetting('gmail_user', (emailConfig.gmail_user || '').trim());
+      await updateOrgSetting('gmail_app_password', (emailConfig.gmail_app_password || '').trim().replace(/\s+/g, ''));
+      await updateOrgSetting('email_sender_name', (emailConfig.sender_name || '').trim());
+      await updateOrgSetting('smtp_host', (emailConfig.smtp_host || 'smtp.gmail.com').trim());
+      await updateOrgSetting('smtp_port', String(emailConfig.smtp_port || 465).trim());
     }
     setEmailConfigSaved(true);
     setTimeout(() => setEmailConfigSaved(false), 3000);

@@ -3,9 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import {
   X, Send, ShieldCheck, AlertTriangle, FileText, CheckCircle2,
   RefreshCw, Sparkles, MessageCircle, ExternalLink, Building2,
-  Calendar, IndianRupee, Clock, ArrowRight, Pencil
+  Calendar, IndianRupee, Clock, ArrowRight, Pencil, Mail
 } from 'lucide-react';
 import { useCompany } from '../context/CompanyContext';
+import { supabase } from '../lib/supabase';
 
 const fmtCurrency = (n) => '₹' + Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 });
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : 'N/A';
@@ -33,6 +34,11 @@ export default function PaymentReminderModal({
   const defaultPhone = customer?.contact_number || primaryInvoice?._verified_phone || primaryInvoice?.client_phone || '';
   const [targetPhone, setTargetPhone] = useState(defaultPhone);
   const [isEditingPhone, setIsEditingPhone] = useState(false);
+
+  const defaultEmail = customer?.email || customer?.email_address || primaryInvoice?._verified_email || primaryInvoice?.client_email || primaryInvoice?.email || '';
+  const [targetEmail, setTargetEmail] = useState(defaultEmail);
+  const [isEditingEmail, setIsEditingEmail] = useState(false);
+  const [channel, setChannel] = useState('all'); // 'all' | 'whatsapp' | 'email'
 
   const [selectedTemplateKey, setSelectedTemplateKey] = useState(isConsolidated ? 'consolidated' : 'gentle');
   const [customMessage, setCustomMessage] = useState('');
@@ -146,9 +152,50 @@ export default function PaymentReminderModal({
     }
   }, [selectedTemplateKey, templates]);
 
+  // Auto-resolve customer email from Google Sheet customer email directory
+  useEffect(() => {
+    if (!targetEmail && clientName) {
+      supabase
+        .from('org_settings')
+        .select('value')
+        .eq('key', 'customer_email_directory')
+        .maybeSingle()
+        .then(({ data }) => {
+          if (data?.value) {
+            try {
+              const dict = JSON.parse(data.value);
+              const normKey = clientName.toLowerCase().replace(/[^a-z0-9]/g, '');
+              if (dict[normKey]?.email) {
+                setTargetEmail(dict[normKey].email);
+              } else {
+                for (const [k, v] of Object.entries(dict)) {
+                  if (!k.startsWith('phone_') && (k.includes(normKey) || normKey.includes(k))) {
+                    setTargetEmail(v.email);
+                    break;
+                  }
+                }
+              }
+            } catch (_) {}
+          }
+        })
+        .catch(() => {});
+    }
+  }, [clientName, targetEmail]);
+
   const handleSend = async () => {
-    if (!verifiedPhone) {
-      setSendResult({ success: false, text: 'No verified phone number found for this customer.' });
+    const sendWhatsApp = channel === 'all' || channel === 'whatsapp';
+    const sendEmail = channel === 'all' || channel === 'email';
+
+    if (sendWhatsApp && !verifiedPhone && !sendEmail) {
+      setSendResult({ success: false, text: 'No verified phone number found for WhatsApp reminder.' });
+      return;
+    }
+    if (sendEmail && !targetEmail && !sendWhatsApp) {
+      setSendResult({ success: false, text: 'No email address found for email reminder.' });
+      return;
+    }
+    if (!verifiedPhone && !targetEmail) {
+      setSendResult({ success: false, text: 'No contact information (phone or email) found for this customer.' });
       return;
     }
 
@@ -164,7 +211,11 @@ export default function PaymentReminderModal({
         isConsolidated,
         invoiceId: primaryInvoice?.id,
         invoiceIds: effectiveInvoices.map(i => i.id),
-        phone: verifiedPhone,
+        phone: sendWhatsApp ? verifiedPhone : null,
+        email: sendEmail ? targetEmail : null,
+        sendWhatsApp,
+        sendEmail,
+        channel,
         clientName,
         customMessage: customMessage.trim(),
         attachPdf: attachPdf && Boolean(effectivePdfUrl),
@@ -179,20 +230,26 @@ export default function PaymentReminderModal({
 
       const data = await res.json();
 
+      const channelsSent = [];
+      if (data.whatsapp?.success || (data.success && sendWhatsApp && !data.is24hWindowClosed)) channelsSent.push('WhatsApp');
+      if (data.email?.success || (data.success && sendEmail)) channelsSent.push('Email');
+      const channelLabel = channelsSent.length > 0 ? channelsSent.join(' & ') : 'Reminder';
+
       if (data.success && !data.is24hWindowClosed) {
         setSendResult({
           success: true,
-          text: `Payment reminder sent successfully to ${verifiedPhone}! Logged in Live Inbox.`
+          text: `Payment reminder sent successfully via ${channelLabel}! Logged in audit trail.`
         });
         if (onSendSuccess) {
           onSendSuccess(effectiveInvoices.map(i => i.id), customMessage.trim());
         }
       } else if (data.is24hWindowClosed) {
+        const extraNote = data.email?.success ? ' (Note: Email reminder was successfully delivered!)' : '';
         setSendResult({
-          success: false,
+          success: Boolean(data.email?.success),
           is24hClosed: true,
           isPaymentRequired: data.isPaymentRequired || data.error?.includes('131042'),
-          text: data.error || 'Meta requires an active payment card on your WhatsApp Business Account (WABA: 2375569266307315) to deliver official templates to new contacts.'
+          text: (data.error || 'Meta requires an active payment card on your WhatsApp Business Account (WABA: 2375569266307315) to deliver official templates to new contacts.') + extraNote
         });
       } else {
         const isPay = data.error?.includes('131042') || data.error?.toLowerCase().includes('payment issue');
@@ -201,7 +258,7 @@ export default function PaymentReminderModal({
           isPaymentRequired: isPay,
           text: isPay
             ? 'Meta Payment Issue (131042): Add a payment method to your WhatsApp Business Account in Meta Business Suite to activate automated delivery.'
-            : (data.error || 'Failed to dispatch reminder. Check WhatsApp credentials.')
+            : (data.error || 'Failed to dispatch reminder. Check credentials.')
         });
       }
     } catch (err) {
@@ -250,14 +307,15 @@ export default function PaymentReminderModal({
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
             <div style={{
               width: 36, height: 36, borderRadius: 10,
-              background: 'rgba(37, 211, 102, 0.15)', color: '#25D366',
+              background: channel === 'whatsapp' ? 'rgba(37, 211, 102, 0.15)' : channel === 'email' ? 'rgba(56, 189, 248, 0.15)' : 'rgba(99, 102, 241, 0.15)',
+              color: channel === 'whatsapp' ? '#25D366' : channel === 'email' ? '#38bdf8' : '#818cf8',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}>
-              <MessageCircle size={20} />
+              {channel === 'email' ? <Mail size={20} /> : channel === 'whatsapp' ? <MessageCircle size={20} /> : <Sparkles size={20} />}
             </div>
             <div>
               <h2 style={{ fontSize: '1.05rem', fontWeight: 800, margin: 0, color: 'var(--text-primary)' }}>
-                Send WhatsApp Payment Reminder
+                {channel === 'all' ? 'Send Multi-Channel Payment Reminder' : channel === 'whatsapp' ? 'Send WhatsApp Payment Reminder' : 'Send Email Payment Reminder'}
               </h2>
               <span style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>
                 Invoice #{invNumber} · {compName}
@@ -292,7 +350,8 @@ export default function PaymentReminderModal({
                   </div>
                 )}
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
+                {/* WhatsApp Phone Chip */}
                 {isEditingPhone ? (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
                     <input
@@ -301,7 +360,7 @@ export default function PaymentReminderModal({
                       onChange={e => setTargetPhone(e.target.value)}
                       placeholder="+91..."
                       className="form-control"
-                      style={{ fontSize: '0.74rem', padding: '0.18rem 0.4rem', width: 130, height: 26 }}
+                      style={{ fontSize: '0.74rem', padding: '0.18rem 0.4rem', width: 125, height: 26 }}
                       autoFocus
                     />
                     <button
@@ -316,7 +375,7 @@ export default function PaymentReminderModal({
                 ) : (
                   <span
                     onClick={() => setIsEditingPhone(true)}
-                    title="Click to edit or set test recipient phone number"
+                    title="Click to edit or set recipient phone number"
                     style={{
                       fontSize: '0.72rem', fontWeight: 600, padding: '0.2rem 0.55rem',
                       borderRadius: 20, background: 'rgba(16, 185, 129, 0.12)', color: '#10b981',
@@ -324,9 +383,46 @@ export default function PaymentReminderModal({
                       display: 'inline-flex', alignItems: 'center', gap: '0.3rem', cursor: 'pointer'
                     }}
                   >
-                    <ShieldCheck size={12} /> {verifiedPhone || 'Set Test Phone'} <Pencil size={10} style={{ opacity: 0.7 }} />
+                    <MessageCircle size={12} /> {verifiedPhone || 'Set Phone'} <Pencil size={10} style={{ opacity: 0.7 }} />
                   </span>
                 )}
+
+                {/* Email Address Chip (from Google Sheet) */}
+                {isEditingEmail ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                    <input
+                      type="email"
+                      value={targetEmail}
+                      onChange={e => setTargetEmail(e.target.value)}
+                      placeholder="client@domain.com"
+                      className="form-control"
+                      style={{ fontSize: '0.74rem', padding: '0.18rem 0.4rem', width: 145, height: 26 }}
+                      autoFocus
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setIsEditingEmail(false)}
+                      className="btn btn-secondary btn-sm"
+                      style={{ fontSize: '0.68rem', padding: '0.15rem 0.45rem', height: 26 }}
+                    >
+                      Done
+                    </button>
+                  </div>
+                ) : (
+                  <span
+                    onClick={() => setIsEditingEmail(true)}
+                    title="Click to edit or set customer email (resolved from Google Sheet)"
+                    style={{
+                      fontSize: '0.72rem', fontWeight: 600, padding: '0.2rem 0.55rem',
+                      borderRadius: 20, background: 'rgba(99, 102, 241, 0.12)', color: '#818cf8',
+                      border: '1px solid rgba(99, 102, 241, 0.3)',
+                      display: 'inline-flex', alignItems: 'center', gap: '0.3rem', cursor: 'pointer'
+                    }}
+                  >
+                    <Mail size={12} /> {targetEmail || 'Set Email'} <Pencil size={10} style={{ opacity: 0.7 }} />
+                  </span>
+                )}
+
                 <span className={`badge ${isOverdue ? 'badge-danger' : 'badge-warning'}`} style={{ fontSize: '0.72rem' }}>
                   {isOverdue ? `Overdue (${overdueDays}d)` : 'Pending'}
                 </span>
@@ -357,6 +453,57 @@ export default function PaymentReminderModal({
                   {dueDateStr}
                 </div>
               </div>
+            </div>
+          </div>
+
+          {/* Delivery Channel Selector */}
+          <div>
+            <label style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em', display: 'block', marginBottom: '0.4rem' }}>
+              Select Delivery Channel
+            </label>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem' }}>
+              <button
+                type="button"
+                onClick={() => setChannel('all')}
+                style={{
+                  padding: '0.45rem 0.6rem', borderRadius: 8, fontSize: '0.78rem', fontWeight: 600,
+                  border: channel === 'all' ? '1.5px solid var(--accent-primary, #6366f1)' : '1px solid var(--border-color)',
+                  background: channel === 'all' ? 'rgba(99,102,241,0.18)' : 'var(--bg-tertiary)',
+                  color: channel === 'all' ? 'var(--accent-primary, #6366f1)' : 'var(--text-secondary)',
+                  cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                <Sparkles size={13} /> WhatsApp & Email
+              </button>
+              <button
+                type="button"
+                onClick={() => setChannel('whatsapp')}
+                style={{
+                  padding: '0.45rem 0.6rem', borderRadius: 8, fontSize: '0.78rem', fontWeight: 600,
+                  border: channel === 'whatsapp' ? '1.5px solid #25D366' : '1px solid var(--border-color)',
+                  background: channel === 'whatsapp' ? 'rgba(37,211,102,0.18)' : 'var(--bg-tertiary)',
+                  color: channel === 'whatsapp' ? '#25D366' : 'var(--text-secondary)',
+                  cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                <MessageCircle size={13} /> WhatsApp Only
+              </button>
+              <button
+                type="button"
+                onClick={() => setChannel('email')}
+                style={{
+                  padding: '0.45rem 0.6rem', borderRadius: 8, fontSize: '0.78rem', fontWeight: 600,
+                  border: channel === 'email' ? '1.5px solid #38bdf8' : '1px solid var(--border-color)',
+                  background: channel === 'email' ? 'rgba(56,189,248,0.18)' : 'var(--bg-tertiary)',
+                  color: channel === 'email' ? '#38bdf8' : 'var(--text-secondary)',
+                  cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                <Mail size={13} /> Email Only
+              </button>
             </div>
           </div>
 
@@ -521,18 +668,22 @@ export default function PaymentReminderModal({
 
           <button
             type="button"
-            className="btn btn-whatsapp"
             onClick={handleSend}
             disabled={isSending || !customMessage.trim()}
-            style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.5rem 1.1rem' }}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '0.45rem', padding: '0.5rem 1.25rem',
+              background: channel === 'whatsapp' ? '#25D366' : channel === 'email' ? '#0284c7' : 'linear-gradient(135deg, #4f46e5 0%, #10b981 100%)',
+              color: '#ffffff', border: 'none', borderRadius: 8, fontWeight: 700, cursor: isSending ? 'not-allowed' : 'pointer',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.15)', transition: 'all 0.15s ease'
+            }}
           >
             {isSending ? (
               <>
-                <RefreshCw size={14} className="animate-spin" /> Dispatching via Meta...
+                <RefreshCw size={14} className="animate-spin" /> Dispatching...
               </>
             ) : (
               <>
-                <Send size={14} /> Send via Cloud API
+                <Send size={14} /> Send via {channel === 'all' ? 'WhatsApp & Email' : channel === 'whatsapp' ? 'WhatsApp' : 'Email'}
               </>
             )}
           </button>

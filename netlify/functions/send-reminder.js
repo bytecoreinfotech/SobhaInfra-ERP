@@ -14,6 +14,7 @@
  */
 
 const { createClient } = require('@supabase/supabase-js');
+const { resolveCustomerEmail, sendPaymentReminderEmail } = require('./utils/customerEmailHelper');
 
 const WA_TOKEN     = process.env.WHATSAPP_TOKEN || 'EAAZAoFJNWmo4BSXS3ZBJrD7sk039yowup2fxSWYZAQFTiTvEfOm5XsRNmyRZC4RnkYyjvFaXaxN3fhqNVvvyBqe0CXwoWClgcBx6X8UhqaNWTUjNFt0XMkufGVKkF9FSOP2V2SXSwxreUpX3UALTRW8TC8feqyWyYdyyamSrkF8qWvqkuSEEkatiTGvaGZC1AYwZDZD';
 const PHONE_ID     = process.env.WHATSAPP_PHONE_ID || '1213997841806162';
@@ -379,139 +380,199 @@ exports.handler = async (event) => {
     const todayMs = Date.now();
 
     // ── Handle Consolidated Multi-Invoice Reminder Dispatch ───────────────────
-    if (body.isConsolidated && body.phone) {
-      const recipientPhone = body.phone.replace(/\s+/g, '').replace(/^\+/, '');
+    if (body.isConsolidated && (body.phone || body.email)) {
+      const recipientPhone = body.phone ? body.phone.replace(/\s+/g, '').replace(/^\+/, '') : null;
       const clientName = body.clientName || 'Valued Customer';
       const invoiceIds = Array.isArray(body.invoiceIds) ? body.invoiceIds : (body.invoiceId ? [body.invoiceId] : []);
       const pdfUrl = (body.attachPdf !== false && body.pdfUrl && body.pdfUrl.startsWith('http')) ? body.pdfUrl : null;
       const message = customText || `Namaste ${clientName}! Please find your official Consolidated Statement of Account attached.`;
 
-      const isWithin24h = await check24hWindow(supabase, recipientPhone);
-      const clean10 = recipientPhone.slice(-10);
-      const waMeUrl = `https://wa.me/91${clean10}?text=${encodeURIComponent(message)}`;
+      // Resolve recipient email from body or customer directory
+      let recipientEmail = body.email || null;
+      if (!recipientEmail && clientName) {
+        recipientEmail = await resolveCustomerEmail(supabase, { companyName: clientName, clientName });
+      }
 
-      let sendRes;
+      const wantWhatsApp = (body.sendWhatsApp !== false) && (body.channel !== 'email') && Boolean(recipientPhone);
+      const wantEmail = (body.sendEmail !== false) && (body.channel !== 'whatsapp') && Boolean(recipientEmail);
+
+      if (!wantWhatsApp && !wantEmail) {
+        return {
+          statusCode: 400,
+          headers: cors,
+          body: JSON.stringify({ success: false, error: 'No valid recipient contact channel selected (phone or email).' }),
+        };
+      }
+
+      let waResult = null;
+      let emailResult = null;
       let sentAsTemplate = false;
 
-      // If outside 24h window, attempt approved Meta Template
-      if (!isWithin24h) {
-        const tplRes = await sendWhatsAppTemplate(recipientPhone, 'statement_reminder_v1', 'en', [
-          clientName,
-          'Sobhainfra Tech',
-          'pending balance',
-          String(invoiceIds.length),
-          'various',
-          'ICICI Bank',
-          '001905012691',
-          'ICIC0000019',
-        ]);
-        if (tplRes.success) {
-          sendRes = tplRes;
-          sentAsTemplate = true;
-          console.log(`[Reminder] Dispatched via Meta Template to ${recipientPhone}`);
-        } else {
-          console.warn('[Reminder] Template statement_reminder_v1 pending or unavailable:', tplRes.error);
+      // 1. Email Dispatch for Statement
+      if (wantEmail) {
+        try {
+          let invRows = [];
+          if (invoiceIds.length > 0) {
+            const { data } = await supabase.from('invoices').select('*').in('id', invoiceIds);
+            invRows = data || [];
+          }
+          const totalPending = invRows.reduce((acc, row) => acc + Number(row.pending_amount !== undefined ? row.pending_amount : row.amount || 0), 0);
+
+          emailResult = await sendPaymentReminderEmail(supabase, {
+            to: recipientEmail,
+            recipientName: clientName,
+            companyName: body.companyName || 'Sobhainfra Tech',
+            invNum: 'Statement',
+            amount: totalPending,
+            dueDate: null,
+            status: invRows.some(i => i.status === 'Overdue') ? 'Overdue' : 'Pending',
+            reminderNum: 1,
+            pdfUrl: pdfUrl,
+            customMessage: message,
+            isConsolidated: true,
+            invoices: invRows,
+          });
+
+          if (emailResult.success) {
+            const emailInsertRows = invoiceIds.map(id => ({
+              organization_id: DEFAULT_ORG_ID,
+              invoice_id: id,
+              channel: 'Email',
+              message: `Statement email dispatched to ${recipientEmail}`,
+              status: emailResult.simulated ? 'simulated' : 'sent',
+            }));
+            if (emailInsertRows.length > 0) {
+              try {
+                await supabase.from('payment_reminders').insert(emailInsertRows);
+              } catch (insErr) {
+                console.warn('[Reminder] payment_reminders insert notice:', insErr.message);
+              }
+            }
+          }
+        } catch (emErr) {
+          console.warn('[Reminder] Consolidated email dispatch error:', emErr.message);
+          emailResult = { success: false, error: emErr.message };
         }
       }
 
-      if (!sentAsTemplate) {
-        const pdfFileName = `Statement_${clientName.replace(/[^a-zA-Z0-9_-]/g, '_')}.pdf`;
-        if (pdfUrl && isWithin24h) {
-          sendRes = await sendDocumentMessage(recipientPhone, pdfUrl, pdfFileName, message);
-          if (!sendRes.success) {
-            console.warn('[Reminder] Document send failed, falling back to text:', sendRes.error);
+      // 2. WhatsApp Dispatch for Statement
+      if (wantWhatsApp) {
+        const isWithin24h = await check24hWindow(supabase, recipientPhone);
+        const clean10 = recipientPhone.slice(-10);
+        const waMeUrl = `https://wa.me/91${clean10}?text=${encodeURIComponent(message)}`;
+
+        let sendRes;
+        if (!isWithin24h) {
+          const tplRes = await sendWhatsAppTemplate(recipientPhone, 'statement_reminder_v1', 'en', [
+            clientName,
+            'Sobhainfra Tech',
+            'pending balance',
+            String(invoiceIds.length),
+            'various',
+            'ICICI Bank',
+            '001905012691',
+            'ICIC0000019',
+          ]);
+          if (tplRes.success) {
+            sendRes = tplRes;
+            sentAsTemplate = true;
+            console.log(`[Reminder] Dispatched via Meta Template to ${recipientPhone}`);
+          } else {
+            console.warn('[Reminder] Template statement_reminder_v1 pending or unavailable:', tplRes.error);
+          }
+        }
+
+        if (!sentAsTemplate) {
+          const pdfFileName = `Statement_${clientName.replace(/[^a-zA-Z0-9_-]/g, '_')}.pdf`;
+          if (pdfUrl && isWithin24h) {
+            sendRes = await sendDocumentMessage(recipientPhone, pdfUrl, pdfFileName, message);
+            if (!sendRes.success) {
+              console.warn('[Reminder] Document send failed, falling back to text:', sendRes.error);
+              sendRes = await sendTextMessage(recipientPhone, message);
+            }
+          } else {
             sendRes = await sendTextMessage(recipientPhone, message);
           }
-        } else {
-          sendRes = await sendTextMessage(recipientPhone, message);
         }
-      }
 
-      // If outside 24h window and no template was sent, Meta will drop the message asynchronously
-      if (!isWithin24h && !sentAsTemplate) {
-        await logToLiveInbox(
-          supabase,
-          recipientPhone,
-          clientName,
-          message,
-          pdfUrl,
-          sendRes?.messageId,
-          'failed',
-          '131047: Meta 24-Hour Service Window Closed'
-        );
+        if (!isWithin24h && !sentAsTemplate) {
+          await logToLiveInbox(
+            supabase,
+            recipientPhone,
+            clientName,
+            message,
+            pdfUrl,
+            sendRes?.messageId,
+            'failed',
+            '131047: Meta 24-Hour Service Window Closed'
+          );
 
-        return {
-          statusCode: 200,
-          headers: cors,
-          body: JSON.stringify({
+          waResult = {
             success: false,
             is24hWindowClosed: true,
             waMeUrl,
             error: 'Meta 24-Hour Policy Window is closed for this number (recipient has not replied in 24h). Click "Open in WhatsApp Web" below to send directly.',
             messageId: sendRes?.messageId,
-          }),
-        };
+          };
+        } else if (sendRes && sendRes.success) {
+          waResult = { success: true, messageId: sendRes.messageId, simulated: sendRes.simulated };
+          await logToLiveInbox(supabase, recipientPhone, clientName, message, pdfUrl, sendRes.messageId, 'delivered', null);
+
+          try {
+            const insertRows = invoiceIds.map(id => ({
+              organization_id: DEFAULT_ORG_ID,
+              invoice_id: id,
+              channel: 'WhatsApp',
+              message,
+              status: sendRes.simulated ? 'simulated' : 'sent',
+            }));
+            if (insertRows.length > 0) {
+              await supabase.from('payment_reminders').insert(insertRows);
+            }
+          } catch {}
+        } else {
+          waResult = { success: false, error: sendRes?.error || 'Failed to dispatch WhatsApp reminder' };
+        }
       }
 
-      if (sendRes.success) {
+      const anySuccess = Boolean(waResult?.success || emailResult?.success);
+      if (anySuccess && invoiceIds.length > 0) {
         const nowIso = new Date().toISOString();
-        if (invoiceIds.length > 0) {
-          try {
-            const { data: invRows } = await supabase.from('invoices').select('id, reminder_count').in('id', invoiceIds);
-            for (const row of (invRows || [])) {
-              await supabase.from('invoices').update({
-                reminder_count: (row.reminder_count || 0) + 1,
-                last_reminder_at: nowIso,
-              }).eq('id', row.id);
-            }
-          } catch (invUpErr) {
-            console.warn('[Reminder] Batch invoice reminder update notice:', invUpErr.message);
-          }
-        }
-
-        await logToLiveInbox(supabase, recipientPhone, clientName, message, pdfUrl, sendRes.messageId, 'delivered', null);
-
         try {
-          const insertRows = invoiceIds.map(id => ({
-            organization_id: DEFAULT_ORG_ID,
-            invoice_id: id,
-            channel: 'WhatsApp',
-            message,
-            status: sendRes.simulated ? 'simulated' : 'sent',
-          }));
-          if (insertRows.length > 0) {
-            await supabase.from('payment_reminders').insert(insertRows);
+          const { data: invRows } = await supabase.from('invoices').select('id, reminder_count').in('id', invoiceIds);
+          for (const row of (invRows || [])) {
+            await supabase.from('invoices').update({
+              reminder_count: (row.reminder_count || 0) + 1,
+              last_reminder_at: nowIso,
+            }).eq('id', row.id);
           }
-        } catch {}
+        } catch (invUpErr) {
+          console.warn('[Reminder] Batch invoice reminder update notice:', invUpErr.message);
+        }
 
         try {
           await supabase.from('activities').insert([{
             type: 'payment_reminder',
-            description: `Consolidated WhatsApp reminder sent for ${invoiceIds.length} invoice(s) to ${clientName}`,
+            description: `Consolidated payment reminder sent for ${invoiceIds.length} invoice(s) to ${clientName} (WhatsApp: ${waResult?.success ? 'Yes' : 'No'}, Email: ${emailResult?.success ? 'Yes' : 'No'})`,
           }]);
         } catch {}
-
-        return {
-          statusCode: 200,
-          headers: cors,
-          body: JSON.stringify({
-            success: true,
-            isConsolidated: true,
-            sentAsTemplate,
-            invoicesUpdated: invoiceIds.length,
-            messageId: sendRes.messageId,
-          }),
-        };
-      } else {
-        return {
-          statusCode: 200,
-          headers: cors,
-          body: JSON.stringify({
-            success: false,
-            error: sendRes.error || 'Failed to dispatch consolidated reminder',
-          }),
-        };
       }
+
+      return {
+        statusCode: 200,
+        headers: cors,
+        body: JSON.stringify({
+          success: anySuccess,
+          isConsolidated: true,
+          sentAsTemplate,
+          invoicesUpdated: invoiceIds.length,
+          whatsapp: waResult,
+          email: emailResult,
+          is24hWindowClosed: waResult?.is24hWindowClosed,
+          waMeUrl: waResult?.waMeUrl,
+          error: anySuccess ? null : (waResult?.error || emailResult?.error || 'Failed to dispatch reminders'),
+        }),
+      };
     }
 
     // ── Automated Scan Run (Bill-by-Bill Loop) ──────────────────────────────────
@@ -555,87 +616,175 @@ exports.handler = async (event) => {
     }
 
     const inv = singleInv;
-    if (!inv.client_phone) {
+
+    // Resolve customer email (from request body or Google Sheet customer directory)
+    let targetEmail = body.email || null;
+    if (!targetEmail && (inv.client_name || inv.party_name)) {
+      targetEmail = await resolveCustomerEmail(supabase, {
+        companyName: inv.company_name,
+        clientName: inv.client_name || inv.party_name,
+        phone: inv.client_phone,
+      });
+    }
+
+    const wantWhatsApp = (body.sendWhatsApp !== false) && (body.channel !== 'email') && Boolean(inv.client_phone);
+    const wantEmail = (body.sendEmail !== false) && (body.channel !== 'whatsapp') && Boolean(targetEmail);
+
+    if (!wantWhatsApp && !wantEmail) {
       return {
         statusCode: 400,
         headers: cors,
-        body: JSON.stringify({ success: false, error: 'Recipient phone number is missing' }),
+        body: JSON.stringify({ success: false, error: 'Neither a valid phone number nor email address is available for this customer.' }),
       };
     }
 
     const reminderNum = (inv.reminder_count || 0) + 1;
     const message = customText || REMINDER_TEXT(inv, reminderNum);
-
-    const isWithin24h = await check24hWindow(supabase, inv.client_phone);
-    const clean10 = String(inv.client_phone).replace(/[^\d]/g, '').slice(-10);
-    const waMeUrl = `https://wa.me/91${clean10}?text=${encodeURIComponent(message)}`;
-
-    let result;
-    let sentAsTemplate = false;
-
-    if (!isWithin24h) {
-      const tplRes = await sendWhatsAppTemplate(inv.client_phone, 'payment_reminder_v1', 'en', [
-        inv.client_name || 'Valued Customer',
-        inv.company_name || 'Sobhainfra Tech',
-        inv.invoice_number || inv.tally_voucher_number || 'Inv',
-        fmtAmount(inv.amount),
-        fmtDate(inv.due_date),
-        inv.status || 'Pending',
-        'ICICI Bank',
-        '001905012691',
-        'ICIC0000019',
-      ]);
-      if (tplRes.success) {
-        result = tplRes;
-        sentAsTemplate = true;
-        console.log(`[Reminder] Dispatched single reminder via Meta Template to ${inv.client_phone}`);
-      } else {
-        console.warn('[Reminder] Template payment_reminder_v1 pending or unavailable:', tplRes.error);
-      }
-    }
-
     const hasValidPdf = inv.pdf_url && typeof inv.pdf_url === 'string' && (inv.pdf_url.startsWith('http://') || inv.pdf_url.startsWith('https://'));
 
-    if (!sentAsTemplate) {
-      if (hasValidPdf && isWithin24h) {
-        const pdfFileName = `Invoice_${inv.invoice_number || inv.id}.pdf`;
-        result = await sendDocumentMessage(inv.client_phone, inv.pdf_url, pdfFileName, message);
-        if (!result.success) {
-          console.warn('[Reminder] Document send failed, falling back to text:', result.error);
-          result = await sendTextMessage(inv.client_phone, message);
+    let emailResult = null;
+    let waResult = null;
+    let sentAsTemplate = false;
+
+    // 1. Dispatch Email Reminder
+    if (wantEmail) {
+      try {
+        emailResult = await sendPaymentReminderEmail(supabase, {
+          to: targetEmail,
+          recipientName: inv.client_name || 'Valued Customer',
+          companyName: inv.company_name || 'Sobhainfra Tech',
+          invNum: inv.invoice_number || inv.tally_voucher_number || 'Inv',
+          amount: inv.amount,
+          dueDate: inv.due_date,
+          status: inv.status || 'Pending',
+          reminderNum,
+          pdfUrl: hasValidPdf ? inv.pdf_url : null,
+          customMessage: customText,
+        });
+
+        if (emailResult.success) {
+          try {
+            await supabase.from('payment_reminders').insert([{
+              organization_id: DEFAULT_ORG_ID,
+              invoice_id: inv.id,
+              channel: 'Email',
+              message: `Payment reminder #${reminderNum} emailed to ${targetEmail}`,
+              status: emailResult.simulated ? 'simulated' : 'sent',
+            }]);
+          } catch (insErr) {
+            console.warn('[Reminder] payment_reminders insert notice:', insErr.message);
+          }
+
+          try {
+            await supabase.from('activities').insert([{
+              type: 'payment_reminder',
+              description: `Email reminder #${reminderNum} sent to ${targetEmail}: ${fmtAmount(inv.amount)} due`,
+              lead_id: inv.lead_id || null,
+            }]);
+          } catch (insErr) {
+            console.warn('[Reminder] activities insert notice:', insErr.message);
+          }
         }
-      } else {
-        result = await sendTextMessage(inv.client_phone, message);
+      } catch (emErr) {
+        console.warn('[Reminder] Single email dispatch error:', emErr.message);
+        emailResult = { success: false, error: emErr.message };
       }
     }
 
-    // If single manual trigger from UI and outside 24h window with no template
-    if (!isWithin24h && !sentAsTemplate) {
-      await logToLiveInbox(
-        supabase,
-        inv.client_phone,
-        inv.client_name,
-        message,
-        hasValidPdf ? inv.pdf_url : null,
-        result?.messageId,
-        'failed',
-        '131047: Meta 24-Hour Service Window Closed'
-      );
+    // 2. Dispatch WhatsApp Reminder
+    if (wantWhatsApp) {
+      const isWithin24h = await check24hWindow(supabase, inv.client_phone);
+      const clean10 = String(inv.client_phone).replace(/[^\d]/g, '').slice(-10);
+      const waMeUrl = `https://wa.me/91${clean10}?text=${encodeURIComponent(message)}`;
 
-      return {
-        statusCode: 200,
-        headers: cors,
-        body: JSON.stringify({
+      let result;
+      if (!isWithin24h) {
+        const tplRes = await sendWhatsAppTemplate(inv.client_phone, 'payment_reminder_v1', 'en', [
+          inv.client_name || 'Valued Customer',
+          inv.company_name || 'Sobhainfra Tech',
+          inv.invoice_number || inv.tally_voucher_number || 'Inv',
+          fmtAmount(inv.amount),
+          fmtDate(inv.due_date),
+          inv.status || 'Pending',
+          'ICICI Bank',
+          '001905012691',
+          'ICIC0000019',
+        ]);
+        if (tplRes.success) {
+          result = tplRes;
+          sentAsTemplate = true;
+          console.log(`[Reminder] Dispatched single reminder via Meta Template to ${inv.client_phone}`);
+        } else {
+          console.warn('[Reminder] Template payment_reminder_v1 pending or unavailable:', tplRes.error);
+        }
+      }
+
+      if (!sentAsTemplate) {
+        if (hasValidPdf && isWithin24h) {
+          const pdfFileName = `Invoice_${inv.invoice_number || inv.id}.pdf`;
+          result = await sendDocumentMessage(inv.client_phone, inv.pdf_url, pdfFileName, message);
+          if (!result.success) {
+            console.warn('[Reminder] Document send failed, falling back to text:', result.error);
+            result = await sendTextMessage(inv.client_phone, message);
+          }
+        } else {
+          result = await sendTextMessage(inv.client_phone, message);
+        }
+      }
+
+      // If single manual trigger from UI and outside 24h window with no template
+      if (!isWithin24h && !sentAsTemplate) {
+        await logToLiveInbox(
+          supabase,
+          inv.client_phone,
+          inv.client_name,
+          message,
+          hasValidPdf ? inv.pdf_url : null,
+          result?.messageId,
+          'failed',
+          '131047: Meta 24-Hour Service Window Closed'
+        );
+
+        waResult = {
           success: false,
           is24hWindowClosed: true,
           waMeUrl,
           error: 'Meta 24-Hour Policy Window is closed for this number (recipient has not replied in 24h). Click "Open in WhatsApp Web" below to send directly.',
           messageId: result?.messageId,
-        }),
-      };
+        };
+      } else if (result?.success) {
+        waResult = { success: true, messageId: result.messageId, simulated: result.simulated };
+
+        // Log to WhatsApp Live Inbox
+        await logToLiveInbox(supabase, inv.client_phone, inv.client_name, message, hasValidPdf ? inv.pdf_url : null, result.messageId);
+
+        // Log to payment_reminders
+        try {
+          await supabase.from('payment_reminders').insert([{
+            organization_id: DEFAULT_ORG_ID,
+            invoice_id: inv.id,
+            channel: 'WhatsApp',
+            message,
+            status: result.simulated ? 'simulated' : 'sent',
+          }]);
+        } catch {}
+
+        // Log to activities
+        try {
+          await supabase.from('activities').insert([{
+            type: 'payment_reminder',
+            description: `WhatsApp reminder #${reminderNum} sent: ${fmtAmount(inv.amount)} due`,
+            lead_id: inv.lead_id || null,
+          }]);
+        } catch {}
+      } else {
+        waResult = { success: false, error: result?.error || 'Failed to dispatch WhatsApp reminder' };
+      }
     }
 
-    if (result?.success) {
+    const anySuccess = Boolean(waResult?.success || emailResult?.success);
+
+    if (anySuccess) {
       const updatePayload = {
         reminder_count: reminderNum,
         last_reminder_at: new Date().toISOString(),
@@ -645,39 +794,29 @@ exports.handler = async (event) => {
       }
       await supabase.from('invoices').update(updatePayload).eq('id', inv.id);
 
-      // Log to WhatsApp Live Inbox
-      await logToLiveInbox(supabase, inv.client_phone, inv.client_name, message, hasValidPdf ? inv.pdf_url : null, result.messageId);
-
-      // Log to payment_reminders
-      try {
-        await supabase.from('payment_reminders').insert([{
-          organization_id: DEFAULT_ORG_ID,
-          invoice_id: inv.id,
-          channel: 'WhatsApp',
-          message,
-          status: result.simulated ? 'simulated' : 'sent',
-        }]);
-      } catch {}
-
-      // Log to activities
-      try {
-        await supabase.from('activities').insert([{
-          type: 'payment_reminder',
-          description: `WhatsApp reminder #${reminderNum} sent: ${fmtAmount(inv.amount)} due`,
-          lead_id: inv.lead_id || null,
-        }]);
-      } catch {}
-
       return {
         statusCode: 200,
         headers: cors,
-        body: JSON.stringify({ success: true, messageId: result.messageId, reminderNum }),
+        body: JSON.stringify({
+          success: true,
+          reminderNum,
+          messageId: waResult?.messageId || emailResult?.messageId,
+          whatsapp: waResult,
+          email: emailResult,
+          is24hWindowClosed: waResult?.is24hWindowClosed,
+          waMeUrl: waResult?.waMeUrl,
+        }),
       };
     } else {
       return {
         statusCode: 500,
         headers: cors,
-        body: JSON.stringify({ success: false, error: result?.error || 'Failed to dispatch reminder' }),
+        body: JSON.stringify({
+          success: false,
+          error: waResult?.error || emailResult?.error || 'Failed to dispatch reminder',
+          is24hWindowClosed: waResult?.is24hWindowClosed,
+          waMeUrl: waResult?.waMeUrl,
+        }),
       };
     }
 
@@ -750,7 +889,17 @@ async function runAutomatedPaymentReminders(supabase) {
       } catch {}
     }
 
-    if (!phone) {
+    // Resolve client email from Google Sheet / customer_email_directory / leads
+    let email = null;
+    try {
+      email = await resolveCustomerEmail(supabase, {
+        companyName: inv.company_name,
+        clientName: inv.client_name || inv.party_name,
+        phone: phone,
+      });
+    } catch (_) {}
+
+    if (!phone && !email) {
       results.skippedNoPhone++;
       continue;
     }
@@ -827,49 +976,121 @@ async function runAutomatedPaymentReminders(supabase) {
       }
     }
 
-    // 6. Dispatch Individual Invoice Reminder + PDF Attachment
+    // 6. Dispatch Reminder (WhatsApp + Email)
     const reminderNum = currentCount + 1;
     const message = REMINDER_TEXT(inv, reminderNum);
-
-    const isWithin24h = await check24hWindow(supabase, phone);
-    let result;
-    let sentAsTemplate = false;
-
-    if (!isWithin24h) {
-      const tplRes = await sendWhatsAppTemplate(phone, 'payment_reminder_v1', 'en', [
-        inv.client_name || 'Valued Customer',
-        inv.company_name || 'Sobhainfra Tech',
-        inv.invoice_number || inv.tally_voucher_number || 'Inv',
-        fmtAmount(inv.amount),
-        fmtDate(inv.due_date),
-        inv.status || 'Pending',
-        'ICICI Bank',
-        '001905012691',
-        'ICIC0000019',
-      ]);
-      if (tplRes.success) {
-        result = tplRes;
-        sentAsTemplate = true;
-      } else {
-        console.warn(`[Automated Reminders] Meta template warning for ${inv.invoice_number}:`, tplRes.error);
-      }
-    }
-
     const hasValidPdf = inv.pdf_url && typeof inv.pdf_url === 'string' && (inv.pdf_url.startsWith('http://') || inv.pdf_url.startsWith('https://'));
 
-    if (!sentAsTemplate) {
-      if (hasValidPdf && isWithin24h) {
-        const pdfFileName = `Invoice_${inv.invoice_number || inv.id}.pdf`;
-        result = await sendDocumentMessage(phone, inv.pdf_url, pdfFileName, message);
-        if (!result.success) {
+    let result = null;
+    let sentAsTemplate = false;
+
+    // 6A. WhatsApp Dispatch (if phone is available)
+    if (phone) {
+      const isWithin24h = await check24hWindow(supabase, phone);
+
+      if (!isWithin24h) {
+        const tplRes = await sendWhatsAppTemplate(phone, 'payment_reminder_v1', 'en', [
+          inv.client_name || 'Valued Customer',
+          inv.company_name || 'Sobhainfra Tech',
+          inv.invoice_number || inv.tally_voucher_number || 'Inv',
+          fmtAmount(inv.amount),
+          fmtDate(inv.due_date),
+          inv.status || 'Pending',
+          'ICICI Bank',
+          '001905012691',
+          'ICIC0000019',
+        ]);
+        if (tplRes.success) {
+          result = tplRes;
+          sentAsTemplate = true;
+        } else {
+          console.warn(`[Automated Reminders] Meta template warning for ${inv.invoice_number}:`, tplRes.error);
+        }
+      }
+
+      if (!sentAsTemplate) {
+        if (hasValidPdf && isWithin24h) {
+          const pdfFileName = `Invoice_${inv.invoice_number || inv.id}.pdf`;
+          result = await sendDocumentMessage(phone, inv.pdf_url, pdfFileName, message);
+          if (!result.success) {
+            result = await sendTextMessage(phone, message);
+          }
+        } else {
           result = await sendTextMessage(phone, message);
         }
-      } else {
-        result = await sendTextMessage(phone, message);
+      }
+
+      if (result?.success) {
+        await logToLiveInbox(supabase, phone, inv.client_name, message, hasValidPdf ? inv.pdf_url : null, result.messageId);
+
+        try {
+          await supabase.from('payment_reminders').insert([{
+            organization_id: DEFAULT_ORG_ID,
+            invoice_id: inv.id,
+            channel: 'WhatsApp',
+            message,
+            status: result.simulated ? 'simulated' : 'sent',
+          }]);
+        } catch {}
+
+        try {
+          await supabase.from('activities').insert([{
+            type: 'payment_reminder',
+            description: `Auto WhatsApp reminder #${reminderNum} sent for ${inv.invoice_number || inv.id} (${fmtAmount(inv.amount)})`,
+            lead_id: inv.lead_id || null,
+          }]);
+        } catch {}
       }
     }
 
-    if (result?.success) {
+    // 6B. Email Dispatch (if customer email is found in Google Sheet directory)
+    let emailSentOk = false;
+    if (email) {
+      try {
+        const emRes = await sendPaymentReminderEmail(supabase, {
+          to: email,
+          recipientName: inv.client_name || 'Valued Customer',
+          companyName: inv.company_name || 'Sobhainfra Tech',
+          invNum: inv.invoice_number || inv.tally_voucher_number || 'Inv',
+          amount: inv.amount,
+          dueDate: inv.due_date,
+          status: inv.status || 'Pending',
+          reminderNum,
+          pdfUrl: hasValidPdf ? inv.pdf_url : null,
+        });
+
+        if (emRes?.success) {
+          emailSentOk = true;
+          results.emailSent = (results.emailSent || 0) + 1;
+
+          try {
+            await supabase.from('payment_reminders').insert([{
+              organization_id: DEFAULT_ORG_ID,
+              invoice_id: inv.id,
+              channel: 'Email',
+              message: `Auto Email reminder #${reminderNum} sent to ${email}`,
+              status: emRes.simulated ? 'simulated' : 'sent',
+            }]);
+          } catch (insErr) {
+            console.warn('[Automated Reminders] payment_reminders insert notice:', insErr.message);
+          }
+
+          try {
+            await supabase.from('activities').insert([{
+              type: 'payment_reminder',
+              description: `Auto Email reminder #${reminderNum} sent for ${inv.invoice_number || inv.id} (${fmtAmount(inv.amount)}) to ${email}`,
+              lead_id: inv.lead_id || null,
+            }]);
+          } catch (insErr) {
+            console.warn('[Automated Reminders] activities insert notice:', insErr.message);
+          }
+        }
+      } catch (emErr) {
+        console.warn(`[Automated Reminders] Email dispatch note for ${inv.invoice_number}:`, emErr.message);
+      }
+    }
+
+    if (result?.success || emailSentOk) {
       results.sent++;
       const updatePayload = {
         reminder_count: reminderNum,
@@ -879,29 +1100,6 @@ async function runAutomatedPaymentReminders(supabase) {
         updatePayload.status = 'Overdue';
       }
       await supabase.from('invoices').update(updatePayload).eq('id', inv.id);
-
-      // Log to Live Inbox
-      await logToLiveInbox(supabase, phone, inv.client_name, message, hasValidPdf ? inv.pdf_url : null, result.messageId);
-
-      // Log to payment_reminders
-      try {
-        await supabase.from('payment_reminders').insert([{
-          organization_id: DEFAULT_ORG_ID,
-          invoice_id: inv.id,
-          channel: 'WhatsApp',
-          message,
-          status: result.simulated ? 'simulated' : 'sent',
-        }]);
-      } catch {}
-
-      // Log to activities
-      try {
-        await supabase.from('activities').insert([{
-          type: 'payment_reminder',
-          description: `Auto WhatsApp reminder #${reminderNum} sent for ${inv.invoice_number || inv.id} (${fmtAmount(inv.amount)})`,
-          lead_id: inv.lead_id || null,
-        }]);
-      } catch {}
     } else {
       results.failed++;
     }
@@ -910,6 +1108,7 @@ async function runAutomatedPaymentReminders(supabase) {
   console.log('[Automated Reminders] Scan finished:', JSON.stringify({
     scanned: results.totalScanned,
     sent: results.sent,
+    emailSent: results.emailSent || 0,
     failed: results.failed,
     skippedPaused: results.skippedPaused,
     skippedTooEarly: results.skippedTooEarly,
