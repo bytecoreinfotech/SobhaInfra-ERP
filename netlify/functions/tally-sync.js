@@ -255,6 +255,22 @@ exports.handler = async (event) => {
 
           finalPdfUrl = finalPdfUrl || v.pdf_url || v.metadata?.pdf_url || null;
 
+          const clientDisplayName = verifiedSheetName || v.ledger_name || 'Customer';
+          const company = v.company_name || companyName || 'SHOBHA READY PLAST';
+
+          // Direct party email from voucher, metadata, or customer directory (Google Sheet / DB)
+          let targetEmail = v.email || v.client_email || v.buyer_email || v.metadata?.email || null;
+          if (!targetEmail || !targetEmail.includes('@')) {
+            try {
+              targetEmail = await resolveCustomerEmail(supabase, {
+                companyName: v.ledger_name || clientDisplayName || company,
+                clientName: clientDisplayName,
+                phone: resolvedClientPhone,
+                email: targetEmail,
+              });
+            } catch (_) {}
+          }
+
           const invoiceRow = {
             organization_id: '00000000-0000-0000-0000-000000000001',
             tally_voucher_number: invNum,
@@ -268,6 +284,8 @@ exports.handler = async (event) => {
             pdf_url: finalPdfUrl || null,
             metadata: {
               ...(v.metadata || {}),
+              email: targetEmail || '',
+              client_email: targetEmail || '',
               pdf_url: finalPdfUrl,
               pdf_generated_at: new Date().toISOString(),
               tally_ledger: v.ledger_name,
@@ -440,15 +458,14 @@ exports.handler = async (event) => {
             else results.unmappedLedgers++;
 
             // ── AIRTIGHT SAFETY GUARD FOR NEW BILL AUTO-DISPATCH ─────
-            // Rule 1: Date Recency Guard — invoice must be same-day or within the last 48 hours OR brand-new voucher
+            // Rule 1: Date Recency Guard — invoice must be same-day or within the last 30 days OR brand-new voucher OR targeted sync (<= 5 vouchers)
             const invDateMs = new Date(invoiceDateStr).getTime();
             const nowMs = Date.now();
             const diffHours = (nowMs - invDateMs) / (1000 * 60 * 60);
-            const isRecentInvoice = diffHours >= -12 && diffHours <= 48;
+            const isRecentInvoice = diffHours >= -12 && diffHours <= (24 * 30); // 30 days window covers backdated vouchers & weekend lags
             const isNewVoucher = !existing || !existing.id;
-            const isEligibleForDispatch = isNewVoucher || isRecentInvoice;
+            const isEligibleForDispatch = !isBulkSync || isNewVoucher || isRecentInvoice;
 
-            // Rule 2: Idempotency Guard — never re-send if already successfully dispatched WITH PDF
             // Rule 2: Idempotency Guard — check both WhatsApp and Email separately
             const isAlreadyDispatchedWhatsApp = Boolean(
               (existing?.metadata?.first_dispatched_at || existing?.metadata?.auto_dispatched_at) &&
@@ -469,21 +486,6 @@ exports.handler = async (event) => {
 
             // Rule 4: Authoritative Phone & Email Verification
             const targetPhone = resolvedClientPhone || invoiceRow.client_phone || existing?.client_phone;
-            const clientDisplayName = verifiedSheetName || v.ledger_name || 'Customer';
-            const company = v.company_name || companyName || 'SHOBHA READY PLAST';
-
-            // Direct party email from voucher, metadata, or customer directory
-            let targetEmail = v.email || v.client_email || v.buyer_email || v.metadata?.email || null;
-            if (!targetEmail || !targetEmail.includes('@')) {
-              try {
-                targetEmail = await resolveCustomerEmail(supabase, {
-                  companyName: v.ledger_name || clientDisplayName || company,
-                  clientName: clientDisplayName,
-                  phone: targetPhone,
-                  email: targetEmail,
-                });
-              } catch (_) {}
-            }
 
             const canAutoDispatchWhatsApp = isEligibleForDispatch &&
               !isAlreadyDispatchedWhatsApp &&
@@ -824,6 +826,7 @@ exports.handler = async (event) => {
                         const nowDispatched = new Date().toISOString();
                         const updatedMeta = {
                           ...(invoiceRow.metadata || {}),
+                          email: targetEmail,
                           pdf_url: finalPdfUrl,
                           auto_email_dispatched_at: nowDispatched,
                           auto_email_dispatched_to: targetEmail,
@@ -843,10 +846,10 @@ exports.handler = async (event) => {
                 console.warn('[AutoSend Guard] Non-fatal dispatch error:', waSendErr.message);
               }
             } else {
-              if (isBulkSync) {
+              if (isBulkSync && !isRecentInvoice) {
                 // Silently skip bulk batch
-              } else if (!isRecentInvoice) {
-                console.log(`[AutoSend Guard] Invoice ${invNum} dated ${invoiceDateStr} is older than 48h. Auto-dispatch skipped.`);
+              } else if (!isRecentInvoice && isBulkSync) {
+                console.log(`[AutoSend Guard] Invoice ${invNum} dated ${invoiceDateStr} is older than 30d in bulk sync. Auto-dispatch skipped.`);
               } else if (isAlreadyDispatchedWhatsApp && isAlreadyDispatchedEmail) {
                 console.log(`[AutoSend Guard] Invoice ${invNum} was already dispatched previously via WhatsApp & Email. Skipped.`);
               }

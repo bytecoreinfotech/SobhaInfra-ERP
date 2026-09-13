@@ -1010,7 +1010,20 @@ const EmailHub = () => {
               <div dangerouslySetInnerHTML={{ __html: previewLog.body_html || previewLog.body_text }} />
             </div>
 
-            <div style={{ padding: '0.85rem 1.25rem', borderTop: '1px solid var(--border-color)', textAlign: 'right' }}>
+            <div style={{ padding: '0.85rem 1.25rem', borderTop: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div>
+                {(previewLog.metadata?.pdf_url || previewLog.pdf_url) && (
+                  <a
+                    href={previewLog.metadata?.pdf_url || previewLog.pdf_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="btn btn-outline btn-sm"
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', textDecoration: 'none', color: '#6366f1', borderColor: 'rgba(99,102,241,0.3)', fontSize: '0.78rem' }}
+                  >
+                    <FileText size={14} /> View Attached Invoice PDF
+                  </a>
+                )}
+              </div>
               <button
                 type="button"
                 className="btn btn-primary btn-sm"

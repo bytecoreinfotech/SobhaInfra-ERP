@@ -330,6 +330,75 @@ function formatEmailHtml({
 `;
 }
 
+// ── Universal Safe Email Logger (Logs directly to audit_logs & email_logs) ────
+async function recordEmailLog(supabase, {
+  recipient_email,
+  recipient_name = '',
+  sender_email,
+  sender_name,
+  subject,
+  body_html = '',
+  template_used = 'Email Dispatch',
+  status = 'SENT',
+  messageId = null,
+  invoice_number = null,
+  amount = null,
+  pdf_url = null,
+  error_message = null,
+  extra = {},
+}) {
+  if (!supabase) return;
+
+  const payload = {
+    recipient_email,
+    recipient_name,
+    sender_email,
+    sender_name,
+    subject,
+    body_html,
+    body_text: subject,
+    template_used,
+    status,
+    messageId,
+    invoice_number,
+    amount,
+    pdf_url,
+    ...extra,
+    ...(error_message ? { error_message } : {}),
+  };
+
+  // 1. Primary: ALWAYS log to audit_logs (guaranteed table in Supabase)
+  try {
+    await supabase.from('audit_logs').insert([{
+      organization_id: DEFAULT_ORG_ID,
+      action: status === 'FAILED' ? 'email.failed' : 'email.sent',
+      resource: 'email',
+      payload,
+    }]);
+  } catch (auditErr) {
+    console.warn('[customerEmailHelper] audit_logs insert notice:', auditErr.message);
+  }
+
+  // 2. Secondary: If email_logs table exists, populate it as well
+  try {
+    await supabase.from('email_logs').insert([{
+      recipient_email,
+      recipient_name,
+      sender_email,
+      sender_name,
+      subject,
+      body_html,
+      template_used,
+      status,
+      sent_by_name: sender_name,
+      metadata: payload,
+      ...(error_message ? { error_message } : {}),
+    }]);
+  } catch (_) {
+    // Ignored if email_logs table is missing
+  }
+}
+
 // ── Send Automated Tax Invoice Email (on Tally Sync) ──────────────────────────
 async function sendInvoiceEmail(supabase, {
   to,
@@ -370,33 +439,28 @@ async function sendInvoiceEmail(supabase, {
         <td style="padding: 6px 12px; font-size: 14px; font-weight: 700; color: #0f172a; text-align: right;">${invNum}</td>
       </tr>
       <tr>
-        <td style="padding: 6px 12px; font-size: 13px; color: #64748b;">Invoice Date:</td>
-        <td style="padding: 6px 12px; font-size: 13px; font-weight: 600; color: #334155; text-align: right;">${formattedDate}</td>
+        <td style="padding: 6px 12px; font-size: 13px; color: #64748b; border-top: 1px dashed #e2e8f0;">Invoice Date:</td>
+        <td style="padding: 6px 12px; font-size: 13px; color: #0f172a; text-align: right; border-top: 1px dashed #e2e8f0;">${formattedDate}</td>
       </tr>
       <tr>
-        <td style="padding: 6px 12px; font-size: 13px; color: #64748b;">Due Date:</td>
-        <td style="padding: 6px 12px; font-size: 13px; font-weight: 600; color: #334155; text-align: right;">${formattedDue}</td>
+        <td style="padding: 6px 12px; font-size: 13px; color: #64748b; border-top: 1px dashed #e2e8f0;">Due Date:</td>
+        <td style="padding: 6px 12px; font-size: 13px; color: #0f172a; text-align: right; border-top: 1px dashed #e2e8f0;">${formattedDue}</td>
       </tr>
-      <tr style="border-top: 1px dashed #cbd5e1;">
-        <td style="padding: 10px 12px 6px; font-size: 15px; font-weight: 700; color: #0f172a;">Total Amount Due:</td>
-        <td style="padding: 10px 12px 6px; font-size: 18px; font-weight: 800; color: #4f46e5; text-align: right;">${formattedAmount}</td>
+      <tr>
+        <td style="padding: 8px 12px; font-size: 14px; font-weight: 700; color: #0f172a; border-top: 2px solid #cbd5e1;">Total Amount:</td>
+        <td style="padding: 8px 12px; font-size: 16px; font-weight: 800; color: #16a34a; text-align: right; border-top: 2px solid #cbd5e1;">${formattedAmount}</td>
       </tr>
     </table>
 
-    <!-- Action Button -->
-    <div style="text-align: center; margin: 25px 0;">
-      <a href="${viewUrl}" target="_blank" style="display: inline-block; background: linear-gradient(135deg, #4f46e5, #4338ca); color: #ffffff; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-weight: 700; font-size: 14px; box-shadow: 0 4px 12px rgba(79, 70, 229, 0.3);">
-        📄 View & Download Tax Invoice
-      </a>
-    </div>
+    <p style="font-size: 13px; color: #64748b;">The official complete 2-page GST Tax Invoice document is attached with this email for your accounting records.</p>
 
-    <!-- Bank Details Box -->
-    <div style="background-color: #f1f5f9; border-radius: 8px; padding: 14px 18px; margin-top: 20px; font-size: 13px;">
-      <strong style="color: #1e293b; display: block; margin-bottom: 6px;">🏦 Remittance Banking Details (NEFT / RTGS / IMPS):</strong>
-      <table width="100%" cellpadding="0" cellspacing="0" style="font-size: 13px; color: #475569;">
-        <tr><td style="padding: 3px 0; width: 130px;">Bank Name:</td><td style="font-weight: 600; color: #0f172a;">${bank.name}</td></tr>
-        <tr><td style="padding: 3px 0;">Account Name:</td><td style="font-weight: 600; color: #0f172a;">${bank.accName || companyName}</td></tr>
-        <tr><td style="padding: 3px 0;">Account Number:</td><td style="font-weight: 700; color: #0f172a;">${bank.accNo}</td></tr>
+    <!-- Bank Details Card -->
+    <div style="background-color: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 15px; margin: 20px 0;">
+      <h3 style="margin: 0 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; color: #1e40af;">Bank Account Details for NEFT / RTGS Remittance</h3>
+      <table width="100%" cellpadding="0" cellspacing="0" style="font-size: 13px; color: #334155;">
+        <tr><td style="padding: 3px 0; width: 130px;">Beneficiary:</td><td style="font-weight: 700; color: #0f172a;">${bank.accName}</td></tr>
+        <tr><td style="padding: 3px 0;">Bank:</td><td style="font-weight: 700; color: #0f172a;">${bank.name}</td></tr>
+        <tr><td style="padding: 3px 0;">Account No:</td><td style="font-weight: 700; color: #0f172a;">${bank.accNo}</td></tr>
         <tr><td style="padding: 3px 0;">IFSC Code:</td><td style="font-weight: 700; color: #0f172a;">${bank.ifsc}</td></tr>
       </table>
     </div>
@@ -424,23 +488,20 @@ async function sendInvoiceEmail(supabase, {
 
   if (!smtp.user || !smtp.pass) {
     console.log(`[customerEmailHelper] Simulated invoice email dispatch to ${to} for ${invNum}`);
-    if (supabase) {
-      try {
-        await supabase.from('email_logs').insert([{
-          recipient_email: to,
-          recipient_name: recipientName,
-          sender_email: smtp.fromEmail,
-          sender_name: smtp.fromName,
-          subject,
-          body_html: finalHtml,
-          template_used: 'Auto Invoice Dispatch',
-          status: 'SIMULATED',
-          error_message: 'Gmail App Password not configured in Settings; simulated successfully.',
-        }]);
-      } catch (logErr) {
-        console.warn('[customerEmailHelper] email_logs insert notice:', logErr.message);
-      }
-    }
+    await recordEmailLog(supabase, {
+      recipient_email: to,
+      recipient_name: recipientName,
+      sender_email: smtp.fromEmail,
+      sender_name: smtp.fromName,
+      subject,
+      body_html: finalHtml,
+      template_used: 'Auto Invoice Dispatch',
+      status: 'SIMULATED',
+      invoice_number: invNum,
+      amount,
+      pdf_url: pdfUrl,
+      error_message: 'Gmail App Password not configured in Settings; simulated successfully.',
+    });
     return { success: true, simulated: true };
   }
 
@@ -461,60 +522,40 @@ async function sendInvoiceEmail(supabase, {
       attachments,
     });
 
-    if (supabase) {
-      try {
-        await supabase.from('email_logs').insert([{
-          recipient_email: to,
-          recipient_name: recipientName,
-          sender_email: smtp.fromEmail,
-          sender_name: smtp.fromName,
-          subject,
-          body_html: finalHtml,
-          template_used: 'Auto Invoice Dispatch',
-          status: 'SENT',
-          sent_by_name: smtp.fromName,
-          metadata: { messageId: info.messageId, invoice_number: invNum, response: info.response },
-        }]);
-        try {
-          await supabase.from('audit_logs').insert([{
-            organization_id: DEFAULT_ORG_ID,
-            action: 'email.sent',
-            resource: 'email',
-            payload: {
-              recipient_email: to,
-              recipient_name: recipientName,
-              sender_email: smtp.fromEmail,
-              sender_name: smtp.fromName,
-              subject,
-              template_used: 'Auto Invoice Dispatch',
-              status: 'SENT',
-              messageId: info.messageId,
-              invoice_number: invNum,
-            }
-          }]);
-        } catch (_) {}
-      } catch (logErr) {
-        console.warn('[customerEmailHelper] email_logs insert notice:', logErr.message);
-      }
-    }
+    await recordEmailLog(supabase, {
+      recipient_email: to,
+      recipient_name: recipientName,
+      sender_email: smtp.fromEmail,
+      sender_name: smtp.fromName,
+      subject,
+      body_html: finalHtml,
+      template_used: 'Auto Invoice Dispatch',
+      status: 'SENT',
+      messageId: info.messageId,
+      invoice_number: invNum,
+      amount,
+      pdf_url: pdfUrl,
+      extra: { response: info.response },
+    });
 
     console.log(`[customerEmailHelper] Successfully delivered invoice email to ${to} for ${invNum} (msgId: ${info.messageId})`);
     return { success: true, messageId: info.messageId };
   } catch (sendErr) {
     console.warn(`[customerEmailHelper] Failed to deliver invoice email to ${to}:`, sendErr.message);
-    if (supabase) {
-      try {
-        await supabase.from('email_logs').insert([{
-          recipient_email: to,
-          recipient_name: recipientName,
-          subject,
-          status: 'FAILED',
-          error_message: sendErr.message,
-        }]);
-      } catch (logErr) {
-        console.warn('[customerEmailHelper] email_logs insert notice:', logErr.message);
-      }
-    }
+    await recordEmailLog(supabase, {
+      recipient_email: to,
+      recipient_name: recipientName,
+      sender_email: smtp.fromEmail,
+      sender_name: smtp.fromName,
+      subject,
+      body_html: finalHtml,
+      template_used: 'Auto Invoice Dispatch',
+      status: 'FAILED',
+      invoice_number: invNum,
+      amount,
+      pdf_url: pdfUrl,
+      error_message: sendErr.message,
+    });
     return { success: false, error: sendErr.message };
   }
 }
@@ -671,23 +712,21 @@ async function sendPaymentReminderEmail(supabase, {
 
   if (!smtp.user || !smtp.pass) {
     console.log(`[customerEmailHelper] Simulated payment reminder email to ${to} for ${invNum}`);
-    if (supabase) {
-      try {
-        await supabase.from('email_logs').insert([{
-          recipient_email: to,
-          recipient_name: recipientName,
-          sender_email: smtp.fromEmail,
-          sender_name: smtp.fromName,
-          subject,
-          body_html: finalHtml,
-          template_used: 'Payment Reminder',
-          status: 'SIMULATED',
-          error_message: 'Gmail App Password not configured in Settings; simulated successfully.',
-        }]);
-      } catch (logErr) {
-        console.warn('[customerEmailHelper] email_logs insert notice:', logErr.message);
-      }
-    }
+    await recordEmailLog(supabase, {
+      recipient_email: to,
+      recipient_name: recipientName,
+      sender_email: smtp.fromEmail,
+      sender_name: smtp.fromName,
+      subject,
+      body_html: finalHtml,
+      template_used: 'Payment Reminder',
+      status: 'SIMULATED',
+      invoice_number: invNum,
+      amount,
+      pdf_url: pdfUrl,
+      extra: { reminder_number: reminderNum },
+      error_message: 'Gmail App Password not configured in Settings; simulated successfully.',
+    });
     return { success: true, simulated: true };
   }
 
@@ -708,61 +747,41 @@ async function sendPaymentReminderEmail(supabase, {
       attachments,
     });
 
-    if (supabase) {
-      try {
-        await supabase.from('email_logs').insert([{
-          recipient_email: to,
-          recipient_name: recipientName,
-          sender_email: smtp.fromEmail,
-          sender_name: smtp.fromName,
-          subject,
-          body_html: finalHtml,
-          template_used: 'Payment Reminder',
-          status: 'SENT',
-          sent_by_name: smtp.fromName,
-          metadata: { messageId: info.messageId, invoice_number: invNum, reminder_number: reminderNum },
-        }]);
-        try {
-          await supabase.from('audit_logs').insert([{
-            organization_id: DEFAULT_ORG_ID,
-            action: 'email.sent',
-            resource: 'email',
-            payload: {
-              recipient_email: to,
-              recipient_name: recipientName,
-              sender_email: smtp.fromEmail,
-              sender_name: smtp.fromName,
-              subject,
-              template_used: 'Payment Reminder',
-              status: 'SENT',
-              messageId: info.messageId,
-              invoice_number: invNum,
-              reminder_number: reminderNum,
-            }
-          }]);
-        } catch (_) {}
-      } catch (logErr) {
-        console.warn('[customerEmailHelper] email_logs insert notice:', logErr.message);
-      }
-    }
+    await recordEmailLog(supabase, {
+      recipient_email: to,
+      recipient_name: recipientName,
+      sender_email: smtp.fromEmail,
+      sender_name: smtp.fromName,
+      subject,
+      body_html: finalHtml,
+      template_used: 'Payment Reminder',
+      status: 'SENT',
+      messageId: info.messageId,
+      invoice_number: invNum,
+      amount,
+      pdf_url: pdfUrl,
+      extra: { reminder_number: reminderNum, response: info.response },
+    });
 
     console.log(`[customerEmailHelper] Successfully delivered payment reminder email to ${to} for ${invNum} (msgId: ${info.messageId})`);
     return { success: true, messageId: info.messageId };
   } catch (sendErr) {
     console.warn(`[customerEmailHelper] Failed to deliver payment reminder email to ${to}:`, sendErr.message);
-    if (supabase) {
-      try {
-        await supabase.from('email_logs').insert([{
-          recipient_email: to,
-          recipient_name: recipientName,
-          subject,
-          status: 'FAILED',
-          error_message: sendErr.message,
-        }]);
-      } catch (logErr) {
-        console.warn('[customerEmailHelper] email_logs insert notice:', logErr.message);
-      }
-    }
+    await recordEmailLog(supabase, {
+      recipient_email: to,
+      recipient_name: recipientName,
+      sender_email: smtp.fromEmail,
+      sender_name: smtp.fromName,
+      subject,
+      body_html: finalHtml,
+      template_used: 'Payment Reminder',
+      status: 'FAILED',
+      invoice_number: invNum,
+      amount,
+      pdf_url: pdfUrl,
+      extra: { reminder_number: reminderNum },
+      error_message: sendErr.message,
+    });
     return { success: false, error: sendErr.message };
   }
 }
@@ -773,4 +792,5 @@ module.exports = {
   resolveCustomerEmail,
   sendInvoiceEmail,
   sendPaymentReminderEmail,
+  recordEmailLog,
 };
