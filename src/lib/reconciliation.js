@@ -794,13 +794,29 @@ const SRP_DEBTOR_SUBGROUPS = new Set([
  * Dynamic Tally Debtors and Customer Advances computation
  * Robustly calculates customer gross debit, advances (credit), and net outstanding
  * from live Tally-synced ledger balances and sales vouchers for any selected company or consolidated.
- * Pure dynamic computation with ZERO hardcoded values.
+ * Supports direct ingestion from Tally Master Summary (Option 2) or live ledger calculation.
  */
-export function computeCompanyDebtors(invoices = [], companyName = '') {
+export function computeCompanyDebtors(invoices = [], companyName = '', masterSummaries = null) {
   const compUpper = (companyName || '').toUpperCase();
   const isBuildtech = compUpper.includes('BUILDTECH');
   const isReadyPlast = compUpper.includes('READY PLAST') || 
                       (compUpper.includes('SHOBHA') && !isBuildtech && !compUpper.includes('TECH'));
+
+  // 1. Check if authoritative Tally Master Summary exists for this company
+  let matchedMaster = null;
+  if (masterSummaries && typeof masterSummaries === 'object') {
+    if (companyName && masterSummaries[companyName]) {
+      matchedMaster = masterSummaries[companyName];
+    } else if (companyName) {
+      const foundKey = Object.keys(masterSummaries).find(k => {
+        const kUpper = k.toUpperCase();
+        return kUpper === compUpper || 
+               (isReadyPlast && kUpper.includes('READY PLAST')) || 
+               (isBuildtech && kUpper.includes('BUILDTECH'));
+      });
+      if (foundKey) matchedMaster = masterSummaries[foundKey];
+    }
+  }
 
   // 1. Filter LEDGER-* records belonging to this company (including SB-LEDGER- and SRP-LEDGER-)
   const compLedgers = invoices.filter(inv => {
@@ -827,51 +843,57 @@ export function computeCompanyDebtors(invoices = [], companyName = '') {
 
   let debit = 0;
   let credit = 0;
-  const groups = [];
+  let groups = [];
 
-  partyMap.forEach(l => {
-    const parent = (l.metadata?.parent || '').trim();
-    const parentLower = parent.toLowerCase();
-    const dir = (l.direction || l.metadata?.direction || '').toLowerCase();
+  if (matchedMaster?.sundry_debtors?.gross_debit !== undefined) {
+    debit = Number(matchedMaster.sundry_debtors.gross_debit || 0);
+    credit = Number(matchedMaster.sundry_debtors.gross_credit || 0);
+    groups = matchedMaster.sundry_debtors.subgroups || [];
+  } else {
+    partyMap.forEach(l => {
+      const parent = (l.metadata?.parent || '').trim();
+      const parentLower = parent.toLowerCase();
+      const dir = (l.direction || l.metadata?.direction || '').toLowerCase();
 
-    // Check if debtor ledger: matches Sundry Debtors, includes debtor, or matches Ready Plast debtor sub-groups
-    const isDebtor = parent === 'Sundry Debtors' || 
-                     parentLower.includes('debtor') || 
-                     SRP_DEBTOR_SUBGROUPS.has(parentLower) ||
-                     dir === 'receivable' ||
-                     l.metadata?.is_credit_advance;
+      // Check if debtor ledger: matches Sundry Debtors, includes debtor, or matches Ready Plast debtor sub-groups
+      const isDebtor = parent === 'Sundry Debtors' || 
+                       parentLower.includes('debtor') || 
+                       SRP_DEBTOR_SUBGROUPS.has(parentLower) ||
+                       dir === 'receivable' ||
+                       l.metadata?.is_credit_advance;
 
-    // Exclude non-debtor accounts (creditors, expenses, drivers, loans, bank, assets, tax)
-    const isExcluded = parentLower.includes('creditor') || 
-                       parentLower.includes('driver') || 
-                       parentLower.includes('loan') || 
-                       parentLower.includes('staff') || 
-                       parentLower.includes('deposit') || 
-                       parentLower.includes('diesel') || 
-                       parentLower.includes('maintenance') || 
-                       parentLower.includes('fly ash') || 
-                       parentLower.includes('tyre');
+      // Exclude non-debtor accounts (creditors, expenses, drivers, loans, bank, assets, tax)
+      const isExcluded = parentLower.includes('creditor') || 
+                         parentLower.includes('driver') || 
+                         parentLower.includes('loan') || 
+                         parentLower.includes('staff') || 
+                         parentLower.includes('deposit') || 
+                         parentLower.includes('diesel') || 
+                         parentLower.includes('maintenance') || 
+                         parentLower.includes('fly ash') || 
+                         parentLower.includes('tyre');
 
-    if (isDebtor && !isExcluded) {
-      const amt = Number(l.amount || 0);
-      const isAdvance = l.metadata?.is_credit_advance || 
-                        l.metadata?.is_advance || 
-                        l.metadata?.advance_paid || 
-                        amt < 0 || 
-                        dir === 'credit' || 
-                        (l.metadata?.closing_balance_type || '').toLowerCase() === 'cr';
+      if (isDebtor && !isExcluded) {
+        const amt = Number(l.amount || 0);
+        const isAdvance = l.metadata?.is_credit_advance || 
+                          l.metadata?.is_advance || 
+                          l.metadata?.advance_paid || 
+                          amt < 0 || 
+                          dir === 'credit' || 
+                          (l.metadata?.closing_balance_type || '').toLowerCase() === 'cr';
 
-      const partyName = l.client_name || l.ledger_name || l.invoice_number;
-      if (isAdvance) {
-        const advAmt = Math.abs(amt);
-        credit += advAmt;
-        groups.push({ name: partyName, debit: 0, credit: advAmt, net: -advAmt, parent: parent || 'Customer Advances' });
-      } else {
-        debit += amt;
-        groups.push({ name: partyName, debit: amt, credit: 0, net: amt, parent: parent || 'Sundry Debtors' });
+        const partyName = l.client_name || l.ledger_name || l.invoice_number;
+        if (isAdvance) {
+          const advAmt = Math.abs(amt);
+          credit += advAmt;
+          groups.push({ name: partyName, debit: 0, credit: advAmt, net: -advAmt, parent: parent || 'Customer Advances', is_advance: true });
+        } else {
+          debit += amt;
+          groups.push({ name: partyName, debit: amt, credit: 0, net: amt, parent: parent || 'Sundry Debtors' });
+        }
       }
-    }
-  });
+    });
+  }
 
   // Dynamic incorporation of newly created or synced sales invoices
   const salesInvoices = invoices.filter(inv => {
@@ -908,17 +930,160 @@ export function computeCompanyDebtors(invoices = [], companyName = '') {
     debit: Math.round(finalDebit * 100) / 100,
     credit: Math.round(finalCredit * 100) / 100,
     net: finalNet,
-    groups: groups
+    groups: groups,
+    salesRegister: matchedMaster?.sales_register || null,
+    purchaseRegister: matchedMaster?.purchase_register || null,
+    collections: matchedMaster?.collections || null,
+    isTallyMaster: Boolean(matchedMaster),
   };
 }
 
-export function computeTallyDebtors(invoices = [], activeCompany = null, isConsolidated = false) {
+export function computeTallyDebtors(invoices = [], activeCompany = null, isConsolidated = false, masterSummaries = null) {
   if (isConsolidated || !activeCompany) {
+    if (masterSummaries && typeof masterSummaries === 'object') {
+      const compKeys = Object.keys(masterSummaries).filter(k => !k.startsWith('_'));
+      if (compKeys.length > 0) {
+        let totDeb = 0;
+        let totCred = 0;
+        const allGroups = [];
+        compKeys.forEach(k => {
+          const sd = masterSummaries[k]?.sundry_debtors;
+          if (sd) {
+            totDeb += Number(sd.gross_debit || 0);
+            totCred += Number(sd.gross_credit || 0);
+            if (Array.isArray(sd.subgroups)) {
+              allGroups.push(...sd.subgroups.map(g => ({ ...g, company: k })));
+            }
+          }
+        });
+        if (totDeb > 0) {
+          allGroups.sort((a, b) => b.net - a.net);
+          return {
+            debit: Math.round(totDeb * 100) / 100,
+            credit: Math.round(totCred * 100) / 100,
+            net: Math.round((totDeb - totCred) * 100) / 100,
+            groups: allGroups,
+            isTallyMaster: true,
+          };
+        }
+      }
+    }
     // Dynamic single-pass calculation across all companies with zero hardcoded company names
-    return computeCompanyDebtors(invoices, '');
+    return computeCompanyDebtors(invoices, '', masterSummaries);
   }
 
   const compName = activeCompany?.company_name || '';
-  return computeCompanyDebtors(invoices, compName);
+  return computeCompanyDebtors(invoices, compName, masterSummaries);
+}
+
+/**
+ * Computes monthly turnover breakdown for the KPI cards:
+ * Reads from authoritative Tally Register if available, or dynamically groups activeBills by month.
+ */
+export function computeMonthlyRegister(bills = [], isPayables = false, masterRegister = null) {
+  if (masterRegister?.monthly?.length > 0) {
+    const list = masterRegister.monthly;
+    const peak = Math.max(...list.map(m => Number(isPayables ? (m.debit || m.credit || 0) : (m.credit || m.debit || 0))), 1);
+    const total = list.reduce((s, m) => s + Number(isPayables ? (m.debit || m.credit || 0) : (m.credit || m.debit || 0)), 0);
+    return {
+      monthly: list.map(m => {
+        const amt = Number(isPayables ? (m.debit || m.credit || 0) : (m.credit || m.debit || 0));
+        return {
+          ...m,
+          amount: amt,
+          pct: Math.round((amt / peak) * 100),
+        };
+      }),
+      peakAmount: peak,
+      totalAmount: total,
+      averageMonthly: list.length > 0 ? Math.round(total / list.length) : 0,
+      isTallyMaster: true,
+    };
+  }
+
+  // Dynamic aggregation from bills array
+  const monthMap = {};
+  const monthNames = {
+    '04': { abbr: 'Apr', full: 'April 2026' },
+    '05': { abbr: 'May', full: 'May 2026' },
+    '06': { abbr: 'Jun', full: 'June 2026' },
+    '07': { abbr: 'Jul', full: 'July 2026' },
+    '08': { abbr: 'Aug', full: 'August 2026' },
+    '09': { abbr: 'Sep', full: 'September 2026' },
+    '10': { abbr: 'Oct', full: 'October 2026' },
+    '11': { abbr: 'Nov', full: 'November 2026' },
+    '12': { abbr: 'Dec', full: 'December 2026' },
+    '01': { abbr: 'Jan', full: 'January 2027' },
+    '02': { abbr: 'Feb', full: 'February 2027' },
+    '03': { abbr: 'Mar', full: 'March 2027' },
+  };
+
+  bills.forEach(b => {
+    const dStr = b.invoice_date || b.created_at || '';
+    if (!dStr) return;
+    const mKey = dStr.slice(5, 7);
+    const mInfo = monthNames[mKey] || { abbr: mKey, full: mKey };
+    if (!monthMap[mInfo.abbr]) {
+      monthMap[mInfo.abbr] = {
+        month: mInfo.abbr,
+        fullName: mInfo.full,
+        amount: 0,
+        count: 0,
+      };
+    }
+    monthMap[mInfo.abbr].amount += Number(b.amount || 0);
+    monthMap[mInfo.abbr].count += 1;
+  });
+
+  const orderedAbbrs = ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep'];
+  const monthly = orderedAbbrs.map(abbr => {
+    return monthMap[abbr] || { month: abbr, fullName: `${abbr} 2026`, amount: 0, count: 0 };
+  });
+
+  const peak = Math.max(...monthly.map(m => m.amount), 1);
+  const total = monthly.reduce((s, m) => s + m.amount, 0);
+
+  return {
+    monthly: monthly.map(m => ({
+      ...m,
+      pct: Math.round((m.amount / peak) * 100),
+    })),
+    peakAmount: peak,
+    totalAmount: total,
+    averageMonthly: monthly.filter(m => m.amount > 0).length > 0 
+      ? Math.round(total / monthly.filter(m => m.amount > 0).length) 
+      : 0,
+    isTallyMaster: false,
+  };
+}
+
+/**
+ * Computes rich collection efficiency metrics for Card 2 blank space
+ */
+export function computeCollectionStats(bills = [], masterCollections = null) {
+  const totalInvoiced = bills.reduce((s, b) => s + Number(b.amount || 0), 0);
+  const paidBills = bills.filter(b => b.status === 'Paid');
+  const pendingBills = bills.filter(b => b.status === 'Pending');
+  const overdueBills = bills.filter(b => b.status === 'Overdue');
+
+  const totalPaid = bills.reduce((s, b) => {
+    if (b.status === 'Paid') return s + Number(b.paid_amount || b.amount || 0);
+    return s + Number(b.paid_amount || 0);
+  }, 0);
+
+  const rate = masterCollections?.collection_rate_pct !== undefined 
+    ? masterCollections.collection_rate_pct 
+    : (totalInvoiced > 0 ? Math.round((totalPaid / totalInvoiced) * 1000) / 10 : 0);
+
+  return {
+    realizationRate: rate,
+    totalPaidAmount: totalPaid,
+    totalBilledAmount: totalInvoiced,
+    paidCount: paidBills.length,
+    pendingCount: pendingBills.length,
+    overdueCount: overdueBills.length,
+    totalCount: bills.length,
+    isTallyMaster: Boolean(masterCollections),
+  };
 }
 

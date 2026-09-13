@@ -744,6 +744,80 @@ export async function updateOrgSetting(key, value) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// TALLY MASTER SUMMARY INGESTION & CACHING (Option 2: Dual-Engine)
+// Direct persistence of Tally Prime's official Group Summary & Monthly Registers
+// ─────────────────────────────────────────────────────────────────────────────
+let _tallyMasterSummaryCache = null;
+let _tallyMasterSummaryCacheTime = 0;
+const TALLY_SUMMARY_CACHE_TTL = 30 * 1000; // 30s cache
+
+export function invalidateTallySummaryCache() {
+  _tallyMasterSummaryCache = null;
+  _tallyMasterSummaryCacheTime = 0;
+}
+
+export async function getTallyMasterSummary(options = {}) {
+  const { forceRefresh = false } = (typeof options === 'object' && options !== null) ? options : {};
+  const now = Date.now();
+  if (!forceRefresh && _tallyMasterSummaryCache && (now - _tallyMasterSummaryCacheTime < TALLY_SUMMARY_CACHE_TTL)) {
+    return { data: _tallyMasterSummaryCache, error: null };
+  }
+
+  if (isSupabaseConfigured) {
+    try {
+      const { data, error } = await supabase
+        .from('org_settings')
+        .select('value')
+        .eq('organization_id', DEFAULT_ORG_ID)
+        .eq('key', 'tally_master_summary')
+        .maybeSingle();
+
+      if (!error && data?.value) {
+        try {
+          const parsed = typeof data.value === 'string' ? JSON.parse(data.value) : data.value;
+          _tallyMasterSummaryCache = parsed;
+          _tallyMasterSummaryCacheTime = now;
+          return { data: parsed, error: null };
+        } catch (pErr) {
+          console.warn('[db] Failed to parse tally_master_summary JSON:', pErr.message);
+        }
+      }
+    } catch (err) {
+      console.warn('[db] getTallyMasterSummary error:', err.message);
+    }
+  }
+
+  return { data: _tallyMasterSummaryCache || null, error: null };
+}
+
+export async function saveTallyMasterSummary(summaryObj) {
+  if (!summaryObj) return { error: 'Empty summary' };
+  if (isSupabaseConfigured) {
+    try {
+      const { error } = await supabase
+        .from('org_settings')
+        .upsert({
+          organization_id: DEFAULT_ORG_ID,
+          key: 'tally_master_summary',
+          value: JSON.stringify(summaryObj),
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'organization_id,key' });
+
+      if (!error) {
+        _tallyMasterSummaryCache = summaryObj;
+        _tallyMasterSummaryCacheTime = Date.now();
+      }
+      return { error };
+    } catch (err) {
+      console.warn('[db] saveTallyMasterSummary error:', err.message);
+      return { error: err };
+    }
+  }
+  _tallyMasterSummaryCache = summaryObj;
+  return { error: null };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // MULTI-COMPANY & MULTI-ENTITY REGISTRY SERVICES
 // ─────────────────────────────────────────────────────────────────────────────
 // The 3 exact real TallyPrime companies for this client.

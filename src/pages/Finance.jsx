@@ -12,10 +12,14 @@ import {
   getLedgerMappings, updateLedgerMapping, getSyncErrors,
   sendPaymentReminderWhatsApp, getLeads, normalizePhone,
   pauseInvoiceReminder, resumeInvoiceReminder, createLead,
-  getCustomerMaster, invalidateInvoicesCache
+  getCustomerMaster, invalidateInvoicesCache, getTallyMasterSummary
 } from '../lib/db';
 import { buildCustomerIndex, matchCustomer } from '../lib/customerMatcher';
-import { reconcileCustomerInvoices, reconcileVendorInvoices, getCustomerLedgerStatement, getCustomerPendingBills, isSalesVoucher, isPurchaseVoucher, isReceiptVoucher, computeTallyDebtors } from '../lib/reconciliation';
+import {
+  reconcileCustomerInvoices, reconcileVendorInvoices, getCustomerLedgerStatement,
+  getCustomerPendingBills, isSalesVoucher, isPurchaseVoucher, isReceiptVoucher,
+  computeTallyDebtors, computeMonthlyRegister, computeCollectionStats
+} from '../lib/reconciliation';
 import { supabase } from '../lib/supabase';
 import { useCompany } from '../context/CompanyContext';
 import LedgerDetailDrawer from '../components/LedgerDetailDrawer';
@@ -195,6 +199,7 @@ const Finance = () => {
   const [selectedInvoiceForTemplate, setSelectedInvoiceForTemplate] = useState(null); // invoice row for browser-side PDF generation
   const [docModalInvoice, setDocModalInvoice] = useState(null); // Pixel-perfect 2-page Invoice + e-Way modal
   const [showTallyGroupSummary, setShowTallyGroupSummary] = useState(false);
+  const [tallyMasterSummary, setTallyMasterSummary] = useState(null);
 
   useEffect(() => {
     loadAllFinanceData();
@@ -282,13 +287,14 @@ const Finance = () => {
   const loadAllFinanceData = async (showSpinner = true, forceRefresh = false) => {
     if (showSpinner) setLoading(true);
     if (forceRefresh) invalidateInvoicesCache();
-    const [invRes, tallyRes, mapRes, errRes, leadsRes, masterRes] = await Promise.all([
+    const [invRes, tallyRes, mapRes, errRes, leadsRes, masterRes, tallyMasterRes] = await Promise.all([
       getInvoices({ forceRefresh }),
       getTallyConnectionStatus(),
       getLedgerMappings(),
       getSyncErrors(),
       getLeads(),
       getCustomerMaster({ forceRefresh }),
+      getTallyMasterSummary({ forceRefresh }),
     ]);
     setAllInvoices(invRes.data || []);
     setCustomerMaster(masterRes.data || []);
@@ -296,6 +302,7 @@ const Finance = () => {
     setMappings(mapRes.data || []);
     setSyncErrors(errRes.data || []);
     setLeads(leadsRes.data || []);
+    setTallyMasterSummary(tallyMasterRes.data || null);
     if (showSpinner) setLoading(false);
   };
 
@@ -544,8 +551,40 @@ const Finance = () => {
 
   // Authoritative dynamic calculation of Tally Sundry Debtors, customer advances, and net outstanding
   const currentTallyDebtors = useMemo(() => {
-    return computeTallyDebtors(allInvoices, activeCompany, isConsolidated);
-  }, [allInvoices, activeCompany, isConsolidated]);
+    return computeTallyDebtors(allInvoices, activeCompany, isConsolidated, tallyMasterSummary);
+  }, [allInvoices, activeCompany, isConsolidated, tallyMasterSummary]);
+
+  // Rich monthly register breakdown (matches Tally Sales Register / Purchase Register)
+  const monthlyRegister = useMemo(() => {
+    const isPayables = financeView === 'payables';
+    const compName = activeCompany?.company_name || '';
+    let compMaster = null;
+    if (tallyMasterSummary) {
+      if (compName && tallyMasterSummary[compName]) {
+        compMaster = tallyMasterSummary[compName];
+      } else {
+        const firstKey = Object.keys(tallyMasterSummary).find(k => !k.startsWith('_'));
+        if (firstKey) compMaster = tallyMasterSummary[firstKey];
+      }
+    }
+    const masterReg = isPayables ? compMaster?.purchase_register : compMaster?.sales_register;
+    return computeMonthlyRegister(activeBills, isPayables, masterReg);
+  }, [activeBills, financeView, activeCompany, tallyMasterSummary]);
+
+  // Rich collection & settlement efficiency metrics
+  const collectionStats = useMemo(() => {
+    const compName = activeCompany?.company_name || '';
+    let compMaster = null;
+    if (tallyMasterSummary) {
+      if (compName && tallyMasterSummary[compName]) {
+        compMaster = tallyMasterSummary[compName];
+      } else {
+        const firstKey = Object.keys(tallyMasterSummary).find(k => !k.startsWith('_'));
+        if (firstKey) compMaster = tallyMasterSummary[firstKey];
+      }
+    }
+    return computeCollectionStats(activeBills, compMaster?.collections);
+  }, [activeBills, activeCompany, tallyMasterSummary]);
 
   // Master ledger closing balance sum for the active view
   const tallyClosingSum = useMemo(() => {
@@ -867,21 +906,147 @@ const Finance = () => {
           {/* KPI Summary Cards — dynamically show per active view */}
           <div className="stats-grid">
             {(financeView === 'receivables' ? [
-              { label: 'Total Billed to Customers', value: fmtCurrency(totalInvoiced), sub: `${activeBills.length} sales invoices (matches Tally)`, icon: <DollarSign size={20} />, color: '#6366f1', bg: 'rgba(99,102,241,0.12)' },
-              { label: 'Collected (Paid)', value: fmtCurrency(totalPaid), sub: `${activeBills.filter(i => i.status === 'Paid').length} paid`, icon: <TrendingUp size={20} />, color: '#10b981', bg: 'rgba(16,185,129,0.12)' },
+              { 
+                type: 'register',
+                label: 'Total Billed to Customers', 
+                value: fmtCurrency(totalInvoiced), 
+                sub: `${activeBills.length} sales invoices (matches Tally)`, 
+                icon: <DollarSign size={20} />, 
+                color: '#6366f1', 
+                bg: 'rgba(99,102,241,0.12)' 
+              },
+              { 
+                type: 'collections',
+                label: 'Collected (Paid)', 
+                value: fmtCurrency(totalPaid), 
+                sub: `${activeBills.filter(i => i.status === 'Paid').length} paid`, 
+                icon: <TrendingUp size={20} />, 
+                color: '#10b981', 
+                bg: 'rgba(16,185,129,0.12)' 
+              },
             ] : [
-              { label: 'Total Vendor Bills', value: fmtCurrency(totalInvoiced), sub: `${activeBills.length} bills (matches Tally Purchase Register)`, icon: <DollarSign size={20} />, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)' },
-              { label: 'Paid Out to Vendors', value: fmtCurrency(totalPaid), sub: `${activeBills.filter(i => i.status === 'Paid').length} bills settled (${fmtCurrency(totalVendorPayments)} total paid in Tally)`, icon: <TrendingUp size={20} />, color: '#10b981', bg: 'rgba(16,185,129,0.12)' },
+              { 
+                type: 'register',
+                label: 'Total Vendor Bills', 
+                value: fmtCurrency(totalInvoiced), 
+                sub: `${activeBills.length} bills (matches Tally Purchase Register)`, 
+                icon: <DollarSign size={20} />, 
+                color: '#f59e0b', 
+                bg: 'rgba(245,158,11,0.12)' 
+              },
+              { 
+                type: 'collections',
+                label: 'Paid Out to Vendors', 
+                value: fmtCurrency(totalPaid), 
+                sub: `${activeBills.filter(i => i.status === 'Paid').length} bills settled (${fmtCurrency(totalVendorPayments)} total paid in Tally)`, 
+                icon: <TrendingUp size={20} />, 
+                color: '#10b981', 
+                bg: 'rgba(16,185,129,0.12)' 
+              },
             ]).map(s => (
-              <div key={s.label} className="stat-card" style={{ '--card-accent': s.color }}>
-                <div className="stat-header">
-                  <div>
-                    <div className="stat-label">{s.label}</div>
-                    <div className="stat-value" style={{ fontSize: '1.55rem' }}>{s.value}</div>
-                    {s.sub && <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>{s.sub}</div>}
+              <div key={s.label} className="stat-card" style={{ '--card-accent': s.color, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                <div>
+                  <div className="stat-header">
+                    <div>
+                      <div className="stat-label">{s.label}</div>
+                      <div className="stat-value" style={{ fontSize: '1.55rem' }}>{s.value}</div>
+                      {s.sub && <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>{s.sub}</div>}
+                    </div>
+                    <div className="stat-icon" style={{ background: s.bg, color: s.color }}>{s.icon}</div>
                   </div>
-                  <div className="stat-icon" style={{ background: s.bg, color: s.color }}>{s.icon}</div>
                 </div>
+
+                {/* ── Rich Details inside Blank Space (Matching Tally Prime) ── */}
+                {s.type === 'register' && (
+                  <div style={{
+                    marginTop: '0.85rem',
+                    paddingTop: '0.75rem',
+                    borderTop: '1px solid var(--border-color)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '0.45rem',
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.3px' }}>
+                      <span>{financeView === 'receivables' ? '📅 Tally Sales Register' : '📦 Tally Purchase Register'}</span>
+                      <span style={{ fontSize: '0.68rem', color: s.color, fontWeight: 700 }}>
+                        Avg {fmtCurrency(monthlyRegister.averageMonthly)}/mo
+                      </span>
+                    </div>
+
+                    {/* Monthly mini spark bars */}
+                    <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'flex-end', height: '52px', paddingTop: '0.25rem' }}>
+                      {monthlyRegister.monthly.slice(0, 6).map(m => (
+                        <div
+                          key={m.month}
+                          style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%', justifyContent: 'flex-end', gap: '0.2rem' }}
+                          title={`${m.fullName}: ${fmtCurrency(m.amount)} (${m.count || 0} vouchers)`}
+                        >
+                          <div style={{ fontSize: '0.62rem', fontWeight: 700, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                            {m.amount >= 10000000 ? `${(m.amount / 10000000).toFixed(1)}Cr` : (m.amount >= 100000 ? `${(m.amount / 100000).toFixed(1)}L` : (m.amount > 0 ? `${(m.amount / 1000).toFixed(0)}k` : '—'))}
+                          </div>
+                          <div style={{
+                            width: '100%',
+                            height: `${Math.max(6, Math.min(26, Math.round((m.pct / 100) * 26)))}px`,
+                            background: m.pct >= 80 ? s.color : (m.amount > 0 ? `${s.color}66` : 'var(--border-color)'),
+                            borderRadius: 3,
+                            transition: 'all 0.3s ease',
+                          }} />
+                          <span style={{ fontSize: '0.62rem', fontWeight: 600, color: 'var(--text-muted)' }}>{m.month}</span>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: '0.1rem' }}>
+                      <span>Peak: <strong style={{ color: 'var(--text-primary)' }}>{fmtCurrency(monthlyRegister.peakAmount)}</strong></span>
+                      <span style={{ color: '#10b981', fontWeight: 600 }}>● FY 2026-27 Active</span>
+                    </div>
+                  </div>
+                )}
+
+                {s.type === 'collections' && (
+                  <div style={{
+                    marginTop: '0.85rem',
+                    paddingTop: '0.75rem',
+                    borderTop: '1px solid var(--border-color)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '0.5rem',
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.3px' }}>
+                      <span>{financeView === 'receivables' ? '🎯 Collection Efficiency' : '💳 Settlement Clearance'}</span>
+                      <span style={{ fontSize: '0.75rem', fontWeight: 800, color: '#10b981' }}>
+                        {collectionStats.realizationRate}% Realized
+                      </span>
+                    </div>
+
+                    {/* Realization progress bar */}
+                    <div style={{ width: '100%', height: 6, background: 'var(--bg-tertiary)', borderRadius: 3, overflow: 'hidden' }}>
+                      <div style={{
+                        width: `${Math.min(100, Math.max(0, collectionStats.realizationRate))}%`,
+                        height: '100%',
+                        background: 'linear-gradient(90deg, #10b981, #059669)',
+                        borderRadius: 3,
+                        transition: 'width 0.4s ease',
+                      }} />
+                    </div>
+
+                    {/* Settlement breakdown pills */}
+                    <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'space-between', marginTop: '0.15rem' }}>
+                      <div style={{ flex: 1, padding: '0.35rem 0.45rem', background: 'rgba(16,185,129,0.08)', borderRadius: 'var(--radius-sm)', border: '1px solid rgba(16,185,129,0.2)', textAlign: 'center' }}>
+                        <div style={{ fontSize: '0.6rem', color: '#10b981', fontWeight: 700, textTransform: 'uppercase' }}>Fully Paid</div>
+                        <div style={{ fontSize: '0.85rem', fontWeight: 800, color: 'var(--text-primary)' }}>{collectionStats.paidCount}</div>
+                      </div>
+                      <div style={{ flex: 1, padding: '0.35rem 0.45rem', background: 'rgba(245,158,11,0.08)', borderRadius: 'var(--radius-sm)', border: '1px solid rgba(245,158,11,0.2)', textAlign: 'center' }}>
+                        <div style={{ fontSize: '0.6rem', color: '#f59e0b', fontWeight: 700, textTransform: 'uppercase' }}>Pending</div>
+                        <div style={{ fontSize: '0.85rem', fontWeight: 800, color: 'var(--text-primary)' }}>{collectionStats.pendingCount}</div>
+                      </div>
+                      <div style={{ flex: 1, padding: '0.35rem 0.45rem', background: 'rgba(239,68,68,0.08)', borderRadius: 'var(--radius-sm)', border: '1px solid rgba(239,68,68,0.2)', textAlign: 'center' }}>
+                        <div style={{ fontSize: '0.6rem', color: '#ef4444', fontWeight: 700, textTransform: 'uppercase' }}>Overdue</div>
+                        <div style={{ fontSize: '0.85rem', fontWeight: 800, color: 'var(--text-primary)' }}>{collectionStats.overdueCount}</div>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
 
@@ -904,7 +1069,7 @@ const Finance = () => {
                     </div>
                     {financeView === 'receivables' && (
                       <span style={{ fontSize: '0.62rem', fontWeight: 700, padding: '0.15rem 0.45rem', borderRadius: 4, background: 'rgba(16,185,129,0.12)', color: '#10b981', border: '1px solid rgba(16,185,129,0.25)' }}>
-                        ✓ Matched with Tally Prime
+                        {currentTallyDebtors?.isTallyMaster ? '✓ 100% Matched with Tally Prime' : '✓ Live Reconciled with Tally'}
                       </span>
                     )}
                   </div>

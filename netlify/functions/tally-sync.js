@@ -94,6 +94,40 @@ exports.handler = async (event) => {
         console.warn('[Tally Ingestion] Connection status update:', connErr.message);
       }
 
+      // 1b. Authoritative Tally Master Summary Ingestion (Option 2: Dual-Engine)
+      if (payload.master_summary) {
+        try {
+          let existingSummaries = {};
+          try {
+            const { data: existingRow } = await supabase
+              .from('org_settings')
+              .select('value')
+              .eq('organization_id', '00000000-0000-0000-0000-000000000001')
+              .eq('key', 'tally_master_summary')
+              .maybeSingle();
+            if (existingRow?.value) {
+              existingSummaries = typeof existingRow.value === 'string' ? JSON.parse(existingRow.value) : existingRow.value;
+            }
+          } catch (_) {}
+
+          const merged = {
+            ...existingSummaries,
+            ...payload.master_summary,
+            _last_synced_at: new Date().toISOString(),
+          };
+
+          await supabase.from('org_settings').upsert({
+            organization_id: '00000000-0000-0000-0000-000000000001',
+            key: 'tally_master_summary',
+            value: JSON.stringify(merged),
+            updated_at: new Date().toISOString(),
+          }, { onConflict: 'organization_id,key' });
+          console.log('[Tally Ingestion] Authoritative Tally Master Summary persisted to org_settings');
+        } catch (mErr) {
+          console.warn('[Tally Ingestion] Master summary persistence warning:', mErr.message);
+        }
+      }
+
       // 2. Fetch existing leads and customer master for auto-mapping
       let allLeads = [];
       try {

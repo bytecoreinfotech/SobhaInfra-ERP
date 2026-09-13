@@ -8,7 +8,7 @@ import {
   Download, Printer, FileSpreadsheet, FileText, ExternalLink, X,
   RotateCcw, ShieldCheck
 } from 'lucide-react';
-import { getDashboardStats, getActivityFeed, getTasks, getLeads, getCampaigns, getInvoices, getTeamMembers, getEmployeeLivePings, getSiteVisits, getCustomerMaster, triggerSheetSync, invalidateCustomerMasterCache, invalidateInvoicesCache } from '../lib/db';
+import { getDashboardStats, getActivityFeed, getTasks, getLeads, getCampaigns, getInvoices, getTeamMembers, getEmployeeLivePings, getSiteVisits, getCustomerMaster, triggerSheetSync, invalidateCustomerMasterCache, invalidateInvoicesCache, getTallyMasterSummary } from '../lib/db';
 import { buildCustomerIndex, matchCustomer } from '../lib/customerMatcher';
 import { reconcileCustomerInvoices, isSalesVoucher, isReceiptVoucher, isPurchaseVoucher, computeTallyDebtors } from '../lib/reconciliation';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
@@ -93,6 +93,7 @@ const Dashboard = () => {
   const [showReportModal, setShowReportModal] = useState(false);
   const [syncingSheet, setSyncingSheet] = useState(false);
   const [sheetSyncToast, setSheetSyncToast] = useState('');
+  const [tallyMasterSummary, setTallyMasterSummary] = useState(null);
 
   const handleSyncSheet = async () => {
     setSyncingSheet(true);
@@ -165,7 +166,7 @@ const Dashboard = () => {
   const loadData = async (isForce = false) => {
     setLoading(true);
     if (isForce) invalidateInvoicesCache();
-    const [statsRes, actRes, taskRes, leadRes, campRes, invRes, membersRes, liveRes, visitsRes, masterRes] = await Promise.all([
+    const [statsRes, actRes, taskRes, leadRes, campRes, invRes, membersRes, liveRes, visitsRes, masterRes, tallyMasterRes] = await Promise.all([
       getDashboardStats(),
       getActivityFeed(8),
       getTasks(),
@@ -176,6 +177,7 @@ const Dashboard = () => {
       getEmployeeLivePings(),
       getSiteVisits(),
       getCustomerMaster({ forceRefresh: isForce }),
+      getTallyMasterSummary({ forceRefresh: isForce }),
     ]);
     if (statsRes.data) setStats(statsRes.data);
     setActivities(actRes.data || []);
@@ -187,6 +189,7 @@ const Dashboard = () => {
     setTeamMembers(membersRes.data || []);
     setLivePings(liveRes.data || []);
     setRecentVisits(visitsRes.data || []);
+    setTallyMasterSummary(tallyMasterRes.data || null);
     setLoading(false);
   };
 
@@ -239,8 +242,8 @@ const Dashboard = () => {
 
   // Dynamic Tally Sundry Debtors & Advances from live database
   const tallySummary = useMemo(() => {
-    return computeTallyDebtors(allInvoices, activeCompany, isConsolidated);
-  }, [allInvoices, activeCompany, isConsolidated]);
+    return computeTallyDebtors(allInvoices, activeCompany, isConsolidated, tallyMasterSummary);
+  }, [allInvoices, activeCompany, isConsolidated, tallyMasterSummary]);
 
   // Total Customer Outstanding (Matches Tally Net Closing Balance)
   const totalCustomerOutstanding = tallySummary?.net ?? 0;
