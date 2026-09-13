@@ -960,36 +960,24 @@ export function computeCompanyDebtors(invoices = [], companyName = '', masterSum
 
 export function computeTallyDebtors(invoices = [], activeCompany = null, isConsolidated = false, masterSummaries = null) {
   if (isConsolidated || !activeCompany) {
-    if (masterSummaries && typeof masterSummaries === 'object') {
-      const compKeys = Object.keys(masterSummaries).filter(k => !k.startsWith('_'));
-      if (compKeys.length > 0) {
-        let totDeb = 0;
-        let totCred = 0;
-        const allGroups = [];
-        compKeys.forEach(k => {
-          const sd = masterSummaries[k]?.sundry_debtors;
-          if (sd) {
-            totDeb += Number(sd.gross_debit || 0);
-            totCred += Number(sd.gross_credit || 0);
-            if (Array.isArray(sd.subgroups)) {
-              allGroups.push(...sd.subgroups.map(g => ({ ...g, company: k })));
-            }
-          }
-        });
-        if (totDeb > 0) {
-          allGroups.sort((a, b) => b.net - a.net);
-          return {
-            debit: Math.round(totDeb * 100) / 100,
-            credit: Math.round(totCred * 100) / 100,
-            net: Math.round((totDeb - totCred) * 100) / 100,
-            groups: allGroups,
-            isTallyMaster: true,
-          };
-        }
-      }
-    }
-    // Dynamic single-pass calculation across all companies with zero hardcoded company names
-    return computeCompanyDebtors(invoices, '', masterSummaries);
+    const readyPlastRes = computeCompanyDebtors(invoices, 'SHOBHA READY PLAST', masterSummaries);
+    const buildtechRes = computeCompanyDebtors(invoices, 'SHOBHA BUILDTECH', masterSummaries);
+
+    const totDeb = (readyPlastRes?.debit || 0) + (buildtechRes?.debit || 0);
+    const totCred = (readyPlastRes?.credit || 0) + (buildtechRes?.credit || 0);
+    const allGroups = [
+      ...(readyPlastRes?.groups || []).map(g => ({ ...g, company: 'SHOBHA READY PLAST' })),
+      ...(buildtechRes?.groups || []).map(g => ({ ...g, company: 'SHOBHA BUILDTECH' })),
+    ];
+    allGroups.sort((a, b) => b.net - a.net);
+
+    return {
+      debit: Math.round(totDeb * 100) / 100,
+      credit: Math.round(totCred * 100) / 100,
+      net: Math.round((totDeb - totCred) * 100) / 100,
+      groups: allGroups,
+      isTallyMaster: Boolean(readyPlastRes?.isTallyMaster || buildtechRes?.isTallyMaster),
+    };
   }
 
   const compName = activeCompany?.company_name || '';
