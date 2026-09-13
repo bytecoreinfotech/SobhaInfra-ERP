@@ -803,16 +803,15 @@ export function computeCompanyDebtors(invoices = [], companyName = '', masterSum
                       (compUpper.includes('SHOBHA') && !isBuildtech && !compUpper.includes('TECH'));
 
   // 1. Check if authoritative Tally Master Summary exists for this company
+  // For Buildtech, calculate 100% dynamically from live database records and live vouchers as requested
   let matchedMaster = null;
-  if (masterSummaries && typeof masterSummaries === 'object') {
+  if (!isBuildtech && masterSummaries && typeof masterSummaries === 'object') {
     if (companyName && masterSummaries[companyName]) {
       matchedMaster = masterSummaries[companyName];
     } else if (companyName) {
       const foundKey = Object.keys(masterSummaries).find(k => {
         const kUpper = k.toUpperCase();
-        return kUpper === compUpper || 
-               (isReadyPlast && kUpper.includes('READY PLAST')) || 
-               (isBuildtech && kUpper.includes('BUILDTECH'));
+        return kUpper === compUpper || (isReadyPlast && kUpper.includes('READY PLAST'));
       });
       if (foundKey) matchedMaster = masterSummaries[foundKey];
     }
@@ -856,11 +855,13 @@ export function computeCompanyDebtors(invoices = [], companyName = '', masterSum
       const dir = (l.direction || l.metadata?.direction || '').toLowerCase();
 
       // Check if debtor ledger: matches Sundry Debtors, includes debtor, or matches Ready Plast debtor sub-groups
-      const isDebtor = parent === 'Sundry Debtors' || 
-                       parentLower.includes('debtor') || 
-                       SRP_DEBTOR_SUBGROUPS.has(parentLower) ||
-                       dir === 'receivable' ||
-                       l.metadata?.is_credit_advance;
+      const isDebtor = isBuildtech
+        ? (parent === 'Sundry Debtors' || parentLower.includes('debtor') || l.metadata?.is_credit_advance)
+        : (parent === 'Sundry Debtors' || 
+           parentLower.includes('debtor') || 
+           SRP_DEBTOR_SUBGROUPS.has(parentLower) ||
+           dir === 'receivable' ||
+           l.metadata?.is_credit_advance);
 
       // Exclude non-debtor accounts (creditors, expenses, drivers, loans, bank, assets, tax)
       const isExcluded = parentLower.includes('creditor') || 
@@ -869,9 +870,15 @@ export function computeCompanyDebtors(invoices = [], companyName = '', masterSum
                          parentLower.includes('staff') || 
                          parentLower.includes('deposit') || 
                          parentLower.includes('diesel') || 
+                         parentLower.includes('deisel') || 
                          parentLower.includes('maintenance') || 
+                         parentLower.includes('maintance') || 
                          parentLower.includes('fly ash') || 
-                         parentLower.includes('tyre');
+                         parentLower.includes('tyre') ||
+                         parentLower.includes('bank charges') ||
+                         parentLower.includes('tds') ||
+                         parentLower.includes('spare') ||
+                         parentLower.includes('blacklist');
 
       if (isDebtor && !isExcluded) {
         const amt = Number(l.amount || 0);
@@ -910,10 +917,23 @@ export function computeCompanyDebtors(invoices = [], companyName = '', masterSum
   salesInvoices.forEach(s => {
     const rawName = s.client_name || s.party_name || '';
     const normKey = rawName.toUpperCase().replace(/[^A-Z0-9]/g, '');
-    if (normKey && !partyMap.has(normKey)) {
+    const isNewParty = normKey && !partyMap.has(normKey);
+    const sDate = (s.invoice_date || s.created_at || '').slice(0, 10);
+    const isPostSnapshot = sDate > '2026-09-07';
+
+    if (isNewParty || isPostSnapshot) {
       if (s.status !== 'Paid') {
         const pAmt = Number(s.pending_amount !== undefined ? s.pending_amount : s.amount) || 0;
         unmappedSalesDebit += pAmt;
+        if (isNewParty) {
+          groups.push({ name: rawName, debit: pAmt, credit: 0, net: pAmt, parent: 'Sundry Debtors', is_new: true });
+        } else {
+          const existingGroup = groups.find(g => (g.name || '').toUpperCase().replace(/[^A-Z0-9]/g, '') === normKey);
+          if (existingGroup) {
+            existingGroup.debit += pAmt;
+            existingGroup.net += pAmt;
+          }
+        }
       }
     }
   });

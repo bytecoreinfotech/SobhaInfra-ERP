@@ -562,7 +562,7 @@ const Finance = () => {
     if (tallyMasterSummary) {
       if (compName && tallyMasterSummary[compName]) {
         compMaster = tallyMasterSummary[compName];
-      } else {
+      } else if (!compName) {
         const firstKey = Object.keys(tallyMasterSummary).find(k => !k.startsWith('_'));
         if (firstKey) compMaster = tallyMasterSummary[firstKey];
       }
@@ -578,7 +578,7 @@ const Finance = () => {
     if (tallyMasterSummary) {
       if (compName && tallyMasterSummary[compName]) {
         compMaster = tallyMasterSummary[compName];
-      } else {
+      } else if (!compName) {
         const firstKey = Object.keys(tallyMasterSummary).find(k => !k.startsWith('_'));
         if (firstKey) compMaster = tallyMasterSummary[firstKey];
       }
