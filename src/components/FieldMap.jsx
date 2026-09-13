@@ -293,7 +293,7 @@ const FieldMap = ({
           if (btn) btn.onclick = () => onSelectVisitRef.current(v);
 
           const img = document.getElementById(`popup-img-${v.id}`);
-          if (img && v.photo_url) img.onclick = () => onViewPhotoRef.current(v.photo_url);
+          if (img && v.photo_url) img.onclick = () => onViewPhotoRef.current(v.photo_url, v);
         }, 30);
       };
 

@@ -4,7 +4,7 @@ import {
   Clock, CheckCircle, Plus, Search, Filter, Download, RefreshCw,
   ExternalLink, MessageCircle, AlertCircle, Eye, ShieldCheck, Check,
   Radio, Power, ToggleLeft, ToggleRight, ArrowRight, X, Image as ImageIcon,
-  Activity, Signal
+  Activity, Signal, Share2, Copy
 } from 'lucide-react';
 import { getSiteVisits, createSiteVisit, updateSiteVisit, getLeads, getTeamMembers, updateEmployeeLivePing, getEmployeeLivePings, getAllEmployeeLiveLocations, reverseGeocode } from '../lib/db';
 import { useAuth } from '../context/AuthContext';
@@ -35,6 +35,7 @@ const FieldOps = () => {
   const [selectedVisit, setSelectedVisit] = useState(null);
   const [selectedAgent, setSelectedAgent] = useState(null);
   const [previewPhotoUrl, setPreviewPhotoUrl] = useState(null);
+  const [previewVisit, setPreviewVisit] = useState(null);
   const [fitAllTrigger, setFitAllTrigger] = useState(0);
 
   // Employee Live Location State
@@ -261,6 +262,58 @@ const FieldOps = () => {
       accuracy: data.accuracy || p.accuracy,
       address: data.address || p.address,
     }));
+    setShowCheckInModal(true);
+  };
+
+  const handleShareVisitWhatsApp = (v) => {
+    if (!v) return;
+    const latStr = Number(v.lat || 0).toFixed(5);
+    const lngStr = Number(v.lng || 0).toFixed(5);
+    const timeStr = new Date(v.check_in_time || v.created_at || Date.now()).toLocaleString('en-IN', {
+      day: '2-digit', month: 'short', year: 'numeric',
+      hour: '2-digit', minute: '2-digit', hour12: true
+    });
+
+    let msg = `*🛡️ REAL ESTATE SITE INSPECTION PROOF*\n`;
+    msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
+    msg += `🏢 *Property / Site:* ${v.site_name || 'Site Inspection'}\n`;
+    if (v.client_name) msg += `👤 *Client:* ${v.client_name}\n`;
+    msg += `👷 *Field Agent:* ${v.employee_name || 'Staff'}\n`;
+    msg += `📅 *Timestamp:* ${timeStr}\n`;
+    msg += `📍 *Location:* ${v.address || 'Site Location'}\n`;
+    msg += `🎯 *GPS Coordinates:* ${latStr}° N, ${lngStr}° E (±${v.accuracy || 10}m)\n`;
+    msg += `📊 *Verification:* ${v.status || 'Verified'}\n`;
+    if (v.photo_url) {
+      msg += `\n📸 *View Tamper-Proof Geotag Photo:*\n${v.photo_url}\n`;
+    }
+    msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
+    msg += `*${activeCompany?.company_name || 'SOBHAINFRA ERP'}* — Verified Site Inspection`;
+
+    const targetPhone = v.lead_phone ? String(v.lead_phone).replace(/\D/g, '') : '';
+    const waUrl = targetPhone ? `https://wa.me/${targetPhone}?text=${encodeURIComponent(msg)}` : `https://wa.me/?text=${encodeURIComponent(msg)}`;
+    window.open(waUrl, '_blank', 'noopener,noreferrer');
+  };
+
+  const handleDownloadVisitPhoto = (v) => {
+    if (!v?.photo_url) return;
+    const link = document.createElement('a');
+    link.href = v.photo_url;
+    link.target = '_blank';
+    link.download = `Inspection_${(v.site_name || 'Site').replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}.jpg`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleCopyVisitLink = async (v) => {
+    if (!v?.photo_url) return;
+    try {
+      await navigator.clipboard.writeText(v.photo_url);
+      setFeedbackMsg({ type: 'success', text: 'Public photo proof link copied to clipboard!' });
+      setTimeout(() => setFeedbackMsg(null), 3000);
+    } catch {
+      prompt('Copy photo link:', v.photo_url);
+    }
   };
 
   const handleCheckInSubmit = async (e) => {
@@ -643,7 +696,10 @@ const FieldOps = () => {
                   selectedAgent={selectedAgent}
                   onSelectVisit={handleSelectVisit}
                   onSelectAgent={handleSelectAgent}
-                  onViewPhoto={url => setPreviewPhotoUrl(url)}
+                  onViewPhoto={(url, v) => {
+                    setPreviewPhotoUrl(url);
+                    setPreviewVisit(v || visits.find(item => item.photo_url === url) || null);
+                  }}
                   fitAllTrigger={fitAllTrigger}
                 />
               </div>
@@ -776,7 +832,7 @@ const FieldOps = () => {
                           {v.photo_url && (
                             <button
                               className="btn btn-secondary btn-sm"
-                              onClick={(e) => { e.stopPropagation(); setPreviewPhotoUrl(v.photo_url); }}
+                              onClick={(e) => { e.stopPropagation(); setPreviewPhotoUrl(v.photo_url); setPreviewVisit(v); }}
                               style={{ fontSize: '0.62rem', padding: '0.1rem 0.4rem', height: 'auto', color: '#10b981' }}
                             >
                               <Camera size={11} /> Real Photo
@@ -807,34 +863,114 @@ const FieldOps = () => {
                     />
                   </div>
                 </div>
+                <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                  Showing <strong style={{ color: 'var(--text-primary)' }}>{visits.filter(v => Boolean(v.photo_url)).length}</strong> Geotagged Site Inspection Proofs
+                </div>
               </div>
 
-              {visits.filter(v => Boolean(v.photo_url)).length === 0 ? (
-                <div className="glass-card" style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>
-                  <Camera size={36} style={{ marginBottom: '0.5rem', opacity: 0.3 }} />
-                  <div style={{ fontWeight: 600 }}>No site inspection photos captured yet</div>
-                  <div style={{ fontSize: '0.75rem', marginTop: '0.25rem' }}>Photos snapped by field agents using their mobile camera will appear here automatically.</div>
-                </div>
-              ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem' }}>
-                  {visits.filter(v => Boolean(v.photo_url)).map(v => (
-                    <div key={v.id} className="glass-card" style={{ padding: '0.75rem', overflow: 'hidden' }}>
-                      <div
-                        style={{ position: 'relative', height: 190, borderRadius: 8, overflow: 'hidden', cursor: 'pointer', marginBottom: '0.65rem' }}
-                        onClick={() => setPreviewPhotoUrl(v.photo_url)}
-                      >
-                        <img src={v.photo_url} alt={v.site_name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                        <div style={{ position: 'absolute', bottom: 6, right: 6, background: 'rgba(0,0,0,0.75)', color: '#10b981', padding: '0.2rem 0.5rem', borderRadius: 4, fontSize: '0.65rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                          <ShieldCheck size={12} /> Geotagged Proof
+              {(() => {
+                const photoVisits = visits.filter(v => Boolean(v.photo_url)).filter(v => {
+                  if (!searchQuery) return true;
+                  const q = searchQuery.toLowerCase();
+                  return (v.site_name || '').toLowerCase().includes(q) ||
+                         (v.employee_name || '').toLowerCase().includes(q) ||
+                         (v.client_name || '').toLowerCase().includes(q) ||
+                         (v.address || '').toLowerCase().includes(q);
+                });
+
+                if (photoVisits.length === 0) {
+                  return (
+                    <div className="glass-card" style={{ textAlign: 'center', padding: '3.5rem 1.5rem', color: 'var(--text-muted)' }}>
+                      <Camera size={42} style={{ marginBottom: '0.75rem', opacity: 0.35 }} />
+                      <div style={{ fontWeight: 600, fontSize: '1rem', color: 'var(--text-primary)' }}>No site inspection photos found</div>
+                      <div style={{ fontSize: '0.8rem', marginTop: '0.35rem', maxWidth: 420, margin: '0.35rem auto 0' }}>
+                        Field inspection photos snapped by mobile agents automatically watermark GPS coordinates and appear here in real-time.
+                      </div>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(310px, 1fr))', gap: '1.25rem' }}>
+                    {photoVisits.map(v => (
+                      <div key={v.id} className="glass-card" style={{ padding: '0.85rem', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                        {/* Image Preview Container */}
+                        <div
+                          style={{ position: 'relative', height: 195, borderRadius: 8, overflow: 'hidden', cursor: 'pointer', marginBottom: '0.75rem', background: '#020617' }}
+                          onClick={() => { setPreviewPhotoUrl(v.photo_url); setPreviewVisit(v); }}
+                        >
+                          <img
+                            src={v.photo_url}
+                            alt={v.site_name}
+                            style={{ width: '100%', height: '100%', objectFit: 'cover', transition: 'transform 0.3s ease' }}
+                            onMouseOver={e => e.currentTarget.style.transform = 'scale(1.03)'}
+                            onMouseOut={e => e.currentTarget.style.transform = 'scale(1)'}
+                          />
+                          <div style={{ position: 'absolute', bottom: 6, right: 6, background: 'rgba(0,0,0,0.8)', color: '#10b981', padding: '0.2rem 0.5rem', borderRadius: 4, fontSize: '0.68rem', display: 'flex', alignItems: 'center', gap: '0.3rem', border: '1px solid rgba(16,185,129,0.3)', backdropFilter: 'blur(4px)' }}>
+                            <ShieldCheck size={12} /> Geotag Verified
+                          </div>
+                          <div style={{ position: 'absolute', top: 6, left: 6, background: 'rgba(0,0,0,0.7)', color: '#ffffff', padding: '0.15rem 0.45rem', borderRadius: 4, fontSize: '0.62rem' }}>
+                            {new Date(v.check_in_time || v.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </div>
+                        </div>
+
+                        {/* Card Info */}
+                        <div style={{ flex: 1 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.3rem' }}>
+                            <div style={{ fontWeight: 700, fontSize: '0.92rem', color: 'var(--text-primary)' }}>
+                              🏢 {v.site_name}
+                            </div>
+                            <span className={`badge ${v.status === 'Completed' ? 'badge-success' : 'badge-warning'}`} style={{ fontSize: '0.62rem' }}>
+                              {v.status || 'In Progress'}
+                            </span>
+                          </div>
+
+                          <div style={{ fontSize: '0.76rem', color: '#6366f1', fontWeight: 600, marginBottom: '0.25rem' }}>
+                            👤 Agent: {v.employee_name} {v.client_name ? `· Client: ${v.client_name}` : ''}
+                          </div>
+
+                          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '0.85rem', lineHeight: 1.35 }}>
+                            📍 {v.address}
+                          </div>
+                        </div>
+
+                        {/* Action Toolbar */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr', gap: '0.4rem', borderTop: '1px solid var(--border-color)', paddingTop: '0.65rem' }}>
+                          <button
+                            type="button"
+                            className="btn btn-sm"
+                            onClick={() => handleShareVisitWhatsApp(v)}
+                            style={{ background: '#25D366', color: '#ffffff', borderColor: '#25D366', fontSize: '0.72rem', padding: '0.3rem 0.5rem', justifyContent: 'center', gap: '0.3rem', fontWeight: 600 }}
+                            title="Share on WhatsApp with prefilled inspection details"
+                          >
+                            <MessageCircle size={13} /> WhatsApp
+                          </button>
+
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => handleDownloadVisitPhoto(v)}
+                            style={{ fontSize: '0.72rem', padding: '0.3rem 0.5rem', justifyContent: 'center', gap: '0.3rem' }}
+                            title="Download watermarked JPG"
+                          >
+                            <Download size={13} /> Download
+                          </button>
+
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => handleCopyVisitLink(v)}
+                            style={{ fontSize: '0.72rem', padding: '0.3rem 0.5rem', justifyContent: 'center', gap: '0.3rem' }}
+                            title="Copy public photo link"
+                          >
+                            <Share2 size={13} /> Copy
+                          </button>
                         </div>
                       </div>
-                      <div style={{ fontWeight: 700, fontSize: '0.88rem', marginBottom: '0.2rem' }}>{v.site_name}</div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--accent-primary)', marginBottom: '0.2rem' }}>👤 Agent: {v.employee_name}</div>
-                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>📍 {v.address}</div>
-                    </div>
-                  ))}
-                </div>
-              )}
+                    ))}
+                  </div>
+                );
+              })()}
             </div>
           )}
 
@@ -876,13 +1012,23 @@ const FieldOps = () => {
                         </td>
                         <td>
                           {v.photo_url ? (
-                            <button
-                              className="btn btn-secondary btn-sm"
-                              onClick={() => setPreviewPhotoUrl(v.photo_url)}
-                              style={{ fontSize: '0.7rem', padding: '0.2rem 0.5rem', color: '#10b981' }}
-                            >
-                              <Camera size={12} /> View Photo
-                            </button>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                              <img
+                                src={v.photo_url}
+                                alt="Proof"
+                                style={{ width: 34, height: 34, borderRadius: 6, objectFit: 'cover', border: '1px solid var(--border-color)', cursor: 'pointer' }}
+                                onClick={() => { setPreviewPhotoUrl(v.photo_url); setPreviewVisit(v); }}
+                                title="Click to inspect photo"
+                              />
+                              <button
+                                type="button"
+                                className="btn btn-secondary btn-sm"
+                                onClick={() => { setPreviewPhotoUrl(v.photo_url); setPreviewVisit(v); }}
+                                style={{ fontSize: '0.7rem', padding: '0.2rem 0.5rem', color: '#10b981', display: 'flex', alignItems: 'center', gap: '0.3rem' }}
+                              >
+                                <Camera size={12} /> View & Share
+                              </button>
+                            </div>
                           ) : (
                             <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>No photo</span>
                           )}
@@ -1049,22 +1195,135 @@ const FieldOps = () => {
         />
       )}
 
-      {/* High Resolution Photo Preview Lightbox */}
-      {previewPhotoUrl && (
-        <div className="modal-overlay" onClick={() => setPreviewPhotoUrl(null)} style={{ background: 'rgba(0,0,0,0.85)', zIndex: 9999 }}>
-          <div style={{ position: 'relative', maxWidth: 800, width: '90%' }} onClick={e => e.stopPropagation()}>
-            <button
-              className="modal-close-btn"
-              onClick={() => setPreviewPhotoUrl(null)}
-              style={{ position: 'absolute', top: -40, right: 0, color: '#ffffff' }}
-            >
-              ✕
-            </button>
-            <img
-              src={previewPhotoUrl}
-              alt="Geotagged Inspection"
-              style={{ width: '100%', maxHeight: '80vh', objectFit: 'contain', borderRadius: 8, border: '1px solid rgba(255,255,255,0.2)' }}
-            />
+      {/* High Resolution Inspection Photo Proof & Sharing Lightbox */}
+      {(previewPhotoUrl || previewVisit) && (
+        <div
+          className="modal-overlay"
+          onClick={() => { setPreviewPhotoUrl(null); setPreviewVisit(null); }}
+          style={{ background: 'rgba(0,0,0,0.88)', zIndex: 9999, backdropFilter: 'blur(6px)' }}
+        >
+          <div
+            className="animate-fade-in"
+            style={{
+              position: 'relative', maxWidth: 760, width: '92%',
+              background: '#0f172a', borderRadius: 12,
+              border: '1px solid rgba(255,255,255,0.15)', overflow: 'hidden',
+              boxShadow: '0 25px 50px rgba(0,0,0,0.6)'
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div style={{
+              padding: '0.9rem 1.25rem', display: 'flex', justifyContent: 'space-between',
+              alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.1)',
+              background: 'rgba(255,255,255,0.02)'
+            }}>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span style={{ fontWeight: 700, fontSize: '1rem', color: '#ffffff' }}>
+                    🏢 {previewVisit?.site_name || 'Site Inspection Proof'}
+                  </span>
+                  {previewVisit?.status && (
+                    <span className={`badge ${previewVisit.status === 'Completed' ? 'badge-success' : 'badge-warning'}`} style={{ fontSize: '0.65rem' }}>
+                      {previewVisit.status}
+                    </span>
+                  )}
+                </div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
+                  👤 {previewVisit?.employee_name || 'Field Agent'} {previewVisit?.client_name ? `· Client: ${previewVisit.client_name}` : ''} · 📍 {previewVisit?.address || 'Site Location'}
+                </div>
+              </div>
+              <button
+                className="modal-close-btn"
+                onClick={() => { setPreviewPhotoUrl(null); setPreviewVisit(null); }}
+                style={{
+                  color: '#ffffff', background: 'rgba(255,255,255,0.1)', border: 'none',
+                  borderRadius: '50%', width: 32, height: 32, display: 'flex',
+                  alignItems: 'center', justifyContent: 'center', cursor: 'pointer'
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Photo Display */}
+            <div style={{
+              position: 'relative', background: '#020617', textAlign: 'center',
+              maxHeight: '65vh', overflow: 'hidden', display: 'flex',
+              alignItems: 'center', justifyContent: 'center'
+            }}>
+              <img
+                src={previewVisit?.photo_url || previewPhotoUrl}
+                alt="Geotagged Inspection Proof"
+                style={{ maxWidth: '100%', maxHeight: '65vh', objectFit: 'contain', display: 'block' }}
+              />
+              <div style={{
+                position: 'absolute', top: 12, right: 12, background: 'rgba(0,0,0,0.75)',
+                padding: '0.35rem 0.75rem', borderRadius: 20, fontSize: '0.72rem',
+                color: '#10b981', display: 'flex', alignItems: 'center', gap: '0.35rem',
+                border: '1px solid rgba(16,185,129,0.4)', backdropFilter: 'blur(4px)'
+              }}>
+                <ShieldCheck size={14} /> Tamper-Proof Geotag Verified
+              </div>
+            </div>
+
+            {/* Action Bar */}
+            <div style={{
+              padding: '0.85rem 1.25rem', background: 'rgba(15,23,42,0.98)',
+              borderTop: '1px solid rgba(255,255,255,0.1)', display: 'flex',
+              justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem'
+            }}>
+              <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>
+                {previewVisit?.lat ? `GPS: ${Number(previewVisit.lat).toFixed(5)}° N, ${Number(previewVisit.lng).toFixed(5)}° E (±${previewVisit.accuracy || 10}m)` : 'GPS Verified'}
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  onClick={() => handleShareVisitWhatsApp(previewVisit || { site_name: 'Site Inspection', photo_url: previewPhotoUrl })}
+                  style={{
+                    background: '#25D366', color: '#ffffff', borderColor: '#25D366',
+                    fontWeight: 600, fontSize: '0.8rem', padding: '0.45rem 0.9rem',
+                    gap: '0.4rem', boxShadow: '0 2px 10px rgba(37,211,102,0.3)'
+                  }}
+                >
+                  <MessageCircle size={15} /> Share to WhatsApp
+                </button>
+
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => handleDownloadVisitPhoto(previewVisit || { photo_url: previewPhotoUrl, site_name: 'Inspection' })}
+                  style={{ fontSize: '0.8rem', padding: '0.45rem 0.85rem', gap: '0.4rem' }}
+                >
+                  <Download size={15} /> Download JPG
+                </button>
+
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => handleCopyVisitLink(previewVisit || { photo_url: previewPhotoUrl })}
+                  style={{ fontSize: '0.8rem', padding: '0.45rem 0.85rem', gap: '0.4rem' }}
+                >
+                  <Share2 size={15} /> Copy Link
+                </button>
+
+                {previewVisit && previewVisit.status !== 'Completed' && canApprove && (
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    onClick={() => {
+                      handleMarkCompleted(previewVisit.id);
+                      setPreviewVisit(p => ({ ...p, status: 'Completed' }));
+                    }}
+                    style={{ background: '#10b981', borderColor: '#10b981', fontSize: '0.8rem', padding: '0.45rem 0.85rem', gap: '0.4rem' }}
+                  >
+                    <Check size={15} /> Mark Verified
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}

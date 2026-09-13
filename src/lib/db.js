@@ -3415,7 +3415,42 @@ export async function getSiteVisits() {
   return { data: MOCK_STORE.site_visits || [], error: null };
 }
 
+export async function uploadInspectionPhoto(fileData, fileName = `inspection_${Date.now()}.jpg`) {
+  if (!fileData) return null;
+  if (fileData.startsWith('http://') || fileData.startsWith('https://')) {
+    return fileData;
+  }
+  try {
+    const res = await fetch('/.netlify/functions/upload-media', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fileData,
+        fileName,
+        folder: 'site_visits',
+      }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.publicUrl) return data.publicUrl;
+    }
+  } catch (err) {
+    console.warn('[uploadInspectionPhoto] Cloud upload fallback:', err);
+  }
+  return fileData;
+}
+
 export async function createSiteVisit(visitData) {
+  let photoUrl = visitData.photo_url || null;
+  if (photoUrl && photoUrl.startsWith('data:image/')) {
+    try {
+      const uploaded = await uploadInspectionPhoto(photoUrl, `site_${Date.now()}.jpg`);
+      if (uploaded) photoUrl = uploaded;
+    } catch (e) {
+      console.warn('[createSiteVisit] auto-upload failed, falling back:', e);
+    }
+  }
+
   const payload = {
     organization_id: DEFAULT_ORG_ID,
     employee_name: visitData.employee_name || 'Field Agent',
@@ -3431,7 +3466,7 @@ export async function createSiteVisit(visitData) {
     accuracy: Number(visitData.accuracy || 10),
     status: visitData.status || 'In Progress',
     check_in_time: visitData.check_in_time || new Date().toISOString(),
-    photo_url: visitData.photo_url || null,
+    photo_url: photoUrl,
     notes: visitData.notes || '',
   };
 

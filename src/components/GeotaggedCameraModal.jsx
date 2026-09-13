@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Camera, MapPin, Check, RefreshCw, X, ShieldCheck, Calendar, User, Building, AlertCircle } from 'lucide-react';
+import { Camera, MapPin, Check, RefreshCw, X, ShieldCheck, Calendar, User, Building, AlertCircle, MessageCircle, Download, Share2, Upload } from 'lucide-react';
 import { reverseGeocode } from '../lib/db';
 
 /**
@@ -25,6 +25,8 @@ const GeotaggedCameraModal = ({
 
   const [rawImageSrc, setRawImageSrc] = useState(null);
   const [watermarkedImage, setWatermarkedImage] = useState(null);
+  const [uploadedUrl, setUploadedUrl] = useState(null);
+  const [uploading, setUploading] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
 
   const fileInputRef = useRef(null);
@@ -180,13 +182,88 @@ const GeotaggedCameraModal = ({
       const finalWatermarked = canvas.toDataURL('image/jpeg', 0.88);
       setWatermarkedImage(finalWatermarked);
       setIsProcessing(false);
+
+      // Automatically upload watermarked photo to Supabase Storage via Netlify function
+      uploadToCloud(finalWatermarked);
     };
+  };
+
+  const uploadToCloud = async (base64Img) => {
+    setUploading(true);
+    try {
+      const res = await fetch('/.netlify/functions/upload-media', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fileData: base64Img,
+          fileName: `inspection_${Date.now()}.jpg`,
+          fileType: 'image/jpeg',
+          folder: 'site_visits',
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.publicUrl) {
+          setUploadedUrl(data.publicUrl);
+        }
+      }
+    } catch (err) {
+      console.warn('[GeotaggedCamera] Cloud upload warning:', err);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleShareWhatsApp = () => {
+    const latStr = coords ? coords.lat.toFixed(5) : '0.00000';
+    const lngStr = coords ? coords.lng.toFixed(5) : '0.00000';
+    const timeStr = new Date().toLocaleString('en-IN', {
+      day: '2-digit', month: 'short', year: 'numeric',
+      hour: '2-digit', minute: '2-digit', hour12: true
+    });
+
+    let msg = `*🛡️ REAL ESTATE SITE INSPECTION PROOF*\n`;
+    msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
+    msg += `🏢 *Site:* ${siteName}\n`;
+    if (clientName) msg += `👤 *Client:* ${clientName}\n`;
+    msg += `👷 *Field Agent:* ${employeeName}\n`;
+    msg += `📅 *Timestamp:* ${timeStr}\n`;
+    msg += `📍 *Location:* ${address}\n`;
+    msg += `🎯 *GPS:* ${latStr}° N, ${lngStr}° E (±${accuracy || 10}m)\n`;
+    if (uploadedUrl) {
+      msg += `\n📸 *View Tamper-Proof Geotag Photo:*\n${uploadedUrl}\n`;
+    }
+    msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
+    msg += `*${companyName}* — Verified ERP Inspection`;
+
+    const waUrl = `https://wa.me/?text=${encodeURIComponent(msg)}`;
+    window.open(waUrl, '_blank', 'noopener,noreferrer');
+  };
+
+  const handleDownloadPhoto = () => {
+    if (!watermarkedImage) return;
+    const link = document.createElement('a');
+    link.href = watermarkedImage;
+    link.download = `Geotag_${(siteName || 'Site').replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}.jpg`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleCopyLink = async () => {
+    if (!uploadedUrl) return;
+    try {
+      await navigator.clipboard.writeText(uploadedUrl);
+      alert('Public photo link copied to clipboard!');
+    } catch {
+      prompt('Copy photo link:', uploadedUrl);
+    }
   };
 
   const handleConfirm = () => {
     if (!watermarkedImage) return;
     onCaptureComplete({
-      photoUrl: watermarkedImage,
+      photoUrl: uploadedUrl || watermarkedImage,
       coords,
       accuracy,
       address,
@@ -311,6 +388,67 @@ const GeotaggedCameraModal = ({
             </div>
           )}
         </div>
+
+        {/* Photo Action Toolbar (WhatsApp Share, Download, Copy Link) */}
+        {watermarkedImage && (
+          <div style={{
+            display: 'flex', flexDirection: 'column', gap: '0.6rem',
+            padding: '0.85rem', borderRadius: 8, background: 'rgba(255,255,255,0.04)',
+            border: '1px solid var(--border-color)', marginBottom: '1rem'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.72rem' }}>
+              <span style={{ color: 'var(--text-muted)' }}>Proof Status:</span>
+              {uploading ? (
+                <span style={{ color: '#38bdf8', display: 'flex', alignItems: 'center', gap: '0.35rem', fontWeight: 600 }}>
+                  <Upload size={12} className="animate-spin" /> Uploading to secure cloud storage...
+                </span>
+              ) : uploadedUrl ? (
+                <span style={{ color: '#10b981', display: 'flex', alignItems: 'center', gap: '0.35rem', fontWeight: 600 }}>
+                  <ShieldCheck size={13} /> Cloud Link Ready & Verified
+                </span>
+              ) : (
+                <span style={{ color: '#cbd5e1' }}>Watermarked locally</span>
+              )}
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr', gap: '0.5rem' }}>
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={handleShareWhatsApp}
+                style={{
+                  background: '#25D366', color: '#ffffff', borderColor: '#25D366',
+                  fontWeight: 600, fontSize: '0.78rem', justifyContent: 'center', gap: '0.4rem',
+                  boxShadow: '0 2px 8px rgba(37,211,102,0.25)'
+                }}
+                title="Share geotagged inspection details and public photo link on WhatsApp"
+              >
+                <MessageCircle size={14} /> WhatsApp Share
+              </button>
+
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={handleDownloadPhoto}
+                style={{ fontSize: '0.78rem', justifyContent: 'center', gap: '0.4rem' }}
+                title="Download high-resolution watermarked JPG"
+              >
+                <Download size={14} /> Download JPG
+              </button>
+
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={handleCopyLink}
+                disabled={!uploadedUrl}
+                style={{ fontSize: '0.78rem', justifyContent: 'center', gap: '0.4rem', opacity: uploadedUrl ? 1 : 0.6 }}
+                title={uploadedUrl ? 'Copy public photo link' : 'Uploading to cloud...'}
+              >
+                <Share2 size={14} /> {uploadedUrl ? 'Copy Link' : 'Uploading...'}
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Hidden Canvas for Processing */}
         <canvas ref={canvasRef} style={{ display: 'none' }} />

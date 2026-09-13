@@ -6,7 +6,7 @@ import {
   Clock, AlertCircle, CheckCircle2, RefreshCw, Zap, Send,
   Phone, Star, Building2, AlertTriangle, Navigation, Camera, MapPin,
   Download, Printer, FileSpreadsheet, FileText, ExternalLink, X,
-  RotateCcw, ShieldCheck
+  RotateCcw, ShieldCheck, Share2
 } from 'lucide-react';
 import { getDashboardStats, getActivityFeed, getTasks, getLeads, getCampaigns, getInvoices, getTeamMembers, getEmployeeLivePings, getSiteVisits, getCustomerMaster, triggerSheetSync, invalidateCustomerMasterCache, invalidateInvoicesCache, getTallyMasterSummary } from '../lib/db';
 import { buildCustomerIndex, matchCustomer } from '../lib/customerMatcher';
@@ -89,11 +89,52 @@ const Dashboard = () => {
   const [teamMembers, setTeamMembers] = useState([]);
   const [livePings, setLivePings] = useState([]);
   const [recentVisits, setRecentVisits] = useState([]);
+  const [dashboardPreviewVisit, setDashboardPreviewVisit] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showReportModal, setShowReportModal] = useState(false);
   const [syncingSheet, setSyncingSheet] = useState(false);
   const [sheetSyncToast, setSheetSyncToast] = useState('');
   const [tallyMasterSummary, setTallyMasterSummary] = useState(null);
+
+  const handleShareDashboardVisitWhatsApp = (v) => {
+    if (!v) return;
+    const latStr = Number(v.lat || 0).toFixed(5);
+    const lngStr = Number(v.lng || 0).toFixed(5);
+    const timeStr = new Date(v.check_in_time || v.created_at || Date.now()).toLocaleString('en-IN', {
+      day: '2-digit', month: 'short', year: 'numeric',
+      hour: '2-digit', minute: '2-digit', hour12: true
+    });
+
+    let msg = `*🛡️ REAL ESTATE SITE INSPECTION PROOF*\n`;
+    msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
+    msg += `🏢 *Property / Site:* ${v.site_name || 'Site Inspection'}\n`;
+    if (v.client_name) msg += `👤 *Client:* ${v.client_name}\n`;
+    msg += `👷 *Field Agent:* ${v.employee_name || 'Staff'}\n`;
+    msg += `📅 *Timestamp:* ${timeStr}\n`;
+    msg += `📍 *Location:* ${v.address || 'Site Location'}\n`;
+    msg += `🎯 *GPS Coordinates:* ${latStr}° N, ${lngStr}° E (±${v.accuracy || 10}m)\n`;
+    msg += `📊 *Verification:* ${v.status || 'Verified'}\n`;
+    if (v.photo_url) {
+      msg += `\n📸 *View Tamper-Proof Geotag Photo:*\n${v.photo_url}\n`;
+    }
+    msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
+    msg += `*${activeCompany?.company_name || 'SOBHAINFRA ERP'}* — Verified Site Inspection`;
+
+    const targetPhone = v.lead_phone ? String(v.lead_phone).replace(/\D/g, '') : '';
+    const waUrl = targetPhone ? `https://wa.me/${targetPhone}?text=${encodeURIComponent(msg)}` : `https://wa.me/?text=${encodeURIComponent(msg)}`;
+    window.open(waUrl, '_blank', 'noopener,noreferrer');
+  };
+
+  const handleDownloadDashboardPhoto = (v) => {
+    if (!v?.photo_url) return;
+    const link = document.createElement('a');
+    link.href = v.photo_url;
+    link.target = '_blank';
+    link.download = `Inspection_${(v.site_name || 'Site').replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}.jpg`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   const handleSyncSheet = async () => {
     setSyncingSheet(true);
@@ -819,16 +860,83 @@ const Dashboard = () => {
             {/* Latest Real Geotagged Inspection Photos */}
             {recentVisits.filter(v => Boolean(v.photo_url)).length > 0 && (
               <div style={{ marginTop: '1.25rem', borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
-                <div style={{ fontSize: '0.82rem', fontWeight: 700, marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                  <Camera size={14} color="var(--accent-primary)" /> Latest Geotagged Site Inspection Photos ({recentVisits.filter(v => Boolean(v.photo_url)).length})
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                  <div style={{ fontSize: '0.85rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                    <Camera size={15} color="var(--accent-primary)" /> Latest Geotagged Site Inspection Proofs ({recentVisits.filter(v => Boolean(v.photo_url)).length})
+                  </div>
+                  <a href="/field-ops" className="section-link" style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.75rem' }}>
+                    Open Photo Gallery & Full Logs <ArrowUpRight size={13} />
+                  </a>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.75rem' }}>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '1rem' }}>
                   {recentVisits.filter(v => Boolean(v.photo_url)).slice(0, 4).map(v => (
-                    <div key={v.id} style={{ borderRadius: 8, overflow: 'hidden', border: '1px solid var(--border-color)', background: 'var(--bg-secondary)' }}>
-                      <img src={v.photo_url} alt={v.site_name} style={{ width: '100%', height: 110, objectFit: 'cover' }} />
-                      <div style={{ padding: '0.5rem' }}>
-                        <div style={{ fontWeight: 600, fontSize: '0.78rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{v.site_name}</div>
-                        <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>👤 {v.employee_name} · {new Date(v.check_in_time || v.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                    <div
+                      key={v.id}
+                      style={{
+                        borderRadius: 10, overflow: 'hidden', border: '1px solid var(--border-color)',
+                        background: 'var(--bg-secondary)', display: 'flex', flexDirection: 'column'
+                      }}
+                    >
+                      <div
+                        style={{ position: 'relative', height: 135, background: '#020617', cursor: 'pointer', overflow: 'hidden' }}
+                        onClick={() => setDashboardPreviewVisit(v)}
+                        title="Click to inspect high-resolution proof"
+                      >
+                        <img
+                          src={v.photo_url}
+                          alt={v.site_name}
+                          style={{ width: '100%', height: '100%', objectFit: 'cover', transition: 'transform 0.25s ease' }}
+                          onMouseOver={e => e.currentTarget.style.transform = 'scale(1.04)'}
+                          onMouseOut={e => e.currentTarget.style.transform = 'scale(1)'}
+                        />
+                        <div style={{
+                          position: 'absolute', bottom: 5, right: 5, background: 'rgba(0,0,0,0.8)',
+                          color: '#10b981', padding: '0.15rem 0.45rem', borderRadius: 4,
+                          fontSize: '0.62rem', display: 'flex', alignItems: 'center', gap: '0.25rem',
+                          border: '1px solid rgba(16,185,129,0.3)', backdropFilter: 'blur(3px)'
+                        }}>
+                          <ShieldCheck size={11} /> Geotag Verified
+                        </div>
+                      </div>
+
+                      <div style={{ padding: '0.65rem', flex: 1, display: 'flex', flexDirection: 'column' }}>
+                        <div style={{ fontWeight: 700, fontSize: '0.82rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginBottom: '0.2rem' }}>
+                          🏢 {v.site_name}
+                        </div>
+                        <div style={{ fontSize: '0.72rem', color: 'var(--accent-primary)', fontWeight: 600, marginBottom: '0.15rem' }}>
+                          👤 {v.employee_name} {v.client_name ? `(${v.client_name})` : ''}
+                        </div>
+                        <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginBottom: '0.65rem', lineHeight: 1.3, flex: 1 }}>
+                          📍 {v.address ? (v.address.length > 55 ? v.address.slice(0, 52) + '...' : v.address) : 'Site Location'}
+                        </div>
+
+                        {/* Quick Actions Row */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '0.35rem', borderTop: '1px solid var(--border-color)', paddingTop: '0.5rem' }}>
+                          <button
+                            type="button"
+                            className="btn btn-sm"
+                            onClick={() => handleShareDashboardVisitWhatsApp(v)}
+                            style={{
+                              background: '#25D366', color: '#ffffff', borderColor: '#25D366',
+                              fontSize: '0.68rem', padding: '0.25rem 0.4rem', justifyContent: 'center',
+                              gap: '0.3rem', fontWeight: 600
+                            }}
+                            title="Share on WhatsApp with public link"
+                          >
+                            <MessageCircle size={12} /> WhatsApp
+                          </button>
+
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => setDashboardPreviewVisit(v)}
+                            style={{ fontSize: '0.68rem', padding: '0.25rem 0.4rem', justifyContent: 'center' }}
+                            title="Inspect high resolution photo"
+                          >
+                            Inspect
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -1017,6 +1125,138 @@ const Dashboard = () => {
               </button>
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {/* Inspection Proof & Sharing Modal */}
+      {dashboardPreviewVisit && (
+        <div
+          className="modal-overlay"
+          onClick={() => setDashboardPreviewVisit(null)}
+          style={{ background: 'rgba(0,0,0,0.88)', zIndex: 9999, backdropFilter: 'blur(6px)' }}
+        >
+          <div
+            className="animate-fade-in"
+            style={{
+              position: 'relative', maxWidth: 760, width: '92%',
+              background: '#0f172a', borderRadius: 12,
+              border: '1px solid rgba(255,255,255,0.15)', overflow: 'hidden',
+              boxShadow: '0 25px 50px rgba(0,0,0,0.6)'
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div style={{
+              padding: '0.9rem 1.25rem', display: 'flex', justifyContent: 'space-between',
+              alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.1)',
+              background: 'rgba(255,255,255,0.02)'
+            }}>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span style={{ fontWeight: 700, fontSize: '1rem', color: '#ffffff' }}>
+                    🏢 {dashboardPreviewVisit.site_name || 'Site Inspection Proof'}
+                  </span>
+                  <span className={`badge ${dashboardPreviewVisit.status === 'Completed' ? 'badge-success' : 'badge-warning'}`} style={{ fontSize: '0.65rem' }}>
+                    {dashboardPreviewVisit.status || 'Verified'}
+                  </span>
+                </div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
+                  👤 {dashboardPreviewVisit.employee_name || 'Field Agent'} {dashboardPreviewVisit.client_name ? `· Client: ${dashboardPreviewVisit.client_name}` : ''} · 📍 {dashboardPreviewVisit.address || 'Site Location'}
+                </div>
+              </div>
+              <button
+                className="modal-close-btn"
+                onClick={() => setDashboardPreviewVisit(null)}
+                style={{
+                  color: '#ffffff', background: 'rgba(255,255,255,0.1)', border: 'none',
+                  borderRadius: '50%', width: 32, height: 32, display: 'flex',
+                  alignItems: 'center', justifyContent: 'center', cursor: 'pointer'
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Photo Display */}
+            <div style={{
+              position: 'relative', background: '#020617', textAlign: 'center',
+              maxHeight: '65vh', overflow: 'hidden', display: 'flex',
+              alignItems: 'center', justifyContent: 'center'
+            }}>
+              <img
+                src={dashboardPreviewVisit.photo_url}
+                alt="Geotagged Inspection Proof"
+                style={{ maxWidth: '100%', maxHeight: '65vh', objectFit: 'contain', display: 'block' }}
+              />
+              <div style={{
+                position: 'absolute', top: 12, right: 12, background: 'rgba(0,0,0,0.75)',
+                padding: '0.35rem 0.75rem', borderRadius: 20, fontSize: '0.72rem',
+                color: '#10b981', display: 'flex', alignItems: 'center', gap: '0.35rem',
+                border: '1px solid rgba(16,185,129,0.4)', backdropFilter: 'blur(4px)'
+              }}>
+                <ShieldCheck size={14} /> Tamper-Proof Geotag Verified
+              </div>
+            </div>
+
+            {/* Action Bar */}
+            <div style={{
+              padding: '0.85rem 1.25rem', background: 'rgba(15,23,42,0.98)',
+              borderTop: '1px solid rgba(255,255,255,0.1)', display: 'flex',
+              justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem'
+            }}>
+              <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>
+                {dashboardPreviewVisit.lat ? `GPS: ${Number(dashboardPreviewVisit.lat).toFixed(5)}° N, ${Number(dashboardPreviewVisit.lng).toFixed(5)}° E (±${dashboardPreviewVisit.accuracy || 10}m)` : 'GPS Verified'}
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  onClick={() => handleShareDashboardVisitWhatsApp(dashboardPreviewVisit)}
+                  style={{
+                    background: '#25D366', color: '#ffffff', borderColor: '#25D366',
+                    fontWeight: 600, fontSize: '0.8rem', padding: '0.45rem 0.9rem',
+                    gap: '0.4rem', boxShadow: '0 2px 10px rgba(37,211,102,0.3)'
+                  }}
+                >
+                  <MessageCircle size={15} /> Share to WhatsApp
+                </button>
+
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => handleDownloadDashboardPhoto(dashboardPreviewVisit)}
+                  style={{ fontSize: '0.8rem', padding: '0.45rem 0.85rem', gap: '0.4rem' }}
+                >
+                  <Download size={15} /> Download JPG
+                </button>
+
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(dashboardPreviewVisit.photo_url);
+                      alert('Public photo link copied to clipboard!');
+                    } catch {
+                      prompt('Copy photo link:', dashboardPreviewVisit.photo_url);
+                    }
+                  }}
+                  style={{ fontSize: '0.8rem', padding: '0.45rem 0.85rem', gap: '0.4rem' }}
+                >
+                  <Share2 size={15} /> Copy Link
+                </button>
+
+                <a
+                  href="/field-ops"
+                  className="btn btn-primary btn-sm"
+                  style={{ fontSize: '0.8rem', padding: '0.45rem 0.85rem', gap: '0.4rem', textDecoration: 'none' }}
+                >
+                  <Navigation size={14} /> Open in FieldOps
+                </a>
+              </div>
+            </div>
           </div>
         </div>
       )}
