@@ -241,6 +241,7 @@ exports.handler = async function (event) {
       // Dual-logging: also record in audit_logs so emails are visible even if email_logs table is missing
       try {
         await sb.from('audit_logs').insert([{
+          organization_id: '00000000-0000-0000-0000-000000000001',
           action: 'email.sent',
           resource: 'email',
           resource_id: leadId || null,

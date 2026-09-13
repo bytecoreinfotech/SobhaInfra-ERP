@@ -477,6 +477,7 @@ async function sendInvoiceEmail(supabase, {
         }]);
         try {
           await supabase.from('audit_logs').insert([{
+            organization_id: DEFAULT_ORG_ID,
             action: 'email.sent',
             resource: 'email',
             payload: {
@@ -723,6 +724,7 @@ async function sendPaymentReminderEmail(supabase, {
         }]);
         try {
           await supabase.from('audit_logs').insert([{
+            organization_id: DEFAULT_ORG_ID,
             action: 'email.sent',
             resource: 'email',
             payload: {
