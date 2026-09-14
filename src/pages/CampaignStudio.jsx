@@ -664,6 +664,14 @@ const CampaignStudio = () => {
       // Ensure no raw {variable} braces remain without index
       metaBodyText = metaBodyText.replace(/\{([^}]+)\}/g, '{{1}}');
 
+      // Meta rejects templates where variables are at the very start or end
+      if (/^\{\{\d+\}\}/.test(metaBodyText.trim())) {
+        metaBodyText = 'Dear ' + metaBodyText.trim();
+      }
+      if (/\{\{\d+\}\}$/.test(metaBodyText.trim())) {
+        metaBodyText = metaBodyText.trim() + '.';
+      }
+
       // Up to 3 quick reply buttons per Meta specification
       const validButtons = (buttons || []).slice(0, 3).map((b, idx) => ({
         type: 'QUICK_REPLY',
