@@ -6,6 +6,11 @@
  * and records it into Supabase / CRM activity feed.
  * 
  * Supports: text, image (URL), document (URL), video (URL), audio (URL)
+ * 
+ * 24-HOUR WINDOW HANDLING:
+ * If Meta rejects a free-form message because the recipient hasn't messaged
+ * within the last 24 hours (error 131047), the system automatically retries
+ * using a pre-approved Meta Message Template (hello_world or custom).
  */
 
 const { createClient } = require('@supabase/supabase-js');
@@ -17,16 +22,92 @@ const SUPABASE_URL = process.env.SUPABASE_URL || 'https://mcgmppnvnwnilioapbli.s
 const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1jZ21wcG52bnduaWxpb2FwYmxpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc1NzE5ODIsImV4cCI6MjEwMzE0Nzk4Mn0.27BrkeNVxcEfG0R1W2gzlV2ueuK6NBS7MuD98Y5iDME';
 
 
-/**
- * Send a message via Meta WhatsApp Cloud API.
- * Supports: text, image, document, video, audio
- * 
- * @param {string} to - Recipient phone number (digits only or with +)
- * @param {string} text - Message text (used for text type and image/video captions)
- * @param {string} mediaType - 'text' | 'image' | 'document' | 'video' | 'audio'
- * @param {string} mediaUrl - Public URL to the media file (required for media types)
- * @param {string} mediaFileName - Optional filename for documents
- */
+// ─── Check if a Meta API error is a 24-hour session window rejection ──────────
+function is24HourWindowError(error) {
+  if (!error) return false;
+  const errStr = typeof error === 'string' ? error : JSON.stringify(error);
+  // Meta error codes for outside-session: 131047 (re-engagement), 131026 (not opted-in),
+  // 130429 (rate limit / session), plus keyword fallbacks
+  return /131047|131026|130429/i.test(errStr) ||
+    /re.?engag/i.test(errStr) ||
+    /24.?hour/i.test(errStr) ||
+    /session|outside.*window|message.*window/i.test(errStr) ||
+    /recipient.*not.*message/i.test(errStr);
+}
+
+// ─── Send Approved Meta Template Message (bypasses 24h window) ────────────────
+async function sendWhatsAppTemplate(to, templateName, language = 'en', params = []) {
+  if (!WA_TOKEN || !PHONE_ID) {
+    return { success: true, messageId: 'mock-tpl-' + Date.now(), simulated: true, isTemplate: true, templateName };
+  }
+  try {
+    const cleanPhone = String(to).replace(/[^\d]/g, '');
+    const url = `https://graph.facebook.com/v20.0/${PHONE_ID}/messages`;
+
+    const components = [];
+    if (params && params.length > 0) {
+      components.push({
+        type: 'body',
+        parameters: params.map(p => ({ type: 'text', text: String(p) })),
+      });
+    }
+
+    const payload = {
+      messaging_product: 'whatsapp',
+      to: cleanPhone,
+      type: 'template',
+      template: {
+        name: templateName,
+        language: { code: language },
+        ...(components.length > 0 ? { components } : {}),
+      },
+    };
+
+    console.log(`[send-message] Sending template "${templateName}" to ${cleanPhone}`);
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${WA_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await res.json();
+    if (data.error) {
+      console.warn(`[send-message] Template "${templateName}" failed:`, data.error.message);
+      return { success: false, error: data.error, isTemplate: true, templateName };
+    }
+    console.log(`[send-message] Template "${templateName}" delivered to ${cleanPhone}: ${data.messages?.[0]?.id}`);
+    return { success: true, messageId: data.messages?.[0]?.id, isTemplate: true, templateName };
+  } catch (err) {
+    return { success: false, error: { message: err.message }, isTemplate: true, templateName };
+  }
+}
+
+// ─── Cascading Template Fallback: try custom templates → hello_world ──────────
+async function sendTemplateFallback(to, originalText) {
+  // Try 1: Custom Sobha template (if approved on Meta)
+  const tpl1 = await sendWhatsAppTemplate(to, 'sobha_catalog_campaign_v1', 'en', []);
+  if (tpl1.success) return tpl1;
+
+  // Try 2: Meta's built-in hello_world template (every business account has this)
+  const tpl2 = await sendWhatsAppTemplate(to, 'hello_world', 'en_US', []);
+  if (tpl2.success) return tpl2;
+
+  // All template attempts failed
+  console.error(`[send-message] All template fallbacks failed for ${to}`);
+  return {
+    success: false,
+    error: {
+      message: 'Message could not be delivered. Contact has not messaged within 24 hours and no approved templates are available. Please create an approved message template in Meta Business Manager.',
+      code: 'TEMPLATE_FALLBACK_EXHAUSTED',
+    },
+    isTemplate: true,
+  };
+}
+
+
 // ─── Resolve and ensure valid public HTTPS URL for WhatsApp Media ─────────────
 async function resolvePublicMediaUrl(mediaUrl, mediaType, folder = 'crm') {
   if (!mediaUrl || typeof mediaUrl !== 'string') return { url: null, type: 'text' };
@@ -186,7 +267,30 @@ exports.handler = async (event) => {
       return { statusCode: 400, headers: cors, body: JSON.stringify({ error: 'Both "to" and either "text" or "mediaUrl" are required' }) };
     }
 
-    const sendRes = await sendMetaWhatsApp(to, text || '', mediaType, mediaUrl, mediaFileName);
+    // ─── 1. Try sending the free-form message first ────────────────────────────
+    let sendRes = await sendMetaWhatsApp(to, text || '', mediaType, mediaUrl, mediaFileName);
+    let usedTemplate = false;
+    let templateName = null;
+
+    // ─── 2. If rejected due to 24-hour window, fallback to approved template ───
+    if (!sendRes.success && is24HourWindowError(sendRes.error)) {
+      console.warn(`[send-message] 24-hour window closed for ${to}. Attempting template fallback...`);
+      const tplRes = await sendTemplateFallback(to, text);
+      if (tplRes.success) {
+        sendRes = tplRes;
+        usedTemplate = true;
+        templateName = tplRes.templateName;
+        console.log(`[send-message] ✅ Template fallback SUCCESS for ${to} using "${templateName}"`);
+      } else {
+        console.error(`[send-message] ❌ Template fallback FAILED for ${to}:`, tplRes.error?.message);
+        // Keep the original error but enhance with template fallback info
+        sendRes = {
+          success: false,
+          error: tplRes.error || sendRes.error,
+          templateFallbackAttempted: true,
+        };
+      }
+    }
 
     let supabase = null;
     let effectiveConvId = conversationId;
@@ -244,13 +348,18 @@ exports.handler = async (event) => {
         }
 
         if (effectiveConvId) {
+          // Build message body — include template info if fallback was used
+          const msgBody = usedTemplate
+            ? `[📋 Template: ${templateName}] ${text || 'Automated greeting sent (contact outside 24h window)'}`
+            : (text || (mediaType === 'document' ? `📄 ${mediaFileName || 'PDF Document'}` : `[${mediaType}]`));
+
           const msgPayload = {
             conversation_id: effectiveConvId,
             direction: 'outbound',
             sender_type: senderType,
-            message_type: mediaType,
-            media_url: mediaUrl,
-            body: text || (mediaType === 'document' ? `📄 ${mediaFileName || 'PDF Document'}` : `[${mediaType}]`),
+            message_type: usedTemplate ? 'template' : mediaType,
+            media_url: usedTemplate ? null : mediaUrl,
+            body: msgBody,
             status: sendRes.success ? 'delivered' : 'failed',
             provider_message_id: sendRes.messageId || null,
           };
@@ -260,7 +369,7 @@ exports.handler = async (event) => {
           // Update conversation last message
           const newMode = senderType === 'ai' ? 'AI ACTIVE' : 'HUMAN ACTIVE';
           await supabase.from('whatsapp_conversations').update({
-            last_message_text: text || (mediaType === 'document' ? `📄 ${mediaFileName || 'PDF Document'}` : `[${mediaType}]`),
+            last_message_text: msgBody,
             last_message_at: new Date().toISOString(),
             conversation_mode: newMode,
             unread_count: 0,
@@ -279,6 +388,9 @@ exports.handler = async (event) => {
         messageId: sendRes.messageId,
         error: sendRes.error,
         conversationId: effectiveConvId,
+        usedTemplate,
+        templateName,
+        templateFallbackAttempted: sendRes.templateFallbackAttempted || usedTemplate,
       }),
     };
   } catch (err) {

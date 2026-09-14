@@ -537,17 +537,43 @@ exports.handler = async (event) => {
       }
 
       // If rejected because recipient is outside 24h window, fallback to approved Meta Marketing Template
+      // Comprehensive error detection: covers all Meta session-window error codes
       let usedTemplate = false;
-      if (!sendRes.success && (sendRes.error?.includes('131047') || sendRes.error?.includes('Re-engagement') || sendRes.error?.includes('24-hour'))) {
-        const clientName = (recipientLead.name && !isGenericName(recipientLead.name)) ? recipientLead.name.trim() : 'Valued Client';
-        const tplRes = await sendWhatsAppTemplate(phone, 'sobha_catalog_campaign_v1', 'en', [
-          clientName,
-          effectiveDefaults.company || 'Sobhainfra Tech',
-        ]);
-        if (tplRes.success) {
-          sendRes = tplRes;
-          usedTemplate = true;
-          console.log(`[send-campaign] Dispatched sobha_catalog_campaign_v1 template to cold contact ${phone}`);
+      let usedTemplateName = null;
+      if (!sendRes.success) {
+        const errStr = typeof sendRes.error === 'string' ? sendRes.error : JSON.stringify(sendRes.error || '');
+        const is24hErr = /131047|131026|130429/i.test(errStr) ||
+          /re.?engag/i.test(errStr) ||
+          /24.?hour/i.test(errStr) ||
+          /session|outside.*window|message.*window/i.test(errStr) ||
+          /recipient.*not.*message/i.test(errStr);
+
+        if (is24hErr) {
+          console.warn(`[send-campaign] 24h window closed for ${phone}. Attempting template fallback cascade...`);
+          const clientName = (recipientLead.name && !isGenericName(recipientLead.name)) ? recipientLead.name.trim() : 'Valued Client';
+
+          // Cascade 1: Try custom Sobha template
+          const tpl1 = await sendWhatsAppTemplate(phone, 'sobha_catalog_campaign_v1', 'en', [
+            clientName,
+            effectiveDefaults.company || 'Sobhainfra Tech',
+          ]);
+          if (tpl1.success) {
+            sendRes = tpl1;
+            usedTemplate = true;
+            usedTemplateName = 'sobha_catalog_campaign_v1';
+            console.log(`[send-campaign] ✅ Template fallback SUCCESS: sobha_catalog_campaign_v1 → ${phone}`);
+          } else {
+            // Cascade 2: Try Meta's built-in hello_world template (every WABA has this)
+            const tpl2 = await sendWhatsAppTemplate(phone, 'hello_world', 'en_US', []);
+            if (tpl2.success) {
+              sendRes = tpl2;
+              usedTemplate = true;
+              usedTemplateName = 'hello_world';
+              console.log(`[send-campaign] ✅ Template fallback SUCCESS: hello_world → ${phone}`);
+            } else {
+              console.error(`[send-campaign] ❌ All template fallbacks FAILED for ${phone}`);
+            }
+          }
         }
       }
 
@@ -584,7 +610,7 @@ exports.handler = async (event) => {
                 : '';
               
               const msgBody = usedTemplate
-                ? `[Template: sobha_catalog_campaign_v1] Namaste ${(recipientLead.name && !isGenericName(recipientLead.name)) ? recipientLead.name.trim() : 'Valued Client'}! Official product catalog dispatched.`
+                ? `[📋 Template: ${usedTemplateName || 'hello_world'}] ${personalizedMsg || 'Automated greeting sent (contact outside 24h window)'}`
                 : (effectiveMediaUrl
                     ? (personalizedMsg ? `${personalizedMsg}\n[${effectiveMediaType}: ${effectiveMediaUrl}]${buttonSummary}` : `[${effectiveMediaType}: ${effectiveMediaUrl}]${buttonSummary}`)
                     : (personalizedMsg + buttonSummary));
