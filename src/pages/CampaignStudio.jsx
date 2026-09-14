@@ -608,7 +608,12 @@ const CampaignStudio = () => {
     try {
       const res = await syncMetaTemplates();
       if (res.success) {
-        setMetaTemplates(res.templates || []);
+        // Map components_json (from DB) → components (used by UI/dispatch)
+        const tpls = (res.templates || []).map(t => ({
+          ...t,
+          components: t.components_json || t.components || [],
+        }));
+        setMetaTemplates(tpls);
         setSyncToast(`✅ Synced ${res.fetched || res.synced || 0} templates from Meta WhatsApp Business Account!`);
         setTimeout(() => setSyncToast(null), 5000);
       } else {
@@ -636,7 +641,12 @@ const CampaignStudio = () => {
       let headerText = '';
 
       if (uploadedMediaUrl || campaignFile) {
-        headerType = 'IMAGE';
+        // Detect media format from file type or URL extension
+        const fileName = (campaignFile?.name || uploadedMediaUrl || '').toLowerCase();
+        const mimeType = campaignFile?.type || '';
+        const isPdf = fileName.endsWith('.pdf') || mimeType === 'application/pdf';
+        const isVideo = /\.(mp4|mov|avi|webm)$/.test(fileName) || mimeType.startsWith('video/');
+        headerType = isPdf ? 'DOCUMENT' : isVideo ? 'VIDEO' : 'IMAGE';
         headerMediaUrl = uploadedMediaUrl || null;
       } else {
         headerType = 'TEXT';
@@ -705,6 +715,18 @@ const CampaignStudio = () => {
     body = body.replace(/\{\{1\}\}/g, '{name}').replace(/\{\{2\}\}/g, '{company}');
     setCustomText(body);
     setName(`Broadcast - ${tpl.name}`);
+
+    // Extract header media URL from components (for preview & dispatch)
+    if (tpl.components) {
+      const headerComp = tpl.components.find(c => c.type === 'HEADER');
+      if (headerComp && (headerComp.format === 'IMAGE' || headerComp.format === 'DOCUMENT' || headerComp.format === 'VIDEO')) {
+        const mediaUrl = headerComp.example?.header_handle?.[0] || null;
+        if (mediaUrl) {
+          setUploadedMediaUrl(mediaUrl);
+          setUploadedMediaType(headerComp.format === 'DOCUMENT' ? 'document' : headerComp.format === 'VIDEO' ? 'video' : 'image');
+        }
+      }
+    }
 
     // STRICT: set buttons ONLY from what the template defines.
     // If the template has no BUTTONS component, clear to empty — we cannot
@@ -2996,7 +3018,7 @@ const CampaignStudio = () => {
 
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                 <span style={{ color: 'var(--text-muted)' }}>• Header:</span>
-                <strong>{uploadedMediaUrl || campaignFile ? 'Media (IMAGE Banner)' : 'Text ("Sobhainfra Tech")'}</strong>
+                <strong>{uploadedMediaUrl || campaignFile ? (() => { const fn = (campaignFile?.name || uploadedMediaUrl || '').toLowerCase(); return fn.endsWith('.pdf') || campaignFile?.type === 'application/pdf' ? 'Media (DOCUMENT / PDF)' : fn.match(/\.(mp4|mov|avi)$/) ? 'Media (VIDEO)' : 'Media (IMAGE Banner)'; })() : 'Text ("Sobhainfra Tech")'}</strong>
               </div>
 
               <div>

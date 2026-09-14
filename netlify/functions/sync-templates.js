@@ -117,6 +117,7 @@ exports.handler = async (event) => {
             status: tpl.status || 'APPROVED',
             body_text: bodyText,
             variables_schema: variablesSchema,
+            components_json: tpl.components || [],
             campaign_eligible: true,
             last_synced_at: new Date().toISOString(),
           };

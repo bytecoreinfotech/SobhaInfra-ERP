@@ -17,11 +17,15 @@ const SUPABASE_URL = process.env.SUPABASE_URL || 'https://mcgmppnvnwnilioapbli.s
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1jZ21wcG52bnduaWxpb2FwYmxpIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4NzU3MTk4MiwiZXhwIjoyMTAzMTQ3OTgyfQ.iMVtS3kZ5jkXd7wOsgviN_3Umz0Auw7vBa0NDlD9rKg';
 const DEFAULT_ORG_ID = '00000000-0000-0000-0000-000000000001';
 
-// Upload image buffer to Meta Resumable Upload API to obtain header_handle
-async function getHeaderHandleForImage(mediaUrl) {
+// Upload media buffer to Meta Resumable Upload API to obtain header_handle
+// Supports IMAGE, DOCUMENT (PDF), and VIDEO formats
+async function getHeaderHandle(mediaUrl, format = 'IMAGE') {
   try {
     let buffer = null;
-    let mimeType = 'image/png';
+    // Default MIME types per format
+    let mimeType = format === 'DOCUMENT' ? 'application/pdf'
+      : format === 'VIDEO' ? 'video/mp4'
+      : 'image/png';
 
     if (mediaUrl && (mediaUrl.startsWith('http://') || mediaUrl.startsWith('https://'))) {
       const res = await fetch(mediaUrl);
@@ -37,14 +41,21 @@ async function getHeaderHandleForImage(mediaUrl) {
       }
     }
 
-    // Fallback to 1px PNG if media download fails or no media passed
+    // Fallback to 1px PNG only for IMAGE format if media download fails
     if (!buffer || buffer.length === 0) {
-      buffer = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
-      mimeType = 'image/png';
+      if (format === 'IMAGE') {
+        buffer = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+        mimeType = 'image/png';
+      } else {
+        console.warn(`[create-meta-template] No media data for ${format} header`);
+        return null;
+      }
     }
 
+    console.log(`[create-meta-template] Uploading ${format} header (${buffer.length} bytes, ${mimeType})...`);
+
     // Step 1: Initialize upload session
-    const initRes = await fetch(`https://graph.facebook.com/v20.0/${APP_ID}/uploads?file_length=${buffer.length}&file_type=${mimeType}`, {
+    const initRes = await fetch(`https://graph.facebook.com/v20.0/${APP_ID}/uploads?file_length=${buffer.length}&file_type=${encodeURIComponent(mimeType)}`, {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${WA_TOKEN}` },
     });
@@ -66,12 +77,13 @@ async function getHeaderHandleForImage(mediaUrl) {
     });
     const uploadData = await uploadRes.json();
     if (uploadData.h) {
+      console.log(`[create-meta-template] ✅ ${format} header handle obtained: ${uploadData.h.substring(0, 30)}...`);
       return uploadData.h;
     }
     console.warn('[create-meta-template] Resumable upload failed:', uploadData);
     return null;
   } catch (err) {
-    console.warn('[create-meta-template] getHeaderHandleForImage error:', err.message);
+    console.warn(`[create-meta-template] getHeaderHandle(${format}) error:`, err.message);
     return null;
   }
 }
@@ -121,22 +133,24 @@ exports.handler = async (event) => {
 
     const components = [];
 
-    // 1. Header Component
-    if (headerType === 'IMAGE') {
-      const handle = await getHeaderHandleForImage(headerMediaUrl);
+    // 1. Header Component — supports IMAGE, DOCUMENT (PDF), and VIDEO
+    if (headerType === 'IMAGE' || headerType === 'DOCUMENT' || headerType === 'VIDEO') {
+      const handle = await getHeaderHandle(headerMediaUrl, headerType);
       if (handle) {
         components.push({
           type: 'HEADER',
-          format: 'IMAGE',
+          format: headerType, // 'IMAGE', 'DOCUMENT', or 'VIDEO'
           example: { header_handle: [handle] },
         });
-      } else {
-        // Fallback to text header if handle couldn't be generated
+      } else if (headerType === 'IMAGE') {
+        // Fallback to text header only if IMAGE handle couldn't be generated
         components.push({
           type: 'HEADER',
           format: 'TEXT',
           text: headerText || 'Sobhainfra Tech',
         });
+      } else {
+        console.warn(`[create-meta-template] ${headerType} header handle failed — skipping header`);
       }
     } else if (headerType === 'TEXT' && headerText && headerText.trim()) {
       components.push({
@@ -242,6 +256,7 @@ exports.handler = async (event) => {
           category: category.toUpperCase(),
           status: metaData.status || 'PENDING',
           body_text: cleanBody,
+          components_json: components,
           campaign_eligible: true,
           last_synced_at: new Date().toISOString(),
         };
