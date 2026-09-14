@@ -67,10 +67,31 @@ function cleanMeta(v) {
 }
 
 /**
+ * Checks if a voucher is cancelled or marked deleted in Tally.
+ */
+export function isInactiveOrCancelled(inv) {
+  if (!inv) return true;
+  const status = (inv?.status || '').toLowerCase().trim();
+  if (status === 'cancelled' || status === 'canceled' || status === 'inactive' || status.includes('deleted') || status.includes('void')) {
+    return true;
+  }
+  if (inv?.metadata?.is_cancelled_in_tally || inv?.metadata?.is_deleted_in_tally) {
+    return true;
+  }
+  if (Number(inv?.amount || 0) <= 0 && status !== 'paid') {
+    return true;
+  }
+  return false;
+}
+
+/**
  * Accurately determines if a voucher is a customer sales bill / debit entry (Receivable).
- * Excludes receipts, master ledger markers, and vendor payables.
+ * Excludes receipts, master ledger markers, vendor payables, and cancelled vouchers.
  */
 export function isSalesVoucher(inv) {
+  if (isInactiveOrCancelled(inv)) return false;
+  if (Number(inv?.amount || 0) <= 0) return false;
+
   const num = (inv?.invoice_number || inv?.tally_voucher_number || '').toLowerCase();
   const vtype = (cleanMeta(inv?.voucher_type) || cleanMeta(inv?.metadata?.voucher_type) || '').toLowerCase().trim();
 
@@ -98,6 +119,9 @@ export function isSalesVoucher(inv) {
  * Accurately determines if a voucher is a customer receipt payment (Credit entry).
  */
 export function isReceiptVoucher(inv) {
+  if (isInactiveOrCancelled(inv)) return false;
+  if (Number(inv?.amount || 0) <= 0) return false;
+
   const num = (inv?.invoice_number || inv?.tally_voucher_number || '').toLowerCase();
   const vtype = (cleanMeta(inv?.voucher_type) || cleanMeta(inv?.metadata?.voucher_type) || '').toLowerCase().trim();
   const dir = (cleanMeta(inv?.direction) || cleanMeta(inv?.metadata?.direction) || '').toLowerCase().trim();
@@ -116,6 +140,9 @@ export function isReceiptVoucher(inv) {
  * Accurately determines if a voucher is a vendor purchase bill (Payable).
  */
 export function isPurchaseVoucher(inv) {
+  if (isInactiveOrCancelled(inv)) return false;
+  if (Number(inv?.amount || 0) <= 0) return false;
+
   const num = (inv?.invoice_number || inv?.tally_voucher_number || '').toLowerCase();
   const vtype = (cleanMeta(inv?.voucher_type) || cleanMeta(inv?.metadata?.voucher_type) || '').toLowerCase().trim();
   const dir = (cleanMeta(inv?.direction) || cleanMeta(inv?.metadata?.direction) || '').toLowerCase().trim();
@@ -137,6 +164,8 @@ export function isPurchaseVoucher(inv) {
  * Accurately determines if a voucher is an outgoing payment to a vendor (Payment voucher).
  */
 export function isPaymentVoucher(inv) {
+  if (isInactiveOrCancelled(inv)) return false;
+
   const num = (inv?.invoice_number || inv?.tally_voucher_number || '').toLowerCase();
   const vtype = (cleanMeta(inv?.voucher_type) || cleanMeta(inv?.metadata?.voucher_type) || '').toLowerCase().trim();
   const dir = (cleanMeta(inv?.direction) || cleanMeta(inv?.metadata?.direction) || '').toLowerCase().trim();
@@ -240,6 +269,16 @@ export function reconcileCustomerInvoices(rawInvoices = []) {
     const otherVouchers = [];
 
     for (const r of records) {
+      if (isInactiveOrCancelled(r)) {
+        otherVouchers.push({
+          ...r,
+          pending_amount: 0,
+          paid_amount: 0,
+          status: 'Cancelled',
+        });
+        continue;
+      }
+
       const num = (r.invoice_number || '').toUpperCase();
       if (num.includes('LEDGER-') || num.startsWith('OP-')) {
         otherVouchers.push(r);
@@ -443,6 +482,16 @@ export function reconcileVendorInvoices(rawInvoices = []) {
     const otherVouchers = [];
 
     for (const r of records) {
+      if (isInactiveOrCancelled(r)) {
+        otherVouchers.push({
+          ...r,
+          pending_amount: 0,
+          paid_amount: 0,
+          status: 'Cancelled',
+        });
+        continue;
+      }
+
       const num = (r.invoice_number || '').toUpperCase();
       if (num.includes('LEDGER-') || num.startsWith('OP-')) {
         otherVouchers.push(r);

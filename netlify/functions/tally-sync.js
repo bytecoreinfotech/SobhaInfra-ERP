@@ -129,6 +129,63 @@ exports.handler = async (event) => {
         }
       }
 
+      // 1c. Tally Deletion Reconciliation (Prunes vouchers deleted from Tally)
+      if (Array.isArray(payload.active_voucher_numbers) && payload.active_voucher_numbers.length > 0) {
+        try {
+          const activeSet = new Set(payload.active_voucher_numbers.map(n => String(n).trim().toUpperCase()));
+          const targetCompany = companyName || '';
+
+          let q = supabase
+            .from('invoices')
+            .select('id, invoice_number, tally_voucher_number, amount, client_name, company_name, metadata')
+            .eq('organization_id', '00000000-0000-0000-0000-000000000001');
+          if (targetCompany && targetCompany !== 'TallyPrime Company') {
+            q = q.or(`company_name.eq.${targetCompany},metadata->>tally_company.eq.${targetCompany}`);
+          }
+          const { data: currentInvs } = await q.limit(10000);
+          if (currentInvs && currentInvs.length > 0) {
+            const orphans = currentInvs.filter(i => {
+              const num = String(i.tally_voucher_number || i.invoice_number || '').trim().toUpperCase();
+              const rawNum = String(i.metadata?.raw_voucher_number || '').trim().toUpperCase();
+              if (num.startsWith('LEDGER-') || num.startsWith('OP-')) return false;
+              return !activeSet.has(num) && (!rawNum || !activeSet.has(rawNum));
+            });
+
+            // Circuit breaker: prune only if <= 50% of the company records are missing
+            if (orphans.length > 0 && (orphans.length <= currentInvs.length * 0.5 || currentInvs.length <= 10)) {
+              const delIds = orphans.map(o => o.id);
+              for (let i = 0; i < delIds.length; i += 100) {
+                await supabase.from('invoices').delete().in('id', delIds.slice(i, i + 100));
+              }
+              results.prunedDeletedInvoices = orphans.length;
+              console.log(`[Tally Ingestion] 🗑️ Pruned ${orphans.length} deleted vouchers for company '${targetCompany}'`);
+
+              // Log audit record for deleted vouchers
+              try {
+                const auditEntries = orphans.slice(0, 50).map(o => ({
+                  organization_id: '00000000-0000-0000-0000-000000000001',
+                  action: 'invoice.tally_deleted',
+                  resource: 'invoice',
+                  resource_id: o.id,
+                  payload: {
+                    invoice_number: o.invoice_number || o.tally_voucher_number,
+                    client_name: o.client_name,
+                    amount: o.amount,
+                    company_name: o.company_name,
+                    reason: 'Voucher was deleted in TallyPrime; reconciled and pruned from Cloud ERP',
+                  }
+                }));
+                if (auditEntries.length > 0) {
+                  await supabase.from('audit_logs').insert(auditEntries);
+                }
+              } catch (_) {}
+            }
+          }
+        } catch (delErr) {
+          console.warn('[Tally Ingestion] Deletion reconciliation error:', delErr.message);
+        }
+      }
+
       // 2. Fetch existing leads and customer master for auto-mapping
       let allLeads = [];
       try {
@@ -271,19 +328,22 @@ exports.handler = async (event) => {
             } catch (_) {}
           }
 
+          const isCancelled = v.status === 'Cancelled' || v.metadata?.is_cancelled_in_tally || false;
+
           const invoiceRow = {
             organization_id: '00000000-0000-0000-0000-000000000001',
             tally_voucher_number: invNum,
             invoice_number: invNum,
             client_name: verifiedSheetName || v.ledger_name || 'Client',
             client_phone: resolvedClientPhone,
-            amount: Number(v.amount) || 0,
-            status: v.status || 'Pending',
+            amount: isCancelled ? 0 : (Number(v.amount) || 0),
+            status: isCancelled ? 'Cancelled' : (v.status || 'Pending'),
             due_date: resolvedDueDate,
             invoice_date: invoiceDateStr,
             pdf_url: finalPdfUrl || null,
             metadata: {
               ...(v.metadata || {}),
+              is_cancelled_in_tally: isCancelled,
               email: targetEmail || '',
               client_email: targetEmail || '',
               pdf_url: finalPdfUrl,
@@ -478,11 +538,11 @@ exports.handler = async (event) => {
               existing?.metadata?.email_dispatch_status !== 'failed'
             );
 
-            // Rule 3: Must be a genuine Sales / Tax Invoice (never purchase/payment)
-            const isSalesInvoice = derivedDirection === 'receivable' ||
+            // Rule 3: Must be a genuine Sales / Tax Invoice (never purchase/payment or cancelled)
+            const isSalesInvoice = !isCancelled && (derivedDirection === 'receivable' ||
               ['sales', 'sales order', 'tax invoice'].some(t => rawVoucherType.includes(t)) ||
               /^(srp|sb|inv|tax)[-/]/i.test(invNum) ||
-              /sales/i.test(invNum);
+              /sales/i.test(invNum));
 
             // Rule 4: Authoritative Phone & Email Verification
             const targetPhone = resolvedClientPhone || invoiceRow.client_phone || existing?.client_phone;

@@ -127,7 +127,7 @@ ALL_VOUCHERS_UNFILTERED_XML = """<?xml version="1.0" encoding="utf-8"?>
           <COLLECTION NAME="AllVouchersFull" ISMODIFY="No">
             <TYPE>Voucher</TYPE>
             <FETCH>DATE, VOUCHERNUMBER, VOUCHERTYPENAME, PARTYLEDGERNAME, BASICBUYERNAME,
-                   AMOUNT, NARRATION, PARTYGSTIN, BASICBUYERADDRESS,
+                   AMOUNT, NARRATION, PARTYGSTIN, BASICBUYERADDRESS, ISCANCELLED, ISDELETED,
                    ALLLEDGERENTRIES.LIST</FETCH>
           </COLLECTION>
         </TDLMESSAGE>
@@ -157,7 +157,7 @@ ALL_VOUCHERS_TDL_XML = f"""<?xml version="1.0" encoding="utf-8"?>
           <COLLECTION NAME="AllVouchersByDate" ISMODIFY="No">
             <TYPE>Voucher</TYPE>
             <FETCH>DATE, VOUCHERNUMBER, VOUCHERTYPENAME, PARTYLEDGERNAME, BASICBUYERNAME,
-                   AMOUNT, NARRATION, PARTYGSTIN, BASICBUYERADDRESS, ISOPTIONAL,
+                   AMOUNT, NARRATION, PARTYGSTIN, BASICBUYERADDRESS, ISOPTIONAL, ISCANCELLED, ISDELETED,
                    ALLLEDGERENTRIES.LIST</FETCH>
             <FILTER>FilterByDateRange</FILTER>
           </COLLECTION>
@@ -251,7 +251,7 @@ DAYBOOK_XML = f"""<?xml version="1.0" encoding="utf-8"?>
           <COLLECTION NAME="SalesDayBookVouchers" ISMODIFY="No">
             <TYPE>Voucher</TYPE>
             <FETCH>DATE, VOUCHERNUMBER, VOUCHERTYPENAME, PARTYLEDGERNAME, BASICBUYERNAME,
-                   AMOUNT, NARRATION, PARTYGSTIN, BASICBUYERADDRESS,
+                   AMOUNT, NARRATION, PARTYGSTIN, BASICBUYERADDRESS, ISCANCELLED, ISDELETED,
                    ALLLEDGERENTRIES.LIST, BILLALLOCATIONS.LIST</FETCH>
             <FILTER>SalesDayBookFilter</FILTER>
           </COLLECTION>
@@ -290,7 +290,7 @@ VOUCHERS_XML = f"""<?xml version="1.0" encoding="utf-8"?>
           <COLLECTION NAME="ReceiptPaymentVouchers" ISMODIFY="No">
             <TYPE>Voucher</TYPE>
             <FETCH>DATE, VOUCHERNUMBER, VOUCHERTYPENAME, PARTYLEDGERNAME, BASICBUYERNAME,
-                   AMOUNT, NARRATION, PARTYGSTIN, BASICBUYERADDRESS,
+                   AMOUNT, NARRATION, PARTYGSTIN, BASICBUYERADDRESS, ISCANCELLED, ISDELETED,
                    ALLLEDGERENTRIES.LIST, BILLALLOCATIONS.LIST</FETCH>
             <FILTER>ReceiptPaymentFilter</FILTER>
           </COLLECTION>
@@ -330,7 +330,7 @@ LEDGER_VOUCHERS_XML = f"""<?xml version="1.0" encoding="utf-8"?>
           <COLLECTION NAME="LedgerVoucherEntries" ISMODIFY="No">
             <TYPE>Voucher</TYPE>
             <FETCH>DATE, VOUCHERNUMBER, VOUCHERTYPENAME, PARTYLEDGERNAME, BASICBUYERNAME,
-                   AMOUNT, NARRATION, ALLLEDGERENTRIES</FETCH>
+                   AMOUNT, NARRATION, ISCANCELLED, ISDELETED, ALLLEDGERENTRIES</FETCH>
             <FILTER>LedgerVoucherFilter</FILTER>
           </COLLECTION>
           <SYSTEM TYPE="Formulae" NAME="LedgerVoucherFilter">
@@ -908,13 +908,23 @@ def parse_voucher_block(block, fallback_company: str = "", ledger_phone_map: dic
     buyer_addr = extract_tag_value(block, "BASICBUYERADDRESS") or extract_tag_value(block, "ADDRESS") or ""
     buyer_gstin = extract_tag_value(block, "PARTYGSTIN") or extract_tag_value(block, "GSTIN") or extract_tag_value(block, "INCOMETAXNUMBER") or ""
 
+    # Check Tally cancellation and deletion flags
+    is_cancelled_raw = (extract_tag_value(block, "ISCANCELLED") or "").strip().lower()
+    is_deleted_raw = (extract_tag_value(block, "ISDELETED") or "").strip().lower()
+    is_cancelled = is_cancelled_raw in ("yes", "1", "true")
+    is_deleted = is_deleted_raw in ("yes", "1", "true")
+
+    # If voucher was deleted in Tally, do not process as active voucher
+    if is_deleted:
+        return None
+
     if not vch_number and not party:
         return None
 
     amount = parse_number(amount_str)
 
     # If amount is 0, check nested ALLLEDGERENTRIES / LEDGERENTRIES amounts
-    if amount == 0:
+    if amount == 0 and not is_cancelled:
         nested_amounts = re.findall(r'<AMOUNT[^>]*>([^<]+)</AMOUNT>', block, re.IGNORECASE)
         for ns in nested_amounts:
             val = parse_number(ns)
@@ -922,7 +932,7 @@ def parse_voucher_block(block, fallback_company: str = "", ledger_phone_map: dic
                 amount = val
                 break
 
-    if amount == 0:
+    if amount == 0 and not is_cancelled:
         return None
 
     # Extract real taxable amount and GST from voucher XML ledger entries
@@ -940,11 +950,18 @@ def parse_voucher_block(block, fallback_company: str = "", ledger_phone_map: dic
         elif "SGST" in entry_name and entry_amt > 0:
             sgst_amount = entry_amt
     # Derive taxable
-    total_tax = (igst_amount or 0) + (cgst_amount or 0) + (sgst_amount or 0)
-    if total_tax > 0:
-        taxable_amount = amount - total_tax
+    if is_cancelled:
+        taxable_amount = 0.0
+        igst_amount    = 0.0
+        cgst_amount    = 0.0
+        sgst_amount    = 0.0
+        amount         = 0.0
     else:
-        taxable_amount = None  # Will fall back to amount/1.05 formula in PDF generator
+        total_tax = (igst_amount or 0) + (cgst_amount or 0) + (sgst_amount or 0)
+        if total_tax > 0:
+            taxable_amount = amount - total_tax
+        else:
+            taxable_amount = None  # Will fall back to amount/1.05 formula in PDF generator
 
     # Extract bill allocations (Agst Ref, New Ref) and credit terms from Tally
     bill_allocations = []
@@ -1034,7 +1051,11 @@ def parse_voucher_block(block, fallback_company: str = "", ledger_phone_map: dic
         return None
 
     # Determine status, flow direction, and due date
-    if any(s in vch_type_lower for s in RECEIPT_TYPES):
+    if is_cancelled:
+        status = "Cancelled"
+        direction = "cancelled"
+        due_date = None
+    elif any(s in vch_type_lower for s in RECEIPT_TYPES):
         status = "Paid"
         direction = "received"       # Customer paid us (money IN)
         due_date = None              # Already settled at transaction date
@@ -1302,11 +1323,11 @@ def parse_voucher_block(block, fallback_company: str = "", ledger_phone_map: dic
         "company_name": comp_name or fallback_company or "Tally Company",
         "phone": phone_val,
         "email": email_val,
-        "amount": amount,
-        "status": status,
+        "amount": 0.0 if is_cancelled else amount,
+        "status": "Cancelled" if is_cancelled else status,
         "voucher_type": vch_type,     # store raw Tally voucher type
-        "direction": direction,        # receivable | received | payable | paid_out
-        "due_date": due_date,
+        "direction": "cancelled" if is_cancelled else direction,        # receivable | received | payable | paid_out | cancelled
+        "due_date": None if is_cancelled else due_date,
         "credit_period_days": applied_credit_days,
         "buyer_address": buyer_addr,
         "gstin": buyer_gstin or "",
@@ -1360,6 +1381,7 @@ def parse_voucher_block(block, fallback_company: str = "", ledger_phone_map: dic
             "line_items": line_items,
             "buyer_address": buyer_addr,
             "gstin": buyer_gstin or "",
+            "is_cancelled_in_tally": is_cancelled,
         },
     }
 
@@ -2789,6 +2811,132 @@ def push_to_cloud(vouchers, master_summaries=None):
     save_cache()
     log.info(f"  [Data Sync] Done: {pushed_ok} synced, {push_errors} errors, {skipped} skipped (already synced)")
 
+    # ── Step 3b: Reconcile Deleted Tally Vouchers (Alt+D Orphan Pruning) ───────
+    # When vouchers are deleted in TallyPrime (Alt+D), they completely vanish from
+    # Tally's collections. Here we compare surviving vouchers against Supabase,
+    # prune orphans for synced companies, and write audit trail records.
+    fy_start_date_iso = f"{_fy_start_year}-04-01"
+    if SUPABASE_URL and SUPABASE_KEY and vouchers:
+        try:
+            active_by_company = {}
+            for v in vouchers:
+                inv_no = str(v.get("invoice_number", "")).strip()
+                raw_no = str(v.get("raw_voucher_number", "")).strip()
+                c_name = (v.get("company_name") or "").strip()
+                if c_name:
+                    active_by_company.setdefault(c_name, set())
+                    if inv_no:
+                        active_by_company[c_name].add(inv_no.upper())
+                    if raw_no:
+                        active_by_company[c_name].add(raw_no.upper())
+
+            for comp_name, active_set in active_by_company.items():
+                if not comp_name or comp_name in ("Tally Company", "Default"):
+                    continue
+
+                if len(active_set) == 0:
+                    continue
+
+                encoded_comp = urllib.parse.quote(comp_name)
+                # Fetch company vouchers from current financial year onwards
+                db_url = (
+                    f"{SUPABASE_URL}/rest/v1/invoices"
+                    f"?organization_id=eq.{ORGANIZATION_ID}"
+                    f"&company_name=ilike.{encoded_comp}"
+                    f"&invoice_date=gte.{fy_start_date_iso}"
+                    f"&select=id,invoice_number,status,amount,tally_voucher_number,invoice_date,client_name"
+                    f"&limit=10000"
+                )
+                db_resp = requests.get(db_url, headers=sb_headers, timeout=25)
+                if db_resp.status_code != 200:
+                    log.warning(f"  [Orphan Reconcile] Supabase query returned HTTP {db_resp.status_code}")
+                    continue
+
+                db_invoices = db_resp.json()
+                if not isinstance(db_invoices, list) or len(db_invoices) == 0:
+                    continue
+
+                orphan_ids = []
+                orphan_records = []
+                for inv in db_invoices:
+                    inv_num = str(inv.get("invoice_number") or "").strip().upper()
+                    tally_num = str(inv.get("tally_voucher_number") or "").strip().upper()
+
+                    # Never prune LEDGER-* summary rows or Opening Balance markers
+                    if "LEDGER-" in inv_num or "OP-" in inv_num or "OPENING" in inv_num:
+                        continue
+
+                    is_active = (inv_num in active_set) or (tally_num and tally_num in active_set)
+                    if not is_active:
+                        orphan_ids.append(inv.get("id"))
+                        orphan_records.append(inv)
+
+                if not orphan_ids:
+                    log.info(f"  [Orphan Reconcile] ✅ '{comp_name}': 0 orphan vouchers. Cloud is 100% in sync with Tally.")
+                    continue
+
+                total_db_count = len(db_invoices)
+                # Safety Circuit Breaker: If > 50% missing and sample size > 10, abort to protect data
+                if total_db_count > 10 and len(orphan_ids) > (total_db_count * 0.5):
+                    log.error(
+                        f"  [Orphan Reconcile] ⚠️ SAFETY CIRCUIT BREAKER TRIGGERED for '{comp_name}': "
+                        f"{len(orphan_ids)} of {total_db_count} vouchers missing (>50%). "
+                        f"Aborting deletion to protect data integrity."
+                    )
+                    continue
+
+                log.info(f"  [Orphan Reconcile] 🗑️ Detected {len(orphan_ids)} deleted voucher(s) in Tally for '{comp_name}'. Pruning from Supabase...")
+                deleted_count = 0
+                for d_idx in range(0, len(orphan_ids), 50):
+                    del_batch_ids = orphan_ids[d_idx:d_idx + 50]
+                    del_batch_recs = orphan_records[d_idx:d_idx + 50]
+                    joined_ids = ",".join(f'"{i}"' for i in del_batch_ids)
+
+                    del_url = f"{SUPABASE_URL}/rest/v1/invoices?organization_id=eq.{ORGANIZATION_ID}&id=in.({joined_ids})"
+                    del_resp = requests.delete(del_url, headers=sb_headers, timeout=15)
+                    if del_resp.status_code in (200, 204):
+                        deleted_count += len(del_batch_ids)
+                        for rec in del_batch_recs:
+                            inv_key = rec.get("invoice_number", "")
+                            sync_cache.pop(inv_key, None)
+
+                        # Record audit logs for deleted vouchers
+                        audit_rows = [
+                            {
+                                "organization_id": ORGANIZATION_ID,
+                                "user_id": "00000000-0000-0000-0000-000000000001",
+                                "action": "invoice.tally_deleted",
+                                "resource_type": "invoice",
+                                "resource_id": str(rec.get("id")),
+                                "details": {
+                                    "invoice_number": rec.get("invoice_number"),
+                                    "amount": rec.get("amount"),
+                                    "client_name": rec.get("client_name"),
+                                    "company_name": comp_name,
+                                    "reason": "Voucher deleted in TallyPrime (Alt+D). Reconciled during sync.",
+                                    "synced_at": datetime.now().isoformat(),
+                                },
+                            }
+                            for rec in del_batch_recs
+                        ]
+                        try:
+                            requests.post(
+                                f"{SUPABASE_URL}/rest/v1/audit_logs",
+                                json=audit_rows,
+                                headers=sb_headers,
+                                timeout=10,
+                            )
+                        except Exception:
+                            pass
+                    else:
+                        log.warning(f"  [Orphan Reconcile] Batch delete HTTP {del_resp.status_code}: {del_resp.text[:120]}")
+
+                save_cache()
+                log.info(f"  [Orphan Reconcile] ✅ Pruned {deleted_count} deleted voucher(s) for '{comp_name}' from Cloud ERP.")
+
+        except Exception as e:
+            log.warning(f"  [Orphan Reconcile] Non-fatal orphan pruning notice: {e}")
+
     # ── Step 4: Persist Authoritative Tally Master Summary (Option 2) ─────────
     if master_summaries and SUPABASE_URL and SUPABASE_KEY:
         try:
@@ -2815,6 +2963,9 @@ def push_to_cloud(vouchers, master_summaries=None):
 
     # ── Status ping & WhatsApp dispatch to Netlify ────────────────────────────
     try:
+        all_active_vch_nums = [
+            v.get("invoice_number") for v in vouchers if v.get("invoice_number")
+        ]
         ping_payload = {
             "organizationId": ORGANIZATION_ID,
             "timestamp": datetime.now().isoformat(),
@@ -2824,6 +2975,7 @@ def push_to_cloud(vouchers, master_summaries=None):
                 [v.get("company_name") for v in vouchers if v.get("company_name")]
             )) or ["TallyPrime Live"])[0],
             "vouchers": new_sales_vouchers,  # Pass new sales vouchers to Netlify for WhatsApp dispatch
+            "active_voucher_numbers": all_active_vch_nums,  # Active vouchers for cloud reconciliation
             "master_summary": master_summaries,  # Pass authoritative Tally master summaries
         }
         requests.post(

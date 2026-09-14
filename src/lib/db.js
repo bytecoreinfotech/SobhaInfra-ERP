@@ -4128,3 +4128,101 @@ export async function submitMetaTemplate(templatePayload) {
   }
 }
 
+/**
+ * Reconciles and deletes vouchers in Supabase that have been deleted in TallyPrime.
+ */
+export async function reconcileTallyDeletionsForCompany(companyName, activeVoucherNumbers = [], options = {}) {
+  if (!isSupabaseConfigured || !companyName || !Array.isArray(activeVoucherNumbers)) {
+    return { success: false, prunedCount: 0, reason: 'Invalid parameters or DB unconfigured' };
+  }
+
+  try {
+    const activeSet = new Set(activeVoucherNumbers.map(n => String(n || '').trim().toUpperCase()).filter(Boolean));
+    if (activeSet.size === 0) {
+      return { success: false, prunedCount: 0, reason: 'Active voucher set is empty; aborting for safety' };
+    }
+
+    // 1. Query all vouchers currently in DB for this company
+    let allCompVouchers = [];
+    let offset = 0;
+    const batchSize = 1000;
+    while (true) {
+      const { data, error } = await supabase
+        .from('invoices')
+        .select('id, invoice_number, tally_voucher_number, amount, client_name, company_name, invoice_date, metadata')
+        .eq('organization_id', DEFAULT_ORG_ID)
+        .range(offset, offset + batchSize - 1);
+
+      if (error || !data || data.length === 0) break;
+      allCompVouchers.push(...data);
+      if (data.length < batchSize) break;
+      offset += batchSize;
+    }
+
+    // Filter to this company's Tally-synced vouchers
+    const compUpper = String(companyName).toUpperCase().trim();
+    const targetVouchers = allCompVouchers.filter(v => {
+      const c = String(v.company_name || v.metadata?.tally_company || '').toUpperCase().trim();
+      const num = String(v.invoice_number || v.tally_voucher_number || '').toUpperCase().trim();
+      if (num.startsWith('LEDGER-') || num.startsWith('OP-')) return false;
+      return c && (c === compUpper || c.includes(compUpper) || compUpper.includes(c));
+    });
+
+    // 2. Identify orphans: in Supabase but NOT in Tally active set
+    const orphans = targetVouchers.filter(v => {
+      const num = String(v.tally_voucher_number || v.invoice_number || '').toUpperCase().trim();
+      const rawNum = String(v.metadata?.raw_voucher_number || '').toUpperCase().trim();
+      return !activeSet.has(num) && (!rawNum || !activeSet.has(rawNum));
+    });
+
+    if (orphans.length === 0) {
+      return { success: true, prunedCount: 0, message: 'All vouchers in cloud match active Tally records' };
+    }
+
+    // Circuit breaker: do not delete if more than 50% of the company records would be wiped in one pass
+    if (targetVouchers.length > 20 && orphans.length > targetVouchers.length * 0.5 && !options.force) {
+      console.warn(`[db] Orphan deletion circuit breaker tripped: ${orphans.length}/${targetVouchers.length} missing. Aborting.`);
+      return { success: false, prunedCount: 0, reason: 'Circuit breaker: >50% vouchers missing from Tally' };
+    }
+
+    // 3. Delete orphan records in batches of 100
+    const orphanIds = orphans.map(o => o.id);
+    let deletedCount = 0;
+    for (let i = 0; i < orphanIds.length; i += 100) {
+      const chunk = orphanIds.slice(i, i + 100);
+      const { error: delErr } = await supabase.from('invoices').delete().in('id', chunk);
+      if (!delErr) {
+        deletedCount += chunk.length;
+      }
+    }
+
+    // 4. Log audit records for the pruned vouchers
+    try {
+      const auditPayloads = orphans.slice(0, 50).map(o => ({
+        organization_id: DEFAULT_ORG_ID,
+        action: 'invoice.tally_deleted',
+        resource: 'invoice',
+        resource_id: o.id,
+        payload: {
+          invoice_number: o.invoice_number || o.tally_voucher_number,
+          client_name: o.client_name,
+          amount: o.amount,
+          company_name: o.company_name,
+          deleted_from_tally_at: new Date().toISOString(),
+          reason: 'Voucher no longer exists in TallyPrime; reconciled and pruned from Cloud ERP',
+        }
+      }));
+      if (auditPayloads.length > 0) {
+        await supabase.from('audit_logs').insert(auditPayloads);
+      }
+    } catch (_) {}
+
+    invalidateInvoicesCache();
+    return { success: true, prunedCount: deletedCount, totalOrphans: orphans.length };
+  } catch (err) {
+    console.warn('[db] reconcileTallyDeletionsForCompany error:', err.message);
+    return { success: false, prunedCount: 0, error: err.message };
+  }
+}
+
+
