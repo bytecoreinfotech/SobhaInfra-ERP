@@ -2506,6 +2506,10 @@ export async function processCampaignBatch(campaignId, batchSize = 50, extraData
         interactiveButtons: extraData.interactiveButtons || extraData.interactive_buttons || [],
         buttonFlow: extraData.buttonFlow || extraData.button_flow || null,
         automationMode: extraData.automationMode || extraData.automation_mode || 'hybrid',
+        // Meta template fields — must be forwarded explicitly
+        templateName: extraData.templateName || extraData.template_name || null,
+        templateLanguage: extraData.templateLanguage || extraData.template_language || 'en',
+        templateParams: extraData.templateParams || extraData.template_params || null,
       }),
     });
     const result = await res.json();
@@ -2523,6 +2527,7 @@ export async function processCampaignBatch(campaignId, batchSize = 50, extraData
     return { success: true, batchResults: { processed: batchSize, sent: batchSize, failed: 0 } };
   }
 }
+
 
 export async function getWhatsAppConversations() {
   if (!isSupabaseConfigured) return { data: MOCK_STORE.whatsapp_conversations, error: null };
@@ -3891,3 +3896,74 @@ export function recordLocalEmailLog(logItem) {
     return null;
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// META WHATSAPP TEMPLATES MANAGEMENT (2-WAY SYNC & REGISTRATION)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Fetch all templates from Supabase whatsapp_templates table */
+export async function getMetaTemplates() {
+  if (isSupabaseConfigured) {
+    try {
+      const { data, error } = await supabase
+        .from('whatsapp_templates')
+        .select('*')
+        .order('name', { ascending: true });
+      if (!error && data) return { data, error: null };
+    } catch (err) {
+      console.warn('[db] getMetaTemplates Supabase error:', err);
+    }
+  }
+  return { data: [], error: null };
+}
+
+/** 1-Click Sync: Pulls live templates and statuses from Meta Graph API */
+export async function syncMetaTemplates() {
+  try {
+    const res = await fetch('/.netlify/functions/sync-templates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ wabaId: '2375569266307315' }),
+    });
+    const result = await res.json();
+    if (!res.ok || result.error) {
+      return { success: false, error: result.error || 'Failed to sync templates from Meta' };
+    }
+    return {
+      success: true,
+      message: result.message,
+      templates: result.results?.templates || [],
+      fetched: result.results?.fetched || 0,
+      synced: result.results?.synced || 0,
+    };
+  } catch (err) {
+    console.error('[db] syncMetaTemplates fetch error:', err);
+    return { success: false, error: err.message };
+  }
+}
+
+/** 1-Click Submit: Registers a template directly with Meta WhatsApp Business Account */
+export async function submitMetaTemplate(templatePayload) {
+  try {
+    const res = await fetch('/.netlify/functions/create-meta-template', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(templatePayload),
+    });
+    const result = await res.json();
+    if (!res.ok || result.error) {
+      return { success: false, error: result.error || 'Meta rejected template registration', details: result.details };
+    }
+    return {
+      success: true,
+      templateId: result.templateId,
+      status: result.status,
+      name: result.name,
+      message: result.message,
+    };
+  } catch (err) {
+    console.error('[db] submitMetaTemplate fetch error:', err);
+    return { success: false, error: err.message };
+  }
+}
+

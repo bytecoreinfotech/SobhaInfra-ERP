@@ -11,10 +11,10 @@
 
 const { createClient } = require('@supabase/supabase-js');
 
-const WA_TOKEN     = process.env.WHATSAPP_TOKEN;
-const WABA_ID      = process.env.WHATSAPP_WABA_ID;
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY;
+const WA_TOKEN     = process.env.WHATSAPP_TOKEN || 'EAAZAoFJNWmo4BSXS3ZBJrD7sk039yowup2fxSWYZAQFTiTvEfOm5XsRNmyRZC4RnkYyjvFaXaxN3fhqNVvvyBqe0CXwoWClgcBx6X8UhqaNWTUjNFt0XMkufGVKkF9FSOP2V2SXSwxreUpX3UALTRW8TC8feqyWyYdyyamSrkF8qWvqkuSEEkatiTGvaGZC1AYwZDZD';
+const WABA_ID      = process.env.WHATSAPP_WABA_ID || '2375569266307315';
+const SUPABASE_URL = process.env.SUPABASE_URL || 'https://mcgmppnvnwnilioapbli.supabase.co';
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1jZ21wcG52bnduaWxpb2FwYmxpIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4NzU3MTk4MiwiZXhwIjoyMTAzMTQ3OTgyfQ.iMVtS3kZ5jkXd7wOsgviN_3Umz0Auw7vBa0NDlD9rKg';
 const DEFAULT_ORG_ID = '00000000-0000-0000-0000-000000000001';
 
 exports.handler = async (event) => {
@@ -101,18 +101,31 @@ exports.handler = async (event) => {
             }
           }
 
-          await supabase.from('whatsapp_templates').upsert([{
+          // Check if template already exists by name
+          const { data: existing } = await supabase
+            .from('whatsapp_templates')
+            .select('id')
+            .eq('name', tpl.name)
+            .maybeSingle();
+
+          const tplRow = {
             organization_id: DEFAULT_ORG_ID,
             provider_template_id: tpl.id,
             name: tpl.name,
-            language: tpl.language || 'en_US',
+            language: tpl.language || 'en',
             category: tpl.category || 'MARKETING',
             status: tpl.status || 'APPROVED',
             body_text: bodyText,
             variables_schema: variablesSchema,
-            campaign_eligible: tpl.category === 'MARKETING',
+            campaign_eligible: true,
             last_synced_at: new Date().toISOString(),
-          }], { onConflict: 'organization_id,name' });
+          };
+
+          if (existing?.id) {
+            await supabase.from('whatsapp_templates').update(tplRow).eq('id', existing.id);
+          } else {
+            await supabase.from('whatsapp_templates').insert([tplRow]);
+          }
 
           results.synced++;
         } catch (err) {
@@ -121,13 +134,26 @@ exports.handler = async (event) => {
       }
     }
 
+    // Fetch all current templates to return to frontend
+    let currentTemplates = [];
+    if (supabase) {
+      const { data: allTpls } = await supabase
+        .from('whatsapp_templates')
+        .select('*')
+        .order('name', { ascending: true });
+      currentTemplates = allTpls || [];
+    }
+
     return {
       statusCode: 200,
       headers: cors,
       body: JSON.stringify({
         success: true,
         message: `Synced ${results.synced} of ${results.fetched} templates from Meta`,
-        results,
+        results: {
+          ...results,
+          templates: currentTemplates,
+        },
       }),
     };
   } catch (err) {

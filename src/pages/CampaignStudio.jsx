@@ -8,7 +8,7 @@ import {
   ExternalLink, UserCheck, Bot, CornerDownRight, Smartphone, RotateCcw,
   Check, HelpCircle, Shield, Info, Save, FolderOpen, Copy, Edit3, X
 } from 'lucide-react';
-import { estimateCampaignAudience, queueCampaign, processCampaignBatch, getLeads, getCustomerMaster, normalizePhone, getCampaignTemplates, saveCampaignTemplate, deleteCampaignTemplate } from '../lib/db';
+import { estimateCampaignAudience, queueCampaign, processCampaignBatch, getLeads, getCustomerMaster, normalizePhone, getCampaignTemplates, saveCampaignTemplate, deleteCampaignTemplate, syncMetaTemplates, submitMetaTemplate, getMetaTemplates } from '../lib/db';
 import { uploadToWhatsAppMedia, getWhatsAppMediaType } from '../lib/storage';
 import { extractMainName, isGenericName, formatPhoneNumber } from '../lib/nameHelper';
 import './Pages.css';
@@ -183,10 +183,25 @@ const CampaignStudio = () => {
   const [templateSaveSuccess, setTemplateSaveSuccess] = useState(false);
   const [loadingTemplates, setLoadingTemplates] = useState(false);
 
+  // Meta WhatsApp Templates State
+  const [metaTemplates, setMetaTemplates] = useState([]);
+  const [syncingMeta, setSyncingMeta] = useState(false);
+  const [syncToast, setSyncToast] = useState(null);
+  const [showSubmitMetaModal, setShowSubmitMetaModal] = useState(false);
+  const [submittingToMeta, setSubmittingToMeta] = useState(false);
+  const [submitMetaName, setSubmitMetaName] = useState('');
+  const [submitMetaCategory, setSubmitMetaCategory] = useState('MARKETING');
+  const [submitMetaStatus, setSubmitMetaStatus] = useState(null);
+  const [selectedMetaTemplate, setSelectedMetaTemplate] = useState(null);
+  // Template Lifecycle: lock fields once an approved Meta template is applied
+  const [isTemplateLocked, setIsTemplateLocked] = useState(false);
+  const [templateModifiedAfterLock, setTemplateModifiedAfterLock] = useState(false);
+
   useEffect(() => {
     loadInitialData();
     calculateAudience();
     loadSavedTemplates();
+    loadMetaTemplates();
   }, []);
 
   useEffect(() => {
@@ -570,7 +585,177 @@ const CampaignStudio = () => {
     setCustomText(preset.text);
     setButtons(preset.buttons || []);
     setEditingButtonIndex(0);
+    setSelectedMetaTemplate(null);
+    setIsTemplateLocked(false);
+    setTemplateModifiedAfterLock(false);
   };
+
+  // ─── META TEMPLATES MANAGEMENT ─────────────────────────────────────────────
+  const loadMetaTemplates = async () => {
+    try {
+      const { data } = await getMetaTemplates();
+      if (data && data.length > 0) {
+        setMetaTemplates(data);
+      }
+    } catch (err) {
+      console.warn('[CampaignStudio] loadMetaTemplates error:', err);
+    }
+  };
+
+  const handleSyncMeta = async () => {
+    setSyncingMeta(true);
+    setSyncToast('🔄 Connecting to Meta Graph API & pulling approved templates...');
+    try {
+      const res = await syncMetaTemplates();
+      if (res.success) {
+        setMetaTemplates(res.templates || []);
+        setSyncToast(`✅ Synced ${res.fetched || res.synced || 0} templates from Meta WhatsApp Business Account!`);
+        setTimeout(() => setSyncToast(null), 5000);
+      } else {
+        setSyncToast(`❌ Meta Sync Error: ${res.error || 'Failed to sync'}`);
+        setTimeout(() => setSyncToast(null), 6000);
+      }
+    } catch (err) {
+      setSyncToast(`❌ Sync Error: ${err.message}`);
+      setTimeout(() => setSyncToast(null), 6000);
+    } finally {
+      setSyncingMeta(false);
+    }
+  };
+
+  const handleSubmitToMeta = async () => {
+    if (!customText.trim()) {
+      alert('Please enter message text in Step 2 before submitting to Meta.');
+      return;
+    }
+    setSubmittingToMeta(true);
+    setSubmitMetaStatus(null);
+    try {
+      let headerType = 'NONE';
+      let headerMediaUrl = null;
+      let headerText = '';
+
+      if (uploadedMediaUrl || campaignFile) {
+        headerType = 'IMAGE';
+        headerMediaUrl = uploadedMediaUrl || null;
+      } else {
+        headerType = 'TEXT';
+        headerText = 'Sobhainfra Tech';
+      }
+
+      // Format body text: convert {name} to {{1}}, {company} to {{2}} for Meta template syntax
+      let metaBodyText = customText
+        .replace(/\{name\}/gi, '{{1}}')
+        .replace(/\{company\}/gi, '{{2}}')
+        .replace(/\{product\}/gi, '{{3}}')
+        .replace(/\{budget\}|\{amount\}/gi, '{{4}}')
+        .replace(/\{phone\}/gi, '{{5}}');
+
+      // Ensure no raw {variable} braces remain without index
+      metaBodyText = metaBodyText.replace(/\{([^}]+)\}/g, '{{1}}');
+
+      // Up to 3 quick reply buttons per Meta specification
+      const validButtons = (buttons || []).slice(0, 3).map((b, idx) => ({
+        type: 'QUICK_REPLY',
+        text: (b.title || b.text || `Option ${idx + 1}`).replace(/[^\w\s-]/gi, '').trim().slice(0, 25) || `Option ${idx + 1}`,
+      }));
+
+      const payload = {
+        name: submitMetaName || `sobha_promo_${Date.now().toString().slice(-5)}`,
+        category: submitMetaCategory || 'MARKETING',
+        language: 'en',
+        headerType,
+        headerText,
+        headerMediaUrl,
+        bodyText: metaBodyText,
+        footerText: 'Sobhainfra Tech Private Limited',
+        buttons: validButtons,
+      };
+
+      const res = await submitMetaTemplate(payload);
+      if (res.success) {
+        setSubmitMetaStatus({
+          success: true,
+          message: `✅ Success! Template "${res.name}" submitted to Meta! Status: ${res.status}. Meta usually approves within 2-15 minutes.`
+        });
+        // Auto-refresh templates list from Meta
+        setTimeout(() => {
+          handleSyncMeta();
+        }, 1500);
+      } else {
+        setSubmitMetaStatus({
+          success: false,
+          message: `❌ ${res.error || 'Meta rejected template registration'}`
+        });
+      }
+    } catch (err) {
+      setSubmitMetaStatus({
+        success: false,
+        message: `❌ Error: ${err.message}`
+      });
+    } finally {
+      setSubmittingToMeta(false);
+    }
+  };
+
+  const handleSelectMetaTemplate = (tpl) => {
+    setSelectedMetaTemplate(tpl);
+    // Convert {{1}} to {name}, {{2}} to {company}
+    let body = tpl.body_text || '';
+    body = body.replace(/\{\{1\}\}/g, '{name}').replace(/\{\{2\}\}/g, '{company}');
+    setCustomText(body);
+    setName(`Broadcast - ${tpl.name}`);
+
+    // STRICT: set buttons ONLY from what the template defines.
+    // If the template has no BUTTONS component, clear to empty — we cannot
+    // send buttons that were not part of the approved template.
+    let templateButtons = [];
+    if (tpl.components) {
+      const btnComp = tpl.components.find(c => c.type === 'BUTTONS');
+      if (btnComp && btnComp.buttons && btnComp.buttons.length > 0) {
+        templateButtons = btnComp.buttons.map((b, i) => ({
+          id: `meta_btn_${i + 1}`,
+          title: b.text || `Button ${i + 1}`,
+          actionType: b.type === 'URL' ? 'media_or_link' : 'human_handoff',
+          replyText: `Customer selected: ${b.text}`,
+          linkUrl: b.url || '',
+        }));
+      }
+    } else if (tpl.quick_reply_buttons && tpl.quick_reply_buttons.length > 0) {
+      // Some DB schemas store buttons flat on the template object
+      templateButtons = tpl.quick_reply_buttons.map((b, i) => ({
+        id: `meta_btn_${i + 1}`,
+        title: (typeof b === 'string' ? b : b.text) || `Button ${i + 1}`,
+        actionType: 'human_handoff',
+        replyText: `Customer selected: ${typeof b === 'string' ? b : b.text}`,
+      }));
+    }
+    // Always overwrite — never carry over previous campaign buttons
+    setButtons(templateButtons);
+    setEditingButtonIndex(0);
+
+    // Lock fields — this is an approved Meta template, no edits allowed
+    if (tpl.status === 'APPROVED') {
+      setIsTemplateLocked(true);
+      setTemplateModifiedAfterLock(false);
+    } else {
+      setIsTemplateLocked(false);
+      setTemplateModifiedAfterLock(false);
+    }
+    setActiveStep(2);
+  };
+
+  const handleUnlockTemplate = () => {
+    // User wants to edit — unlock but mark as modified (template no longer valid for direct send)
+    setIsTemplateLocked(false);
+    setTemplateModifiedAfterLock(true);
+  };
+
+  const handleRelockTemplate = () => {
+    // Re-select same template to restore locked state
+    if (selectedMetaTemplate) handleSelectMetaTemplate(selectedMetaTemplate);
+  };
+
 
   // Format message text for preview
   const isOverride = campaignVariables.mode === 'override';
@@ -811,8 +996,6 @@ const CampaignStudio = () => {
         setUploadedMediaType(mediaType);
       } catch (err) {
         console.warn('[CampaignStudio] Storage upload failed:', err.message);
-        // CRITICAL: NEVER fall back to campaignFilePreview (base64 Data URL)
-        // Meta WhatsApp Cloud API rejects data: URIs with (#100) Param image.link is not a valid URI.
         mediaUrl = null;
         mediaType = 'text';
       }
@@ -822,9 +1005,16 @@ const CampaignStudio = () => {
     const finalMediaUrl = (mediaUrl && typeof mediaUrl === 'string' && (mediaUrl.startsWith('http://') || mediaUrl.startsWith('https://'))) ? mediaUrl : null;
     const finalMediaType = finalMediaUrl ? (mediaType || 'image') : 'text';
 
+    // Determine if this is an approved Meta template send
+    const isMetaTemplate = isTemplateLocked && selectedMetaTemplate?.status === 'APPROVED';
+    const metaTemplateName = selectedMetaTemplate?.name || null;
+    // Meta stores language as 'en', 'en_US', etc. — use exactly what was synced from Meta
+    const metaTemplateLanguage = selectedMetaTemplate?.language || 'en';
+
     const payload = {
       name: name.trim() || 'WhatsApp Broadcast Flow',
-      template_name: 'Interactive Broadcast Flow',
+      // Store real template name in DB record
+      template_name: metaTemplateName || 'Interactive Broadcast Flow',
       custom_message: customText,
       media_url: finalMediaUrl,
       media_type: finalMediaType,
@@ -845,9 +1035,13 @@ const CampaignStudio = () => {
         mediaUrl: finalMediaUrl,
         mediaType: finalMediaType,
         campaignDefaults: campaignVariables,
-        interactiveButtons: buttons,
-        buttonFlow: { buttons, automationMode },
+        interactiveButtons: isMetaTemplate ? [] : buttons, // no interactive buttons for Meta template sends
+        buttonFlow: isMetaTemplate ? null : { buttons, automationMode },
         recipients: effectiveRecipients,
+        // Template dispatch fields — the root cause of the failure was missing these
+        templateName: metaTemplateName,
+        templateLanguage: metaTemplateLanguage,
+        templateParams: null, // let server auto-build from recipient name + company
       });
       setLaunchSuccess(true);
     }
@@ -876,8 +1070,65 @@ const CampaignStudio = () => {
           </p>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+          {/* 1. Sync Templates from Meta */}
           <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={handleSyncMeta}
+            disabled={syncingMeta}
+            style={{
+              fontSize: '0.78rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.35rem',
+              borderColor: '#10b981',
+              background: 'rgba(16, 185, 129, 0.08)',
+              color: '#059669',
+              fontWeight: 600,
+            }}
+            data-tooltip="Pull approved templates from Meta WhatsApp Business Account"
+            data-tooltip-pos="bottom"
+          >
+            <RefreshCw size={14} className={syncingMeta ? 'animate-spin' : ''} />
+            <span>{syncingMeta ? 'Syncing...' : `Sync Meta (${metaTemplates.length})`}</span>
+          </button>
+
+          {/* 2. Submit Template to Meta */}
+          <button
+            type="button"
+            className="btn"
+            disabled={!customText.trim()}
+            onClick={() => {
+              setSubmitMetaName((name || 'sobha_promo').toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 30));
+              setSubmitMetaStatus(null);
+              setShowSubmitMetaModal(true);
+            }}
+            style={{
+              fontSize: '0.78rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.35rem',
+              background: customText.trim()
+                ? 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)'
+                : 'var(--bg-tertiary)',
+              color: customText.trim() ? '#ffffff' : 'var(--text-muted)',
+              border: customText.trim() ? 'none' : '1px solid var(--border-color)',
+              fontWeight: 700,
+              boxShadow: customText.trim() ? '0 2px 8px rgba(99, 102, 241, 0.3)' : 'none',
+              cursor: customText.trim() ? 'pointer' : 'not-allowed',
+              opacity: customText.trim() ? 1 : 0.55,
+            }}
+            data-tooltip={customText.trim() ? 'Submit this design directly to Meta for official template approval' : 'Add message text first to enable this button'}
+            data-tooltip-pos="bottom"
+          >
+            <Sparkles size={14} />
+            <span>Submit to Meta 🚀</span>
+          </button>
+
+          {/* 3. Variables Customizer */}
+          <button
+            type="button"
             className="btn btn-secondary"
             onClick={() => setShowVarSettings(p => !p)}
             style={{
@@ -886,20 +1137,53 @@ const CampaignStudio = () => {
               background: showVarSettings ? 'rgba(99,102,241,0.1)' : 'var(--bg-secondary)',
             }}
           >
-            <Settings size={15} color="var(--accent-primary)" />
-            <span>Customize Variables ⚙️</span>
+            <Settings size={14} color="var(--accent-primary)" />
+            <span>Variables ⚙️</span>
           </button>
 
+          {/* 4. Launch Broadcast */}
           <button
+            type="button"
             className="btn btn-whatsapp"
-            disabled={isSubmitting || effectiveCount === 0}
+            disabled={isSubmitting || effectiveCount === 0 || (selectedMetaTemplate && templateModifiedAfterLock)}
             onClick={handleLaunchCampaign}
-            style={{ fontWeight: 700, fontSize: '0.82rem', padding: '0.5rem 1.1rem' }}
+            title={selectedMetaTemplate && templateModifiedAfterLock ? 'Template was modified — re-apply or submit to Meta for approval before sending' : ''}
+            style={{
+              fontWeight: 700, fontSize: '0.82rem', padding: '0.5rem 1.1rem',
+              opacity: (selectedMetaTemplate && templateModifiedAfterLock) ? 0.5 : 1,
+              cursor: (selectedMetaTemplate && templateModifiedAfterLock) ? 'not-allowed' : 'pointer',
+            }}
           >
             <Send size={15} /> {isSubmitting ? 'Launching...' : `Launch to ${effectiveCount} Contacts`}
           </button>
         </div>
       </div>
+
+      {/* Sync Status Banner */}
+      {syncToast && (
+        <div className="animate-fade-in" style={{
+          marginBottom: '1rem',
+          padding: '0.65rem 1rem',
+          borderRadius: 8,
+          background: syncToast.startsWith('❌') ? 'rgba(239, 68, 68, 0.12)' : 'rgba(16, 185, 129, 0.12)',
+          border: syncToast.startsWith('❌') ? '1px solid rgba(239, 68, 68, 0.3)' : '1px solid rgba(16, 185, 129, 0.3)',
+          color: syncToast.startsWith('❌') ? '#dc2626' : '#059669',
+          fontSize: '0.82rem',
+          fontWeight: 600,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        }}>
+          <span>{syncToast}</span>
+          <button
+            type="button"
+            onClick={() => setSyncToast(null)}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', fontWeight: 800 }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* Dynamic Variables Customization Drawer (Gear Icon) */}
       {showVarSettings && (
@@ -1381,6 +1665,178 @@ const CampaignStudio = () => {
             {activeStep === 2 && (
               <div className="glass-card p-6" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '1.1rem' }}>
                 
+                {/* ─── META APPROVED TEMPLATES LIBRARY (OFFICIAL META WABA SYNC) ─── */}
+                <div style={{
+                  background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.08) 0%, rgba(99, 102, 241, 0.08) 100%)',
+                  borderRadius: 12,
+                  padding: '1rem',
+                  border: '1.5px solid rgba(16, 185, 129, 0.45)',
+                  boxShadow: '0 2px 10px rgba(16, 185, 129, 0.08)',
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.65rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                      <span style={{ fontSize: '1.25rem' }}>⚡</span>
+                      <div>
+                        <div style={{ fontSize: '0.86rem', fontWeight: 800, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                          Meta Approved Templates Library
+                          <span className="badge badge-whatsapp" style={{ fontSize: '0.65rem', padding: '0.1rem 0.4rem' }}>
+                            {metaTemplates.filter(t => t.status === 'APPROVED').length} Active
+                          </span>
+                        </div>
+                        <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                          Bypasses 24-hour window restriction for 100% guaranteed delivery to cold & inactive contacts
+                        </div>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        onClick={handleSyncMeta}
+                        disabled={syncingMeta}
+                        style={{
+                          fontSize: '0.72rem',
+                          padding: '0.25rem 0.6rem',
+                          borderColor: '#10b981',
+                          color: '#059669',
+                          background: 'rgba(16, 185, 129, 0.12)',
+                          fontWeight: 700,
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.3rem',
+                        }}
+                        title="Pull latest templates from Meta WhatsApp Business Account"
+                      >
+                        <RefreshCw size={12} className={syncingMeta ? 'animate-spin' : ''} />
+                        <span>{syncingMeta ? 'Syncing...' : 'Sync from Meta'}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        className="btn btn-primary btn-sm"
+                        onClick={() => {
+                          setSubmitMetaName((name || 'sobha_promo').toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 30));
+                          setSubmitMetaStatus(null);
+                          setShowSubmitMetaModal(true);
+                        }}
+                        style={{
+                          fontSize: '0.72rem',
+                          padding: '0.25rem 0.65rem',
+                          background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+                          color: 'white',
+                          border: 'none',
+                          fontWeight: 700,
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.3rem',
+                          boxShadow: '0 2px 6px rgba(99, 102, 241, 0.35)',
+                        }}
+                        title="Submit this current message + buttons to Meta for approval"
+                      >
+                        <Sparkles size={12} />
+                        <span>+ Register on Meta</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Active / Synced Meta Templates Pill Grid */}
+                  <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', marginTop: '0.4rem' }}>
+                    {metaTemplates.length === 0 ? (
+                      <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', fontStyle: 'italic', padding: '0.4rem 0' }}>
+                        No templates loaded yet. Click <strong>"Sync from Meta"</strong> above to fetch your approved templates.
+                      </div>
+                    ) : (
+                      metaTemplates.map(tpl => {
+                        const isSelected = selectedMetaTemplate?.name === tpl.name;
+                        const isApproved = tpl.status === 'APPROVED';
+                        return (
+                          <div
+                            key={tpl.id || tpl.name}
+                            style={{
+                              padding: '0.35rem 0.65rem',
+                              borderRadius: 8,
+                              background: isSelected ? 'rgba(99, 102, 241, 0.15)' : 'var(--bg-card)',
+                              border: isSelected ? '1.5px solid var(--accent-primary)' : '1px solid var(--border-color)',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '0.45rem',
+                              fontSize: '0.74rem',
+                            }}
+                          >
+                            <span style={{
+                              width: 8, height: 8, borderRadius: '50%',
+                              background: isApproved ? '#10b981' : '#f59e0b',
+                              boxShadow: isApproved ? '0 0 6px #10b981' : 'none',
+                              flexShrink: 0,
+                            }} />
+                            <div style={{ display: 'flex', flexDirection: 'column' }}>
+                              <span style={{ fontWeight: 700, color: isSelected ? 'var(--accent-primary)' : 'var(--text-primary)' }}>
+                                {tpl.name}
+                              </span>
+                              <span style={{ fontSize: '0.62rem', color: 'var(--text-muted)' }}>
+                                {tpl.category} · {tpl.language}
+                              </span>
+                            </div>
+                            <span style={{
+                              fontSize: '0.62rem',
+                              padding: '0.1rem 0.35rem',
+                              borderRadius: 4,
+                              background: isApproved ? 'rgba(16, 185, 129, 0.12)' : 'rgba(245, 158, 11, 0.12)',
+                              color: isApproved ? '#059669' : '#d97706',
+                              fontWeight: 700,
+                            }}>
+                              {isApproved ? 'Approved' : 'Pending'}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleSelectMetaTemplate(tpl)}
+                              style={{
+                                border: 'none',
+                                background: isSelected ? 'var(--accent-primary)' : 'var(--bg-tertiary)',
+                                color: isSelected ? 'white' : 'var(--text-secondary)',
+                                padding: '0.2rem 0.5rem',
+                                borderRadius: 5,
+                                cursor: 'pointer',
+                                fontSize: '0.68rem',
+                                fontWeight: 700,
+                              }}
+                            >
+                              {isSelected ? 'In Use ✓' : 'Apply'}
+                            </button>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                  {selectedMetaTemplate && (
+                    <div style={{
+                      marginTop: '0.65rem',
+                      padding: '0.35rem 0.65rem',
+                      borderRadius: 6,
+                      background: 'rgba(99, 102, 241, 0.1)',
+                      border: '1px solid rgba(99, 102, 241, 0.25)',
+                      fontSize: '0.72rem',
+                      color: 'var(--accent-primary)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                    }}>
+                      <span>
+                        🎯 Broadcasting with Meta Template: <strong>{selectedMetaTemplate.name}</strong> ({selectedMetaTemplate.category})
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedMetaTemplate(null)}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', fontWeight: 800, fontSize: '0.75rem' }}
+                        title="Unlink Meta template and use custom text"
+                      >
+                        ✕ Unlink
+                      </button>
+                    </div>
+                  )}
+                </div>
+
                 {/* Template Manager — Built-in Presets + Saved Templates */}
                 <div style={{ background: 'var(--bg-secondary)', borderRadius: 10, padding: '0.85rem', border: '1px solid var(--border-color)' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.65rem', flexWrap: 'wrap', gap: '0.4rem' }}>
@@ -1518,10 +1974,97 @@ const CampaignStudio = () => {
                   )}
                 </div>
 
+                {/* Template Lifecycle Lock Banner */}
+                {isTemplateLocked && selectedMetaTemplate && (
+                  <div style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem',
+                    padding: '0.6rem 0.85rem', borderRadius: 8,
+                    background: 'linear-gradient(90deg, rgba(16,185,129,0.12) 0%, rgba(99,102,241,0.08) 100%)',
+                    border: '1.5px solid rgba(16,185,129,0.4)',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                      <Shield size={15} color="#059669" />
+                      <div>
+                        <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#059669' }}>
+                          🔒 Locked — Meta Approved Template
+                        </span>
+                        <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+                          Fields are read-only. This template is approved and ready to send.
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleUnlockTemplate}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: '0.3rem',
+                        fontSize: '0.73rem', fontWeight: 700, padding: '0.3rem 0.7rem',
+                        background: 'rgba(245,158,11,0.12)', border: '1.5px solid rgba(245,158,11,0.5)',
+                        color: '#d97706', borderRadius: 6, cursor: 'pointer',
+                      }}
+                    >
+                      <Edit3 size={12} /> Edit Template
+                    </button>
+                  </div>
+                )}
+
+                {/* Modified-after-lock warning */}
+                {templateModifiedAfterLock && selectedMetaTemplate && (
+                  <div style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem',
+                    padding: '0.6rem 0.85rem', borderRadius: 8,
+                    background: 'rgba(239,68,68,0.08)', border: '1.5px solid rgba(239,68,68,0.35)',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                      <AlertTriangle size={15} color="#dc2626" />
+                      <div>
+                        <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#dc2626' }}>
+                          ⚠️ Template Modified — Cannot Send Campaign
+                        </span>
+                        <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+                          You edited an approved template. Re-apply the original or submit to Meta for new approval.
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.4rem' }}>
+                      <button
+                        type="button"
+                        onClick={handleRelockTemplate}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: '0.3rem',
+                          fontSize: '0.73rem', fontWeight: 700, padding: '0.3rem 0.7rem',
+                          background: 'rgba(16,185,129,0.12)', border: '1.5px solid rgba(16,185,129,0.5)',
+                          color: '#059669', borderRadius: 6, cursor: 'pointer',
+                        }}
+                      >
+                        <RotateCcw size={12} /> Re-apply Original
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSubmitMetaName((name || 'sobha_promo').toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 30));
+                          setSubmitMetaStatus(null);
+                          setShowSubmitMetaModal(true);
+                        }}
+                        disabled={!customText.trim()}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: '0.3rem',
+                          fontSize: '0.73rem', fontWeight: 700, padding: '0.3rem 0.7rem',
+                          background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+                          border: 'none', color: 'white', borderRadius: 6, cursor: 'pointer',
+                        }}
+                      >
+                        <Sparkles size={12} /> Submit New Version to Meta
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {/* Variable insertion tags */}
                 <div>
                   <label style={{ fontSize: '0.75rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>
                     Dynamic Personalization Variables:
+                    {isTemplateLocked && <span style={{ fontSize: '0.65rem', color: '#059669', marginLeft: '0.4rem', fontWeight: 600 }}>🔒 Read-only</span>}
                   </label>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', marginBottom: '0.45rem' }}>
                     {[
@@ -1534,16 +2077,18 @@ const CampaignStudio = () => {
                       <button
                         key={v.tag}
                         type="button"
-                        onClick={() => insertVariable(v.tag)}
+                        onClick={() => !isTemplateLocked && insertVariable(v.tag)}
+                        disabled={isTemplateLocked}
                         style={{
                           fontSize: '0.7rem',
-                          background: 'rgba(99,102,241,0.12)',
-                          color: 'var(--accent-primary)',
-                          border: '1px solid rgba(99,102,241,0.3)',
+                          background: isTemplateLocked ? 'var(--bg-tertiary)' : 'rgba(99,102,241,0.12)',
+                          color: isTemplateLocked ? 'var(--text-muted)' : 'var(--accent-primary)',
+                          border: isTemplateLocked ? '1px solid var(--border-color)' : '1px solid rgba(99,102,241,0.3)',
                           borderRadius: 5,
                           padding: '0.25rem 0.55rem',
-                          cursor: 'pointer',
+                          cursor: isTemplateLocked ? 'not-allowed' : 'pointer',
                           fontWeight: 600,
+                          opacity: isTemplateLocked ? 0.5 : 1,
                         }}
                       >
                         {v.label}
@@ -1557,19 +2102,30 @@ const CampaignStudio = () => {
                     rows={6}
                     placeholder="Type your WhatsApp message copy here... Use {name}, {product}, {budget} tags for dynamic customization."
                     value={customText}
-                    onChange={e => setCustomText(e.target.value)}
-                    style={{ fontSize: '0.82rem', lineHeight: 1.45 }}
+                    onChange={e => {
+                      if (isTemplateLocked) return;
+                      setCustomText(e.target.value);
+                    }}
+                    readOnly={isTemplateLocked}
+                    style={{
+                      fontSize: '0.82rem', lineHeight: 1.45,
+                      cursor: isTemplateLocked ? 'not-allowed' : 'text',
+                      background: isTemplateLocked ? 'var(--bg-tertiary)' : undefined,
+                      color: isTemplateLocked ? 'var(--text-secondary)' : undefined,
+                      borderColor: isTemplateLocked ? 'rgba(16,185,129,0.35)' : undefined,
+                    }}
                   />
 
                   {/* Emoji Quick Picker */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', marginTop: '0.35rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', marginTop: '0.35rem', opacity: isTemplateLocked ? 0.4 : 1 }}>
                     <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Emojis:</span>
                     {EMOJIS.map(em => (
                       <button
                         key={em}
                         type="button"
-                        onClick={() => insertVariable(em)}
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.9rem', padding: '0.1rem' }}
+                        onClick={() => !isTemplateLocked && insertVariable(em)}
+                        disabled={isTemplateLocked}
+                        style={{ background: 'none', border: 'none', cursor: isTemplateLocked ? 'not-allowed' : 'pointer', fontSize: '0.9rem', padding: '0.1rem' }}
                       >
                         {em}
                       </button>
@@ -1581,9 +2137,10 @@ const CampaignStudio = () => {
                 </div>
 
                 {/* Media Attachment Dropzone */}
-                <div>
+                <div style={{ opacity: isTemplateLocked ? 0.65 : 1, pointerEvents: isTemplateLocked ? 'none' : 'auto', position: 'relative' }}>
                   <label style={{ fontSize: '0.78rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.4rem' }}>
                     <ImageIcon size={15} color="var(--accent-primary)" /> Header Media Attachment (Optional Image or PDF Catalog)
+                    {isTemplateLocked && <span style={{ fontSize: '0.65rem', color: '#059669', fontWeight: 600 }}>🔒 Locked</span>}
                   </label>
 
                   {campaignFile ? (
@@ -1615,30 +2172,34 @@ const CampaignStudio = () => {
                           )}
                         </div>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => { setCampaignFile(null); setCampaignFilePreview(null); setUploadedMediaUrl(null); setUploadedMediaType(null); }}
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)', fontSize: '1.1rem', padding: '0.2rem' }}
-                      >
-                        ✕
-                      </button>
+                      {!isTemplateLocked && (
+                        <button
+                          type="button"
+                          onClick={() => { setCampaignFile(null); setCampaignFilePreview(null); setUploadedMediaUrl(null); setUploadedMediaType(null); }}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)', fontSize: '1.1rem', padding: '0.2rem' }}
+                        >
+                          ✕
+                        </button>
+                      )}
                     </div>
                   ) : (
                     <div
-                      onDrop={handleDrop}
-                      onDragOver={e => { e.preventDefault(); setIsDragOver(true); }}
-                      onDragLeave={() => setIsDragOver(false)}
-                      onClick={() => campaignFileRef.current?.click()}
+                      onDrop={!isTemplateLocked ? handleDrop : undefined}
+                      onDragOver={!isTemplateLocked ? e => { e.preventDefault(); setIsDragOver(true); } : undefined}
+                      onDragLeave={!isTemplateLocked ? () => setIsDragOver(false) : undefined}
+                      onClick={!isTemplateLocked ? () => campaignFileRef.current?.click() : undefined}
                       style={{
-                        border: `1.5px dashed ${isDragOver ? 'var(--accent-primary)' : 'var(--border-color)'}`,
+                        border: `1.5px dashed ${isTemplateLocked ? 'var(--border-color)' : isDragOver ? 'var(--accent-primary)' : 'var(--border-color)'}`,
                         borderRadius: 8, padding: '1rem',
-                        textAlign: 'center', cursor: 'pointer',
-                        background: isDragOver ? 'rgba(99,102,241,0.06)' : 'var(--bg-secondary)',
+                        textAlign: 'center', cursor: isTemplateLocked ? 'not-allowed' : 'pointer',
+                        background: isTemplateLocked ? 'var(--bg-tertiary)' : isDragOver ? 'rgba(99,102,241,0.06)' : 'var(--bg-secondary)',
                       }}
                     >
-                      <UploadCloud size={22} color="var(--accent-primary)" style={{ opacity: 0.6, marginBottom: 4 }} />
-                      <div style={{ fontSize: '0.8rem', fontWeight: 600 }}>Click or drag image (JPG/PNG) or PDF brochure</div>
-                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 2 }}>Max 15 MB · WhatsApp media compliance</div>
+                      <UploadCloud size={22} color={isTemplateLocked ? 'var(--text-muted)' : 'var(--accent-primary)'} style={{ opacity: 0.6, marginBottom: 4 }} />
+                      <div style={{ fontSize: '0.8rem', fontWeight: 600, color: isTemplateLocked ? 'var(--text-muted)' : undefined }}>
+                        {isTemplateLocked ? '🔒 Media locked — click Edit to change' : 'Click or drag image (JPG/PNG) or PDF brochure'}
+                      </div>
+                      {!isTemplateLocked && <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 2 }}>Max 15 MB · WhatsApp media compliance</div>}
                     </div>
                   )}
                   <input
@@ -1646,7 +2207,7 @@ const CampaignStudio = () => {
                     type="file"
                     accept="image/*,.pdf,.mp4"
                     style={{ display: 'none' }}
-                    onChange={e => handleFileSelect(e.target.files[0])}
+                    onChange={e => !isTemplateLocked && handleFileSelect(e.target.files[0])}
                   />
                 </div>
 
@@ -1671,47 +2232,74 @@ const CampaignStudio = () => {
                   <div>
                     <h3 style={{ fontSize: '0.95rem', fontWeight: 800, margin: 0, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                       <Zap size={16} color="var(--accent-primary)" /> Interactive Quick Reply Buttons & Decision Flow Tree
+                      {isTemplateLocked && <span style={{ fontSize: '0.65rem', color: '#059669', background: 'rgba(16,185,129,0.12)', padding: '0.15rem 0.4rem', borderRadius: 4, fontWeight: 700 }}>🔒 Locked</span>}
                     </h3>
                     <p style={{ fontSize: '0.74rem', color: 'var(--text-muted)', margin: '0.2rem 0 0 0' }}>
-                      Predefine 1 to 3 action buttons attached to your broadcast. Configure multi-level follow-ups, catalogs, or human takeover.
+                      {isTemplateLocked ? 'Buttons are locked because an approved Meta template is applied. Click "Edit Template" in Step 2 to modify.' : 'Predefine 1 to 3 action buttons attached to your broadcast. Configure multi-level follow-ups, catalogs, or human takeover.'}
                     </p>
                   </div>
-                  {buttons.length < 3 && (
+                  {buttons.length < 3 && !isTemplateLocked && (
                     <button type="button" className="btn btn-secondary btn-sm" onClick={addButton}>
                       <Plus size={13} /> Add Button ({buttons.length}/3)
                     </button>
                   )}
                 </div>
 
-                {/* Button Tabs List */}
-                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                  {buttons.map((btn, idx) => (
-                    <button
-                      key={btn.id || idx}
-                      type="button"
-                      onClick={() => setEditingButtonIndex(idx)}
-                      className="btn"
-                      style={{
-                        fontSize: '0.78rem', padding: '0.4rem 0.75rem',
-                        background: editingButtonIndex === idx ? 'var(--accent-primary)' : 'var(--bg-secondary)',
-                        color: editingButtonIndex === idx ? 'white' : 'var(--text-primary)',
-                        borderColor: editingButtonIndex === idx ? 'var(--accent-primary)' : 'var(--border-color)',
-                      }}
-                    >
-                      <span>Button {idx + 1}: {btn.title || 'Untitled'}</span>
-                      {btn.actionType === 'human_handoff' && <span style={{ fontSize: '0.65rem', opacity: 0.9 }}>👤 Handoff</span>}
-                    </button>
-                  ))}
-                </div>
+                {/* Button Tabs List — or empty state when locked template has no buttons */}
+                {isTemplateLocked && buttons.length === 0 ? (
+                  <div style={{
+                    padding: '1.25rem 1rem', borderRadius: 8, textAlign: 'center',
+                    background: 'rgba(16,185,129,0.06)', border: '1.5px dashed rgba(16,185,129,0.35)',
+                  }}>
+                    <div style={{ fontSize: '1.6rem', marginBottom: '0.4rem' }}>🚫</div>
+                    <div style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '0.3rem' }}>
+                      No Reply Buttons in This Template
+                    </div>
+                    <div style={{ fontSize: '0.73rem', color: 'var(--text-muted)', maxWidth: 400, margin: '0 auto' }}>
+                      The approved Meta template <strong style={{ color: 'var(--accent-primary)' }}>{selectedMetaTemplate?.name}</strong> does not include interactive buttons.
+                      This campaign will be sent as a <strong>text/media-only broadcast</strong> — exactly as Meta approved it.
+                    </div>
+                    <div style={{ fontSize: '0.68rem', color: '#d97706', marginTop: '0.6rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.3rem' }}>
+                      <AlertTriangle size={12} />
+                      Adding buttons would require re-submitting a new template to Meta for approval.
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    {buttons.map((btn, idx) => (
+                      <button
+                        key={btn.id || idx}
+                        type="button"
+                        onClick={() => setEditingButtonIndex(idx)}
+                        className="btn"
+                        style={{
+                          fontSize: '0.78rem', padding: '0.4rem 0.75rem',
+                          background: editingButtonIndex === idx ? 'var(--accent-primary)' : 'var(--bg-secondary)',
+                          color: editingButtonIndex === idx ? 'white' : 'var(--text-primary)',
+                          borderColor: editingButtonIndex === idx ? 'var(--accent-primary)' : 'var(--border-color)',
+                        }}
+                      >
+                        <span>Button {idx + 1}: {btn.title || 'Untitled'}</span>
+                        {btn.actionType === 'human_handoff' && <span style={{ fontSize: '0.65rem', opacity: 0.9 }}>👤 Handoff</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
 
                 {/* Selected Button Configuration Card */}
                 {buttons[editingButtonIndex] && (
-                  <div style={{ background: 'var(--bg-secondary)', padding: '1rem', borderRadius: 8, border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+                  <div style={{
+                    background: 'var(--bg-secondary)', padding: '1rem', borderRadius: 8,
+                    border: isTemplateLocked ? '1px solid rgba(16,185,129,0.3)' : '1px solid var(--border-color)',
+                    display: 'flex', flexDirection: 'column', gap: '0.85rem',
+                    opacity: isTemplateLocked ? 0.75 : 1,
+                    pointerEvents: isTemplateLocked ? 'none' : 'auto',
+                  }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <span style={{ fontSize: '0.82rem', fontWeight: 700 }}>
-                        Configure Button #{editingButtonIndex + 1}
+                        {isTemplateLocked ? '🔒 ' : ''}Configure Button #{editingButtonIndex + 1}
                       </span>
-                      {buttons.length > 1 && (
+                      {buttons.length > 1 && !isTemplateLocked && (
                         <button
                           type="button"
                           onClick={() => removeButton(editingButtonIndex)}
@@ -2305,6 +2893,152 @@ const CampaignStudio = () => {
 
           </div>
 
+        </div>
+      )}
+
+      {/* ─── SUBMIT TEMPLATE TO META MODAL ─── */}
+      {showSubmitMetaModal && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 9999,
+          background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(6px)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem',
+        }}>
+          <div className="glass-card animate-fade-in" style={{
+            width: '100%', maxWidth: 540,
+            background: 'var(--bg-primary)',
+            border: '1.5px solid var(--accent-primary)',
+            borderRadius: 14,
+            padding: '1.5rem',
+            boxShadow: '0 20px 50px rgba(0,0,0,0.4)',
+            display: 'flex', flexDirection: 'column', gap: '1rem',
+          }}>
+            {/* Modal Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <div style={{ width: 32, height: 32, borderRadius: 8, background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white' }}>
+                  <Sparkles size={16} />
+                </div>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 800 }}>Submit Template to Meta WhatsApp API</h3>
+                  <p style={{ margin: 0, fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                    Registers this design directly with Meta for official approval
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => { setShowSubmitMetaModal(false); setSubmitMetaStatus(null); }}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '1.2rem' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Status Alert if submitted */}
+            {submitMetaStatus && (
+              <div style={{
+                padding: '0.75rem 1rem',
+                borderRadius: 8,
+                background: submitMetaStatus.success ? 'rgba(16, 185, 129, 0.12)' : 'rgba(239, 68, 68, 0.12)',
+                border: submitMetaStatus.success ? '1px solid rgba(16, 185, 129, 0.35)' : '1px solid rgba(239, 68, 68, 0.35)',
+                color: submitMetaStatus.success ? '#059669' : '#dc2626',
+                fontSize: '0.8rem',
+                fontWeight: 600,
+                lineHeight: 1.4,
+              }}>
+                {submitMetaStatus.message}
+              </div>
+            )}
+
+            {/* Template Name & Category Inputs */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: '0.75rem' }}>
+              <div>
+                <label style={{ fontSize: '0.74rem', fontWeight: 700, display: 'block', marginBottom: '0.25rem' }}>
+                  Meta Template Name *
+                </label>
+                <input
+                  type="text"
+                  className="input-field"
+                  placeholder="sobha_promo_broadcast_v1"
+                  value={submitMetaName}
+                  onChange={e => setSubmitMetaName(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '_'))}
+                  disabled={submittingToMeta}
+                  style={{ fontSize: '0.78rem', fontFamily: 'monospace' }}
+                />
+                <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>Only lowercase letters, numbers, and underscores</span>
+              </div>
+
+              <div>
+                <label style={{ fontSize: '0.74rem', fontWeight: 700, display: 'block', marginBottom: '0.25rem' }}>
+                  Category *
+                </label>
+                <select
+                  className="input-field"
+                  value={submitMetaCategory}
+                  onChange={e => setSubmitMetaCategory(e.target.value)}
+                  disabled={submittingToMeta}
+                  style={{ fontSize: '0.78rem' }}
+                >
+                  <option value="MARKETING">Marketing</option>
+                  <option value="UTILITY">Utility</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Live Inspection / Meta Submission Payload Summary */}
+            <div style={{ background: 'var(--bg-secondary)', padding: '0.85rem', borderRadius: 8, border: '1px solid var(--border-color)', fontSize: '0.74rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              <div style={{ fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', fontSize: '0.68rem', letterSpacing: '0.04em' }}>
+                Components being submitted to Meta:
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <span style={{ color: 'var(--text-muted)' }}>• Header:</span>
+                <strong>{uploadedMediaUrl || campaignFile ? 'Media (IMAGE Banner)' : 'Text ("Sobhainfra Tech")'}</strong>
+              </div>
+
+              <div>
+                <span style={{ color: 'var(--text-muted)' }}>• Body Message:</span>
+                <div style={{ marginTop: '0.25rem', padding: '0.45rem', background: 'var(--bg-tertiary)', borderRadius: 6, maxHeight: 85, overflowY: 'auto', whiteSpace: 'pre-wrap', fontFamily: 'monospace', fontSize: '0.7rem' }}>
+                  {customText || '(No message entered)'}
+                </div>
+              </div>
+
+              <div>
+                <span style={{ color: 'var(--text-muted)' }}>• Quick Reply Buttons ({Math.min(buttons.length, 3)} of max 3):</span>
+                <div style={{ display: 'flex', gap: '0.35rem', marginTop: '0.25rem', flexWrap: 'wrap' }}>
+                  {buttons.slice(0, 3).map((b, idx) => (
+                    <span key={idx} style={{ padding: '0.15rem 0.45rem', borderRadius: 4, background: 'rgba(99, 102, 241, 0.12)', color: 'var(--accent-primary)', fontSize: '0.68rem', fontWeight: 600 }}>
+                      🔘 {b.title || b.text || `Option ${idx + 1}`}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Actions */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.5rem' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => { setShowSubmitMetaModal(false); setSubmitMetaStatus(null); }}
+                disabled={submittingToMeta}
+                style={{ fontSize: '0.78rem' }}
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                className="btn btn-whatsapp"
+                onClick={handleSubmitToMeta}
+                disabled={submittingToMeta || !submitMetaName.trim() || !customText.trim()}
+                style={{ fontSize: '0.8rem', fontWeight: 700, padding: '0.45rem 1.1rem', background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)', border: 'none' }}
+              >
+                <Sparkles size={14} className={submittingToMeta ? 'animate-spin' : ''} />
+                <span>{submittingToMeta ? 'Submitting to Meta API...' : '🚀 Submit to Meta for Approval'}</span>
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

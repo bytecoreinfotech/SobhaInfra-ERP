@@ -24,55 +24,6 @@ const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
   || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1jZ21wcG52bnduaWxpb2FwYmxpIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4NzU3MTk4MiwiZXhwIjoyMTAzMTQ3OTgyfQ.iMVtS3kZ5jkXd7wOsgviN_3Umz0Auw7vBa0NDlD9rKg';
 const DEFAULT_ORG_ID = '00000000-0000-0000-0000-000000000001';
 
-// ─── 1. Send WhatsApp Template Message (Meta Approved) ───────────────────────
-async function sendWhatsAppTemplate(to, template, params) {
-  if (!WA_TOKEN || !PHONE_ID) {
-    return { success: true, messageId: 'mock-wamid-' + Date.now() };
-  }
-  try {
-    const cleanPhone = String(to).replace(/[^\d+]/g, '').replace(/^\+/, '');
-    const url = `https://graph.facebook.com/v20.0/${PHONE_ID}/messages`;
-
-    const components = [];
-    if (params && params.length > 0) {
-      components.push({
-        type: 'body',
-        parameters: params.map(p => ({ type: 'text', text: String(p) })),
-      });
-    }
-
-    const payload = {
-      messaging_product: 'whatsapp',
-      to: cleanPhone,
-      type: 'template',
-      template: {
-        name: template.name,
-        language: { code: template.language || 'en_US' },
-      },
-    };
-
-    if (components.length > 0) {
-      payload.template.components = components;
-    }
-
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${WA_TOKEN}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
-    const data = await res.json();
-    return {
-      success: !data.error,
-      messageId: data.messages?.[0]?.id,
-      error: data.error?.message,
-    };
-  } catch (err) {
-    return { success: false, error: err.message };
-  }
-}
 
 // ─── 2. Send WhatsApp Interactive Quick Reply / List Message ─────────────────
 async function sendMetaWhatsAppInteractive(to, text, buttons = [], headerMedia = null, footerText = null) {
@@ -432,9 +383,14 @@ exports.handler = async (event) => {
       campaignDefaults = {},
       interactiveButtons = [],
       buttonFlow = null,
-      automationMode = 'hybrid', // 'hybrid' | 'fallback_only' | 'strict_guided'
+      automationMode = 'hybrid',
       recipients = [],
+      templateName = null,         // <-- THE KEY FIX: was missing from destructuring
+      templateLanguage = 'en',     // language code for Meta template (matches sync-templates.js storage)
+      templateParams = null,       // explicit params array if provided
     } = JSON.parse(event.body || '{}');
+
+    console.log('[send-campaign] Incoming request:', { campaignId, templateName, recipientsCount: recipients.length, hasButtons: interactiveButtons.length });
 
     let supabase = null;
     if (SUPABASE_URL && SUPABASE_KEY && !SUPABASE_URL.includes('placeholder')) {
@@ -515,31 +471,60 @@ exports.handler = async (event) => {
       const recipientLead = item.lead || item;
       const personalizedMsg = personalize(messageBodyRaw, recipientLead, effectiveDefaults);
 
-      let sendRes;
-      if (effectiveButtons.length > 0) {
-        // Send Interactive Quick Reply message
-        const headerObj = effectiveMediaUrl ? { type: effectiveMediaType, url: effectiveMediaUrl } : null;
-        sendRes = await sendMetaWhatsAppInteractive(
-          phone,
-          personalizedMsg,
-          effectiveButtons,
-          headerObj,
-          effectiveDefaults.company || 'ERPPro Solutions'
-        );
-      } else {
-        // Send regular Media or Text message
-        sendRes = await sendMetaWhatsAppMediaOrText(
-          phone,
-          personalizedMsg,
-          effectiveMediaType,
-          effectiveMediaUrl
-        );
+      let sendRes = null;
+      let usedTemplate = false;
+      let usedTemplateName = null;
+
+      // 1. If an approved Meta template was selected, send it directly
+      // This uses the official template API — works outside 24h window for all contacts
+      const isApprovedMetaTemplate = templateName &&
+        templateName !== 'Interactive Broadcast Flow' &&
+        !templateName.includes('Interactive Broadcast');
+
+      if (isApprovedMetaTemplate) {
+        const clientName = (recipientLead.name && !isGenericName(recipientLead.name)) ? recipientLead.name.trim() : 'Valued Client';
+        const company = recipientLead.company_name || effectiveDefaults.company || 'Sobhainfra Tech';
+        // Use explicitly provided params, or default to [name, company] for 2-variable templates
+        const params = Array.isArray(templateParams) && templateParams.length > 0
+          ? templateParams
+          : [clientName, company];
+
+        console.log(`[send-campaign] Sending approved template "${templateName}" → ${phone} | params:`, params);
+        sendRes = await sendWhatsAppTemplate(phone, templateName, templateLanguage, params);
+        if (sendRes.success) {
+          usedTemplate = true;
+          usedTemplateName = templateName;
+          console.log(`[send-campaign] ✅ Template "${templateName}" delivered → ${phone} | wamid: ${sendRes.messageId}`);
+        } else {
+          console.warn(`[send-campaign] ❌ Template "${templateName}" FAILED → ${phone} | error: ${sendRes.error}`);
+        }
+      }
+
+      // 2. Otherwise send Interactive or Media/Text
+      if (!sendRes) {
+        if (effectiveButtons.length > 0) {
+          // Send Interactive Quick Reply message
+          const headerObj = effectiveMediaUrl ? { type: effectiveMediaType, url: effectiveMediaUrl } : null;
+          sendRes = await sendMetaWhatsAppInteractive(
+            phone,
+            personalizedMsg,
+            effectiveButtons,
+            headerObj,
+            effectiveDefaults.company || 'Sobhainfra Tech'
+          );
+        } else {
+          // Send regular Media or Text message
+          sendRes = await sendMetaWhatsAppMediaOrText(
+            phone,
+            personalizedMsg,
+            effectiveMediaType,
+            effectiveMediaUrl
+          );
+        }
       }
 
       // If rejected because recipient is outside 24h window, fallback to approved Meta Marketing Template
       // Comprehensive error detection: covers all Meta session-window error codes
-      let usedTemplate = false;
-      let usedTemplateName = null;
       if (!sendRes.success) {
         const errStr = typeof sendRes.error === 'string' ? sendRes.error : JSON.stringify(sendRes.error || '');
         const is24hErr = /131047|131026|130429/i.test(errStr) ||

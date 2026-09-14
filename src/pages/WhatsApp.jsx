@@ -12,7 +12,7 @@ import {
   getWhatsAppConversations, getWhatsAppMessages, sendWhatsAppMessage,
   updateConversationMode, toggleLeadOptOut, reassignSalesperson, submitAiFeedback,
   getTeamMembers, updateConversationContactName,
-  getCustomerMaster, triggerSheetSync, invalidateCustomerMasterCache
+  getCustomerMaster, triggerSheetSync, invalidateCustomerMasterCache, syncMetaTemplates
 } from '../lib/db';
 import {
   extractMainName, isGenericName, formatPhoneNumber, getDisplayName, getGreeting
@@ -81,6 +81,10 @@ const WhatsApp = () => {
   const [sheetSearch, setSheetSearch]         = useState('');
   const [sheetFilter, setSheetFilter]         = useState('all'); // 'all' | 'with_phone' | 'active_chat' | 'missing_phone'
   const [customerPage, setCustomerPage]       = useState(1);
+
+  // Meta Templates Sync State
+  const [syncingMeta, setSyncingMeta]         = useState(false);
+  const [metaSyncMsg, setMetaSyncMsg]         = useState('');
 
   // Live Inbox State
   const [conversations, setConversations] = useState([]);
@@ -612,6 +616,26 @@ const WhatsApp = () => {
     setTimeout(() => setSyncMsg(''), 4500);
   };
 
+  const handleMetaSync = async () => {
+    setSyncingMeta(true);
+    setMetaSyncMsg('Syncing approved templates from Meta WhatsApp Business...');
+    try {
+      const res = await syncMetaTemplates();
+      if (res.success) {
+        setMetaSyncMsg(`✅ Synced ${res.fetched || res.synced || 0} templates from Meta!`);
+        setTimeout(() => setMetaSyncMsg(''), 4500);
+      } else {
+        setMetaSyncMsg(`❌ Meta error: ${res.error || 'Failed'}`);
+        setTimeout(() => setMetaSyncMsg(''), 5000);
+      }
+    } catch (err) {
+      setMetaSyncMsg(`❌ Error: ${err.message}`);
+      setTimeout(() => setMetaSyncMsg(''), 5000);
+    } finally {
+      setSyncingMeta(false);
+    }
+  };
+
   // Filtered customers for the dedicated Sheet Customers directory
   const filteredSheetCustomers = useMemo(() => {
     return customerMaster.filter(cust => {
@@ -764,6 +788,23 @@ const WhatsApp = () => {
             {syncingSheet ? 'Syncing...' : 'Sync Sheet'}
           </button>
 
+          <button
+            className="btn btn-secondary"
+            onClick={handleMetaSync}
+            disabled={syncingMeta}
+            data-tooltip="Pull latest approved message templates from Meta Cloud API"
+            data-tooltip-pos="bottom"
+            style={{
+              color: '#059669',
+              borderColor: '#10b981',
+              background: 'rgba(16, 185, 129, 0.08)',
+              fontWeight: 600,
+            }}
+          >
+            <RefreshCw size={14} className={syncingMeta ? 'animate-spin' : ''} />
+            {syncingMeta ? 'Syncing Meta...' : 'Sync Meta Templates'}
+          </button>
+
           <button className="btn btn-secondary" onClick={loadAllData}>
             <RefreshCw size={15} className={loading ? 'animate-spin' : ''} /> Refresh
           </button>
@@ -784,6 +825,18 @@ const WhatsApp = () => {
           display: 'flex', alignItems: 'center', gap: '0.5rem',
         }}>
           <ShieldCheck size={15} color="var(--success)" /> {syncMsg}
+        </div>
+      )}
+
+      {/* Meta Templates Sync Notification Banner */}
+      {metaSyncMsg && (
+        <div style={{
+          background: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.3)',
+          borderRadius: 'var(--radius-md)', padding: '0.65rem 1rem',
+          marginBottom: '1rem', fontSize: '0.82rem', color: metaSyncMsg.startsWith('❌') ? '#dc2626' : '#059669',
+          display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600,
+        }}>
+          <span>{metaSyncMsg}</span>
         </div>
       )}
 
