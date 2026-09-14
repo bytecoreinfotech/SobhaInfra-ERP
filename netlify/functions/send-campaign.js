@@ -510,9 +510,12 @@ exports.handler = async (event) => {
       templateLanguage = 'en',
       templateParams = null,
       templateComponents = null,   // Full Meta template components array for smart payload building
+      isChunk = false,
+      chunkIndex = 1,
+      totalChunks = 1,
     } = JSON.parse(event.body || '{}');
 
-    console.log('[send-campaign] Incoming request:', { campaignId, templateName, recipientsCount: recipients.length, hasButtons: interactiveButtons.length });
+    console.log('[send-campaign] Incoming request:', { campaignId, templateName, recipientsCount: recipients.length, hasButtons: interactiveButtons.length, isChunk, chunkIndex, totalChunks });
 
     let supabase = null;
     if (SUPABASE_URL && SUPABASE_KEY && !SUPABASE_URL.includes('placeholder')) {
@@ -817,18 +820,16 @@ exports.handler = async (event) => {
         results.errors.push({ phone, error: sendRes.error });
       }
 
-      // Rate limit delay (150ms)
-      await new Promise(r => setTimeout(r, 150));
+      // Rate limit delay (80ms: safe for Meta Cloud API, fast throughput)
+      await new Promise(r => setTimeout(r, 80));
     }
 
     // 2.1 Post-dispatch verification:
-    // Meta Cloud API accepts marketing messages (HTTP 200) but may immediately fail them
-    // via webhook within 500-1500ms due to Error 131049 (Healthy Ecosystem Engagement /
-    // Marketing Message Frequency Capping) or invalid recipient.
-    // Check whatsapp_messages to capture any immediate failure callbacks.
-    if (supabase && results.sent > 0 && results.details.some(d => d.status === 'sent' && d.messageId)) {
+    // When executing in micro-chunks, skip the 2.2s sleep because the client performs live verification directly.
+    // For single-request dispatches with small recipient counts, check webhook callbacks.
+    if (!isChunk && supabase && results.sent > 0 && results.details.some(d => d.status === 'sent' && d.messageId)) {
       try {
-        await new Promise(r => setTimeout(r, 2200));
+        await new Promise(r => setTimeout(r, 1200));
         const sentMsgIds = results.details.filter(d => d.status === 'sent' && d.messageId).map(d => d.messageId);
         const { data: checkedMsgs } = await supabase
           .from('whatsapp_messages')
@@ -861,14 +862,27 @@ exports.handler = async (event) => {
     // 3. Update wa_campaigns with live sent/delivered counts & accurate status
     if (supabase && campaignId) {
       try {
-        const finalStatus = results.sent === 0 && results.failed > 0
-          ? 'Failed'
-          : (results.failed > 0 ? 'Partially Delivered' : 'Completed');
-        await supabase.from('wa_campaigns').update({
-          total_sent: results.sent,
-          delivered: results.sent,
-          status: finalStatus,
-        }).eq('id', campaignId);
+        if (isChunk) {
+          // Increment cumulative counts
+          const { data: curCamp } = await supabase.from('wa_campaigns').select('total_sent, delivered').eq('id', campaignId).maybeSingle();
+          const currentSent = (curCamp?.total_sent || 0) + results.sent;
+          const currentDelivered = (curCamp?.delivered || 0) + results.sent;
+          const isFinalChunk = chunkIndex >= totalChunks;
+          await supabase.from('wa_campaigns').update({
+            total_sent: currentSent,
+            delivered: currentDelivered,
+            status: isFinalChunk ? (currentSent === 0 ? 'Failed' : 'Completed') : 'Processing',
+          }).eq('id', campaignId);
+        } else {
+          const finalStatus = results.sent === 0 && results.failed > 0
+            ? 'Failed'
+            : (results.failed > 0 ? 'Partially Delivered' : 'Completed');
+          await supabase.from('wa_campaigns').update({
+            total_sent: results.sent,
+            delivered: results.sent,
+            status: finalStatus,
+          }).eq('id', campaignId);
+        }
       } catch (upErr) {
         console.warn('[send-campaign] wa_campaigns update warning:', upErr.message);
       }

@@ -125,6 +125,9 @@ function formatMetaError(err) {
   if (str.includes('132012')) {
     return '132012: Template component parameter format mismatch';
   }
+  if (str.includes('HTML') || str.includes('Unexpected token') || str.includes('504') || str.toLowerCase().includes('gateway timeout')) {
+    return 'Server Gateway Timeout (HTTP 504): Netlify function execution limit exceeded for single batch';
+  }
   return str;
 }
 
@@ -197,6 +200,7 @@ const CampaignStudio = () => {
   // Execution
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isVerifyingDelivery, setIsVerifyingDelivery] = useState(false);
+  const [dispatchProgress, setDispatchProgress] = useState(null);
   const [launchResult, setLaunchResult] = useState(null);
   const [testUtilityState, setTestUtilityState] = useState(null);
 
@@ -1147,8 +1151,18 @@ const CampaignStudio = () => {
       }
 
       setIsVerifyingDelivery(true);
+      setDispatchProgress({
+        chunkIndex: 1,
+        totalChunks: Math.max(1, Math.ceil(effectiveCount / 10)),
+        currentBatchCount: Math.min(effectiveCount, 10),
+        processedCount: 0,
+        totalCount: effectiveCount,
+        sentCount: 0,
+        failedCount: 0,
+        percent: 0,
+      });
 
-      const batchRes = await processCampaignBatch(cData.id, 50, {
+      const batchRes = await processCampaignBatch(cData.id, 10, {
         customMessage: customText,
         mediaUrl: finalMediaUrl,
         mediaType: finalMediaType,
@@ -1161,6 +1175,8 @@ const CampaignStudio = () => {
         templateLanguage: metaTemplateLanguage,
         templateParams: null, // let server auto-build from recipient name + company
         templateComponents: isMetaTemplate ? (selectedMetaTemplate?.components || null) : null,
+      }, (prog) => {
+        setDispatchProgress(prog);
       });
 
       const bRes = batchRes?.batchResults || {};
@@ -1249,6 +1265,7 @@ const CampaignStudio = () => {
     } finally {
       setIsSubmitting(false);
       setIsVerifyingDelivery(false);
+      setDispatchProgress(null);
     }
   };
 
@@ -1467,16 +1484,55 @@ const CampaignStudio = () => {
 
       {/* DISPATCH PROGRESS / VERIFICATION OVERLAY */}
       {isVerifyingDelivery && !launchResult && (
-        <div className="glass-card animate-fade-in" style={{ padding: '2.5rem', textAlign: 'center', marginTop: '1rem', border: '1.5px solid var(--whatsapp)' }}>
-          <div style={{ fontSize: '2.8rem', marginBottom: '0.75rem' }} className="animate-spin" style={{ display: 'inline-block', animationDuration: '3s' }}>
-            🔄
+        <div className="glass-card animate-fade-in" style={{ padding: '2rem 2.5rem', textAlign: 'center', marginTop: '1rem', border: '1.5px solid var(--whatsapp)', borderRadius: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
+            <div className="animate-spin" style={{ fontSize: '2rem', display: 'inline-block', animationDuration: '2s' }}>
+              🔄
+            </div>
+            <h3 style={{ fontSize: '1.3rem', fontWeight: 800, margin: 0 }}>
+              {dispatchProgress && dispatchProgress.totalChunks > 1
+                ? `Dispatching Batch ${dispatchProgress.chunkIndex} of ${dispatchProgress.totalChunks}...`
+                : 'Dispatching via Meta WhatsApp Cloud API...'}
+            </h3>
           </div>
-          <h3 style={{ fontSize: '1.25rem', fontWeight: 700, margin: 0 }}>
-            Dispatching via Meta WhatsApp Cloud API...
-          </h3>
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: '0.4rem auto 0 auto', maxWidth: 460 }}>
-            Sending payload and verifying live delivery status with Meta webhook receipts. Please hold...
+
+          <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', margin: '0 auto 1.25rem auto', maxWidth: 540 }}>
+            {dispatchProgress && dispatchProgress.totalChunks > 1
+              ? `Processing contacts in safe batches of 10 to guarantee 100% reliable delivery and eliminate server timeout limits.`
+              : 'Sending payload and verifying live delivery status with Meta webhook receipts. Please hold...'}
           </p>
+
+          {/* Dynamic Progress Bar & Live Counter */}
+          {dispatchProgress && (
+            <div style={{ maxWidth: 540, margin: '0 auto' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.82rem', fontWeight: 600, marginBottom: '0.45rem', color: 'var(--text-secondary)' }}>
+                <span>{dispatchProgress.processedCount} of {dispatchProgress.totalCount} Contacts Dispatched</span>
+                <span style={{ color: 'var(--whatsapp)', fontWeight: 700 }}>{dispatchProgress.percent || 0}% Complete</span>
+              </div>
+              <div style={{ width: '100%', height: 10, background: 'rgba(255, 255, 255, 0.08)', borderRadius: 6, overflow: 'hidden', border: '1px solid var(--border-color)' }}>
+                <div
+                  style={{
+                    width: `${Math.max(4, dispatchProgress.percent || 0)}%`,
+                    height: '100%',
+                    background: 'linear-gradient(90deg, #10b981, #25D366)',
+                    borderRadius: 6,
+                    transition: 'width 0.35s ease',
+                  }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'center', gap: '1.75rem', marginTop: '1rem', fontSize: '0.86rem' }}>
+                <span style={{ color: 'var(--success)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+                  ✓ Accepted / Sent: <strong>{dispatchProgress.sentCount}</strong>
+                </span>
+                {dispatchProgress.failedCount > 0 && (
+                  <span style={{ color: 'var(--danger)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+                    ✕ Failed: <strong>{dispatchProgress.failedCount}</strong>
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

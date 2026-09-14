@@ -2489,7 +2489,7 @@ export async function queueCampaign(campaignData, targetOptions = {}) {
   return { data: createdCampaign, error: cErr, eligible };
 }
 
-export async function processCampaignBatch(campaignId, batchSize = 50, extraData = {}) {
+async function sendSingleCampaignChunk(campaignId, batchSize, extraData, chunkRecipients, chunkIndex = 1, totalChunks = 1) {
   try {
     const res = await fetch('/.netlify/functions/send-campaign', {
       method: 'POST',
@@ -2502,7 +2502,7 @@ export async function processCampaignBatch(campaignId, batchSize = 50, extraData
         mediaUrl: extraData.mediaUrl || extraData.media_url || null,
         mediaType: extraData.mediaType || extraData.media_type || null,
         campaignDefaults: extraData.campaignDefaults || extraData.campaign_defaults || {},
-        recipients: extraData.recipients || [],
+        recipients: chunkRecipients,
         interactiveButtons: extraData.interactiveButtons || extraData.interactive_buttons || [],
         buttonFlow: extraData.buttonFlow || extraData.button_flow || null,
         automationMode: extraData.automationMode || extraData.automation_mode || 'hybrid',
@@ -2512,39 +2512,181 @@ export async function processCampaignBatch(campaignId, batchSize = 50, extraData
         templateParams: extraData.templateParams || extraData.template_params || null,
         // Full Meta template components array for smart payload building
         templateComponents: extraData.templateComponents || null,
+        // Chunk metadata
+        isChunk: totalChunks > 1,
+        chunkIndex,
+        totalChunks,
       }),
     });
-    const result = await res.json();
+
+    const text = await res.text();
+    let result;
+    try {
+      result = JSON.parse(text);
+    } catch (jsonErr) {
+      console.error('[sendSingleCampaignChunk] Non-JSON server response:', res.status, text.slice(0, 150));
+      const isTimeout = res.status === 504 || text.includes('Gateway Timeout') || text.includes('504');
+      const errDetail = isTimeout
+        ? 'Server Gateway Timeout (HTTP 504): Function exceeded execution window'
+        : `Server Gateway Error (HTTP ${res.status || 'unknown'})`;
+      return {
+        success: false,
+        error: errDetail,
+        batchResults: {
+          processed: chunkRecipients.length,
+          sent: 0,
+          failed: chunkRecipients.length,
+          errors: chunkRecipients.map(r => ({ phone: r.phone || r, error: errDetail })),
+          details: chunkRecipients.map(r => ({
+            name: r.name || 'Valued Client',
+            phone: r.phone || r,
+            status: 'failed',
+            error: errDetail,
+          })),
+        },
+      };
+    }
+
     return result;
   } catch (err) {
-    // Fallback simulation for offline/mock development
-    if (!isSupabaseConfigured) {
-      const camp = MOCK_STORE.campaigns.find(c => c.id === campaignId);
-      if (camp) {
-        camp.total_sent = camp.total_queued || camp.total_sent;
-        camp.delivered = camp.total_sent;
-        camp.status = 'Completed';
-      }
-      return { success: true, batchResults: { processed: batchSize, sent: batchSize, failed: 0 } };
-    }
-    console.error('[db] processCampaignBatch error:', err.message);
+    console.error('[sendSingleCampaignChunk] Network/Fetch error:', err.message);
     return {
       success: false,
       error: err.message,
       batchResults: {
-        processed: extraData.recipients?.length || 0,
+        processed: chunkRecipients.length,
         sent: 0,
-        failed: extraData.recipients?.length || 0,
+        failed: chunkRecipients.length,
         errors: [{ phone: 'All', error: err.message }],
-        details: (extraData.recipients || []).map(r => ({
+        details: chunkRecipients.map(r => ({
           name: r.name || 'Valued Client',
-          phone: r.phone,
+          phone: r.phone || r,
           status: 'failed',
           error: err.message,
         })),
-      }
+      },
     };
   }
+}
+
+export async function processCampaignBatch(campaignId, batchSize = 10, extraData = {}, onProgress = null) {
+  const allRecipients = Array.isArray(extraData.recipients) ? extraData.recipients : [];
+
+  // Fallback simulation for offline/mock development
+  if (!isSupabaseConfigured) {
+    const camp = MOCK_STORE.campaigns.find(c => c.id === campaignId);
+    if (camp) {
+      camp.total_sent = camp.total_queued || camp.total_sent;
+      camp.delivered = camp.total_sent;
+      camp.status = 'Completed';
+    }
+    return { success: true, batchResults: { processed: allRecipients.length || batchSize, sent: allRecipients.length || batchSize, failed: 0 } };
+  }
+
+  // If no explicit recipients array, perform a single request (server resolves from audience_filter)
+  if (allRecipients.length === 0) {
+    return await sendSingleCampaignChunk(campaignId, batchSize, extraData, []);
+  }
+
+  // Safe micro-chunk size: 10 recipients per request completes in ~2.5s (well below Netlify 10s timeout)
+  const CHUNK_SIZE = Math.min(Math.max(1, batchSize || 10), 10);
+  const chunks = [];
+  for (let i = 0; i < allRecipients.length; i += CHUNK_SIZE) {
+    chunks.push(allRecipients.slice(i, i + CHUNK_SIZE));
+  }
+
+  const aggregated = {
+    campaignId,
+    batchSize,
+    processed: allRecipients.length,
+    sent: 0,
+    failed: 0,
+    errors: [],
+    details: [],
+    hasMedia: Boolean(extraData.mediaUrl || extraData.media_url),
+    hasInteractiveButtons: Array.isArray(extraData.interactiveButtons) && extraData.interactiveButtons.length > 0,
+  };
+
+  let chunkIndex = 0;
+  for (const chunk of chunks) {
+    chunkIndex++;
+    if (onProgress) {
+      try {
+        onProgress({
+          chunkIndex,
+          totalChunks: chunks.length,
+          currentBatchCount: chunk.length,
+          processedCount: aggregated.details.length,
+          totalCount: allRecipients.length,
+          sentCount: aggregated.sent,
+          failedCount: aggregated.failed,
+          percent: Math.round((aggregated.details.length / allRecipients.length) * 100),
+        });
+      } catch (cbErr) {
+        console.warn('[processCampaignBatch] onProgress callback warning:', cbErr);
+      }
+    }
+
+    const chunkRes = await sendSingleCampaignChunk(campaignId, chunk.length, extraData, chunk, chunkIndex, chunks.length);
+    const bRes = chunkRes?.batchResults || {};
+
+    aggregated.sent += (bRes.sent || 0);
+    aggregated.failed += (bRes.failed || 0);
+    if (Array.isArray(bRes.errors)) {
+      aggregated.errors.push(...bRes.errors);
+    }
+    if (Array.isArray(bRes.details)) {
+      aggregated.details.push(...bRes.details);
+    } else {
+      chunk.forEach(r => {
+        aggregated.details.push({
+          name: r.name || 'Valued Client',
+          phone: r.phone || r,
+          status: chunkRes?.success ? 'sent' : 'failed',
+          error: chunkRes?.error || null,
+        });
+      });
+    }
+
+    if (onProgress) {
+      try {
+        onProgress({
+          chunkIndex,
+          totalChunks: chunks.length,
+          currentBatchCount: chunk.length,
+          processedCount: aggregated.details.length,
+          totalCount: allRecipients.length,
+          sentCount: aggregated.sent,
+          failedCount: aggregated.failed,
+          percent: Math.round((aggregated.details.length / allRecipients.length) * 100),
+        });
+      } catch (cbErr) {
+        console.warn('[processCampaignBatch] onProgress callback warning:', cbErr);
+      }
+    }
+  }
+
+  // Update wa_campaigns with cumulative results
+  if (supabase && campaignId) {
+    try {
+      const finalStatus = aggregated.sent === 0 && aggregated.failed > 0
+        ? 'Failed'
+        : (aggregated.failed > 0 ? 'Partially Delivered' : 'Completed');
+      await supabase.from('wa_campaigns').update({
+        total_sent: aggregated.sent,
+        delivered: aggregated.sent,
+        status: finalStatus,
+      }).eq('id', campaignId);
+    } catch (upErr) {
+      console.warn('[processCampaignBatch] Final wa_campaigns update warning:', upErr.message);
+    }
+  }
+
+  return {
+    success: aggregated.failed === 0,
+    partial: aggregated.sent > 0 && aggregated.failed > 0,
+    batchResults: aggregated,
+  };
 }
 
 
