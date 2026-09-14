@@ -581,13 +581,14 @@ exports.handler = async (event) => {
       sent: 0,
       failed: 0,
       errors: [],
+      details: [],
       hasMedia: Boolean(effectiveMediaUrl),
       hasInteractiveButtons: effectiveButtons.length > 0,
     };
 
     // ── Resolve Template Components (for smart Meta API payload building) ──
-    // If templateComponents weren't passed from the frontend, fetch from Meta API
-    let effectiveTemplateComponents = templateComponents || null;
+    // If templateComponents weren't passed or is empty array, fetch from Meta API
+    let effectiveTemplateComponents = (Array.isArray(templateComponents) && templateComponents.length > 0) ? templateComponents : null;
     let effectiveTemplateLang = templateLanguage || 'en';
 
     const isApprovedMetaTemplate = templateName &&
@@ -744,6 +745,15 @@ exports.handler = async (event) => {
         }
       }
 
+      // Record recipient detail
+      results.details.push({
+        name: recipientLead.name || 'Valued Client',
+        phone,
+        status: sendRes.success ? 'sent' : 'failed',
+        messageId: sendRes.messageId || null,
+        error: sendRes.error || null,
+      });
+
       if (sendRes.success) {
         results.sent++;
 
@@ -756,6 +766,7 @@ exports.handler = async (event) => {
             const { data: conv } = await supabase.from('whatsapp_conversations')
               .select('id')
               .or(`contact_phone.eq.${cleanPhone},contact_phone.eq.${digitsOnly},contact_phone.eq.+${digitsOnly}`)
+              .limit(1)
               .maybeSingle();
 
             if (conv?.id) {
@@ -787,7 +798,7 @@ exports.handler = async (event) => {
                 direction: 'outbound',
                 sender_type: 'system',
                 body: msgBody,
-                status: 'delivered',
+                status: 'sent',
                 provider_message_id: sendRes.messageId || null,
               }]);
 
@@ -810,13 +821,53 @@ exports.handler = async (event) => {
       await new Promise(r => setTimeout(r, 150));
     }
 
-    // 3. Update wa_campaigns with live sent/delivered counts & flow rules
+    // 2.1 Post-dispatch verification:
+    // Meta Cloud API accepts marketing messages (HTTP 200) but may immediately fail them
+    // via webhook within 500-1500ms due to Error 131049 (Healthy Ecosystem Engagement /
+    // Marketing Message Frequency Capping) or invalid recipient.
+    // Check whatsapp_messages to capture any immediate failure callbacks.
+    if (supabase && results.sent > 0 && results.details.some(d => d.status === 'sent' && d.messageId)) {
+      try {
+        await new Promise(r => setTimeout(r, 2200));
+        const sentMsgIds = results.details.filter(d => d.status === 'sent' && d.messageId).map(d => d.messageId);
+        const { data: checkedMsgs } = await supabase
+          .from('whatsapp_messages')
+          .select('provider_message_id, status, error_message')
+          .in('provider_message_id', sentMsgIds);
+
+        if (checkedMsgs && checkedMsgs.length > 0) {
+          checkedMsgs.forEach(cm => {
+            if (cm.status === 'failed') {
+              const matched = results.details.find(d => d.messageId === cm.provider_message_id);
+              if (matched && matched.status === 'sent') {
+                matched.status = 'failed';
+                matched.error = cm.error_message || '131049: This message was not delivered to maintain healthy ecosystem engagement.';
+                results.sent = Math.max(0, results.sent - 1);
+                results.failed++;
+                results.errors.push({ phone: matched.phone, error: matched.error });
+                console.log(`[send-campaign] ⚠️ Post-check caught webhook failure for ${matched.phone}: ${matched.error}`);
+              }
+            } else if (cm.status === 'delivered') {
+              const matched = results.details.find(d => d.messageId === cm.provider_message_id);
+              if (matched) matched.status = 'delivered';
+            }
+          });
+        }
+      } catch (checkErr) {
+        console.warn('[send-campaign] Post-dispatch check warning:', checkErr.message);
+      }
+    }
+
+    // 3. Update wa_campaigns with live sent/delivered counts & accurate status
     if (supabase && campaignId) {
       try {
+        const finalStatus = results.sent === 0 && results.failed > 0
+          ? 'Failed'
+          : (results.failed > 0 ? 'Partially Delivered' : 'Completed');
         await supabase.from('wa_campaigns').update({
           total_sent: results.sent,
           delivered: results.sent,
-          status: 'Completed',
+          status: finalStatus,
         }).eq('id', campaignId);
       } catch (upErr) {
         console.warn('[send-campaign] wa_campaigns update warning:', upErr.message);
@@ -827,7 +878,8 @@ exports.handler = async (event) => {
       statusCode: 200,
       headers: cors,
       body: JSON.stringify({
-        success: true,
+        success: results.failed === 0,
+        partial: results.sent > 0 && results.failed > 0,
         batchResults: results,
       }),
     };

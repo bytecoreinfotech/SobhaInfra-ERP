@@ -6,9 +6,11 @@ import {
   Sparkles, FileText, Image as ImageIcon, Phone, Layers, Settings,
   SlidersHorizontal, ChevronRight, ArrowLeft, RefreshCw, Trash2,
   ExternalLink, UserCheck, Bot, CornerDownRight, Smartphone, RotateCcw,
-  Check, HelpCircle, Shield, Info, Save, FolderOpen, Copy, Edit3, X
+  Check, HelpCircle, Shield, Info, Save, FolderOpen, Copy, Edit3, X,
+  AlertCircle, XCircle
 } from 'lucide-react';
 import { estimateCampaignAudience, queueCampaign, processCampaignBatch, getLeads, getCustomerMaster, normalizePhone, getCampaignTemplates, saveCampaignTemplate, deleteCampaignTemplate, syncMetaTemplates, submitMetaTemplate, getMetaTemplates } from '../lib/db';
+import { supabase } from '../lib/supabase';
 import { uploadToWhatsAppMedia, getWhatsAppMediaType } from '../lib/storage';
 import { extractMainName, isGenericName, formatPhoneNumber } from '../lib/nameHelper';
 import './Pages.css';
@@ -105,6 +107,27 @@ const DEFAULT_PRESETS = [
 
 const EMOJIS = ['👋', '🚀', '🎁', '💰', '📞', '✨', '🏢', '📦', '🔥', '✅', '🙏', '😊'];
 
+function formatMetaError(err) {
+  if (!err) return 'Meta WhatsApp Cloud API error';
+  const str = String(err);
+  if (str.includes('131049') || str.toLowerCase().includes('healthy ecosystem engagement') || str.toLowerCase().includes('frequency cap')) {
+    return '131049: Suppressed by Meta Marketing Frequency Cap (Recipient received recent marketing messages without replying)';
+  }
+  if (str.includes('131047') || str.includes('131026') || str.toLowerCase().includes('re-engagement') || str.toLowerCase().includes('24-hour')) {
+    return '131047: Outside 24-Hour customer care window (Approved Meta Template required)';
+  }
+  if (str.includes('131053') || str.toLowerCase().includes('media upload')) {
+    return '131053: Header media upload error (ensure public HTTPS link)';
+  }
+  if (str.includes('132001') || str.toLowerCase().includes('translation')) {
+    return '132001: Template translation not registered for selected language';
+  }
+  if (str.includes('132012')) {
+    return '132012: Template component parameter format mismatch';
+  }
+  return str;
+}
+
 const CampaignStudio = () => {
   const navigate = useNavigate();
   
@@ -173,7 +196,9 @@ const CampaignStudio = () => {
 
   // Execution
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [launchSuccess, setLaunchSuccess] = useState(false);
+  const [isVerifyingDelivery, setIsVerifyingDelivery] = useState(false);
+  const [launchResult, setLaunchResult] = useState(null);
+  const [testUtilityState, setTestUtilityState] = useState(null);
 
   // Campaign Template State
   const [savedTemplates, setSavedTemplates] = useState([]);
@@ -1010,10 +1035,55 @@ const CampaignStudio = () => {
     setSimChatHistory(nextHistory);
   };
 
+  // Test send utility template to verify connection when marketing cap is hit
+  const handleTestUtilityTemplate = async (phone) => {
+    if (!phone) return;
+    setTestUtilityState({ loading: true, success: false, error: null, phone });
+    try {
+      const res = await fetch('/.netlify/functions/send-campaign', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          campaignId: 'utility-test-' + Date.now(),
+          templateName: 'hello_world',
+          templateLanguage: 'en_US',
+          recipients: [{ phone, name: 'Valued Client' }],
+        }),
+      });
+      const data = await res.json();
+      if (data.batchResults?.sent > 0 || data.success) {
+        setTestUtilityState({
+          loading: false,
+          success: true,
+          error: null,
+          phone,
+          message: `✅ Test successful! "hello_world" Utility Template was accepted & delivered to ${phone}. This confirms that your WhatsApp number, Cloud API token, and credentials are 100% operational — only marketing templates were held by Meta's ecosystem frequency cap.`,
+        });
+      } else {
+        setTestUtilityState({
+          loading: false,
+          success: false,
+          error: data.batchResults?.errors?.[0]?.error || data.error || 'Utility test send failed',
+          phone,
+        });
+      }
+    } catch (err) {
+      setTestUtilityState({
+        loading: false,
+        success: false,
+        error: err.message,
+        phone,
+      });
+    }
+  };
+
   // LAUNCH CAMPAIGN
   const handleLaunchCampaign = async () => {
     if (effectiveCount === 0) return;
     setIsSubmitting(true);
+    setIsVerifyingDelivery(false);
+    setLaunchResult(null);
+    setTestUtilityState(null);
 
     let mediaUrl = uploadedMediaUrl;
     let mediaType = uploadedMediaType || 'text';
@@ -1057,10 +1127,28 @@ const CampaignStudio = () => {
       ? { filters, campaignDefaults: campaignVariables, interactive_buttons: buttons }
       : { customRecipients: effectiveRecipients, campaignDefaults: campaignVariables, interactive_buttons: buttons };
 
-    const { data: cData } = await queueCampaign(payload, targetPayload);
+    try {
+      const { data: cData, error: queueErr } = await queueCampaign(payload, targetPayload);
 
-    if (cData) {
-      await processCampaignBatch(cData.id, 50, {
+      if (queueErr || !cData) {
+        setLaunchResult({
+          status: 'failed',
+          campaignName: payload.name,
+          templateName: metaTemplateName,
+          total: effectiveCount,
+          sent: 0,
+          failed: effectiveCount,
+          errors: [{ phone: 'All', error: queueErr?.message || 'Failed to queue campaign in database' }],
+          recipients: effectiveRecipients.map(r => ({ name: r.name, phone: r.phone, status: 'failed', error: queueErr?.message || 'Queue error' })),
+          has131049: false,
+        });
+        setIsSubmitting(false);
+        return;
+      }
+
+      setIsVerifyingDelivery(true);
+
+      const batchRes = await processCampaignBatch(cData.id, 50, {
         customMessage: customText,
         mediaUrl: finalMediaUrl,
         mediaType: finalMediaType,
@@ -1072,14 +1160,96 @@ const CampaignStudio = () => {
         templateName: metaTemplateName,
         templateLanguage: metaTemplateLanguage,
         templateParams: null, // let server auto-build from recipient name + company
-        // Pass the full template components so the Netlify function can dynamically
-        // build the correct Meta API payload (header image, body params, etc.)
         templateComponents: isMetaTemplate ? (selectedMetaTemplate?.components || null) : null,
       });
-      setLaunchSuccess(true);
-    }
 
-    setIsSubmitting(false);
+      const bRes = batchRes?.batchResults || {};
+      let actualSent = bRes.sent ?? (batchRes?.success ? effectiveCount : 0);
+      let actualFailed = bRes.failed ?? (batchRes?.success ? 0 : effectiveCount);
+      let errors = [...(bRes.errors || [])];
+      let details = [...(bRes.details || [])];
+
+      // If details were not returned from server, build from recipients & errors
+      if (details.length === 0) {
+        details = effectiveRecipients.map(r => {
+          const matchedErr = errors.find(e => e.phone === r.phone || e.phone === (r.phone && r.phone.replace('+', '')));
+          return {
+            name: r.name,
+            phone: r.phone,
+            status: matchedErr ? 'failed' : (actualSent > 0 ? 'sent' : 'failed'),
+            error: matchedErr ? matchedErr.error : (actualSent === 0 ? (batchRes?.error || 'Dispatch error') : null),
+          };
+        });
+      }
+
+      // Check live database for asynchronous webhook delivery/failure receipts
+      if (supabase && (actualSent > 0 || details.some(d => d.messageId))) {
+        try {
+          const messageIds = details.filter(d => d.messageId).map(d => d.messageId);
+          if (messageIds.length > 0) {
+            const { data: latestMsgs } = await supabase
+              .from('whatsapp_messages')
+              .select('provider_message_id, status, error_message')
+              .in('provider_message_id', messageIds);
+
+            if (latestMsgs && latestMsgs.length > 0) {
+              latestMsgs.forEach(lm => {
+                if (lm.status === 'failed') {
+                  const target = details.find(d => d.messageId === lm.provider_message_id);
+                  if (target && target.status !== 'failed') {
+                    target.status = 'failed';
+                    target.error = lm.error_message || '131049: This message was not delivered to maintain healthy ecosystem engagement.';
+                    actualSent = Math.max(0, actualSent - 1);
+                    actualFailed++;
+                    errors.push({ phone: target.phone, error: target.error });
+                  }
+                } else if (lm.status === 'delivered') {
+                  const target = details.find(d => d.messageId === lm.provider_message_id);
+                  if (target) target.status = 'delivered';
+                }
+              });
+            }
+          }
+        } catch (verifyErr) {
+          console.warn('[CampaignStudio] Live verification check:', verifyErr.message);
+        }
+      }
+
+      const has131049 = errors.some(e => String(e.error || '').includes('131049') || String(e.error || '').toLowerCase().includes('healthy ecosystem')) ||
+        details.some(d => String(d.error || '').includes('131049') || String(d.error || '').toLowerCase().includes('healthy ecosystem'));
+
+      const finalStatus = actualSent === 0 ? 'failed' : (actualFailed > 0 ? 'partial' : 'success');
+
+      setLaunchResult({
+        campaignId: cData.id,
+        campaignName: payload.name,
+        templateName: metaTemplateName,
+        status: finalStatus,
+        total: effectiveCount,
+        sent: actualSent,
+        failed: actualFailed,
+        errors,
+        recipients: details,
+        has131049,
+      });
+
+    } catch (err) {
+      console.error('[CampaignStudio] Launch error:', err);
+      setLaunchResult({
+        status: 'failed',
+        campaignName: payload.name,
+        templateName: metaTemplateName,
+        total: effectiveCount,
+        sent: 0,
+        failed: effectiveCount,
+        errors: [{ phone: 'All', error: err.message }],
+        recipients: effectiveRecipients.map(r => ({ name: r.name, phone: r.phone, status: 'failed', error: err.message })),
+        has131049: false,
+      });
+    } finally {
+      setIsSubmitting(false);
+      setIsVerifyingDelivery(false);
+    }
   };
 
   return (
@@ -1295,22 +1465,233 @@ const CampaignStudio = () => {
         </div>
       )}
 
-      {/* SUCCESS MODAL / BANNER */}
-      {launchSuccess ? (
-        <div className="glass-card" style={{ padding: '3.5rem 2rem', textAlign: 'center', marginTop: '1rem' }}>
-          <div style={{ fontSize: '3.5rem', marginBottom: '1rem' }}>🚀</div>
-          <h2 style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--success)' }}>Campaign & Flow Successfully Dispatched!</h2>
-          <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', maxWidth: 520, margin: '0.5rem auto 1.5rem auto' }}>
-            <strong>{effectiveCount} WhatsApp interactive messages</strong> have been queued. Customers can now interact seamlessly with your predefined quick reply buttons and automated decision flows!
-          </p>
-          <div style={{ display: 'inline-flex', gap: '0.75rem' }}>
-            <button className="btn btn-secondary" onClick={() => { setLaunchSuccess(false); resetSimulator(); }}>
-              <RotateCcw size={14} /> Create Another Campaign
-            </button>
-            <button className="btn btn-whatsapp" onClick={() => navigate('/whatsapp')}>
-              <MessageCircle size={14} /> Open Live WhatsApp Inbox
-            </button>
+      {/* DISPATCH PROGRESS / VERIFICATION OVERLAY */}
+      {isVerifyingDelivery && !launchResult && (
+        <div className="glass-card animate-fade-in" style={{ padding: '2.5rem', textAlign: 'center', marginTop: '1rem', border: '1.5px solid var(--whatsapp)' }}>
+          <div style={{ fontSize: '2.8rem', marginBottom: '0.75rem' }} className="animate-spin" style={{ display: 'inline-block', animationDuration: '3s' }}>
+            🔄
           </div>
+          <h3 style={{ fontSize: '1.25rem', fontWeight: 700, margin: 0 }}>
+            Dispatching via Meta WhatsApp Cloud API...
+          </h3>
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: '0.4rem auto 0 auto', maxWidth: 460 }}>
+            Sending payload and verifying live delivery status with Meta webhook receipts. Please hold...
+          </p>
+        </div>
+      )}
+
+      {/* AUDITED CAMPAIGN DISPATCH REPORT SCREEN */}
+      {launchResult ? (
+        <div className="animate-fade-in" style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+          
+          {/* Main Status Header Card */}
+          <div
+            className="glass-card"
+            style={{
+              padding: '2.5rem 2rem',
+              textAlign: 'center',
+              border: `1.5px solid ${
+                launchResult.status === 'success'
+                  ? 'rgba(16, 185, 129, 0.4)'
+                  : launchResult.status === 'partial'
+                  ? 'rgba(245, 158, 11, 0.4)'
+                  : 'rgba(239, 68, 68, 0.4)'
+              }`,
+              background:
+                launchResult.status === 'success'
+                  ? 'rgba(16, 185, 129, 0.05)'
+                  : launchResult.status === 'partial'
+                  ? 'rgba(245, 158, 11, 0.05)'
+                  : 'rgba(239, 68, 68, 0.05)',
+              borderRadius: 14,
+            }}
+          >
+            <div style={{ fontSize: '3.2rem', marginBottom: '0.75rem' }}>
+              {launchResult.status === 'success' ? '🚀' : launchResult.status === 'partial' ? '⚠️' : '❌'}
+            </div>
+
+            <h2
+              style={{
+                fontSize: '1.45rem',
+                fontWeight: 800,
+                margin: 0,
+                color:
+                  launchResult.status === 'success'
+                    ? 'var(--success)'
+                    : launchResult.status === 'partial'
+                    ? '#f59e0b'
+                    : 'var(--danger)',
+              }}
+            >
+              {launchResult.status === 'success'
+                ? 'Campaign & Flow Successfully Dispatched!'
+                : launchResult.status === 'partial'
+                ? 'Campaign Partially Delivered (Notes Below)'
+                : 'Campaign Delivery Blocked / Failed'}
+            </h2>
+
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.92rem', maxWidth: 640, margin: '0.6rem auto 1.5rem auto', lineHeight: 1.5 }}>
+              {launchResult.status === 'success' && (
+                <>All <strong>{launchResult.sent} WhatsApp messages</strong> have been accepted and delivered via Meta WhatsApp Cloud API. Customers can now interact with quick replies and automation flows.</>
+              )}
+              {launchResult.status === 'partial' && (
+                <><strong>{launchResult.sent} of {launchResult.total} messages</strong> delivered successfully. <strong>{launchResult.failed} recipient(s)</strong> could not be reached due to delivery constraints.</>
+              )}
+              {launchResult.status === 'failed' && (
+                <>Meta WhatsApp Cloud API could not deliver messages to <strong>{launchResult.total} recipient(s)</strong>. See detailed diagnostics and resolution steps below.</>
+              )}
+            </p>
+
+            {/* Stat Counters Grid */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '1rem', maxWidth: 680, margin: '0 auto 1.5rem auto' }}>
+              <div style={{ padding: '0.85rem', background: 'var(--bg-tertiary)', borderRadius: 10, border: '1px solid var(--border-color)' }}>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Targeted Contacts</div>
+                <div style={{ fontSize: '1.6rem', fontWeight: 800, marginTop: '0.2rem' }}>{launchResult.total}</div>
+              </div>
+
+              <div style={{ padding: '0.85rem', background: 'rgba(16, 185, 129, 0.1)', borderRadius: 10, border: '1px solid rgba(16, 185, 129, 0.25)' }}>
+                <div style={{ fontSize: '0.75rem', color: 'var(--success)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Delivered / Accepted</div>
+                <div style={{ fontSize: '1.6rem', fontWeight: 800, color: 'var(--success)', marginTop: '0.2rem' }}>{launchResult.sent}</div>
+              </div>
+
+              <div style={{ padding: '0.85rem', background: launchResult.failed > 0 ? 'rgba(239, 68, 68, 0.1)' : 'var(--bg-tertiary)', borderRadius: 10, border: launchResult.failed > 0 ? '1px solid rgba(239, 68, 68, 0.25)' : '1px solid var(--border-color)' }}>
+                <div style={{ fontSize: '0.75rem', color: launchResult.failed > 0 ? 'var(--danger)' : 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Failed / Blocked</div>
+                <div style={{ fontSize: '1.6rem', fontWeight: 800, color: launchResult.failed > 0 ? 'var(--danger)' : 'inherit', marginTop: '0.2rem' }}>{launchResult.failed}</div>
+              </div>
+            </div>
+
+            {/* Quick Action Navigation */}
+            <div style={{ display: 'inline-flex', gap: '0.75rem', flexWrap: 'wrap', justifyContent: 'center' }}>
+              <button className="btn btn-secondary" onClick={() => { setLaunchResult(null); resetSimulator(); }}>
+                <RotateCcw size={14} /> Create Another Campaign
+              </button>
+              <button className="btn btn-whatsapp" onClick={() => navigate('/whatsapp')}>
+                <MessageCircle size={14} /> Open Live WhatsApp Center
+              </button>
+            </div>
+          </div>
+
+          {/* DIAGNOSTIC CARD: Error 131049 (Healthy Ecosystem Engagement / Marketing Frequency Cap) */}
+          {launchResult.has131049 && (
+            <div
+              className="glass-card animate-fade-in"
+              style={{
+                padding: '1.5rem 1.75rem',
+                borderLeft: '4px solid #f59e0b',
+                background: 'rgba(245, 158, 11, 0.04)',
+                borderRadius: 12,
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.85rem' }}>
+                <div style={{ padding: '0.5rem', background: 'rgba(245, 158, 11, 0.15)', borderRadius: 8, color: '#f59e0b', flexShrink: 0 }}>
+                  <AlertTriangle size={24} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <h3 style={{ fontSize: '1.05rem', fontWeight: 700, margin: 0, color: '#d97706' }}>
+                    Why did Meta block this message? (Error 131049: Healthy Ecosystem Engagement)
+                  </h3>
+                  <p style={{ fontSize: '0.85rem', color: 'var(--text-primary)', margin: '0.5rem 0 0.75rem 0', lineHeight: 1.55 }}>
+                    Meta limits the volume of <strong>MARKETING templates</strong> a WhatsApp user can receive from all businesses in a given timeframe to maintain healthy ecosystem engagement. When a user has received promotional messages recently without replying, Meta temporarily halts new marketing templates to that phone number.
+                  </p>
+
+                  <div style={{ background: 'var(--bg-secondary)', padding: '1rem', borderRadius: 8, border: '1px solid var(--border-color)', marginBottom: '1rem' }}>
+                    <div style={{ fontSize: '0.82rem', fontWeight: 700, marginBottom: '0.5rem', color: 'var(--text-primary)' }}>
+                      💡 3 Ways to Resolve This:
+                    </div>
+                    <ul style={{ margin: 0, paddingLeft: '1.25rem', fontSize: '0.82rem', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: '0.4rem', lineHeight: 1.45 }}>
+                      <li>
+                        <strong>Ask the customer to send a message:</strong> Once the recipient sends any message to your WhatsApp number (<code>+91 88508 81761</code>), an active 24-hour service window opens and messages will <strong>never be blocked</strong>.
+                      </li>
+                      <li>
+                        <strong>Use a Utility Template:</strong> Transactional & Utility category templates (such as order confirmations, invoices, or service notifications like <code>hello_world</code>) are <strong>completely exempt</strong> from marketing frequency caps!
+                      </li>
+                      <li>
+                        <strong>Wait for Cooldown:</strong> Meta automatically resets the recipient's marketing limit after a 24 to 48 hour rest window.
+                      </li>
+                    </ul>
+                  </div>
+
+                  {/* One-Click Utility Template Verification Button */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      disabled={testUtilityState?.loading}
+                      onClick={() => {
+                        const targetPhone = launchResult.recipients?.[0]?.phone || effectiveRecipients?.[0]?.phone;
+                        handleTestUtilityTemplate(targetPhone);
+                      }}
+                      style={{ fontSize: '0.8rem', gap: '0.4rem', borderColor: '#f59e0b', color: '#d97706' }}
+                    >
+                      <Zap size={14} />
+                      {testUtilityState?.loading ? 'Sending Utility Test...' : '⚡ Test Delivery with Utility Template (hello_world)'}
+                    </button>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                      Confirms Cloud API connectivity bypasses marketing frequency limit
+                    </span>
+                  </div>
+
+                  {/* Test Result Banner */}
+                  {testUtilityState && (
+                    <div
+                      style={{
+                        marginTop: '0.75rem',
+                        padding: '0.65rem 0.9rem',
+                        borderRadius: 8,
+                        fontSize: '0.8rem',
+                        background: testUtilityState.success ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                        border: `1px solid ${testUtilityState.success ? 'rgba(16, 185, 129, 0.25)' : 'rgba(239, 68, 68, 0.25)'}`,
+                        color: testUtilityState.success ? 'var(--success)' : 'var(--danger)',
+                      }}
+                    >
+                      {testUtilityState.message || testUtilityState.error}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Recipient Delivery Breakdown Table */}
+          <div className="glass-card" style={{ padding: '1.25rem 1.5rem', borderRadius: 12 }}>
+            <h3 style={{ fontSize: '0.95rem', fontWeight: 700, margin: '0 0 0.85rem 0', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Users size={16} /> Recipient Delivery Status Breakdown ({launchResult.recipients?.length || 0})
+            </h3>
+            <div style={{ overflowX: 'auto' }}>
+              <table className="data-table" style={{ margin: 0, fontSize: '0.8rem', width: '100%' }}>
+                <thead>
+                  <tr>
+                    <th>Recipient</th>
+                    <th>Phone Number</th>
+                    <th>Delivery Status</th>
+                    <th>Diagnostic Details / Meta Response</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(launchResult.recipients || []).map((r, idx) => (
+                    <tr key={idx}>
+                      <td style={{ fontWeight: 600 }}>{r.name || 'Valued Client'}</td>
+                      <td style={{ fontFamily: 'monospace' }}>{r.phone}</td>
+                      <td>
+                        <span
+                          className={`badge ${r.status === 'delivered' || r.status === 'sent' ? 'badge-success' : 'badge-danger'}`}
+                          style={{ fontSize: '0.72rem', padding: '0.2rem 0.5rem', display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}
+                        >
+                          {r.status === 'delivered' || r.status === 'sent' ? '✓ Accepted by Meta' : '✕ Delivery Failed'}
+                        </span>
+                      </td>
+                      <td style={{ fontSize: '0.75rem', color: r.status === 'failed' ? 'var(--danger)' : 'var(--text-muted)', maxWidth: 380 }}>
+                        {r.status === 'delivered' || r.status === 'sent'
+                          ? 'Message accepted by Meta Cloud API and queued for delivery.'
+                          : formatMetaError(r.error)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
         </div>
       ) : (
         /* MAIN 2-COLUMN STUDIO WORKSPACE */

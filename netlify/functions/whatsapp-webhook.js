@@ -89,72 +89,6 @@ async function loadDynamicOrgSettings(supabase) {
   return _orgSettingsCache || {};
 }
 
-// ─── Status Update Processor (Delivery, Read, Failed receipts from Meta) ─────
-async function handleStatusUpdate(supabase, statuses) {
-  if (!statuses || statuses.length === 0) return;
-  for (const st of statuses) {
-    const wamid = st.id;
-    const status = st.status; // 'delivered', 'read', 'sent', 'failed'
-    const recipientId = st.recipient_id;
-    const timestamp = st.timestamp ? new Date(parseInt(st.timestamp, 10) * 1000).toISOString() : new Date().toISOString();
-
-    console.log(JSON.stringify({ step: 'status_update_item', wamid, status, recipientId }));
-
-    if (supabase) {
-      try {
-        // 1. Update message status in whatsapp_messages table
-        if (wamid) {
-          await supabase
-            .from('whatsapp_messages')
-            .update({ status: status })
-            .eq('provider_message_id', wamid);
-        }
-
-        // 2. If 'read', increment total_read on latest wa_campaigns
-        if (status === 'read') {
-          const { data: latestCamp } = await supabase
-            .from('wa_campaigns')
-            .select('id, total_read, total_sent')
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
-
-          if (latestCamp) {
-            const currentRead = latestCamp.total_read || 0;
-            const currentSent = latestCamp.total_sent || 1;
-            const newRead = Math.min(currentRead + 1, currentSent);
-            await supabase
-              .from('wa_campaigns')
-              .update({ total_read: newRead, updated_at: new Date().toISOString() })
-              .eq('id', latestCamp.id);
-          }
-        }
-
-        // 3. If 'delivered', increment delivered on latest wa_campaigns
-        if (status === 'delivered') {
-          const { data: latestCamp } = await supabase
-            .from('wa_campaigns')
-            .select('id, delivered, total_sent')
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
-
-          if (latestCamp) {
-            const currentDelivered = latestCamp.delivered || 0;
-            const currentSent = latestCamp.total_sent || 1;
-            const newDelivered = Math.min(currentDelivered + 1, currentSent);
-            await supabase
-              .from('wa_campaigns')
-              .update({ delivered: newDelivered, updated_at: new Date().toISOString() })
-              .eq('id', latestCamp.id);
-          }
-        }
-      } catch (err) {
-        console.warn('[handleStatusUpdate] warning:', err.message);
-      }
-    }
-  }
-}
 
 // ─── 2. HMAC SHA-256 Signature Verification (Spec §11, §37) ──────────────────
 
@@ -1248,24 +1182,68 @@ async function handleStatusUpdate(supabase, statuses) {
         .select('id, conversation_id')
         .maybeSingle();
 
-      // Update campaign delivery/read metrics if this message was part of a campaign
-      if (updatedMsg && (newStatus === 'delivered' || newStatus === 'read')) {
-        // Find campaign_recipient by message provider_id linkage
-        const { data: recipient } = await supabase
-          .from('campaign_recipients')
-          .select('id, campaign_id')
-          .eq('status', 'sent')
-          .limit(1)
-          .maybeSingle();
+      // Update campaign metrics if this message was part of a campaign
+      if (newStatus === 'failed') {
+        try {
+          const { data: latestCamp } = await supabase
+            .from('wa_campaigns')
+            .select('id, total_sent, delivered, status')
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
 
-        if (recipient?.campaign_id) {
-          const deltaField = newStatus === 'delivered' ? 'delivered_delta' : 'read_delta';
-          try {
-            await supabase.rpc('increment_campaign_stats', {
-              c_id: recipient.campaign_id,
-              [deltaField]: 1,
-            });
-          } catch {}
+          if (latestCamp) {
+            const newDelivered = Math.max(0, (latestCamp.delivered || 1) - 1);
+            const newStatusCamp = newDelivered === 0 ? 'Failed' : 'Partially Delivered';
+            await supabase
+              .from('wa_campaigns')
+              .update({ delivered: newDelivered, status: newStatusCamp, updated_at: new Date().toISOString() })
+              .eq('id', latestCamp.id);
+          }
+        } catch (campErr) {
+          console.warn('[handleStatusUpdate] Failed status campaign sync warning:', campErr.message);
+        }
+      } else if (newStatus === 'delivered') {
+        try {
+          const { data: latestCamp } = await supabase
+            .from('wa_campaigns')
+            .select('id, delivered, total_sent')
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (latestCamp) {
+            const currentDelivered = latestCamp.delivered || 0;
+            const currentSent = latestCamp.total_sent || 1;
+            const newDelivered = Math.min(currentDelivered + 1, currentSent);
+            await supabase
+              .from('wa_campaigns')
+              .update({ delivered: newDelivered, updated_at: new Date().toISOString() })
+              .eq('id', latestCamp.id);
+          }
+        } catch (campErr) {
+          console.warn('[handleStatusUpdate] Delivered status campaign sync warning:', campErr.message);
+        }
+      } else if (newStatus === 'read') {
+        try {
+          const { data: latestCamp } = await supabase
+            .from('wa_campaigns')
+            .select('id, total_read, total_sent')
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (latestCamp) {
+            const currentRead = latestCamp.total_read || 0;
+            const currentSent = latestCamp.total_sent || 1;
+            const newRead = Math.min(currentRead + 1, currentSent);
+            await supabase
+              .from('wa_campaigns')
+              .update({ total_read: newRead, updated_at: new Date().toISOString() })
+              .eq('id', latestCamp.id);
+          }
+        } catch (campErr) {
+          console.warn('[handleStatusUpdate] Read status campaign sync warning:', campErr.message);
         }
       }
 

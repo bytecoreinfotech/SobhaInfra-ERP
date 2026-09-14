@@ -151,6 +151,7 @@ exports.handler = async (event) => {
       body: JSON.stringify({
         success: true,
         message: `Synced ${results.synced} of ${results.fetched} templates from Meta`,
+        templates: currentTemplates,
         results: {
           ...results,
           templates: currentTemplates,

@@ -2525,8 +2525,25 @@ export async function processCampaignBatch(campaignId, batchSize = 50, extraData
         camp.delivered = camp.total_sent;
         camp.status = 'Completed';
       }
+      return { success: true, batchResults: { processed: batchSize, sent: batchSize, failed: 0 } };
     }
-    return { success: true, batchResults: { processed: batchSize, sent: batchSize, failed: 0 } };
+    console.error('[db] processCampaignBatch error:', err.message);
+    return {
+      success: false,
+      error: err.message,
+      batchResults: {
+        processed: extraData.recipients?.length || 0,
+        sent: 0,
+        failed: extraData.recipients?.length || 0,
+        errors: [{ phone: 'All', error: err.message }],
+        details: (extraData.recipients || []).map(r => ({
+          name: r.name || 'Valued Client',
+          phone: r.phone,
+          status: 'failed',
+          error: err.message,
+        })),
+      }
+    };
   }
 }
 
