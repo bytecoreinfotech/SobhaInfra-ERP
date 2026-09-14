@@ -113,7 +113,13 @@ function formatMetaError(err) {
   if (str.includes('131049') || str.toLowerCase().includes('healthy ecosystem engagement') || str.toLowerCase().includes('frequency cap')) {
     return '131049: Suppressed by Meta Marketing Frequency Cap (Recipient received recent marketing messages without replying)';
   }
-  if (str.includes('131047') || str.includes('131026') || str.toLowerCase().includes('re-engagement') || str.toLowerCase().includes('24-hour')) {
+  if (str.includes('130472') || str.toLowerCase().includes('experiment')) {
+    return "130472: User's number is part of an active Meta experiment cohort (Meta anti-spam test)";
+  }
+  if (str.includes('131026') || str.toLowerCase().includes('undeliverable')) {
+    return '131026: Message undeliverable (Recipient phone is not registered on WhatsApp or has blocked business messages)';
+  }
+  if (str.includes('131047') || str.toLowerCase().includes('re-engagement') || str.toLowerCase().includes('24-hour')) {
     return '131047: Outside 24-Hour customer care window (Approved Meta Template required)';
   }
   if (str.includes('131053') || str.toLowerCase().includes('media upload')) {
@@ -1234,6 +1240,12 @@ const CampaignStudio = () => {
       const has131049 = errors.some(e => String(e.error || '').includes('131049') || String(e.error || '').toLowerCase().includes('healthy ecosystem')) ||
         details.some(d => String(d.error || '').includes('131049') || String(d.error || '').toLowerCase().includes('healthy ecosystem'));
 
+      const has130472 = errors.some(e => String(e.error || '').includes('130472') || String(e.error || '').toLowerCase().includes('experiment')) ||
+        details.some(d => String(d.error || '').includes('130472') || String(d.error || '').toLowerCase().includes('experiment'));
+
+      const has131026 = errors.some(e => String(e.error || '').includes('131026') || String(e.error || '').toLowerCase().includes('undeliverable')) ||
+        details.some(d => String(d.error || '').includes('131026') || String(d.error || '').toLowerCase().includes('undeliverable'));
+
       const finalStatus = actualSent === 0 ? 'failed' : (actualFailed > 0 ? 'partial' : 'success');
 
       setLaunchResult({
@@ -1247,6 +1259,8 @@ const CampaignStudio = () => {
         errors,
         recipients: details,
         has131049,
+        has130472,
+        has131026,
       });
 
     } catch (err) {
@@ -1482,57 +1496,121 @@ const CampaignStudio = () => {
         </div>
       )}
 
-      {/* DISPATCH PROGRESS / VERIFICATION OVERLAY */}
+      {/* REAL-TIME FULL-SCREEN DISPATCH PROGRESS MODAL */}
       {isVerifyingDelivery && !launchResult && (
-        <div className="glass-card animate-fade-in" style={{ padding: '2rem 2.5rem', textAlign: 'center', marginTop: '1rem', border: '1.5px solid var(--whatsapp)', borderRadius: 14 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
-            <div className="animate-spin" style={{ fontSize: '2rem', display: 'inline-block', animationDuration: '2s' }}>
-              🔄
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 10000,
+            background: 'rgba(5, 10, 24, 0.82)',
+            backdropFilter: 'blur(10px)',
+            WebkitBackdropFilter: 'blur(10px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '1.5rem',
+          }}
+        >
+          <div
+            className="glass-card animate-scale-up"
+            style={{
+              width: '100%',
+              maxWidth: 560,
+              padding: '2.5rem 2.25rem',
+              textAlign: 'center',
+              border: '2px solid rgba(37, 211, 102, 0.5)',
+              borderRadius: 20,
+              background: 'linear-gradient(135deg, rgba(16, 24, 39, 0.96) 0%, rgba(20, 30, 48, 0.96) 100%)',
+              boxShadow: '0 25px 70px rgba(0, 0, 0, 0.75), 0 0 50px rgba(37, 211, 102, 0.2)',
+            }}
+          >
+            {/* Animated WhatsApp Radar / Spinner Badge */}
+            <div style={{ position: 'relative', width: 72, height: 72, margin: '0 auto 1.25rem auto' }}>
+              <div
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  borderRadius: '50%',
+                  border: '3px solid rgba(37, 211, 102, 0.25)',
+                  borderTopColor: '#25D366',
+                  animation: 'spin 1.2s linear infinite',
+                }}
+              />
+              <div
+                style={{
+                  position: 'absolute',
+                  inset: 8,
+                  borderRadius: '50%',
+                  background: 'rgba(37, 211, 102, 0.15)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '1.8rem',
+                }}
+              >
+                💬
+              </div>
             </div>
-            <h3 style={{ fontSize: '1.3rem', fontWeight: 800, margin: 0 }}>
+
+            <h3 style={{ fontSize: '1.4rem', fontWeight: 800, margin: 0, color: 'var(--text-primary)' }}>
               {dispatchProgress && dispatchProgress.totalChunks > 1
                 ? `Dispatching Batch ${dispatchProgress.chunkIndex} of ${dispatchProgress.totalChunks}...`
-                : 'Dispatching via Meta WhatsApp Cloud API...'}
+                : 'Broadcasting via Meta WhatsApp Cloud API...'}
             </h3>
-          </div>
 
-          <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', margin: '0 auto 1.25rem auto', maxWidth: 540 }}>
-            {dispatchProgress && dispatchProgress.totalChunks > 1
-              ? `Processing contacts in safe batches of 10 to guarantee 100% reliable delivery and eliminate server timeout limits.`
-              : 'Sending payload and verifying live delivery status with Meta webhook receipts. Please hold...'}
-          </p>
+            <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', margin: '0.5rem auto 1.5rem auto', maxWidth: 460, lineHeight: 1.5 }}>
+              High-speed parallel dispatch in progress. Delivering approved marketing messages directly to customer devices.
+            </p>
 
-          {/* Dynamic Progress Bar & Live Counter */}
-          {dispatchProgress && (
-            <div style={{ maxWidth: 540, margin: '0 auto' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.82rem', fontWeight: 600, marginBottom: '0.45rem', color: 'var(--text-secondary)' }}>
-                <span>{dispatchProgress.processedCount} of {dispatchProgress.totalCount} Contacts Dispatched</span>
-                <span style={{ color: 'var(--whatsapp)', fontWeight: 700 }}>{dispatchProgress.percent || 0}% Complete</span>
-              </div>
-              <div style={{ width: '100%', height: 10, background: 'rgba(255, 255, 255, 0.08)', borderRadius: 6, overflow: 'hidden', border: '1px solid var(--border-color)' }}>
-                <div
-                  style={{
-                    width: `${Math.max(4, dispatchProgress.percent || 0)}%`,
-                    height: '100%',
-                    background: 'linear-gradient(90deg, #10b981, #25D366)',
-                    borderRadius: 6,
-                    transition: 'width 0.35s ease',
-                  }}
-                />
-              </div>
-
-              <div style={{ display: 'flex', justifyContent: 'center', gap: '1.75rem', marginTop: '1rem', fontSize: '0.86rem' }}>
-                <span style={{ color: 'var(--success)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
-                  ✓ Accepted / Sent: <strong>{dispatchProgress.sentCount}</strong>
-                </span>
-                {dispatchProgress.failedCount > 0 && (
-                  <span style={{ color: 'var(--danger)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
-                    ✕ Failed: <strong>{dispatchProgress.failedCount}</strong>
+            {/* Dynamic Progress Bar & Percent Indicator */}
+            {dispatchProgress && (
+              <div style={{ maxWidth: 480, margin: '0 auto' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.84rem', fontWeight: 700, marginBottom: '0.6rem' }}>
+                  <span style={{ color: 'var(--text-secondary)' }}>
+                    {dispatchProgress.processedCount} of {dispatchProgress.totalCount} Contacts Dispatched
                   </span>
-                )}
+                  <span style={{ color: 'var(--whatsapp)', fontSize: '0.95rem' }}>
+                    {dispatchProgress.percent || 0}% Complete
+                  </span>
+                </div>
+
+                {/* Progress Track */}
+                <div style={{ width: '100%', height: 12, background: 'rgba(255, 255, 255, 0.08)', borderRadius: 8, overflow: 'hidden', border: '1px solid var(--border-color)', padding: 1 }}>
+                  <div
+                    style={{
+                      width: `${Math.max(4, dispatchProgress.percent || 0)}%`,
+                      height: '100%',
+                      background: 'linear-gradient(90deg, #10b981, #25D366, #34d399)',
+                      borderRadius: 6,
+                      boxShadow: '0 0 14px rgba(37, 211, 102, 0.6)',
+                      transition: 'width 0.4s cubic-bezier(0.4, 0, 0.2, 1)',
+                    }}
+                  />
+                </div>
+
+                {/* Live Stats Counters Grid */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem', marginTop: '1.25rem' }}>
+                  <div style={{ padding: '0.7rem', background: 'rgba(255, 255, 255, 0.04)', borderRadius: 10, border: '1px solid var(--border-color)' }}>
+                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Total Queue</div>
+                    <div style={{ fontSize: '1.25rem', fontWeight: 800, marginTop: '0.15rem' }}>{dispatchProgress.totalCount}</div>
+                  </div>
+                  <div style={{ padding: '0.7rem', background: 'rgba(16, 185, 129, 0.1)', borderRadius: 10, border: '1px solid rgba(16, 185, 129, 0.3)' }}>
+                    <div style={{ fontSize: '0.7rem', color: 'var(--success)', textTransform: 'uppercase', fontWeight: 600 }}>Accepted</div>
+                    <div style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--success)', marginTop: '0.15rem' }}>{dispatchProgress.sentCount}</div>
+                  </div>
+                  <div style={{ padding: '0.7rem', background: dispatchProgress.failedCount > 0 ? 'rgba(239, 68, 68, 0.1)' : 'rgba(255, 255, 255, 0.04)', borderRadius: 10, border: dispatchProgress.failedCount > 0 ? '1px solid rgba(239, 68, 68, 0.3)' : '1px solid var(--border-color)' }}>
+                    <div style={{ fontSize: '0.7rem', color: dispatchProgress.failedCount > 0 ? 'var(--danger)' : 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Blocked / Failed</div>
+                    <div style={{ fontSize: '1.25rem', fontWeight: 800, color: dispatchProgress.failedCount > 0 ? 'var(--danger)' : 'inherit', marginTop: '0.15rem' }}>{dispatchProgress.failedCount}</div>
+                  </div>
+                </div>
+
+                <div style={{ marginTop: '1.25rem', fontSize: '0.76rem', color: 'var(--text-muted)' }}>
+                  ⚡ Safe parallel batching active. Window will automatically update when complete.
+                </div>
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       )}
 
@@ -1703,6 +1781,60 @@ const CampaignStudio = () => {
                       {testUtilityState.message || testUtilityState.error}
                     </div>
                   )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* DIAGNOSTIC CARD: Error 130472 (Meta Experiment Cohort) */}
+          {launchResult.has130472 && (
+            <div
+              className="glass-card animate-fade-in"
+              style={{
+                padding: '1.25rem 1.5rem',
+                borderLeft: '4px solid #3b82f6',
+                background: 'rgba(59, 130, 246, 0.04)',
+                borderRadius: 12,
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.85rem' }}>
+                <div style={{ padding: '0.45rem', background: 'rgba(59, 130, 246, 0.15)', borderRadius: 8, color: '#3b82f6', flexShrink: 0 }}>
+                  <HelpCircle size={22} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <h3 style={{ fontSize: '1rem', fontWeight: 700, margin: 0, color: '#2563eb' }}>
+                    What is Error 130472? (User's Number in Meta Experiment Cohort)
+                  </h3>
+                  <p style={{ fontSize: '0.84rem', color: 'var(--text-primary)', margin: '0.4rem 0 0 0', lineHeight: 1.5 }}>
+                    Meta randomly assigns a small fraction of consumer WhatsApp numbers into internal anti-spam and message-frequency experiments. During an active experiment cohort, Meta blocks marketing templates to that specific user. <strong>You are not charged by Meta for these messages.</strong> Once Meta concludes the test cohort for that user, standard messaging resumes automatically.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* DIAGNOSTIC CARD: Error 131026 (Undeliverable / Inactive / Blocked) */}
+          {launchResult.has131026 && (
+            <div
+              className="glass-card animate-fade-in"
+              style={{
+                padding: '1.25rem 1.5rem',
+                borderLeft: '4px solid #ef4444',
+                background: 'rgba(239, 68, 68, 0.04)',
+                borderRadius: 12,
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.85rem' }}>
+                <div style={{ padding: '0.45rem', background: 'rgba(239, 68, 68, 0.15)', borderRadius: 8, color: '#ef4444', flexShrink: 0 }}>
+                  <AlertCircle size={22} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <h3 style={{ fontSize: '1rem', fontWeight: 700, margin: 0, color: '#dc2626' }}>
+                    What is Error 131026? (Message Undeliverable)
+                  </h3>
+                  <p style={{ fontSize: '0.84rem', color: 'var(--text-primary)', margin: '0.4rem 0 0 0', lineHeight: 1.5 }}>
+                    The message was successfully dispatched as an approved Meta template, but Meta Cloud API could not deliver it because the recipient's phone number is <strong>not registered on WhatsApp</strong>, or the contact has <strong>blocked messages from business accounts</strong>, or the phone number has been powered off/inactive for an extended period.
+                  </p>
                 </div>
               </div>
             </div>

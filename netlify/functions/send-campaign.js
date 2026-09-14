@@ -656,10 +656,10 @@ exports.handler = async (event) => {
       }
     }
 
-    // 2. Process Batch with Meta WhatsApp Cloud API
-    for (const item of targetRecipients) {
+    // 2. Process Batch with Meta WhatsApp Cloud API (High-speed concurrent dispatch for micro-chunks)
+    await Promise.all(targetRecipients.map(async (item) => {
       const phone = item.phone || (typeof item === 'string' ? item : '');
-      if (!phone || phone.replace(/\D/g, '').length < 10) continue;
+      if (!phone || phone.replace(/\D/g, '').length < 10) return;
 
       const recipientLead = item.lead || item;
       const personalizedMsg = personalize(messageBodyRaw, recipientLead, effectiveDefaults);
@@ -673,7 +673,6 @@ exports.handler = async (event) => {
       if (isApprovedMetaTemplate) {
         const clientName = (recipientLead.name && !isGenericName(recipientLead.name)) ? recipientLead.name.trim() : 'Valued Client';
         const company = recipientLead.company_name || effectiveDefaults.company || 'Sobhainfra Tech';
-        // Build a generous params array — sendWhatsAppTemplate will trim to match template's actual var count
         const params = Array.isArray(templateParams) && templateParams.length > 0
           ? templateParams
           : [clientName, company, effectiveDefaults.product || 'our products', effectiveDefaults.phone || ''];
@@ -689,7 +688,6 @@ exports.handler = async (event) => {
       // 2. Otherwise send Interactive or Media/Text
       if (!sendRes) {
         if (effectiveButtons.length > 0) {
-          // Send Interactive Quick Reply message
           const headerObj = effectiveMediaUrl ? { type: effectiveMediaType, url: effectiveMediaUrl } : null;
           sendRes = await sendMetaWhatsAppInteractive(
             phone,
@@ -699,7 +697,6 @@ exports.handler = async (event) => {
             effectiveDefaults.company || 'Sobhainfra Tech'
           );
         } else {
-          // Send regular Media or Text message
           sendRes = await sendMetaWhatsAppMediaOrText(
             phone,
             personalizedMsg,
@@ -710,7 +707,6 @@ exports.handler = async (event) => {
       }
 
       // If rejected because recipient is outside 24h window, fallback to approved Meta Marketing Template
-      // Comprehensive error detection: covers all Meta session-window error codes
       if (!sendRes.success) {
         const errStr = typeof sendRes.error === 'string' ? sendRes.error : JSON.stringify(sendRes.error || '');
         const is24hErr = /131047|131026|130429/i.test(errStr) ||
@@ -723,7 +719,6 @@ exports.handler = async (event) => {
           console.warn(`[send-campaign] 24h window closed for ${phone}. Attempting template fallback cascade...`);
           const clientName = (recipientLead.name && !isGenericName(recipientLead.name)) ? recipientLead.name.trim() : 'Valued Client';
 
-          // Cascade 1: Try custom Sobha template (fetch its components from Meta for correct payload)
           const sobha = await fetchTemplateComponents('sobha_catalog_campaign_v1', 'en');
           const tpl1 = await sendWhatsAppTemplate(phone, 'sobha_catalog_campaign_v1', sobha.language,
             [clientName, effectiveDefaults.company || 'Sobhainfra Tech'],
@@ -734,7 +729,6 @@ exports.handler = async (event) => {
             usedTemplate = true;
             usedTemplateName = 'sobha_catalog_campaign_v1';
           } else {
-            // Cascade 2: Try Meta's built-in hello_world template (every WABA has this)
             const hw = await fetchTemplateComponents('hello_world', 'en_US');
             const tpl2 = await sendWhatsAppTemplate(phone, 'hello_world', hw.language, [], hw.components);
             if (tpl2.success) {
@@ -819,10 +813,7 @@ exports.handler = async (event) => {
         results.failed++;
         results.errors.push({ phone, error: sendRes.error });
       }
-
-      // Rate limit delay (80ms: safe for Meta Cloud API, fast throughput)
-      await new Promise(r => setTimeout(r, 80));
-    }
+    }));
 
     // 2.1 Post-dispatch verification:
     // When executing in micro-chunks, skip the 2.2s sleep because the client performs live verification directly.
