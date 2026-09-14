@@ -1420,10 +1420,18 @@ const WhatsApp = () => {
                                   borderRadius: '4px',
                                   border: '1px solid rgba(239, 68, 68, 0.25)'
                                 }}
-                                title={m.error_message || 'Delivery failed by Meta'}
+                                title={
+                                  m.error_message?.includes('131049')
+                                    ? 'Error 131049: Meta suppressed this marketing message to maintain healthy ecosystem engagement. Recipient received multiple marketing messages recently without replying. Solution: Ask recipient to send any message to +91 88508 81761, or use a Utility template.'
+                                    : (m.error_message || 'Delivery failed by Meta')
+                                }
                               >
                                 <AlertTriangle size={11} color="#ef4444" />
-                                <span>Failed {m.error_message?.includes('131042') ? '(Meta Card Required)' : m.error_message?.includes('131047') ? '(24h Expired)' : ''}</span>
+                                <span>Failed {
+                                  m.error_message?.includes('131049') ? '(Meta Marketing Cap)' :
+                                  m.error_message?.includes('131042') ? '(Card Required)' :
+                                  m.error_message?.includes('131047') ? '(24h Expired)' : ''
+                                }</span>
                               </span>
                             ) : (
                               <>
