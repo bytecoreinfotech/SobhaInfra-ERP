@@ -721,6 +721,7 @@ export async function getOrgSettings() {
 }
 
 export async function updateOrgSetting(key, value) {
+  const strVal = typeof value === 'object' && value !== null ? JSON.stringify(value) : String(value);
   if (isSupabaseConfigured) {
     try {
       const { error } = await supabase
@@ -728,19 +729,80 @@ export async function updateOrgSetting(key, value) {
         .upsert({
           organization_id: DEFAULT_ORG_ID,
           key,
-          value: String(value),
+          value: strVal,
           updated_at: new Date().toISOString(),
         }, { onConflict: 'organization_id,key' });
       if (!error) {
-        logAuditEvent('settings.updated', 'org_settings', null, { key, value });
+        logAuditEvent('settings.updated', 'org_settings', null, { key, value: strVal });
         return { error: null };
       }
     } catch (err) {
       console.warn('[db] updateOrgSetting fallback:', err.message);
     }
   }
-  DEFAULT_ORG_SETTINGS[key] = String(value);
+  DEFAULT_ORG_SETTINGS[key] = strVal;
   return { error: null };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CAMPAIGN TEMPLATE CRUD (stored in org_settings as JSON array)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const CAMPAIGN_TEMPLATES_KEY = 'campaign_templates';
+
+export async function getCampaignTemplates() {
+  try {
+    const { data } = await getOrgSettings();
+    const raw = data?.[CAMPAIGN_TEMPLATES_KEY];
+    if (raw) {
+      const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      return Array.isArray(parsed) ? parsed : [];
+    }
+  } catch (err) {
+    console.warn('[db] getCampaignTemplates error:', err.message);
+  }
+  return [];
+}
+
+export async function saveCampaignTemplate(template) {
+  try {
+    const existing = await getCampaignTemplates();
+    const newTemplate = {
+      id: `tpl_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      createdAt: new Date().toISOString(),
+      ...template,
+    };
+    const updated = [...existing, newTemplate];
+    await updateOrgSetting(CAMPAIGN_TEMPLATES_KEY, JSON.stringify(updated));
+    return { data: newTemplate, error: null };
+  } catch (err) {
+    console.error('[db] saveCampaignTemplate error:', err);
+    return { data: null, error: err.message };
+  }
+}
+
+export async function updateCampaignTemplate(templateId, updates) {
+  try {
+    const existing = await getCampaignTemplates();
+    const updated = existing.map(t => t.id === templateId ? { ...t, ...updates, updatedAt: new Date().toISOString() } : t);
+    await updateOrgSetting(CAMPAIGN_TEMPLATES_KEY, JSON.stringify(updated));
+    return { error: null };
+  } catch (err) {
+    console.error('[db] updateCampaignTemplate error:', err);
+    return { error: err.message };
+  }
+}
+
+export async function deleteCampaignTemplate(templateId) {
+  try {
+    const existing = await getCampaignTemplates();
+    const updated = existing.filter(t => t.id !== templateId);
+    await updateOrgSetting(CAMPAIGN_TEMPLATES_KEY, JSON.stringify(updated));
+    return { error: null };
+  } catch (err) {
+    console.error('[db] deleteCampaignTemplate error:', err);
+    return { error: err.message };
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2395,6 +2457,9 @@ export async function queueCampaign(campaignData, targetOptions = {}) {
       media_url: campaignData.media_url || null,
       media_type: campaignData.media_type || null,
       campaign_defaults: campaignDefaults,
+      interactive_buttons: campaignData.interactiveButtons || targetOptions.interactive_buttons || targetOptions.interactiveButtons || [],
+      button_flow: campaignData.buttonFlow || targetOptions.button_flow || targetOptions.buttonFlow || null,
+      automation_mode: campaignData.automationMode || targetOptions.automation_mode || targetOptions.automationMode || 'hybrid',
       total_targeted: targetedCount,
       recipients: eligible,
     }),
@@ -2438,6 +2503,9 @@ export async function processCampaignBatch(campaignId, batchSize = 50, extraData
         mediaType: extraData.mediaType || extraData.media_type || null,
         campaignDefaults: extraData.campaignDefaults || extraData.campaign_defaults || {},
         recipients: extraData.recipients || [],
+        interactiveButtons: extraData.interactiveButtons || extraData.interactive_buttons || [],
+        buttonFlow: extraData.buttonFlow || extraData.button_flow || null,
+        automationMode: extraData.automationMode || extraData.automation_mode || 'hybrid',
       }),
     });
     const result = await res.json();

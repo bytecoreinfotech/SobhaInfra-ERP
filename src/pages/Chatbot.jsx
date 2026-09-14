@@ -4,7 +4,8 @@ import {
   Bot, Send, Plus, Trash2, Edit2, CheckCircle2, AlertTriangle,
   Zap, RefreshCw, Database, Terminal, Shield, Sparkles, Activity,
   ChevronRight, ArrowRight, IndianRupee, Layers, HelpCircle, ExternalLink,
-  FileText, Upload, Check, Copy, Eye, AlertCircle, FileCheck, UserCheck, MessageSquare, Save, Sliders
+  FileText, Upload, Check, Copy, Eye, AlertCircle, FileCheck, UserCheck, MessageSquare, Save, Sliders,
+  CornerDownRight, Smartphone, X
 } from 'lucide-react';
 import {
   getAiKnowledge, createAiKnowledge, deleteAiKnowledge,
@@ -25,6 +26,36 @@ const SCORING_RULES = [
   { trigger: 'Opt-Out Request ("STOP / UNSUBSCRIBE")', delta: '-100 pts', type: 'critical' },
 ];
 
+const DEFAULT_WELCOME_BUTTONS = [
+  {
+    id: 'btn_catalog',
+    title: '📄 Get Catalog',
+    action: 'catalog',
+    response_text: '',
+    sub_buttons: [
+      { id: 'sub_catalog_spec', title: '🔬 Tech Specs', action: 'custom', response_text: 'Our technical guide covers mixing ratios (1:4 water cement), tensile adhesion (>1.2 N/mm²), and pot life (3 hours).' },
+      { id: 'sub_catalog_talk', title: '👤 Talk to Exec', action: 'human', response_text: 'Connecting you with our product specialist...' }
+    ]
+  },
+  {
+    id: 'btn_pricing',
+    title: '💰 Get Quote',
+    action: 'quote',
+    response_text: '',
+    sub_buttons: [
+      { id: 'sub_rate_pdf', title: '📊 Rate List PDF', action: 'rate_list_pdf', response_text: 'Sending our latest official rate list schedule...' },
+      { id: 'sub_rate_call', title: '📞 Call Executive', action: 'human', response_text: 'Our sales executive will call you shortly.' }
+    ]
+  },
+  {
+    id: 'btn_human',
+    title: '👤 Talk to Exec',
+    action: 'human',
+    response_text: '',
+    sub_buttons: []
+  }
+];
+
 const Chatbot = () => {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('flows'); // 'flows' | 'simulator' | 'knowledge' | 'rules' | 'logs'
@@ -40,7 +71,11 @@ const Chatbot = () => {
     whatsapp_talk_executive_message: `👋 Namaste {name}!\n\nI have notified our Senior Sales Team regarding your inquiry.\n\n📞 A dedicated sales specialist has been alerted and will connect with you directly on this number shortly!\n\n💡 *In the meantime, our AI Assistant is right here 24/7:* feel free to ask about product technical specifications, AAC block mortar coverage, plaster mixing ratios, or packing sizes.\n\nWhat can I help you check right now?`,
     whatsapp_get_quote_message: `💰 Namaste {name}!\n\nOur official rate lists and customized project quotations are provided directly by our senior sales specialists based on your delivery location and order quantity.\n\nI have forwarded your request to our Senior Sales Team who will share the latest rate schedule and connect with you shortly! 📞\n\nIn the meantime, feel free to ask any technical, application, or packing questions about our products right here!`,
     whatsapp_welcome_message: `👋 Namaste {name}! Welcome to *Sobhainfra Tech Pvt. Ltd.*\n\nWe manufacture high-performance construction chemicals, AAC block fix mortars, ready-mix plasters, and tile adhesives.\n\nHow can we help you today? Please choose an option below or type your inquiry:`,
+    whatsapp_enable_welcome_buttons: 'true',
+    whatsapp_welcome_buttons: DEFAULT_WELCOME_BUTTONS,
   });
+  const [activeWelcomeButtonIdx, setActiveWelcomeButtonIdx] = useState(0);
+  const [simulatedSelectedBtn, setSimulatedSelectedBtn] = useState(null);
   const [loadingFlowSettings, setLoadingFlowSettings] = useState(true);
   const [savingFlowSettings, setSavingFlowSettings] = useState(false);
   const [catalogProgress, setCatalogProgress] = useState(null);
@@ -83,6 +118,20 @@ const Chatbot = () => {
     try {
       const { data } = await getOrgSettings();
       if (data) {
+        let loadedButtons = DEFAULT_WELCOME_BUTTONS;
+        if (data.whatsapp_welcome_buttons) {
+          try {
+            const parsed = typeof data.whatsapp_welcome_buttons === 'string'
+              ? JSON.parse(data.whatsapp_welcome_buttons)
+              : data.whatsapp_welcome_buttons;
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              loadedButtons = parsed;
+            }
+          } catch (e) {
+            console.warn('[Chatbot] parse welcome buttons error:', e);
+          }
+        }
+
         setFlowSettings(prev => ({
           ...prev,
           whatsapp_catalog_pdf_url: data.whatsapp_catalog_pdf_url || prev.whatsapp_catalog_pdf_url,
@@ -94,6 +143,8 @@ const Chatbot = () => {
           whatsapp_talk_executive_message: data.whatsapp_talk_executive_message || prev.whatsapp_talk_executive_message,
           whatsapp_get_quote_message: data.whatsapp_get_quote_message || prev.whatsapp_get_quote_message,
           whatsapp_welcome_message: data.whatsapp_welcome_message || prev.whatsapp_welcome_message,
+          whatsapp_enable_welcome_buttons: data.whatsapp_enable_welcome_buttons !== undefined ? String(data.whatsapp_enable_welcome_buttons) : 'true',
+          whatsapp_welcome_buttons: loadedButtons,
         }));
       }
     } catch (err) {
@@ -118,6 +169,85 @@ const Chatbot = () => {
     } finally {
       setSavingFlowSettings(false);
     }
+  };
+
+  const handleAddWelcomeButton = () => {
+    const current = flowSettings.whatsapp_welcome_buttons || [];
+    if (current.length >= 3) return;
+    const newIdx = current.length + 1;
+    const newBtn = {
+      id: `btn_${Date.now()}`,
+      title: `Option ${newIdx}`,
+      action: 'custom',
+      response_text: '',
+      sub_buttons: []
+    };
+    setFlowSettings(prev => ({
+      ...prev,
+      whatsapp_welcome_buttons: [...(prev.whatsapp_welcome_buttons || []), newBtn]
+    }));
+    setActiveWelcomeButtonIdx(current.length);
+  };
+
+  const handleRemoveWelcomeButton = (idxToRemove) => {
+    setFlowSettings(prev => {
+      const updated = (prev.whatsapp_welcome_buttons || []).filter((_, i) => i !== idxToRemove);
+      return { ...prev, whatsapp_welcome_buttons: updated };
+    });
+    if (activeWelcomeButtonIdx >= idxToRemove && activeWelcomeButtonIdx > 0) {
+      setActiveWelcomeButtonIdx(activeWelcomeButtonIdx - 1);
+    }
+  };
+
+  const handleUpdateWelcomeButton = (idx, field, value) => {
+    setFlowSettings(prev => {
+      const updated = [...(prev.whatsapp_welcome_buttons || [])];
+      if (updated[idx]) {
+        updated[idx] = { ...updated[idx], [field]: value };
+      }
+      return { ...prev, whatsapp_welcome_buttons: updated };
+    });
+  };
+
+  const handleAddSubButton = (buttonIdx) => {
+    setFlowSettings(prev => {
+      const updated = [...(prev.whatsapp_welcome_buttons || [])];
+      const target = updated[buttonIdx];
+      if (!target) return prev;
+      const subList = target.sub_buttons || [];
+      if (subList.length >= 3) return prev;
+      const newSub = {
+        id: `sub_${Date.now()}`,
+        title: `Sub Option ${subList.length + 1}`,
+        action: 'custom',
+        response_text: ''
+      };
+      updated[buttonIdx] = { ...target, sub_buttons: [...subList, newSub] };
+      return { ...prev, whatsapp_welcome_buttons: updated };
+    });
+  };
+
+  const handleUpdateSubButton = (buttonIdx, subIdx, field, value) => {
+    setFlowSettings(prev => {
+      const updated = [...(prev.whatsapp_welcome_buttons || [])];
+      const target = updated[buttonIdx];
+      if (!target || !target.sub_buttons || !target.sub_buttons[subIdx]) return prev;
+      const updatedSubs = [...target.sub_buttons];
+      updatedSubs[subIdx] = { ...updatedSubs[subIdx], [field]: value };
+      updated[buttonIdx] = { ...target, sub_buttons: updatedSubs };
+      return { ...prev, whatsapp_welcome_buttons: updated };
+    });
+  };
+
+  const handleRemoveSubButton = (buttonIdx, subIdx) => {
+    setFlowSettings(prev => {
+      const updated = [...(prev.whatsapp_welcome_buttons || [])];
+      const target = updated[buttonIdx];
+      if (!target || !target.sub_buttons) return prev;
+      const updatedSubs = target.sub_buttons.filter((_, i) => i !== subIdx);
+      updated[buttonIdx] = { ...target, sub_buttons: updatedSubs };
+      return { ...prev, whatsapp_welcome_buttons: updated };
+    });
   };
 
   const handleCatalogUpload = async (e) => {
@@ -603,20 +733,52 @@ const Chatbot = () => {
                 </div>
               </div>
 
-              {/* Trigger 3: First Contact Welcome Greeting */}
+              {/* Trigger 3: First Contact Welcome Greeting & Dynamic Interactive Buttons Studio */}
               <div className="glass-card" style={{ padding: '1.5rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     <MessageSquare size={18} color="var(--accent-secondary)" />
-                    <h3 style={{ fontSize: '0.95rem', fontWeight: 700, margin: 0 }}>First Contact Welcome Greeting</h3>
+                    <h3 style={{ fontSize: '0.95rem', fontWeight: 700, margin: 0 }}>First Contact Welcome Greeting & Interactive Flow Studio</h3>
                   </div>
-                  <span className="badge badge-neutral" style={{ fontSize: '0.65rem' }}>New Messenger Welcome</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>
+                      <input
+                        type="checkbox"
+                        checked={flowSettings.whatsapp_enable_welcome_buttons !== 'false'}
+                        onChange={e => setFlowSettings(prev => ({ ...prev, whatsapp_enable_welcome_buttons: e.target.checked ? 'true' : 'false' }))}
+                        style={{ accentColor: '#10B981', cursor: 'pointer' }}
+                      />
+                      <span style={{ color: flowSettings.whatsapp_enable_welcome_buttons !== 'false' ? '#10B981' : 'var(--text-muted)' }}>
+                        {flowSettings.whatsapp_enable_welcome_buttons !== 'false' ? 'Interactive Buttons Active' : 'Buttons Disabled'}
+                      </span>
+                    </label>
+                    <span className="badge badge-neutral" style={{ fontSize: '0.65rem' }}>Meta Cloud API (v20.0)</span>
+                  </div>
                 </div>
+
                 <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: '0.85rem' }}>
-                  First welcome message sent when an unfamiliar contact or new lead initiates contact on WhatsApp.
+                  Dispatched when an unfamiliar contact or new lead initiates contact on WhatsApp, or sends a greeting (e.g. <em>"Hi"</em>, <em>"Hello"</em>, <em>"Namaste"</em>). Predefine 1 to 3 interactive reply buttons and multi-level follow-up sub-buttons dynamically.
                 </p>
 
-                <div>
+                {/* Welcome Message Copy */}
+                <div style={{ marginBottom: '1.25rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem' }}>
+                    <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)' }}>Welcome Greeting Message:</label>
+                    <div style={{ display: 'flex', gap: '0.3rem' }}>
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        style={{ fontSize: '0.68rem', padding: '0.15rem 0.4rem' }}
+                        onClick={() => setFlowSettings(prev => ({ ...prev, whatsapp_welcome_message: (prev.whatsapp_welcome_message || '') + ' {name}' }))}
+                      >+ {'{name}'}</button>
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        style={{ fontSize: '0.68rem', padding: '0.15rem 0.4rem' }}
+                        onClick={() => setFlowSettings(prev => ({ ...prev, whatsapp_welcome_message: (prev.whatsapp_welcome_message || '') + ' {executive}' }))}
+                      >+ {'{executive}'}</button>
+                    </div>
+                  </div>
                   <textarea
                     className="input-field"
                     rows={4}
@@ -625,11 +787,487 @@ const Chatbot = () => {
                     placeholder="Enter first greeting..."
                     style={{ width: '100%', fontSize: '0.82rem', fontFamily: 'inherit', lineHeight: 1.4, resize: 'vertical' }}
                   />
-                  <div style={{ marginTop: '0.6rem', display: 'flex', gap: '0.4rem', flexWrap: 'wrap', alignItems: 'center' }}>
-                    <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Attached Quick Buttons:</span>
-                    <span className="badge badge-neutral" style={{ fontSize: '0.68rem' }}>📄 Get Catalog</span>
-                    <span className="badge badge-neutral" style={{ fontSize: '0.68rem' }}>💰 Get Quote</span>
-                    <span className="badge badge-neutral" style={{ fontSize: '0.68rem' }}>👤 Talk to Executive</span>
+                </div>
+
+                {/* Dynamic Interactive Reply Buttons & Sub-Buttons Flow Builder */}
+                {flowSettings.whatsapp_enable_welcome_buttons !== 'false' && (
+                  <div style={{ background: 'var(--bg-secondary)', borderRadius: '10px', padding: '1.25rem', border: '1px solid var(--border-color)', marginBottom: '1.25rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                      <div>
+                        <h4 style={{ fontSize: '0.88rem', fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                          <Layers size={16} color="var(--accent-primary)" />
+                          Interactive Quick Reply Buttons & Decision Flow Tree
+                        </h4>
+                        <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                          Configure 1 to 3 primary reply buttons attached to greeting, with optional Level-2 sub-buttons.
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <span className="badge badge-neutral" style={{ fontSize: '0.7rem' }}>
+                          {(flowSettings.whatsapp_welcome_buttons || []).length} / 3 Buttons
+                        </span>
+                        {(flowSettings.whatsapp_welcome_buttons || []).length < 3 && (
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            style={{ fontSize: '0.72rem', padding: '0.25rem 0.6rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}
+                            onClick={handleAddWelcomeButton}
+                          >
+                            <Plus size={13} /> Add Button
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Button Selector Tabs */}
+                    <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '1rem', overflowX: 'auto', paddingBottom: '0.2rem' }}>
+                      {(flowSettings.whatsapp_welcome_buttons || []).map((btn, idx) => (
+                        <button
+                          key={btn.id || idx}
+                          type="button"
+                          onClick={() => setActiveWelcomeButtonIdx(idx)}
+                          className={activeWelcomeButtonIdx === idx ? 'btn btn-primary btn-sm' : 'btn btn-secondary btn-sm'}
+                          style={{
+                            fontSize: '0.75rem',
+                            padding: '0.35rem 0.75rem',
+                            borderRadius: '6px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.4rem',
+                            whiteSpace: 'nowrap'
+                          }}
+                        >
+                          <span style={{ fontWeight: 600 }}>Button {idx + 1}:</span> {btn.title || 'Untitled'}
+                          {(btn.sub_buttons || []).length > 0 && (
+                            <span style={{ background: 'rgba(255,255,255,0.2)', borderRadius: '10px', padding: '0.05rem 0.35rem', fontSize: '0.62rem' }}>
+                              +{btn.sub_buttons.length} subs
+                            </span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Active Button Configuration Form */}
+                    {(() => {
+                      const buttons = flowSettings.whatsapp_welcome_buttons || [];
+                      const safeIdx = Math.min(activeWelcomeButtonIdx, Math.max(0, buttons.length - 1));
+                      const activeBtn = buttons[safeIdx];
+                      if (!activeBtn) return null;
+
+                      const titleCharCount = (activeBtn.title || '').length;
+                      const isTitleTooLong = titleCharCount > 20;
+
+                      return (
+                        <div style={{ background: 'var(--bg-primary)', borderRadius: '8px', padding: '1.1rem', border: '1px solid var(--border-color)' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.85rem' }}>
+                            <span style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                              Configure Button #{safeIdx + 1}
+                            </span>
+                            {buttons.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveWelcomeButton(safeIdx)}
+                                style={{ background: 'none', border: 'none', color: '#EF4444', fontSize: '0.72rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.25rem', padding: '0.2rem 0.4rem' }}
+                              >
+                                <Trash2 size={13} /> Remove Button
+                              </button>
+                            )}
+                          </div>
+
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1rem', marginBottom: '0.85rem' }}>
+                            {/* Button Label Input */}
+                            <div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem' }}>
+                                <label style={{ fontSize: '0.74rem', fontWeight: 600, color: 'var(--text-muted)' }}>
+                                  Button Title / Label (Max 20 chars) *
+                                </label>
+                                <span style={{ fontSize: '0.68rem', fontWeight: 700, color: isTitleTooLong ? '#EF4444' : 'var(--text-muted)' }}>
+                                  {titleCharCount} / 20
+                                </span>
+                              </div>
+                              <input
+                                type="text"
+                                className="input-field"
+                                value={activeBtn.title || ''}
+                                maxLength={20}
+                                onChange={e => handleUpdateWelcomeButton(safeIdx, 'title', e.target.value)}
+                                placeholder="e.g. 📄 Get Catalog"
+                                style={{
+                                  width: '100%',
+                                  fontSize: '0.82rem',
+                                  borderColor: isTitleTooLong ? '#EF4444' : undefined,
+                                }}
+                              />
+                              {isTitleTooLong && (
+                                <p style={{ fontSize: '0.68rem', color: '#EF4444', margin: '0.25rem 0 0 0' }}>
+                                  ⚠️ Meta Cloud API limits button titles to 20 characters. Excess characters will be clipped!
+                                </p>
+                              )}
+                            </div>
+
+                            {/* Trigger Action Select */}
+                            <div>
+                              <label style={{ display: 'block', fontSize: '0.74rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '0.3rem' }}>
+                                Trigger Action on Click *
+                              </label>
+                              <select
+                                className="input-field"
+                                value={activeBtn.action || 'custom'}
+                                onChange={e => handleUpdateWelcomeButton(safeIdx, 'action', e.target.value)}
+                                style={{ width: '100%', fontSize: '0.82rem', height: '38px' }}
+                              >
+                                <option value="catalog">📄 Send Official Catalog PDF Document</option>
+                                <option value="quote">💰 Request Official Quote & Rate List (Sales Lead)</option>
+                                <option value="human">👤 Connect with Human Senior Executive (Callback)</option>
+                                <option value="custom">💬 Send Custom Bot Response & Sub-Buttons</option>
+                              </select>
+                            </div>
+                          </div>
+
+                          {/* Automated Response Copy */}
+                          <div style={{ marginBottom: '1rem' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem' }}>
+                              <label style={{ fontSize: '0.74rem', fontWeight: 600, color: 'var(--text-muted)' }}>
+                                Automated Bot Response Copy:
+                              </label>
+                              <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>Leave empty to use default system template</span>
+                            </div>
+                            <textarea
+                              className="input-field"
+                              rows={2}
+                              value={activeBtn.response_text || ''}
+                              onChange={e => handleUpdateWelcomeButton(safeIdx, 'response_text', e.target.value)}
+                              placeholder={
+                                activeBtn.action === 'catalog'
+                                  ? 'e.g. Please find our official Sobhainfra Tech Product Catalog attached above in PDF format...'
+                                  : activeBtn.action === 'quote'
+                                  ? 'e.g. Our official rate lists and customized project quotations are provided directly by our senior sales specialists...'
+                                  : activeBtn.action === 'human'
+                                  ? 'e.g. A dedicated sales specialist has been alerted and will connect with you directly shortly!'
+                                  : 'e.g. Thank you for selecting this option. How else can we assist you with our products today?'
+                              }
+                              style={{ width: '100%', fontSize: '0.8rem', fontFamily: 'inherit', lineHeight: 1.35, resize: 'vertical' }}
+                            />
+                          </div>
+
+                          {/* Level-2 Sub-Buttons Flow Tree — Full Configuration */}
+                          <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px dashed var(--border-color)', borderRadius: '8px', padding: '0.85rem' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.65rem' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                <CornerDownRight size={15} color="var(--accent-secondary)" />
+                                <span style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                                  Level-2 Sub-Buttons (Follow-up Options After Click)
+                                </span>
+                                <span className="badge badge-neutral" style={{ fontSize: '0.62rem' }}>
+                                  {(activeBtn.sub_buttons || []).length} / 3
+                                </span>
+                              </div>
+                              {(activeBtn.sub_buttons || []).length < 3 && (
+                                <button
+                                  type="button"
+                                  className="btn btn-secondary btn-sm"
+                                  style={{ fontSize: '0.7rem', padding: '0.2rem 0.5rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}
+                                  onClick={() => handleAddSubButton(safeIdx)}
+                                >
+                                  <Plus size={12} /> Add Sub-Button
+                                </button>
+                              )}
+                            </div>
+
+                            {(!activeBtn.sub_buttons || activeBtn.sub_buttons.length === 0) ? (
+                              <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', margin: '0.2rem 0 0 0', fontStyle: 'italic', padding: '0.5rem 0.75rem', background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                                No follow-up sub-buttons configured for Button #{safeIdx + 1}. Tapping will execute the primary action directly. Add sub-buttons to create a multi-step decision tree.
+                              </p>
+                            ) : (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                                {activeBtn.sub_buttons.map((sub, subIdx) => {
+                                  const subAction = sub.action || 'custom';
+                                  const effectLabel = subAction === 'human' ? '👤 Creates Sales Callback Task → HUMAN ACTIVE'
+                                    : subAction === 'catalog' ? '📄 Sends Catalog / Document PDF'
+                                    : subAction === 'rate_list_pdf' ? '📊 Sends Rate List PDF + Sales Escalation'
+                                    : '💬 Sends Custom Reply Message';
+                                  return (
+                                    <div
+                                      key={sub.id || subIdx}
+                                      style={{
+                                        background: 'var(--bg-secondary)',
+                                        padding: '0.75rem',
+                                        borderRadius: '8px',
+                                        border: '1px solid var(--border-color)',
+                                        position: 'relative'
+                                      }}
+                                    >
+                                      {/* Sub-button header with level indicator */}
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                          <span style={{ fontSize: '0.68rem', fontWeight: 700, color: 'var(--accent-primary)', background: 'rgba(99,102,241,0.1)', padding: '0.1rem 0.4rem', borderRadius: 4 }}>
+                                            L1 → L2 #{subIdx + 1}
+                                          </span>
+                                          <span style={{ fontSize: '0.66rem', color: 'var(--text-muted)' }}>
+                                            {effectLabel}
+                                          </span>
+                                        </div>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleRemoveSubButton(safeIdx, subIdx)}
+                                          style={{ background: 'none', border: 'none', color: '#EF4444', cursor: 'pointer', fontSize: '0.7rem', display: 'flex', alignItems: 'center', gap: '0.2rem' }}
+                                          title="Delete sub-button"
+                                        >
+                                          <Trash2 size={12} /> Remove
+                                        </button>
+                                      </div>
+
+                                      {/* Title + Action row */}
+                                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem', marginBottom: '0.5rem' }}>
+                                        <div>
+                                          <label style={{ fontSize: '0.68rem', fontWeight: 600, display: 'block', marginBottom: '0.2rem', color: 'var(--text-muted)' }}>
+                                            Sub-Button Label (Max 20 chars) *
+                                          </label>
+                                          <input
+                                            type="text"
+                                            className="input-field"
+                                            value={sub.title || ''}
+                                            maxLength={20}
+                                            onChange={e => handleUpdateSubButton(safeIdx, subIdx, 'title', e.target.value)}
+                                            placeholder="e.g. 📊 Rate List PDF"
+                                            style={{ width: '100%', fontSize: '0.75rem', padding: '0.35rem 0.5rem' }}
+                                          />
+                                        </div>
+                                        <div>
+                                          <label style={{ fontSize: '0.68rem', fontWeight: 600, display: 'block', marginBottom: '0.2rem', color: 'var(--text-muted)' }}>
+                                            Trigger Action on Click *
+                                          </label>
+                                          <select
+                                            className="input-field"
+                                            value={subAction}
+                                            onChange={e => handleUpdateSubButton(safeIdx, subIdx, 'action', e.target.value)}
+                                            style={{ width: '100%', fontSize: '0.75rem', padding: '0.35rem 0.5rem' }}
+                                          >
+                                            <option value="custom">💬 Send Custom Reply Message</option>
+                                            <option value="catalog">📄 Send Catalog / Document PDF</option>
+                                            <option value="rate_list_pdf">📊 Send Rate List PDF + Sales Escalation</option>
+                                            <option value="human">👤 Connect with Executive (Human Takeover)</option>
+                                          </select>
+                                        </div>
+                                      </div>
+
+                                      {/* Reply Text (for all non-human actions) */}
+                                      {subAction !== 'human' && (
+                                        <div style={{ marginBottom: '0.45rem' }}>
+                                          <label style={{ fontSize: '0.68rem', fontWeight: 600, display: 'block', marginBottom: '0.2rem', color: 'var(--text-muted)' }}>
+                                            Automated Bot Response When Tapped:
+                                          </label>
+                                          <textarea
+                                            className="input-field"
+                                            rows={2}
+                                            value={sub.response_text || ''}
+                                            onChange={e => handleUpdateSubButton(safeIdx, subIdx, 'response_text', e.target.value)}
+                                            placeholder={
+                                              subAction === 'catalog' ? 'e.g. Here is our official product catalog PDF. Would you like a custom quote?'
+                                              : subAction === 'rate_list_pdf' ? 'e.g. Sending our latest official rate list. A sales executive will connect with you shortly...'
+                                              : 'e.g. Thank you! Here are the details you requested...'
+                                            }
+                                            style={{ width: '100%', fontSize: '0.74rem', resize: 'vertical' }}
+                                          />
+                                        </div>
+                                      )}
+
+                                      {/* Link URL (for catalog / rate_list actions) */}
+                                      {(subAction === 'catalog' || subAction === 'rate_list_pdf') && (
+                                        <div style={{ marginBottom: '0.35rem' }}>
+                                          <label style={{ fontSize: '0.68rem', fontWeight: 600, display: 'block', marginBottom: '0.2rem', color: 'var(--text-muted)' }}>
+                                            Document / PDF URL (optional override):
+                                          </label>
+                                          <input
+                                            type="url"
+                                            className="input-field"
+                                            value={sub.link_url || ''}
+                                            onChange={e => handleUpdateSubButton(safeIdx, subIdx, 'link_url', e.target.value)}
+                                            placeholder="https://yoursite.com/catalog.pdf"
+                                            style={{ width: '100%', fontSize: '0.74rem', padding: '0.35rem 0.5rem' }}
+                                          />
+                                        </div>
+                                      )}
+
+                                      {/* Human handoff notice */}
+                                      {subAction === 'human' && (
+                                        <div style={{ padding: '0.5rem 0.65rem', background: 'rgba(245,158,11,0.08)', borderRadius: 5, border: '1px solid rgba(245,158,11,0.25)', fontSize: '0.7rem', color: 'var(--text-primary)' }}>
+                                          👤 <strong>Effect:</strong> AI is paused, conversation mode → <code>HUMAN ACTIVE</code>, urgent callback task assigned to sales executive.
+                                        </div>
+                                      )}
+
+                                      {/* Rate list notice */}
+                                      {subAction === 'rate_list_pdf' && (
+                                        <div style={{ padding: '0.5rem 0.65rem', background: 'rgba(16,185,129,0.08)', borderRadius: 5, border: '1px solid rgba(16,185,129,0.25)', fontSize: '0.7rem', color: 'var(--text-primary)' }}>
+                                          📊 <strong>Effect:</strong> Official Rate List PDF auto-attached (if uploaded) + high-priority sales escalation task created.
+                                        </div>
+                                      )}
+
+                                      {/* Catalog notice */}
+                                      {subAction === 'catalog' && (
+                                        <div style={{ padding: '0.5rem 0.65rem', background: 'rgba(59,130,246,0.08)', borderRadius: 5, border: '1px solid rgba(59,130,246,0.25)', fontSize: '0.7rem', color: 'var(--text-primary)' }}>
+                                          📄 <strong>Effect:</strong> Product catalog PDF auto-attached from your uploaded document library.
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+
+                {/* Interactive Live WhatsApp Mobile Phone Simulator Preview */}
+                <div style={{ background: '#0B141A', borderRadius: '10px', padding: '1rem', border: '1px solid #222D34' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', borderBottom: '1px solid #202C33', paddingBottom: '0.5rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: '#25D366' }}>
+                      <Smartphone size={15} />
+                      <span style={{ fontSize: '0.76rem', fontWeight: 700, color: '#E9EDEF' }}>
+                        WhatsApp Live Interactive Simulator
+                      </span>
+                    </div>
+                    {simulatedSelectedBtn && (
+                      <button
+                        type="button"
+                        onClick={() => setSimulatedSelectedBtn(null)}
+                        style={{ background: 'none', border: 'none', color: '#00A884', fontSize: '0.68rem', cursor: 'pointer', textDecoration: 'underline' }}
+                      >
+                        Reset Flow
+                      </button>
+                    )}
+                  </div>
+
+                  {/* WhatsApp Chat Area */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                    {/* Bot Welcome Greeting Message Bubble */}
+                    <div style={{ alignSelf: 'flex-start', maxWidth: '85%', background: '#202C33', borderRadius: '8px', padding: '0.65rem 0.85rem', color: '#E9EDEF', fontSize: '0.78rem', lineHeight: 1.45, boxShadow: '0 1px 2px rgba(0,0,0,0.3)' }}>
+                      <div style={{ fontWeight: 600, color: '#25D366', fontSize: '0.72rem', marginBottom: '0.25rem' }}>
+                        Sobhainfra Tech Pvt. Ltd. (Verified Business)
+                      </div>
+                      <div style={{ whiteSpace: 'pre-wrap' }}>
+                        {(flowSettings.whatsapp_welcome_message || '')
+                          .replace(/\{name\}/g, 'Rahul Sharma')
+                          .replace(/\{executive\}/g, flowSettings.whatsapp_default_salesperson || 'Senior Sales Executive')}
+                      </div>
+                      <div style={{ fontSize: '0.62rem', color: '#8696A0', textAlign: 'right', marginTop: '0.2rem' }}>
+                        09:15 AM
+                      </div>
+                    </div>
+
+                    {/* Primary Interactive Quick Reply Buttons */}
+                    {flowSettings.whatsapp_enable_welcome_buttons !== 'false' && (flowSettings.whatsapp_welcome_buttons || []).length > 0 && (
+                      <div style={{ alignSelf: 'flex-start', maxWidth: '85%', display: 'flex', flexDirection: 'column', gap: '0.35rem', width: '100%' }}>
+                        <span style={{ fontSize: '0.65rem', color: '#8696A0', fontStyle: 'italic', marginBottom: '0.1rem' }}>
+                          ⚡ Tap a reply button to simulate client action:
+                        </span>
+                        {(flowSettings.whatsapp_welcome_buttons || []).map((btn, idx) => (
+                          <button
+                            key={btn.id || idx}
+                            type="button"
+                            onClick={() => setSimulatedSelectedBtn(btn)}
+                            style={{
+                              background: simulatedSelectedBtn?.id === btn.id ? '#005C4B' : '#111B21',
+                              border: '1px solid #202C33',
+                              color: simulatedSelectedBtn?.id === btn.id ? '#FFFFFF' : '#00A884',
+                              borderRadius: '8px',
+                              padding: '0.45rem 0.85rem',
+                              fontSize: '0.75rem',
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: '0.4rem',
+                              transition: 'all 0.15s ease'
+                            }}
+                          >
+                            {btn.title || `Button #${idx + 1}`}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Simulated Client Tap Response */}
+                    {simulatedSelectedBtn && (
+                      <>
+                        {/* Customer tap bubble (right aligned, green) */}
+                        <div style={{ alignSelf: 'flex-end', maxWidth: '75%', background: '#005C4B', borderRadius: '8px', padding: '0.5rem 0.75rem', color: '#E9EDEF', fontSize: '0.76rem', boxShadow: '0 1px 2px rgba(0,0,0,0.3)' }}>
+                          {simulatedSelectedBtn.title}
+                          <div style={{ fontSize: '0.6rem', color: '#8696A0', textAlign: 'right', marginTop: '0.15rem' }}>
+                            09:16 AM ✓✓
+                          </div>
+                        </div>
+
+                        {/* Bot follow-up action response bubble */}
+                        <div style={{ alignSelf: 'flex-start', maxWidth: '85%', background: '#202C33', borderRadius: '8px', padding: '0.65rem 0.85rem', color: '#E9EDEF', fontSize: '0.78rem', lineHeight: 1.45, boxShadow: '0 1px 2px rgba(0,0,0,0.3)' }}>
+                          {simulatedSelectedBtn.action === 'catalog' && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: '#111B21', padding: '0.4rem 0.6rem', borderRadius: '6px', marginBottom: '0.4rem' }}>
+                              <FileText size={18} color="#EF4444" />
+                              <div>
+                                <div style={{ fontSize: '0.74rem', fontWeight: 600 }}>{flowSettings.whatsapp_catalog_filename || 'Product_Catalog.pdf'}</div>
+                                <div style={{ fontSize: '0.62rem', color: '#8696A0' }}>PDF Document • 4.2 MB</div>
+                              </div>
+                            </div>
+                          )}
+                          {simulatedSelectedBtn.action === 'quote' && flowSettings.whatsapp_rate_list_pdf_url && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: '#111B21', padding: '0.4rem 0.6rem', borderRadius: '6px', marginBottom: '0.4rem' }}>
+                              <FileText size={18} color="#10B981" />
+                              <div>
+                                <div style={{ fontSize: '0.74rem', fontWeight: 600 }}>{flowSettings.whatsapp_rate_list_filename || 'Official_Rate_List.pdf'}</div>
+                                <div style={{ fontSize: '0.62rem', color: '#8696A0' }}>Official Rate Schedule • PDF</div>
+                              </div>
+                            </div>
+                          )}
+                          <div style={{ whiteSpace: 'pre-wrap' }}>
+                            {simulatedSelectedBtn.response_text || (
+                              simulatedSelectedBtn.action === 'catalog'
+                                ? `📄 Namaste Rahul Sharma!\n\nPlease find our official Sobhainfra Tech Product Catalog attached above in PDF format.`
+                                : simulatedSelectedBtn.action === 'quote'
+                                ? `💰 Namaste Rahul Sharma!\n\nOur official rate lists and customized quotations are coordinated directly by our senior sales specialists. An executive will connect with you shortly!`
+                                : simulatedSelectedBtn.action === 'human'
+                                ? `👋 Namaste Rahul Sharma!\n\nA dedicated senior sales specialist has been alerted and will connect with you directly on this number shortly!`
+                                : `Thank you! How else may we assist you with our products today?`
+                            )}
+                          </div>
+                          <div style={{ fontSize: '0.62rem', color: '#8696A0', textAlign: 'right', marginTop: '0.2rem' }}>
+                            09:16 AM
+                          </div>
+                        </div>
+
+                        {/* Level-2 Sub-Buttons in Simulator */}
+                        {Array.isArray(simulatedSelectedBtn.sub_buttons) && simulatedSelectedBtn.sub_buttons.length > 0 && (
+                          <div style={{ alignSelf: 'flex-start', maxWidth: '85%', display: 'flex', flexDirection: 'column', gap: '0.35rem', width: '100%' }}>
+                            <span style={{ fontSize: '0.65rem', color: '#8696A0', fontStyle: 'italic', marginBottom: '0.1rem' }}>
+                              ↳ Level-2 Follow-up Options:
+                            </span>
+                            {simulatedSelectedBtn.sub_buttons.map((sub, sIdx) => (
+                              <div
+                                key={sub.id || sIdx}
+                                style={{
+                                  background: '#111B21',
+                                  border: '1px dashed #202C33',
+                                  color: '#25D366',
+                                  borderRadius: '8px',
+                                  padding: '0.4rem 0.75rem',
+                                  fontSize: '0.72rem',
+                                  fontWeight: 600,
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  gap: '0.35rem'
+                                }}
+                              >
+                                {sub.title}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    )}
                   </div>
                 </div>
               </div>

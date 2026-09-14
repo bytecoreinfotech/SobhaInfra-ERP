@@ -6,9 +6,9 @@ import {
   Sparkles, FileText, Image as ImageIcon, Phone, Layers, Settings,
   SlidersHorizontal, ChevronRight, ArrowLeft, RefreshCw, Trash2,
   ExternalLink, UserCheck, Bot, CornerDownRight, Smartphone, RotateCcw,
-  Check, HelpCircle, Shield, Info
+  Check, HelpCircle, Shield, Info, Save, FolderOpen, Copy, Edit3, X
 } from 'lucide-react';
-import { estimateCampaignAudience, queueCampaign, processCampaignBatch, getLeads, getCustomerMaster, normalizePhone } from '../lib/db';
+import { estimateCampaignAudience, queueCampaign, processCampaignBatch, getLeads, getCustomerMaster, normalizePhone, getCampaignTemplates, saveCampaignTemplate, deleteCampaignTemplate } from '../lib/db';
 import { uploadToWhatsAppMedia, getWhatsAppMediaType } from '../lib/storage';
 import { extractMainName, isGenericName, formatPhoneNumber } from '../lib/nameHelper';
 import './Pages.css';
@@ -175,9 +175,18 @@ const CampaignStudio = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [launchSuccess, setLaunchSuccess] = useState(false);
 
+  // Campaign Template State
+  const [savedTemplates, setSavedTemplates] = useState([]);
+  const [showSaveModal, setShowSaveModal] = useState(false);
+  const [templateName, setTemplateName] = useState('');
+  const [savingTemplate, setSavingTemplate] = useState(false);
+  const [templateSaveSuccess, setTemplateSaveSuccess] = useState(false);
+  const [loadingTemplates, setLoadingTemplates] = useState(false);
+
   useEffect(() => {
     loadInitialData();
     calculateAudience();
+    loadSavedTemplates();
   }, []);
 
   useEffect(() => {
@@ -494,6 +503,69 @@ const CampaignStudio = () => {
   };
 
   // Load Full Preset Flow
+  // ─── Campaign Template CRUD handlers ───
+  const loadSavedTemplates = async () => {
+    setLoadingTemplates(true);
+    try {
+      const templates = await getCampaignTemplates();
+      setSavedTemplates(templates);
+    } catch (err) {
+      console.warn('[CampaignStudio] loadSavedTemplates error:', err.message);
+    } finally {
+      setLoadingTemplates(false);
+    }
+  };
+
+  const handleSaveTemplate = async () => {
+    if (!templateName.trim()) return;
+    setSavingTemplate(true);
+    try {
+      const template = {
+        name: templateName.trim(),
+        text: customText,
+        buttons: buttons,
+        mediaUrl: uploadedMediaUrl || null,
+        mediaType: uploadedMediaType || null,
+        automationMode,
+        campaignDefaults: campaignVariables,
+      };
+      const { data, error } = await saveCampaignTemplate(template);
+      if (!error && data) {
+        setSavedTemplates(prev => [...prev, data]);
+        setTemplateSaveSuccess(true);
+        setShowSaveModal(false);
+        setTemplateName('');
+        setTimeout(() => setTemplateSaveSuccess(false), 4000);
+      }
+    } catch (err) {
+      console.error('[CampaignStudio] saveTemplate error:', err);
+    } finally {
+      setSavingTemplate(false);
+    }
+  };
+
+  const handleDeleteTemplate = async (tplId) => {
+    try {
+      await deleteCampaignTemplate(tplId);
+      setSavedTemplates(prev => prev.filter(t => t.id !== tplId));
+    } catch (err) {
+      console.error('[CampaignStudio] deleteTemplate error:', err);
+    }
+  };
+
+  const handleLoadTemplate = (tpl) => {
+    setCustomText(tpl.text || '');
+    setButtons(tpl.buttons || []);
+    if (tpl.mediaUrl) {
+      setUploadedMediaUrl(tpl.mediaUrl);
+      setUploadedMediaType(tpl.mediaType || 'image');
+    }
+    if (tpl.automationMode) setAutomationMode(tpl.automationMode);
+    if (tpl.campaignDefaults) setCampaignVariables(prev => ({ ...prev, ...tpl.campaignDefaults }));
+    setEditingButtonIndex(0);
+    setName(tpl.name || '');
+  };
+
   const loadPresetFlow = (preset) => {
     setCustomText(preset.text);
     setButtons(preset.buttons || []);
@@ -1309,22 +1381,141 @@ const CampaignStudio = () => {
             {activeStep === 2 && (
               <div className="glass-card p-6" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '1.1rem' }}>
                 
-                {/* Preset Picker */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
-                  <span style={{ fontSize: '0.82rem', fontWeight: 700 }}>Choose Template Flow Copy</span>
-                  <div style={{ display: 'flex', gap: '0.35rem' }}>
-                    {DEFAULT_PRESETS.map(p => (
+                {/* Template Manager — Built-in Presets + Saved Templates */}
+                <div style={{ background: 'var(--bg-secondary)', borderRadius: 10, padding: '0.85rem', border: '1px solid var(--border-color)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.65rem', flexWrap: 'wrap', gap: '0.4rem' }}>
+                    <span style={{ fontSize: '0.82rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                      <FolderOpen size={15} color="var(--accent-primary)" /> Campaign Templates
+                    </span>
+                    <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+                      {templateSaveSuccess && (
+                        <span style={{ fontSize: '0.7rem', color: 'var(--success)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
+                          <Check size={12} /> Template Saved!
+                        </span>
+                      )}
                       <button
-                        key={p.name}
                         type="button"
-                        onClick={() => loadPresetFlow(p)}
-                        className="btn btn-secondary btn-sm"
-                        style={{ fontSize: '0.7rem', padding: '0.25rem 0.55rem' }}
+                        className="btn btn-primary btn-sm"
+                        style={{ fontSize: '0.7rem', padding: '0.25rem 0.6rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}
+                        onClick={() => setShowSaveModal(true)}
                       >
-                        {p.name}
+                        <Save size={12} /> Save Current as Template
                       </button>
-                    ))}
+                    </div>
                   </div>
+
+                  {/* Built-in Presets */}
+                  <div style={{ marginBottom: '0.65rem' }}>
+                    <span style={{ fontSize: '0.68rem', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>Built-in Presets:</span>
+                    <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
+                      {DEFAULT_PRESETS.map(p => (
+                        <button
+                          key={p.name}
+                          type="button"
+                          onClick={() => loadPresetFlow(p)}
+                          className="btn btn-secondary btn-sm"
+                          style={{ fontSize: '0.68rem', padding: '0.2rem 0.5rem' }}
+                        >
+                          {p.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Saved Templates */}
+                  {savedTemplates.length > 0 && (
+                    <div>
+                      <span style={{ fontSize: '0.68rem', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
+                        📂 My Saved Templates ({savedTemplates.length}):
+                      </span>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                        {savedTemplates.map(tpl => (
+                          <div key={tpl.id} style={{
+                            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                            background: 'var(--bg-primary)', padding: '0.45rem 0.65rem', borderRadius: 6,
+                            border: '1px solid var(--border-color)', fontSize: '0.73rem'
+                          }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flex: 1, minWidth: 0 }}>
+                              <FileText size={13} color="var(--accent-primary)" />
+                              <span style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {tpl.name}
+                              </span>
+                              <span style={{ fontSize: '0.62rem', color: 'var(--text-muted)', flexShrink: 0 }}>
+                                {tpl.buttons?.length || 0} buttons · {tpl.createdAt ? new Date(tpl.createdAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : ''}
+                              </span>
+                            </div>
+                            <div style={{ display: 'flex', gap: '0.3rem', flexShrink: 0 }}>
+                              <button
+                                type="button"
+                                className="btn btn-primary btn-sm"
+                                style={{ fontSize: '0.65rem', padding: '0.15rem 0.4rem', display: 'flex', alignItems: 'center', gap: '0.2rem' }}
+                                onClick={() => handleLoadTemplate(tpl)}
+                              >
+                                <Copy size={11} /> Load
+                              </button>
+                              <button
+                                type="button"
+                                style={{
+                                  fontSize: '0.65rem', padding: '0.15rem 0.35rem', display: 'flex', alignItems: 'center', gap: '0.15rem',
+                                  background: 'none', border: '1px solid var(--danger)', color: 'var(--danger)', borderRadius: 4, cursor: 'pointer'
+                                }}
+                                onClick={() => handleDeleteTemplate(tpl.id)}
+                              >
+                                <Trash2 size={11} /> Delete
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Save Template Modal Inline */}
+                  {showSaveModal && (
+                    <div style={{
+                      marginTop: '0.65rem', padding: '0.75rem', background: 'var(--bg-primary)',
+                      borderRadius: 8, border: '1px solid var(--accent-primary)', display: 'flex',
+                      flexDirection: 'column', gap: '0.5rem'
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: '0.78rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                          <Save size={14} color="var(--accent-primary)" /> Save Campaign as Reusable Template
+                        </span>
+                        <button type="button" onClick={() => setShowSaveModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>
+                          <X size={16} />
+                        </button>
+                      </div>
+                      <div>
+                        <label style={{ fontSize: '0.7rem', fontWeight: 600, display: 'block', marginBottom: '0.2rem' }}>Template Name *</label>
+                        <input
+                          type="text"
+                          className="input-field"
+                          value={templateName}
+                          onChange={e => setTemplateName(e.target.value)}
+                          placeholder="e.g. Sobha Product Launch Campaign"
+                          autoFocus
+                        />
+                      </div>
+                      <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+                        Saves: message text, interactive buttons (with sub-buttons), media URL, automation mode, and campaign defaults.
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.35rem' }}>
+                        <button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowSaveModal(false)} style={{ fontSize: '0.7rem' }}>
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-primary btn-sm"
+                          onClick={handleSaveTemplate}
+                          disabled={!templateName.trim() || savingTemplate}
+                          style={{ fontSize: '0.7rem', display: 'flex', alignItems: 'center', gap: '0.2rem' }}
+                        >
+                          {savingTemplate ? <RefreshCw size={12} className="spin" /> : <Save size={12} />}
+                          {savingTemplate ? 'Saving...' : 'Save Template'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Variable insertion tags */}
@@ -1603,59 +1794,149 @@ const CampaignStudio = () => {
                       </div>
                     )}
 
-                    {/* SUB-BUTTONS / LEVEL-2 BRANCHING BUILDER */}
+                    {/* SUB-BUTTONS / LEVEL-2 BRANCHING BUILDER — Full Configuration */}
                     {['reply', 'nested_message', 'media_or_link'].includes(buttons[editingButtonIndex].actionType) && (
-                      <div style={{ borderTop: '1px dashed var(--border-color)', paddingTop: '0.75rem', marginTop: '0.25rem' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.45rem' }}>
-                          <span style={{ fontSize: '0.75rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-                            <CornerDownRight size={13} color="var(--accent-primary)" /> Level-2 Sub-Buttons (Optional Next Step)
-                          </span>
+                      <div style={{ borderTop: '1px dashed var(--border-color)', paddingTop: '0.85rem', marginTop: '0.25rem' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.65rem' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                            <CornerDownRight size={14} color="var(--accent-primary)" />
+                            <span style={{ fontSize: '0.78rem', fontWeight: 700 }}>Level-2 Sub-Buttons (Follow-up Options After Click)</span>
+                            <span style={{ fontSize: '0.65rem', background: 'var(--bg-tertiary)', padding: '0.1rem 0.4rem', borderRadius: 8, color: 'var(--text-muted)', fontWeight: 600 }}>
+                              {(buttons[editingButtonIndex].subButtons || []).length} / 3
+                            </span>
+                          </div>
                           {(buttons[editingButtonIndex].subButtons || []).length < 3 && (
                             <button
                               type="button"
                               className="btn btn-secondary btn-sm"
-                              style={{ fontSize: '0.68rem', padding: '0.2rem 0.5rem' }}
+                              style={{ fontSize: '0.7rem', padding: '0.25rem 0.6rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}
                               onClick={() => addSubButton(editingButtonIndex)}
                             >
-                              + Add Sub-Button
+                              <Plus size={12} /> Add Sub-Button
                             </button>
                           )}
                         </div>
 
                         {(buttons[editingButtonIndex].subButtons || []).length === 0 ? (
-                          <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-                            No sub-buttons added yet. Add sub-buttons if you want the customer to have further options after clicking this button.
+                          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontStyle: 'italic', padding: '0.5rem 0.75rem', background: 'var(--bg-tertiary)', borderRadius: 6 }}>
+                            No sub-buttons configured. When the customer taps Button #{editingButtonIndex + 1}, only the primary action above will execute. Add sub-buttons to create a multi-step decision tree.
                           </div>
                         ) : (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                            {(buttons[editingButtonIndex].subButtons || []).map((subBtn, sIdx) => (
-                              <div key={subBtn.id || sIdx} style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.2fr 40px', gap: '0.5rem', alignItems: 'center', background: 'var(--bg-tertiary)', padding: '0.5rem', borderRadius: 6 }}>
-                                <input
-                                  type="text"
-                                  className="input-field"
-                                  style={{ fontSize: '0.72rem', padding: '0.3rem 0.5rem' }}
-                                  value={subBtn.title}
-                                  onChange={e => updateSubButtonField(editingButtonIndex, sIdx, 'title', e.target.value)}
-                                  placeholder="Sub-button label"
-                                />
-                                <select
-                                  className="input-field"
-                                  style={{ fontSize: '0.72rem', padding: '0.3rem 0.5rem' }}
-                                  value={subBtn.actionType}
-                                  onChange={e => updateSubButtonField(editingButtonIndex, sIdx, 'actionType', e.target.value)}
-                                >
-                                  <option value="reply">💬 Send Reply Message</option>
-                                  <option value="human_handoff">👤 Connect with Executive</option>
-                                </select>
-                                <button
-                                  type="button"
-                                  onClick={() => removeSubButton(editingButtonIndex, sIdx)}
-                                  style={{ background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer', textAlign: 'center' }}
-                                >
-                                  ✕
-                                </button>
-                              </div>
-                            ))}
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                            {(buttons[editingButtonIndex].subButtons || []).map((subBtn, sIdx) => {
+                              const actionLabel = subBtn.actionType === 'human_handoff' ? '👤 Creates Sales Callback Task → HUMAN ACTIVE'
+                                : subBtn.actionType === 'media_or_link' ? '📄 Sends Document / Catalog PDF'
+                                : subBtn.actionType === 'rate_list_pdf' ? '📊 Sends Rate List PDF + Sales Escalation'
+                                : '💬 Sends Custom Reply Message';
+                              return (
+                                <div key={subBtn.id || sIdx} style={{ background: 'var(--bg-tertiary)', padding: '0.75rem', borderRadius: 8, border: '1px solid var(--border-color)', position: 'relative' }}>
+                                  {/* Sub-button header with level indicator */}
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                      <span style={{ fontSize: '0.68rem', fontWeight: 700, color: 'var(--accent-primary)', background: 'rgba(99,102,241,0.1)', padding: '0.1rem 0.4rem', borderRadius: 4 }}>
+                                        L1 → L2 #{sIdx + 1}
+                                      </span>
+                                      <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+                                        {actionLabel}
+                                      </span>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => removeSubButton(editingButtonIndex, sIdx)}
+                                      style={{ background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer', fontSize: '0.7rem', display: 'flex', alignItems: 'center', gap: '0.2rem' }}
+                                    >
+                                      <Trash2 size={12} /> Remove
+                                    </button>
+                                  </div>
+
+                                  {/* Title + Action row */}
+                                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem', marginBottom: '0.5rem' }}>
+                                    <div>
+                                      <label style={{ fontSize: '0.68rem', fontWeight: 600, display: 'block', marginBottom: '0.2rem', color: 'var(--text-muted)' }}>
+                                        Sub-Button Label (Max 20 chars) *
+                                      </label>
+                                      <input
+                                        type="text"
+                                        maxLength={20}
+                                        className="input-field"
+                                        style={{ fontSize: '0.75rem', padding: '0.35rem 0.5rem' }}
+                                        value={subBtn.title}
+                                        onChange={e => updateSubButtonField(editingButtonIndex, sIdx, 'title', e.target.value)}
+                                        placeholder="e.g. 📊 Rate List PDF"
+                                      />
+                                    </div>
+                                    <div>
+                                      <label style={{ fontSize: '0.68rem', fontWeight: 600, display: 'block', marginBottom: '0.2rem', color: 'var(--text-muted)' }}>
+                                        Trigger Action on Click *
+                                      </label>
+                                      <select
+                                        className="input-field"
+                                        style={{ fontSize: '0.75rem', padding: '0.35rem 0.5rem' }}
+                                        value={subBtn.actionType}
+                                        onChange={e => updateSubButtonField(editingButtonIndex, sIdx, 'actionType', e.target.value)}
+                                      >
+                                        <option value="reply">💬 Send Custom Reply Message</option>
+                                        <option value="media_or_link">📄 Send Catalog / Document PDF</option>
+                                        <option value="rate_list_pdf">📊 Send Rate List PDF + Sales Escalation</option>
+                                        <option value="human_handoff">👤 Connect with Executive (Human Takeover)</option>
+                                      </select>
+                                    </div>
+                                  </div>
+
+                                  {/* Reply Text (for all non-handoff actions) */}
+                                  {subBtn.actionType !== 'human_handoff' && (
+                                    <div style={{ marginBottom: '0.45rem' }}>
+                                      <label style={{ fontSize: '0.68rem', fontWeight: 600, display: 'block', marginBottom: '0.2rem', color: 'var(--text-muted)' }}>
+                                        Automated Bot Response When Tapped:
+                                      </label>
+                                      <textarea
+                                        className="input-field"
+                                        rows={2}
+                                        value={subBtn.replyText || ''}
+                                        onChange={e => updateSubButtonField(editingButtonIndex, sIdx, 'replyText', e.target.value)}
+                                        placeholder={
+                                          subBtn.actionType === 'media_or_link' ? 'e.g. Here is our official product catalog PDF...'
+                                          : subBtn.actionType === 'rate_list_pdf' ? 'e.g. Sending our latest official rate list. A sales executive will connect with you shortly...'
+                                          : 'e.g. Thank you! Here are the details you requested...'
+                                        }
+                                        style={{ fontSize: '0.74rem', resize: 'vertical' }}
+                                      />
+                                    </div>
+                                  )}
+
+                                  {/* Link URL (for media/link actions) */}
+                                  {subBtn.actionType === 'media_or_link' && (
+                                    <div>
+                                      <label style={{ fontSize: '0.68rem', fontWeight: 600, display: 'block', marginBottom: '0.2rem', color: 'var(--text-muted)' }}>
+                                        Document / Catalog PDF URL:
+                                      </label>
+                                      <input
+                                        type="url"
+                                        className="input-field"
+                                        style={{ fontSize: '0.74rem', padding: '0.35rem 0.5rem' }}
+                                        value={subBtn.linkUrl || ''}
+                                        onChange={e => updateSubButtonField(editingButtonIndex, sIdx, 'linkUrl', e.target.value)}
+                                        placeholder="https://yoursite.com/catalog.pdf"
+                                      />
+                                    </div>
+                                  )}
+
+                                  {/* Human handoff notice */}
+                                  {subBtn.actionType === 'human_handoff' && (
+                                    <div style={{ padding: '0.5rem 0.65rem', background: 'rgba(245,158,11,0.08)', borderRadius: 5, border: '1px solid rgba(245,158,11,0.25)', fontSize: '0.7rem', color: 'var(--text-primary)' }}>
+                                      👤 <strong>Effect:</strong> AI is paused, conversation mode → <code>HUMAN ACTIVE</code>, urgent callback task assigned to sales executive.
+                                    </div>
+                                  )}
+
+                                  {/* Rate list notice */}
+                                  {subBtn.actionType === 'rate_list_pdf' && (
+                                    <div style={{ padding: '0.5rem 0.65rem', background: 'rgba(16,185,129,0.08)', borderRadius: 5, border: '1px solid rgba(16,185,129,0.25)', fontSize: '0.7rem', color: 'var(--text-primary)' }}>
+                                      📊 <strong>Effect:</strong> Official Rate List PDF auto-attached (if uploaded) + high-priority sales escalation task created.
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
                           </div>
                         )}
                       </div>

@@ -719,6 +719,33 @@ async function handleInvoiceRequest(supabase, fromPhone, contactName, conversati
 }
 
 // ─── 3b. Interactive Quick Reply & Action Buttons Dispatcher ─────────────────
+function sanitizeButtonTitle(title) {
+  if (!title) return 'Option';
+  const str = String(title).trim();
+  const codePoints = Array.from(str);
+  return codePoints.slice(0, 20).join('').trim() || 'Option';
+}
+
+function getWelcomeButtons(orgSettings) {
+  if (orgSettings && orgSettings.whatsapp_welcome_buttons) {
+    try {
+      const parsed = typeof orgSettings.whatsapp_welcome_buttons === 'string'
+        ? JSON.parse(orgSettings.whatsapp_welcome_buttons)
+        : orgSettings.whatsapp_welcome_buttons;
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    } catch (e) {
+      console.warn('[webhook] Failed to parse whatsapp_welcome_buttons JSON:', e.message);
+    }
+  }
+  return [
+    { id: 'btn_catalog', title: '📄 Get Catalog', action: 'catalog' },
+    { id: 'btn_pricing', title: '💰 Get Quote', action: 'quote' },
+    { id: 'btn_human', title: '👤 Talk to Exec', action: 'human' }
+  ];
+}
+
 async function sendWhatsAppInteractive(to, text, buttons = [], headerMedia = null, footerText = null) {
   if (!WA_TOKEN || !PHONE_ID) {
     console.log(JSON.stringify({ step: 'send_wa_interactive', status: 'simulated', reason: 'no_credentials' }));
@@ -737,20 +764,20 @@ async function sendWhatsAppInteractive(to, text, buttons = [], headerMedia = nul
     if (validButtons.length <= 3) {
       const interactiveObj = {
         type: 'button',
-        body: { text: text || 'Please select an option below:' },
+        body: { text: String(text || 'Please select an option below:').slice(0, 1024) },
         action: {
           buttons: validButtons.slice(0, 3).map((b, idx) => ({
             type: 'reply',
             reply: {
-              id: b.id || `btn_${idx}_${(b.title || b.label || 'opt').toLowerCase().replace(/[^a-z0-9]/g, '_').slice(0, 20)}`,
-              title: (b.title || b.label).slice(0, 20),
+              id: b.id || `btn_${idx}_${(b.title || b.label || 'opt').toLowerCase().replace(/[^a-z0-9]/g, '_').slice(0, 15)}`,
+              title: sanitizeButtonTitle(b.title || b.label),
             },
           })),
         },
       };
 
       if (footerText) {
-        interactiveObj.footer = { text: footerText.slice(0, 60) };
+        interactiveObj.footer = { text: String(footerText).slice(0, 60) };
       }
 
       if (headerMedia && headerMedia.url) {
@@ -771,16 +798,16 @@ async function sendWhatsAppInteractive(to, text, buttons = [], headerMedia = nul
     } else {
       const interactiveObj = {
         type: 'list',
-        body: { text: text || 'Please choose an option from the menu:' },
+        body: { text: String(text || 'Please choose an option from the menu:').slice(0, 1024) },
         action: {
           button: 'Select Option',
           sections: [
             {
               title: 'Guided Menu',
               rows: validButtons.slice(0, 10).map((b, idx) => ({
-                id: b.id || `opt_${idx}_${(b.title || b.label || 'opt').toLowerCase().replace(/[^a-z0-9]/g, '_').slice(0, 20)}`,
-                title: (b.title || b.label).slice(0, 24),
-                description: (b.description || b.actionType || 'Tap to select').slice(0, 72),
+                id: b.id || `opt_${idx}_${(b.title || b.label || 'opt').toLowerCase().replace(/[^a-z0-9]/g, '_').slice(0, 15)}`,
+                title: sanitizeButtonTitle(b.title || b.label).slice(0, 24),
+                description: String(b.description || b.actionType || 'Tap to select').slice(0, 72),
               })),
             },
           ],
@@ -788,7 +815,7 @@ async function sendWhatsAppInteractive(to, text, buttons = [], headerMedia = nul
       };
 
       if (footerText) {
-        interactiveObj.footer = { text: footerText.slice(0, 60) };
+        interactiveObj.footer = { text: String(footerText).slice(0, 60) };
       }
 
       payload = {
@@ -800,14 +827,29 @@ async function sendWhatsAppInteractive(to, text, buttons = [], headerMedia = nul
       };
     }
 
-    const res = await fetch(url, {
+    let res = await fetch(url, {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${WA_TOKEN}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
 
-    const data = await res.json();
+    let data = await res.json();
     if (data.error) {
+      console.warn('[Webhook Interactive Error]:', data.error.message);
+      // If failed with header, retry immediately without header so buttons still deliver:
+      if (payload.interactive?.header) {
+        console.warn('[Webhook Interactive] Retrying interactive buttons without header...');
+        delete payload.interactive.header;
+        const retryRes = await fetch(url, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${WA_TOKEN}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const retryData = await retryRes.json();
+        if (!retryData.error) {
+          return { success: true, messages: retryData.messages };
+        }
+      }
       console.warn('[Webhook Interactive Fallback] Falling back to standard text:', data.error.message);
       return sendWhatsAppMessage(to, text);
     }
@@ -1849,6 +1891,293 @@ exports.handler = async (event) => {
     const buttonTitle = msg.interactive?.button_reply?.title || msg.interactive?.list_reply?.title || '';
     const lowerMsg = messageText.toLowerCase();
 
+    // ── Dynamic Interactive Welcome Buttons & Sub-Buttons Router ──
+    const welcomeButtons = getWelcomeButtons(orgSettings);
+
+    // Check if clicked button matches a dynamic Level-2 sub-button
+    let matchedSub = null;
+    let parentBtn = null;
+    for (const b of welcomeButtons) {
+      if (Array.isArray(b.sub_buttons)) {
+        const s = b.sub_buttons.find(sb =>
+          (buttonId && sb.id === buttonId) ||
+          (buttonTitle && sb.title && sb.title.trim().toLowerCase() === buttonTitle.trim().toLowerCase())
+        );
+        if (s) {
+          matchedSub = s;
+          parentBtn = b;
+          break;
+        }
+      }
+    }
+
+    // Check if clicked button matches a dynamic Level-1 button
+    const matchedL1 = !matchedSub ? welcomeButtons.find(b =>
+      (buttonId && b.id === buttonId) ||
+      (buttonTitle && b.title && b.title.trim().toLowerCase() === buttonTitle.trim().toLowerCase())
+    ) : null;
+
+    if (matchedSub) {
+      console.log(JSON.stringify({ step: 'sub_button_click', subId: matchedSub.id, subTitle: matchedSub.title, action: matchedSub.action }));
+      const mainName = extractMainName(contactName);
+      const salutation = mainName ? `Namaste ${mainName}!` : 'Namaste!';
+      const activeRep = orgSettings.whatsapp_default_salesperson || assignedRep || 'Senior Sales Executive';
+
+      if (matchedSub.action === 'catalog') {
+        const catalogPdfUrl = orgSettings.whatsapp_catalog_pdf_url || BROCHURE_PUBLIC_URL;
+        const catalogFilename = orgSettings.whatsapp_catalog_filename || 'Sobha_Infratech_Product_Catalog.pdf';
+        await sendWhatsAppDocument(fromPhone, catalogPdfUrl, catalogFilename, '📄 Sobhainfra Tech — Official Product Catalog');
+        const respText = (matchedSub.response_text || `📄 Please find our official product catalog attached above!`)
+          .replace(/\{name\}/g, mainName || 'Sir/Madam')
+          .replace(/\{executive\}/g, activeRep);
+        await sendWhatsAppMessage(fromPhone, respText);
+        if (supabase && conversationId) {
+          try {
+            await supabase.from('whatsapp_messages').insert([
+              { organization_id: DEFAULT_ORG_ID, conversation_id: conversationId, direction: 'outbound', sender_type: 'system', message_type: 'document', media_url: catalogPdfUrl, body: catalogFilename, status: 'sent' },
+              { organization_id: DEFAULT_ORG_ID, conversation_id: conversationId, direction: 'outbound', sender_type: 'system', message_type: 'text', body: respText, status: 'sent' }
+            ]);
+          } catch {}
+        }
+        return { statusCode: 200, headers, body: JSON.stringify({ status: 'sub_button_catalog_sent' }) };
+      }
+
+      if (matchedSub.action === 'rate_list_pdf' || matchedSub.action === 'quote') {
+        const rateListPdfUrl = orgSettings.whatsapp_rate_list_pdf_url;
+        const rateListFilename = orgSettings.whatsapp_rate_list_filename || 'Sobha_Infratech_Official_Rate_List.pdf';
+        if (rateListPdfUrl && rateListPdfUrl.startsWith('http')) {
+          await sendWhatsAppDocument(fromPhone, rateListPdfUrl, rateListFilename, '📊 Sobhainfra Tech — Official Rate List');
+        }
+        if (supabase && conversationId) {
+          await supabase.from('whatsapp_conversations').update({
+            conversation_mode: 'HUMAN TAKEOVER REQUESTED',
+            last_message_text: `[Rate List Requested via Sub-Button] ${matchedSub.title}`,
+            last_message_at: new Date().toISOString(),
+          }).eq('id', conversationId);
+          try {
+            await supabase.from('tasks').insert([{
+              organization_id: DEFAULT_ORG_ID,
+              title: `⚡ Rate List Inquiry: ${contactName}`,
+              description: `Customer clicked "${matchedSub.title}" on WhatsApp. Phone: ${fromPhone}.`,
+              assigned_to: activeRep,
+              priority: 'High',
+              due_date: new Date(Date.now() + 3600000).toISOString(),
+              status: 'Pending',
+              lead_id: leadId,
+            }]);
+          } catch {}
+        }
+        const respText = (matchedSub.response_text || orgSettings.whatsapp_get_quote_message || `💰 ${salutation}\n\nOur official rate lists and customized quotations are coordinated directly by our sales team. An executive will connect with you shortly!`)
+          .replace(/\{name\}/g, mainName || 'Sir/Madam')
+          .replace(/\{executive\}/g, activeRep);
+        await sendWhatsAppMessage(fromPhone, respText);
+        if (supabase && conversationId) {
+          try {
+            await supabase.from('whatsapp_messages').insert([{ organization_id: DEFAULT_ORG_ID, conversation_id: conversationId, direction: 'outbound', sender_type: 'system', body: respText, status: 'sent' }]);
+          } catch {}
+        }
+        return { statusCode: 200, headers, body: JSON.stringify({ status: 'sub_button_rate_list_handled' }) };
+      }
+
+      if (matchedSub.action === 'human' || matchedSub.action === 'call') {
+        if (supabase && conversationId) {
+          await supabase.from('whatsapp_conversations').update({
+            conversation_mode: 'HUMAN TAKEOVER REQUESTED',
+            last_message_text: `[Executive Callback Requested via Sub-Button] ${matchedSub.title}`,
+            last_message_at: new Date().toISOString(),
+          }).eq('id', conversationId);
+          try {
+            await supabase.from('tasks').insert([{
+              organization_id: DEFAULT_ORG_ID,
+              title: `⚡ Executive Callback: ${contactName}`,
+              description: `Customer requested callback via button "${matchedSub.title}". Phone: ${fromPhone}.`,
+              assigned_to: activeRep,
+              priority: 'High',
+              due_date: new Date(Date.now() + 3600000).toISOString(),
+              status: 'Pending',
+              lead_id: leadId,
+            }]);
+          } catch {}
+        }
+        const respText = (matchedSub.response_text || orgSettings.whatsapp_talk_executive_message || `👋 ${salutation}\n\nA dedicated sales specialist has been alerted and will connect with you directly shortly!`)
+          .replace(/\{name\}/g, mainName || 'Sir/Madam')
+          .replace(/\{executive\}/g, activeRep);
+        await sendWhatsAppMessage(fromPhone, respText);
+        if (supabase && conversationId) {
+          try {
+            await supabase.from('whatsapp_messages').insert([{ organization_id: DEFAULT_ORG_ID, conversation_id: conversationId, direction: 'outbound', sender_type: 'system', body: respText, status: 'sent' }]);
+          } catch {}
+        }
+        return { statusCode: 200, headers, body: JSON.stringify({ status: 'sub_button_human_handled' }) };
+      }
+
+      // Default sub-button action: custom text
+      const respText = (matchedSub.response_text || `Thank you! How else may we assist you with our products today?`)
+        .replace(/\{name\}/g, mainName || 'Sir/Madam')
+        .replace(/\{executive\}/g, activeRep);
+      await sendWhatsAppMessage(fromPhone, respText);
+      if (supabase && conversationId) {
+        try {
+          await supabase.from('whatsapp_messages').insert([{ organization_id: DEFAULT_ORG_ID, conversation_id: conversationId, direction: 'outbound', sender_type: 'system', body: respText, status: 'sent' }]);
+        } catch {}
+      }
+      return { statusCode: 200, headers, body: JSON.stringify({ status: 'sub_button_text_sent' }) };
+    }
+
+    if (matchedL1) {
+      console.log(JSON.stringify({ step: 'level1_button_click', btnId: matchedL1.id, btnTitle: matchedL1.title, action: matchedL1.action }));
+      const mainName = extractMainName(contactName);
+      const salutation = mainName ? `Namaste ${mainName}!` : 'Namaste!';
+      const activeRep = orgSettings.whatsapp_default_salesperson || assignedRep || 'Senior Sales Executive';
+      const hasSubButtons = Array.isArray(matchedL1.sub_buttons) && matchedL1.sub_buttons.length > 0;
+      const subButtonsToSend = hasSubButtons ? matchedL1.sub_buttons.slice(0, 3).map((sb, idx) => ({
+        id: sb.id || `sub_${idx}_${(sb.title || 'opt').toLowerCase().replace(/[^a-z0-9]/g, '_').slice(0, 15)}`,
+        title: sanitizeButtonTitle(sb.title || `Option ${idx + 1}`),
+      })) : null;
+
+      if (matchedL1.action === 'catalog') {
+        const catalogPdfUrl = orgSettings.whatsapp_catalog_pdf_url || BROCHURE_PUBLIC_URL;
+        const catalogFilename = orgSettings.whatsapp_catalog_filename || 'Sobha_Infratech_Product_Catalog.pdf';
+        await sendWhatsAppDocument(fromPhone, catalogPdfUrl, catalogFilename, '📄 Sobhainfra Tech — Official Product Catalog');
+        const accompanyingText = (matchedL1.response_text || `📄 ${salutation}\n\nPlease find our official *Sobhainfra Tech Product Catalog & Technical Specification Guide* attached above in PDF format.\n\nFeel free to choose an option below or ask any questions!`)
+          .replace(/\{name\}/g, mainName || 'Sir/Madam')
+          .replace(/\{executive\}/g, activeRep);
+
+        if (subButtonsToSend && subButtonsToSend.length > 0) {
+          await sendWhatsAppInteractive(fromPhone, accompanyingText, subButtonsToSend);
+        } else {
+          await sendWhatsAppMessage(fromPhone, accompanyingText);
+        }
+
+        if (supabase && conversationId) {
+          try {
+            await supabase.from('whatsapp_messages').insert([
+              { organization_id: DEFAULT_ORG_ID, conversation_id: conversationId, direction: 'outbound', sender_type: 'system', message_type: 'document', media_url: catalogPdfUrl, body: catalogFilename, status: 'sent' },
+              { organization_id: DEFAULT_ORG_ID, conversation_id: conversationId, direction: 'outbound', sender_type: 'system', message_type: 'text', body: accompanyingText, status: 'sent', raw_payload: { buttons: subButtonsToSend } }
+            ]);
+          } catch {}
+        }
+        return { statusCode: 200, headers, body: JSON.stringify({ status: 'l1_catalog_dispatched' }) };
+      }
+
+      if (matchedL1.action === 'quote' || matchedL1.action === 'rate_list') {
+        if (supabase && conversationId) {
+          await supabase.from('whatsapp_conversations').update({
+            conversation_mode: 'HUMAN TAKEOVER REQUESTED',
+            last_message_text: `[Rate List / Quote Requested] ${matchedL1.title}`,
+            last_message_at: new Date().toISOString(),
+          }).eq('id', conversationId);
+          try {
+            await supabase.from('tasks').insert([{
+              organization_id: DEFAULT_ORG_ID,
+              title: `⚡ Rate List & Quotation Request: ${contactName}`,
+              description: `Customer clicked "${matchedL1.title}" on WhatsApp. Phone: ${fromPhone}.`,
+              assigned_to: activeRep,
+              priority: 'High',
+              due_date: new Date(Date.now() + 3600000).toISOString(),
+              status: 'Pending',
+              lead_id: leadId,
+            }]);
+          } catch {}
+        }
+
+        const rateListPdfUrl = orgSettings.whatsapp_rate_list_pdf_url;
+        const rateListFilename = orgSettings.whatsapp_rate_list_filename || 'Sobha_Infratech_Official_Rate_List.pdf';
+        const autoSendRateListPdf = orgSettings.whatsapp_auto_send_rate_list !== 'false';
+        if (rateListPdfUrl && rateListPdfUrl.startsWith('http') && autoSendRateListPdf) {
+          try {
+            await sendWhatsAppDocument(fromPhone, rateListPdfUrl, rateListFilename, '📊 Sobhainfra Tech — Official Rate List');
+          } catch {}
+        }
+
+        const rateReply = (matchedL1.response_text || orgSettings.whatsapp_get_quote_message || `💰 ${salutation}\n\nOur official rate lists and customized project quotations are provided directly by our senior sales specialists based on your delivery location and order quantity.\n\nI have forwarded your request to our Senior Sales Team who will connect with you shortly! 📞`)
+          .replace(/\{name\}/g, mainName || 'Sir/Madam')
+          .replace(/\{executive\}/g, activeRep);
+
+        if (subButtonsToSend && subButtonsToSend.length > 0) {
+          await sendWhatsAppInteractive(fromPhone, rateReply, subButtonsToSend);
+        } else {
+          await sendWhatsAppMessage(fromPhone, rateReply);
+        }
+
+        if (supabase && conversationId) {
+          try {
+            await supabase.from('whatsapp_messages').insert([{
+              organization_id: DEFAULT_ORG_ID, conversation_id: conversationId,
+              direction: 'outbound', sender_type: 'system', body: rateReply, status: 'sent',
+              raw_payload: { buttons: subButtonsToSend }
+            }]);
+          } catch {}
+        }
+        return { statusCode: 200, headers, body: JSON.stringify({ status: 'l1_quote_dispatched' }) };
+      }
+
+      if (matchedL1.action === 'human' || matchedL1.action === 'executive') {
+        if (supabase && conversationId) {
+          await supabase.from('whatsapp_conversations').update({
+            conversation_mode: 'HUMAN TAKEOVER REQUESTED',
+            last_message_text: `[Executive Callback Requested] ${matchedL1.title}`,
+            last_message_at: new Date().toISOString(),
+          }).eq('id', conversationId);
+          try {
+            await supabase.from('tasks').insert([{
+              organization_id: DEFAULT_ORG_ID,
+              title: `⚡ Executive WhatsApp Callback: ${contactName}`,
+              description: `Customer requested executive callback via "${matchedL1.title}". Phone: ${fromPhone}.`,
+              assigned_to: activeRep,
+              priority: 'High',
+              due_date: new Date(Date.now() + 3600000).toISOString(),
+              status: 'Pending',
+              lead_id: leadId,
+            }]);
+          } catch {}
+        }
+
+        const handoffReply = (matchedL1.response_text || orgSettings.whatsapp_talk_executive_message || `👋 ${salutation}\n\nI have notified our Senior Sales Team regarding your inquiry.\n\n📞 A dedicated sales specialist has been alerted and will connect with you directly on this number shortly!`)
+          .replace(/\{name\}/g, mainName || 'Sir/Madam')
+          .replace(/\{executive\}/g, activeRep);
+
+        if (subButtonsToSend && subButtonsToSend.length > 0) {
+          await sendWhatsAppInteractive(fromPhone, handoffReply, subButtonsToSend);
+        } else {
+          await sendWhatsAppMessage(fromPhone, handoffReply);
+        }
+
+        if (supabase && conversationId) {
+          try {
+            await supabase.from('whatsapp_messages').insert([{
+              organization_id: DEFAULT_ORG_ID, conversation_id: conversationId,
+              direction: 'outbound', sender_type: 'system', body: handoffReply, status: 'sent',
+              raw_payload: { buttons: subButtonsToSend }
+            }]);
+          } catch {}
+        }
+        return { statusCode: 200, headers, body: JSON.stringify({ status: 'l1_human_dispatched' }) };
+      }
+
+      // Action is custom / text
+      const customReply = (matchedL1.response_text || `Thank you! Please choose an option below or type your message:`)
+        .replace(/\{name\}/g, mainName || 'Sir/Madam')
+        .replace(/\{executive\}/g, activeRep);
+
+      if (subButtonsToSend && subButtonsToSend.length > 0) {
+        await sendWhatsAppInteractive(fromPhone, customReply, subButtonsToSend);
+      } else {
+        await sendWhatsAppMessage(fromPhone, customReply);
+      }
+
+      if (supabase && conversationId) {
+        try {
+          await supabase.from('whatsapp_messages').insert([{
+            organization_id: DEFAULT_ORG_ID, conversation_id: conversationId,
+            direction: 'outbound', sender_type: 'system', body: customReply, status: 'sent',
+            raw_payload: { buttons: subButtonsToSend }
+          }]);
+        } catch {}
+      }
+      return { statusCode: 200, headers, body: JSON.stringify({ status: 'l1_custom_dispatched' }) };
+    }
+
     // 1. Check for Human Agent Handover
     const isHumanTrigger = buttonId.includes('human') ||
       buttonId.includes('agent') ||
@@ -2158,26 +2487,46 @@ exports.handler = async (event) => {
 
     console.log(JSON.stringify({ step: 'ai_reply', model: aiResult.modelUsed, replyLength: aiResult.reply?.length, latencyMs: aiLatencyMs, isHandoffPending }));
 
-    // ONLY attach the 3 interactive menu buttons if:
-    // 1. It is the FIRST greeting / initial contact (isFirstGreeting), OR
-    // 2. The customer explicitly asks for "menu", "options", "buttons", "help"
-    const isExplicitMenuRequest = ['menu', 'options', 'buttons', 'main menu', 'help', 'start', 'action'].some(w => lowerMsg === w || lowerMsg === `show ${w}` || lowerMsg === `get ${w}`);
-    const shouldSendButtons = isFirstGreeting || isExplicitMenuRequest;
+    // Determine if welcome interactive reply buttons should be attached:
+    const GREETING_TRIGGERS = [
+      'hi', 'hello', 'hey', 'namaste', 'pranam', 'start', 'help', 'menu', 'options', 'buttons',
+      'welcome', 'hola', 'good morning', 'good afternoon', 'good evening', 'hii', 'hiii', 'helo', 'main menu', 'action'
+    ];
+    const isGreetingOrMenu = GREETING_TRIGGERS.some(g => {
+      return lowerMsg === g ||
+        lowerMsg.startsWith(g + ' ') ||
+        lowerMsg.startsWith(g + ',') ||
+        lowerMsg.startsWith(g + '!') ||
+        lowerMsg === `show ${g}` ||
+        lowerMsg === `get ${g}`;
+    });
+
+    const isButtonsEnabled = orgSettings.whatsapp_enable_welcome_buttons !== 'false';
+    const shouldSendButtons = isButtonsEnabled && (isFirstGreeting || isGreetingOrMenu);
 
     let sendResult;
     let outboundButtons = null;
+    let outboundText = aiResult.reply;
 
     if (shouldSendButtons) {
-      const copilotButtons = [
-        { id: 'btn_catalog', title: '📄 Get Catalog' },
-        { id: 'btn_pricing', title: '💰 Get Quote' },
-        { id: 'btn_human', title: '👤 Talk to Executive' }
-      ];
-      sendResult = await sendWhatsAppInteractive(fromPhone, aiResult.reply, copilotButtons);
+      const configuredButtons = getWelcomeButtons(orgSettings);
+      const copilotButtons = configuredButtons.slice(0, 3).map((b, idx) => ({
+        id: b.id || `btn_${idx}_${(b.title || 'opt').toLowerCase().replace(/[^a-z0-9]/g, '_').slice(0, 15)}`,
+        title: sanitizeButtonTitle(b.title || b.label || `Option ${idx + 1}`),
+      }));
+
+      if (isGreetingOrMenu || isFirstGreeting) {
+        const mainName = extractMainName(contactName);
+        outboundText = (orgSettings.whatsapp_welcome_message || `Namaste {name}! Welcome to *Sobhainfra Tech Pvt. Ltd.*\n\nWe manufacture high-performance construction chemicals, AAC block fix mortars, ready-mix plasters, and tile adhesives.\n\nHow can we help you today? Please choose an option below or type your inquiry:`)
+          .replace(/\{name\}/g, mainName || 'Sir/Madam')
+          .replace(/\{executive\}/g, assignedRep || 'our Senior Sales Executive');
+      }
+
+      sendResult = await sendWhatsAppInteractive(fromPhone, outboundText, copilotButtons);
       outboundButtons = copilotButtons;
     } else {
       // In ongoing conversations & follow-ups: Send clean, natural text without repeating buttons!
-      sendResult = await sendWhatsAppMessage(fromPhone, aiResult.reply);
+      sendResult = await sendWhatsAppMessage(fromPhone, outboundText);
     }
 
     // Log outbound AI message + AI Run
@@ -2185,7 +2534,7 @@ exports.handler = async (event) => {
       try {
         await supabase.from('whatsapp_messages').insert([{
           organization_id: DEFAULT_ORG_ID, conversation_id: conversationId,
-          direction: 'outbound', sender_type: 'ai', body: aiResult.reply, status: 'sent',
+          direction: 'outbound', sender_type: 'ai', body: outboundText, status: 'sent',
           provider_message_id: sendResult.messages?.[0]?.id,
           raw_payload: { buttons: outboundButtons, isHandoffPending },
         }]);

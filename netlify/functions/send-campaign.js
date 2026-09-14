@@ -96,20 +96,20 @@ async function sendMetaWhatsAppInteractive(to, text, buttons = [], headerMedia =
     if (validButtons.length <= 3) {
       const interactiveObj = {
         type: 'button',
-        body: { text: text || 'Please select an option below:' },
+        body: { text: (text || 'Please select an option below:').slice(0, 1024) },
         action: {
           buttons: validButtons.slice(0, 3).map((b, idx) => ({
             type: 'reply',
             reply: {
-              id: b.id || `btn_${idx}_${(b.title || b.label || 'opt').toLowerCase().replace(/[^a-z0-9]/g, '_').slice(0, 20)}`,
-              title: (b.title || b.label).slice(0, 20),
+              id: String(b.id || `btn_${idx}_${(b.title || b.label || 'opt').toLowerCase().replace(/[^a-z0-9]/g, '_')}`).slice(0, 256),
+              title: String(b.title || b.label || 'Option').trim().slice(0, 20),
             },
           })),
         },
       };
 
       if (footerText) {
-        interactiveObj.footer = { text: footerText.slice(0, 60) };
+        interactiveObj.footer = { text: String(footerText).slice(0, 60) };
       }
 
       if (headerMedia && headerMedia.url && typeof headerMedia.url === 'string' && (headerMedia.url.startsWith('http://') || headerMedia.url.startsWith('https://'))) {
@@ -133,16 +133,16 @@ async function sendMetaWhatsAppInteractive(to, text, buttons = [], headerMedia =
       // 4+ buttons -> WhatsApp Interactive List Menu
       const interactiveObj = {
         type: 'list',
-        body: { text: text || 'Please choose from the menu below:' },
+        body: { text: (text || 'Please choose from the menu below:').slice(0, 1024) },
         action: {
           button: 'View Options',
           sections: [
             {
               title: 'Available Options',
               rows: validButtons.slice(0, 10).map((b, idx) => ({
-                id: b.id || `opt_${idx}_${(b.title || b.label || 'opt').toLowerCase().replace(/[^a-z0-9]/g, '_').slice(0, 20)}`,
-                title: (b.title || b.label).slice(0, 24),
-                description: (b.description || b.actionType || 'Tap to select').slice(0, 72),
+                id: String(b.id || `opt_${idx}_${(b.title || b.label || 'opt').toLowerCase().replace(/[^a-z0-9]/g, '_')}`).slice(0, 200),
+                title: String(b.title || b.label || 'Option').trim().slice(0, 24),
+                description: String(b.description || b.actionType || 'Tap to select').trim().slice(0, 72),
               })),
             },
           ],
@@ -150,7 +150,7 @@ async function sendMetaWhatsAppInteractive(to, text, buttons = [], headerMedia =
       };
 
       if (footerText) {
-        interactiveObj.footer = { text: footerText.slice(0, 60) };
+        interactiveObj.footer = { text: String(footerText).slice(0, 60) };
       }
 
       payload = {
@@ -173,8 +173,27 @@ async function sendMetaWhatsAppInteractive(to, text, buttons = [], headerMedia =
 
     const data = await res.json();
     if (data.error) {
-      console.warn('[Interactive Dispatch] Fallback to standard message:', data.error.message);
-      // Fallback to text/media if interactive fails (e.g. template constraint)
+      console.warn('[Interactive Dispatch] Error with interactive payload:', data.error.message);
+      // If header caused the issue, retry interactive buttons without header so buttons are preserved!
+      if (payload.interactive?.header) {
+        try {
+          const retryPayload = { ...payload, interactive: { ...payload.interactive } };
+          delete retryPayload.interactive.header;
+          const retryRes = await fetch(url, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${WA_TOKEN}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify(retryPayload),
+          });
+          const retryData = await retryRes.json();
+          if (!retryData.error && retryData.messages?.[0]?.id) {
+            console.log('[Interactive Dispatch] Recovered successfully without media header');
+            return { success: true, messageId: retryData.messages[0].id };
+          }
+        } catch (retryErr) {
+          console.warn('[Interactive Retry Error]', retryErr.message);
+        }
+      }
+      // Fallback to text/media if interactive fails completely
       return sendMetaWhatsAppMediaOrText(to, text, headerMedia?.type || 'text', headerMedia?.url, headerMedia?.filename);
     }
     return { success: true, messageId: data.messages?.[0]?.id };
