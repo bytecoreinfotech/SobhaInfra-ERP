@@ -2510,6 +2510,8 @@ export async function processCampaignBatch(campaignId, batchSize = 50, extraData
         templateName: extraData.templateName || extraData.template_name || null,
         templateLanguage: extraData.templateLanguage || extraData.template_language || 'en',
         templateParams: extraData.templateParams || extraData.template_params || null,
+        // Full Meta template components array for smart payload building
+        templateComponents: extraData.templateComponents || null,
       }),
     });
     const result = await res.json();

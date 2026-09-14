@@ -219,19 +219,100 @@ async function sendMetaWhatsAppMediaOrText(to, text, mediaType = 'text', mediaUr
   }
 }
 
-// ─── 3.1 Send Meta Approved Template Message for Cold Campaigns ──────────────
-async function sendWhatsAppTemplate(to, templateName, language = 'en', params = []) {
+// ─── 3.1 Send Meta Approved Template Message (Smart Component Builder) ───────
+// Accepts either pre-fetched templateComponents (from sync/DB) or fetches from Meta.
+// Dynamically builds the correct components array based on header type, body vars, etc.
+async function sendWhatsAppTemplate(to, templateName, language = 'en', bodyParams = [], templateComponents = null, mediaUrl = null) {
   if (!WA_TOKEN || !PHONE_ID) {
     return { success: true, messageId: 'mock-tpl-' + Date.now(), simulated: true };
   }
   try {
     const phone = String(to).replace(/[^\d]/g, '');
+
+    // ── Build Components Array from Template Structure ──
     const components = [];
-    if (params && params.length > 0) {
+
+    // 1. HEADER component — only if template has IMAGE/VIDEO/DOCUMENT header
+    if (templateComponents && Array.isArray(templateComponents)) {
+      const headerComp = templateComponents.find(c => c.type === 'HEADER');
+      if (headerComp) {
+        if (headerComp.format === 'IMAGE') {
+          // Use provided mediaUrl, or fall back to the example image from Meta
+          const imageLink = mediaUrl
+            || headerComp.example?.header_handle?.[0]
+            || null;
+          if (imageLink) {
+            components.push({
+              type: 'header',
+              parameters: [{ type: 'image', image: { link: imageLink } }],
+            });
+          }
+        } else if (headerComp.format === 'VIDEO') {
+          const videoLink = mediaUrl || headerComp.example?.header_handle?.[0] || null;
+          if (videoLink) {
+            components.push({
+              type: 'header',
+              parameters: [{ type: 'video', video: { link: videoLink } }],
+            });
+          }
+        } else if (headerComp.format === 'DOCUMENT') {
+          const docLink = mediaUrl || headerComp.example?.header_handle?.[0] || null;
+          if (docLink) {
+            components.push({
+              type: 'header',
+              parameters: [{ type: 'document', document: { link: docLink } }],
+            });
+          }
+        }
+        // TEXT headers with variables would need params too, but typically static
+      }
+    }
+
+    // 2. BODY component — only send params if template actually has {{1}}, {{2}} etc
+    let expectedParamCount = 0;
+    if (templateComponents && Array.isArray(templateComponents)) {
+      const bodyComp = templateComponents.find(c => c.type === 'BODY');
+      if (bodyComp && bodyComp.text) {
+        const varMatches = bodyComp.text.match(/\{\{\d+\}\}/g);
+        expectedParamCount = varMatches ? varMatches.length : 0;
+      }
+    }
+
+    if (expectedParamCount > 0 && bodyParams && bodyParams.length > 0) {
+      // Trim or pad params to match expected count exactly
+      const finalParams = [];
+      for (let i = 0; i < expectedParamCount; i++) {
+        finalParams.push(bodyParams[i] || 'Valued Client');
+      }
       components.push({
         type: 'body',
-        parameters: params.map(p => ({ type: 'text', text: String(p) })),
+        parameters: finalParams.map(p => ({ type: 'text', text: String(p) })),
       });
+    }
+
+    // 3. BUTTON components — FLOW buttons REQUIRE explicit component with flow_token
+    // QUICK_REPLY and URL buttons are auto-rendered by Meta from the template definition
+    if (templateComponents && Array.isArray(templateComponents)) {
+      const buttonsComp = templateComponents.find(c => c.type === 'BUTTONS');
+      if (buttonsComp && buttonsComp.buttons) {
+        buttonsComp.buttons.forEach((btn, idx) => {
+          if (btn.type === 'FLOW') {
+            components.push({
+              type: 'button',
+              sub_type: 'flow',
+              index: String(idx),
+              parameters: [{
+                type: 'action',
+                action: {
+                  flow_token: 'campaign_broadcast_' + Date.now(),
+                  // Use the flow's navigate_screen if specified in the template
+                  ...(btn.navigate_screen ? { flow_action_data: { screen: btn.navigate_screen } } : {}),
+                },
+              }],
+            });
+          }
+        });
+      }
     }
 
     const payload = {
@@ -245,6 +326,8 @@ async function sendWhatsAppTemplate(to, templateName, language = 'en', params = 
       },
     };
 
+    console.log(`[sendWhatsAppTemplate] Sending "${templateName}" (${language}) to ${phone} | components:`, JSON.stringify(components));
+
     const res = await fetch(`https://graph.facebook.com/v20.0/${PHONE_ID}/messages`, {
       method: 'POST',
       headers: {
@@ -256,14 +339,35 @@ async function sendWhatsAppTemplate(to, templateName, language = 'en', params = 
 
     const data = await res.json();
     if (data.error) {
-      console.warn(`[Campaign Meta Template Error] ${templateName}:`, data.error.message);
+      console.error(`[sendWhatsAppTemplate] ❌ "${templateName}" FAILED:`, JSON.stringify(data.error));
       return { success: false, error: `${data.error.code}: ${data.error.message}` };
     }
+    console.log(`[sendWhatsAppTemplate] ✅ "${templateName}" delivered to ${phone} | wamid: ${data.messages?.[0]?.id}`);
     return { success: true, messageId: data.messages?.[0]?.id, isTemplate: true };
   } catch (err) {
+    console.error(`[sendWhatsAppTemplate] Exception for "${templateName}":`, err.message);
     return { success: false, error: err.message };
   }
 }
+
+// Helper: Fetch template components from Meta API (for fallback templates)
+async function fetchTemplateComponents(templateName, language) {
+  try {
+    const wabaId = process.env.WHATSAPP_WABA_ID || '2375569266307315';
+    const res = await fetch(`https://graph.facebook.com/v20.0/${wabaId}/message_templates?name=${templateName}`, {
+      headers: { 'Authorization': `Bearer ${WA_TOKEN}` },
+    });
+    const data = await res.json();
+    if (data.data && data.data.length > 0) {
+      const tpl = data.data.find(t => t.language === language) || data.data[0];
+      return { components: tpl.components || [], language: tpl.language };
+    }
+  } catch (err) {
+    console.warn(`[fetchTemplateComponents] Failed for ${templateName}:`, err.message);
+  }
+  return { components: [], language: language || 'en' };
+}
+
 
 // ─── 4. Personalization helper ────────────────────────────────────────────────
 function isGenericName(name) {
@@ -385,9 +489,10 @@ exports.handler = async (event) => {
       buttonFlow = null,
       automationMode = 'hybrid',
       recipients = [],
-      templateName = null,         // <-- THE KEY FIX: was missing from destructuring
-      templateLanguage = 'en',     // language code for Meta template (matches sync-templates.js storage)
-      templateParams = null,       // explicit params array if provided
+      templateName = null,
+      templateLanguage = 'en',
+      templateParams = null,
+      templateComponents = null,   // Full Meta template components array for smart payload building
     } = JSON.parse(event.body || '{}');
 
     console.log('[send-campaign] Incoming request:', { campaignId, templateName, recipientsCount: recipients.length, hasButtons: interactiveButtons.length });
@@ -463,6 +568,24 @@ exports.handler = async (event) => {
       hasInteractiveButtons: effectiveButtons.length > 0,
     };
 
+    // ── Resolve Template Components (for smart Meta API payload building) ──
+    // If templateComponents weren't passed from the frontend, fetch from Meta API
+    let effectiveTemplateComponents = templateComponents || null;
+    let effectiveTemplateLang = templateLanguage || 'en';
+
+    const isApprovedMetaTemplate = templateName &&
+      templateName !== 'Interactive Broadcast Flow' &&
+      !templateName.includes('Interactive Broadcast');
+
+    if (isApprovedMetaTemplate && !effectiveTemplateComponents) {
+      console.log(`[send-campaign] No templateComponents passed for "${templateName}", fetching from Meta API...`);
+      const fetched = await fetchTemplateComponents(templateName, effectiveTemplateLang);
+      effectiveTemplateComponents = fetched.components;
+      // Use the actual language from Meta (e.g. 'en_IN' not 'en')
+      effectiveTemplateLang = fetched.language || effectiveTemplateLang;
+      console.log(`[send-campaign] Resolved template: lang=${effectiveTemplateLang}, components=${effectiveTemplateComponents?.length || 0}`);
+    }
+
     // 2. Process Batch with Meta WhatsApp Cloud API
     for (const item of targetRecipients) {
       const phone = item.phone || (typeof item === 'string' ? item : '');
@@ -477,26 +600,19 @@ exports.handler = async (event) => {
 
       // 1. If an approved Meta template was selected, send it directly
       // This uses the official template API — works outside 24h window for all contacts
-      const isApprovedMetaTemplate = templateName &&
-        templateName !== 'Interactive Broadcast Flow' &&
-        !templateName.includes('Interactive Broadcast');
-
       if (isApprovedMetaTemplate) {
         const clientName = (recipientLead.name && !isGenericName(recipientLead.name)) ? recipientLead.name.trim() : 'Valued Client';
         const company = recipientLead.company_name || effectiveDefaults.company || 'Sobhainfra Tech';
-        // Use explicitly provided params, or default to [name, company] for 2-variable templates
+        // Build a generous params array — sendWhatsAppTemplate will trim to match template's actual var count
         const params = Array.isArray(templateParams) && templateParams.length > 0
           ? templateParams
-          : [clientName, company];
+          : [clientName, company, effectiveDefaults.product || 'our products', effectiveDefaults.phone || ''];
 
-        console.log(`[send-campaign] Sending approved template "${templateName}" → ${phone} | params:`, params);
-        sendRes = await sendWhatsAppTemplate(phone, templateName, templateLanguage, params);
+        console.log(`[send-campaign] Sending approved template "${templateName}" (${effectiveTemplateLang}) → ${phone}`);
+        sendRes = await sendWhatsAppTemplate(phone, templateName, effectiveTemplateLang, params, effectiveTemplateComponents, effectiveMediaUrl);
         if (sendRes.success) {
           usedTemplate = true;
           usedTemplateName = templateName;
-          console.log(`[send-campaign] ✅ Template "${templateName}" delivered → ${phone} | wamid: ${sendRes.messageId}`);
-        } else {
-          console.warn(`[send-campaign] ❌ Template "${templateName}" FAILED → ${phone} | error: ${sendRes.error}`);
         }
       }
 
@@ -537,24 +653,24 @@ exports.handler = async (event) => {
           console.warn(`[send-campaign] 24h window closed for ${phone}. Attempting template fallback cascade...`);
           const clientName = (recipientLead.name && !isGenericName(recipientLead.name)) ? recipientLead.name.trim() : 'Valued Client';
 
-          // Cascade 1: Try custom Sobha template
-          const tpl1 = await sendWhatsAppTemplate(phone, 'sobha_catalog_campaign_v1', 'en', [
-            clientName,
-            effectiveDefaults.company || 'Sobhainfra Tech',
-          ]);
+          // Cascade 1: Try custom Sobha template (fetch its components from Meta for correct payload)
+          const sobha = await fetchTemplateComponents('sobha_catalog_campaign_v1', 'en');
+          const tpl1 = await sendWhatsAppTemplate(phone, 'sobha_catalog_campaign_v1', sobha.language,
+            [clientName, effectiveDefaults.company || 'Sobhainfra Tech'],
+            sobha.components
+          );
           if (tpl1.success) {
             sendRes = tpl1;
             usedTemplate = true;
             usedTemplateName = 'sobha_catalog_campaign_v1';
-            console.log(`[send-campaign] ✅ Template fallback SUCCESS: sobha_catalog_campaign_v1 → ${phone}`);
           } else {
             // Cascade 2: Try Meta's built-in hello_world template (every WABA has this)
-            const tpl2 = await sendWhatsAppTemplate(phone, 'hello_world', 'en_US', []);
+            const hw = await fetchTemplateComponents('hello_world', 'en_US');
+            const tpl2 = await sendWhatsAppTemplate(phone, 'hello_world', hw.language, [], hw.components);
             if (tpl2.success) {
               sendRes = tpl2;
               usedTemplate = true;
               usedTemplateName = 'hello_world';
-              console.log(`[send-campaign] ✅ Template fallback SUCCESS: hello_world → ${phone}`);
             } else {
               console.error(`[send-campaign] ❌ All template fallbacks FAILED for ${phone}`);
             }

@@ -1038,10 +1038,13 @@ const CampaignStudio = () => {
         interactiveButtons: isMetaTemplate ? [] : buttons, // no interactive buttons for Meta template sends
         buttonFlow: isMetaTemplate ? null : { buttons, automationMode },
         recipients: effectiveRecipients,
-        // Template dispatch fields — the root cause of the failure was missing these
+        // Template dispatch fields
         templateName: metaTemplateName,
         templateLanguage: metaTemplateLanguage,
         templateParams: null, // let server auto-build from recipient name + company
+        // Pass the full template components so the Netlify function can dynamically
+        // build the correct Meta API payload (header image, body params, etc.)
+        templateComponents: isMetaTemplate ? (selectedMetaTemplate?.components || null) : null,
       });
       setLaunchSuccess(true);
     }
