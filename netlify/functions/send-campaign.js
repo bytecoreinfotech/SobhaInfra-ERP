@@ -222,7 +222,7 @@ async function sendMetaWhatsAppMediaOrText(to, text, mediaType = 'text', mediaUr
 // ─── 3.1 Send Meta Approved Template Message (Smart Component Builder) ───────
 // Accepts either pre-fetched templateComponents (from sync/DB) or fetches from Meta.
 // Dynamically builds the correct components array based on header type, body vars, etc.
-async function sendWhatsAppTemplate(to, templateName, language = 'en', bodyParams = [], templateComponents = null, mediaUrl = null) {
+async function sendWhatsAppTemplate(to, templateName, language = 'en', bodyParams = [], templateComponents = null, mediaUrl = null, preUploadedMediaId = null) {
   if (!WA_TOKEN || !PHONE_ID) {
     return { success: true, messageId: 'mock-tpl-' + Date.now(), simulated: true };
   }
@@ -233,38 +233,55 @@ async function sendWhatsAppTemplate(to, templateName, language = 'en', bodyParam
     const components = [];
 
     // 1. HEADER component — only if template has IMAGE/VIDEO/DOCUMENT header
+    // Priority: preUploadedMediaId > user mediaUrl (public link) > download+reupload from CDN
     if (templateComponents && Array.isArray(templateComponents)) {
       const headerComp = templateComponents.find(c => c.type === 'HEADER');
-      if (headerComp) {
-        if (headerComp.format === 'IMAGE') {
-          // Use provided mediaUrl, or fall back to the example image from Meta
-          const imageLink = mediaUrl
-            || headerComp.example?.header_handle?.[0]
-            || null;
-          if (imageLink) {
-            components.push({
-              type: 'header',
-              parameters: [{ type: 'image', image: { link: imageLink } }],
-            });
+      if (headerComp && (headerComp.format === 'IMAGE' || headerComp.format === 'VIDEO' || headerComp.format === 'DOCUMENT')) {
+        const mediaTypeLower = headerComp.format.toLowerCase();
+
+        if (preUploadedMediaId) {
+          // Best path: use the pre-uploaded media_id (already uploaded once before the loop)
+          const mediaParam = { type: mediaTypeLower };
+          mediaParam[mediaTypeLower] = { id: preUploadedMediaId };
+          components.push({ type: 'header', parameters: [mediaParam] });
+        } else if (mediaUrl && !mediaUrl.includes('scontent.whatsapp.net') && !mediaUrl.includes('lookaside.fbsbx.com')) {
+          // User-provided public URL — use directly as link
+          const mediaParam = { type: mediaTypeLower };
+          if (mediaTypeLower === 'document') {
+            mediaParam[mediaTypeLower] = { link: mediaUrl, filename: 'Brochure.pdf' };
+          } else {
+            mediaParam[mediaTypeLower] = { link: mediaUrl };
           }
-        } else if (headerComp.format === 'VIDEO') {
-          const videoLink = mediaUrl || headerComp.example?.header_handle?.[0] || null;
-          if (videoLink) {
-            components.push({
-              type: 'header',
-              parameters: [{ type: 'video', video: { link: videoLink } }],
-            });
-          }
-        } else if (headerComp.format === 'DOCUMENT') {
-          const docLink = mediaUrl || headerComp.example?.header_handle?.[0] || null;
-          if (docLink) {
-            components.push({
-              type: 'header',
-              parameters: [{ type: 'document', document: { link: docLink } }],
-            });
+          components.push({ type: 'header', parameters: [mediaParam] });
+        } else {
+          // Last resort: download from CDN and re-upload now
+          const cdnUrl = mediaUrl || headerComp.example?.header_handle?.[0] || null;
+          if (cdnUrl) {
+            try {
+              const dlRes = await fetch(cdnUrl);
+              if (dlRes.ok) {
+                const buffer = await dlRes.arrayBuffer();
+                const mimeType = mediaTypeLower === 'image' ? 'image/jpeg' : mediaTypeLower === 'video' ? 'video/mp4' : 'application/pdf';
+                const ext = mediaTypeLower === 'image' ? '.jpg' : mediaTypeLower === 'video' ? '.mp4' : '.pdf';
+                const formData = new FormData();
+                formData.append('messaging_product', 'whatsapp');
+                formData.append('type', mimeType);
+                formData.append('file', new Blob([buffer], { type: mimeType }), `header${ext}`);
+                const uploadRes = await fetch(`https://graph.facebook.com/v20.0/${PHONE_ID}/media`, {
+                  method: 'POST',
+                  headers: { 'Authorization': `Bearer ${WA_TOKEN}` },
+                  body: formData,
+                });
+                const uploadData = await uploadRes.json();
+                if (uploadData.id) {
+                  const mediaParam = { type: mediaTypeLower };
+                  mediaParam[mediaTypeLower] = { id: uploadData.id };
+                  components.push({ type: 'header', parameters: [mediaParam] });
+                }
+              }
+            } catch (e) { console.warn('[sendWhatsAppTemplate] Header media fallback failed:', e.message); }
           }
         }
-        // TEXT headers with variables would need params too, but typically static
       }
     }
 
@@ -586,6 +603,55 @@ exports.handler = async (event) => {
       console.log(`[send-campaign] Resolved template: lang=${effectiveTemplateLang}, components=${effectiveTemplateComponents?.length || 0}`);
     }
 
+    // ── Pre-upload template header media (ONCE, before recipient loop) ──
+    // If the template has an IMAGE/VIDEO/DOCUMENT header and the URL is from Meta's CDN
+    // (scontent.whatsapp.net), download and re-upload to WhatsApp Media API once.
+    // This avoids re-uploading per recipient and prevents 131053 "Media upload error".
+    let preUploadedMediaId = null;
+    if (isApprovedMetaTemplate && effectiveTemplateComponents && Array.isArray(effectiveTemplateComponents)) {
+      const headerComp = effectiveTemplateComponents.find(c => c.type === 'HEADER');
+      if (headerComp && (headerComp.format === 'IMAGE' || headerComp.format === 'VIDEO' || headerComp.format === 'DOCUMENT')) {
+        const sourceUrl = effectiveMediaUrl || headerComp.example?.header_handle?.[0] || null;
+        if (sourceUrl) {
+          const isMetaCdn = sourceUrl.includes('scontent.whatsapp.net') || sourceUrl.includes('lookaside.fbsbx.com');
+          if (isMetaCdn) {
+            try {
+              console.log(`[send-campaign] Pre-uploading ${headerComp.format} header from Meta CDN...`);
+              const dlRes = await fetch(sourceUrl);
+              if (dlRes.ok) {
+                const buffer = await dlRes.arrayBuffer();
+                const fmt = headerComp.format.toLowerCase();
+                const mimeType = fmt === 'image' ? 'image/jpeg' : fmt === 'video' ? 'video/mp4' : 'application/pdf';
+                const ext = fmt === 'image' ? '.jpg' : fmt === 'video' ? '.mp4' : '.pdf';
+
+                const formData = new FormData();
+                formData.append('messaging_product', 'whatsapp');
+                formData.append('type', mimeType);
+                formData.append('file', new Blob([buffer], { type: mimeType }), `header${ext}`);
+
+                const uploadRes = await fetch(`https://graph.facebook.com/v20.0/${PHONE_ID}/media`, {
+                  method: 'POST',
+                  headers: { 'Authorization': `Bearer ${WA_TOKEN}` },
+                  body: formData,
+                });
+                const uploadData = await uploadRes.json();
+                if (uploadData.id) {
+                  preUploadedMediaId = uploadData.id;
+                  console.log(`[send-campaign] ✅ Header media pre-uploaded: id=${preUploadedMediaId} (${buffer.byteLength} bytes)`);
+                } else {
+                  console.warn(`[send-campaign] ⚠️ Header media pre-upload failed:`, JSON.stringify(uploadData));
+                }
+              } else {
+                console.warn(`[send-campaign] ⚠️ Header media download failed: ${dlRes.status}`);
+              }
+            } catch (preUpErr) {
+              console.warn(`[send-campaign] ⚠️ Header media pre-upload error:`, preUpErr.message);
+            }
+          }
+        }
+      }
+    }
+
     // 2. Process Batch with Meta WhatsApp Cloud API
     for (const item of targetRecipients) {
       const phone = item.phone || (typeof item === 'string' ? item : '');
@@ -609,7 +675,7 @@ exports.handler = async (event) => {
           : [clientName, company, effectiveDefaults.product || 'our products', effectiveDefaults.phone || ''];
 
         console.log(`[send-campaign] Sending approved template "${templateName}" (${effectiveTemplateLang}) → ${phone}`);
-        sendRes = await sendWhatsAppTemplate(phone, templateName, effectiveTemplateLang, params, effectiveTemplateComponents, effectiveMediaUrl);
+        sendRes = await sendWhatsAppTemplate(phone, templateName, effectiveTemplateLang, params, effectiveTemplateComponents, effectiveMediaUrl, preUploadedMediaId);
         if (sendRes.success) {
           usedTemplate = true;
           usedTemplateName = templateName;
