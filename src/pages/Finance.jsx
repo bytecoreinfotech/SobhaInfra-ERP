@@ -18,7 +18,7 @@ import { buildCustomerIndex, matchCustomer } from '../lib/customerMatcher';
 import {
   reconcileCustomerInvoices, reconcileVendorInvoices, getCustomerLedgerStatement,
   getCustomerPendingBills, isSalesVoucher, isPurchaseVoucher, isReceiptVoucher,
-  computeTallyDebtors, computeMonthlyRegister, computeCollectionStats
+  computeTallyDebtors, computeMonthlyRegister, computeCollectionStats, getDaysOverdue
 } from '../lib/reconciliation';
 import { supabase } from '../lib/supabase';
 import { useCompany } from '../context/CompanyContext';
@@ -45,6 +45,22 @@ const decodeHtml = (str) => {
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
     .replace(/&apos;/g, "'");
+};
+
+// Safe date formatter that prevents UTC midnight timezone shifts
+const formatDateSafe = (dStr) => {
+  if (!dStr) return '—';
+  try {
+    const s = String(dStr).split('T')[0].trim();
+    const parts = s.split('-');
+    if (parts.length === 3) {
+      const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+      return d.toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' });
+    }
+    return new Date(dStr).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' });
+  } catch {
+    return String(dStr);
+  }
 };
 
 /**
@@ -1690,11 +1706,33 @@ const Finance = () => {
                               <td style={{ fontSize: '0.78rem', verticalAlign: 'middle', padding: '0.5rem 0.75rem', whiteSpace: 'nowrap' }}>
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.1rem' }}>
                                   <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
-                                    {inv.invoice_date ? new Date(inv.invoice_date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
+                                    {inv.invoice_date ? formatDateSafe(inv.invoice_date) : '—'}
                                   </div>
-                                  {!isSettled && inv.due_date && (
-                                    <div style={{ fontSize: '0.67rem', color: 'var(--text-muted)' }}>
-                                      Due: {new Date(inv.due_date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' })}
+                                  {!isSettled && (inv.due_date || inv.invoice_date) && (
+                                    <div style={{
+                                      fontSize: '0.67rem',
+                                      color: inv.status === 'Overdue' ? 'var(--danger, #dc2626)' : 'var(--text-muted)',
+                                      fontWeight: inv.status === 'Overdue' ? 600 : 400
+                                    }}>
+                                      {inv.due_date && inv.due_date !== inv.invoice_date ? (
+                                        <span>
+                                          Due: {formatDateSafe(inv.due_date)}
+                                          {inv.status === 'Overdue' && (
+                                            <span style={{ marginLeft: '0.25rem', fontWeight: 700 }}>
+                                              ({getDaysOverdue(inv.due_date, inv.invoice_date)}d overdue)
+                                            </span>
+                                          )}
+                                        </span>
+                                      ) : (
+                                        <span>
+                                          Due: Immediate
+                                          {inv.status === 'Overdue' && (
+                                            <span style={{ marginLeft: '0.25rem', fontWeight: 700 }}>
+                                              ({getDaysOverdue(inv.due_date, inv.invoice_date)}d overdue)
+                                            </span>
+                                          )}
+                                        </span>
+                                      )}
                                     </div>
                                   )}
                                 </div>

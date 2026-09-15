@@ -1026,11 +1026,12 @@ def parse_voucher_block(block, fallback_company: str = "", ledger_phone_map: dic
             applied_credit_days = l_days
             due_date = (dt_obj + timedelta(days=l_days)).strftime("%Y-%m-%d")
 
-    # Fallback to default 30 days if still unassigned and dt_obj is valid
+    # If no explicit bill due date or credit terms in Tally, payment is due on invoice date (0 days / immediate)
     if not due_date and dt_obj:
-        applied_credit_days = 30
-        due_date = (dt_obj + timedelta(days=30)).strftime("%Y-%m-%d")
+        applied_credit_days = 0
+        due_date = dt_obj.strftime("%Y-%m-%d")
     elif not due_date:
+        applied_credit_days = 0
         due_date = datetime.now().strftime("%Y-%m-%d")
 
     # Voucher type classification
@@ -1615,7 +1616,7 @@ def parse_any_tally_xml(xml_text, fallback_company: str = "", ledger_phone_map: 
                 if raw_date and len(raw_date) == 8:
                     try:
                         dt = datetime.strptime(raw_date, "%Y%m%d")
-                        due_date = (dt + timedelta(days=30)).strftime("%Y-%m-%d")
+                        due_date = dt.strftime("%Y-%m-%d")
                     except ValueError:
                         due_date = datetime.now().strftime("%Y-%m-%d")
                 else:

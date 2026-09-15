@@ -309,6 +309,10 @@ exports.handler = async (event) => {
               } catch {}
             }
           }
+          // Default due date to invoice date (immediate / due on presentation) if not explicitly set
+          if (!resolvedDueDate && invoiceDateStr) {
+            resolvedDueDate = invoiceDateStr;
+          }
 
           finalPdfUrl = finalPdfUrl || v.pdf_url || v.metadata?.pdf_url || null;
 

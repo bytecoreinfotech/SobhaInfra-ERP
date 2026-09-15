@@ -32,12 +32,17 @@ function parseDate(dStr) {
   }
 }
 
-export function isPastDue(dueDateStr) {
-  if (!dueDateStr) return false;
+export function isPastDue(dueDateStr, invoiceDateStr = null) {
+  const target = dueDateStr || invoiceDateStr;
+  if (!target) return false;
   try {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const due = new Date(dueDateStr);
+    const s = String(target).split('T')[0].trim();
+    const parts = s.split('-');
+    const due = parts.length === 3
+      ? new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]))
+      : new Date(s);
     due.setHours(0, 0, 0, 0);
     return due < today;
   } catch {
@@ -45,12 +50,17 @@ export function isPastDue(dueDateStr) {
   }
 }
 
-export function getDaysOverdue(dueDateStr) {
-  if (!dueDateStr) return 0;
+export function getDaysOverdue(dueDateStr, invoiceDateStr = null) {
+  const target = dueDateStr || invoiceDateStr;
+  if (!target) return 0;
   try {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const due = new Date(dueDateStr);
+    const s = String(target).split('T')[0].trim();
+    const parts = s.split('-');
+    const due = parts.length === 3
+      ? new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]))
+      : new Date(s);
     due.setHours(0, 0, 0, 0);
     const diff = today.getTime() - due.getTime();
     return diff > 0 ? Math.floor(diff / (1000 * 60 * 60 * 24)) : 0;
@@ -365,7 +375,8 @@ export function reconcileCustomerInvoices(rawInvoices = []) {
       const pending = Math.max(0, billAmt - paid);
       s.paid_amount = Math.round(paid * 100) / 100;
       s.pending_amount = Math.round(pending * 100) / 100;
-      s.status = s.pending_amount <= 0.01 ? 'Paid' : (isPastDue(s.due_date) ? 'Overdue' : 'Pending');
+      s.days_overdue = getDaysOverdue(s.due_date, s.invoice_date);
+      s.status = s.pending_amount <= 0.01 ? 'Paid' : (isPastDue(s.due_date, s.invoice_date) ? 'Overdue' : 'Pending');
       s._reconciled = true;
     }
 
@@ -577,8 +588,10 @@ export function reconcileVendorInvoices(rawInvoices = []) {
 
       if (pending <= 0.01) {
         pb.status = 'Paid';
+        pb.days_overdue = 0;
       } else {
-        const overdueDays = getDaysOverdue(pb.due_date);
+        const overdueDays = getDaysOverdue(pb.due_date, pb.invoice_date);
+        pb.days_overdue = overdueDays;
         pb.status = overdueDays > 0 ? 'Overdue' : 'Pending';
       }
     }

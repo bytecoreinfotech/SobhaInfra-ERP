@@ -192,9 +192,7 @@ function parseTallyVouchers(xmlString, fallbackCompany = '', phoneMap = {}) {
     let dueDate = null;
     if (date && date.length === 8) {
       invoiceDate = `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}`;
-      const d = new Date(invoiceDate);
-      d.setDate(d.getDate() + 30);
-      dueDate = d.toISOString().split('T')[0];
+      dueDate = invoiceDate;
     } else if (date) {
       invoiceDate = date;
       dueDate = date;
