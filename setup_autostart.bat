@@ -111,7 +111,8 @@ echo   SOBHAINFRA ERP - TALLY SYNC LIVE LOGS
 echo   (Press Ctrl+C to exit monitor - Sync keeps running in background)
 echo ============================================================
 echo.
-echo powershell -Command "Get-Content -Path '%INSTALL_DIR%\sync.log' -Wait -Tail 30"
+echo if not exist "%INSTALL_DIR%\sync.log" type nul ^> "%INSTALL_DIR%\sync.log"
+echo powershell -NoProfile -Command "Get-Content -Path '%INSTALL_DIR%\sync.log' -Wait -Tail 30"
 ) > "%INSTALL_DIR%\view_sync_log.bat"
 
 :: Also put view_sync_log.bat on Desktop for easy monitoring
@@ -128,6 +129,7 @@ if %errorlevel% neq 0 (
 )
 
 :: 10. Kill any old zombie tally-sync instance and start fresh now
+powershell -NoProfile -Command "Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like '*tally-sync.py*' -and $_.Name -ne 'powershell.exe' } | Stop-Process -Force" >nul 2>&1
 wmic process where "commandline like '%%tally-sync.py%%' and not name='wmic.exe'" call terminate >nul 2>&1
 wscript.exe "%INSTALL_DIR%\start_silent.vbs"
 
