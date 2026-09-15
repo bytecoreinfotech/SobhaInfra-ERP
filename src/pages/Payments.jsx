@@ -7,7 +7,7 @@ import {
   ChevronDown, ChevronUp, Users, Download, Printer,
   PauseCircle, PlayCircle, CalendarClock, MessageSquare
 } from 'lucide-react';
-import { getInvoices, getCustomerMaster, triggerSheetSync, getSheetSyncLog, invalidateInvoicesCache, invalidateCustomerMasterCache, pauseInvoiceReminder, resumeInvoiceReminder } from '../lib/db';
+import { getInvoices, getCustomerMaster, triggerSheetSync, getSheetSyncLog, invalidateInvoicesCache, invalidateCustomerMasterCache, pauseInvoiceReminder, resumeInvoiceReminder, getTallyMasterSummary } from '../lib/db';
 import { reconcileCustomerInvoices, isSalesVoucher, computeTallyDebtors } from '../lib/reconciliation';
 import { buildCustomerIndex, matchCustomer } from '../lib/customerMatcher';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
@@ -65,6 +65,7 @@ const Payments = () => {
   const { activeCompany, isConsolidated, companyProfiles } = useCompany();
   const [allInvoices, setAllInvoices]         = useState([]);
   const [customerMaster, setCustomerMaster]   = useState([]);
+  const [tallyMasterSummary, setTallyMasterSummary] = useState(null);
   const [loading, setLoading]                 = useState(true);
   const [syncing, setSyncing]                 = useState(false);
   const [syncMsg, setSyncMsg]                 = useState('');
@@ -150,13 +151,15 @@ const Payments = () => {
 
   const loadAll = async (forceRefresh = false) => {
     setLoading(true);
-    const [invRes, masterRes, logRes] = await Promise.all([
+    const [invRes, masterRes, logRes, tallyRes] = await Promise.all([
       getInvoices({ forceRefresh }),
       getCustomerMaster({ forceRefresh }),
       getSheetSyncLog(),
+      getTallyMasterSummary({ forceRefresh }),
     ]);
     setAllInvoices(invRes.data || []);
     setCustomerMaster(masterRes.data || []);
+    setTallyMasterSummary(tallyRes.data || null);
     if (logRes.data?.synced_at) setLastSynced(logRes.data.synced_at);
     setLoading(false);
   };
@@ -398,8 +401,8 @@ const Payments = () => {
 
   // Dynamic Tally Sundry Debtors & Advances from live database
   const tallySummary = useMemo(() => {
-    return computeTallyDebtors(allInvoices, activeCompany, isConsolidated);
-  }, [allInvoices, activeCompany, isConsolidated]);
+    return computeTallyDebtors(allInvoices, activeCompany, isConsolidated, tallyMasterSummary);
+  }, [allInvoices, activeCompany, isConsolidated, tallyMasterSummary]);
 
   const fmtAmount = (n) => '₹' + Number(n || 0).toLocaleString('en-IN');
   const fmtCurrency = (n) => '₹' + Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 });

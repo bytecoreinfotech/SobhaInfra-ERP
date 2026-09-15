@@ -4,10 +4,10 @@ import {
   Bot, Zap, RefreshCw, IndianRupee, Target, Phone, CheckCircle2,
   FileSpreadsheet, ExternalLink, Printer, Calendar
 } from 'lucide-react';
-import { getDashboardStats, getLeads, getCampaigns, getInvoices, getAutomationRuns, syncToGoogleSheets, exportLiveTableCsv, getCustomerMaster, invalidateInvoicesCache } from '../lib/db';
+import { getDashboardStats, getLeads, getCampaigns, getInvoices, getAutomationRuns, syncToGoogleSheets, exportLiveTableCsv, getCustomerMaster, invalidateInvoicesCache, getTallyMasterSummary } from '../lib/db';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { buildCustomerIndex, matchCustomer } from '../lib/customerMatcher';
-import { reconcileCustomerInvoices, isSalesVoucher } from '../lib/reconciliation';
+import { reconcileCustomerInvoices, isSalesVoucher, isReceiptVoucher, isPurchaseVoucher, computeTallyDebtors } from '../lib/reconciliation';
 import { useCompany } from '../context/CompanyContext';
 import { Skeleton, SkeletonStats } from '../components/Skeleton';
 import './Pages.css';
@@ -23,17 +23,17 @@ const getDirection = (inv) => {
   if (numUpper.includes('LEDGER-')) return { isVendor: dir === 'payable' || dir === 'paid_out', isCustomer: dir === 'receivable', isLedger: true };
 
   // 2. Sales Invoices (Customer Receivables)
-  if (['sales', 'sales order', 'tax invoice'].some(t => vtype.includes(t)) || /^(srp|sb)\/./.test(num) || /^(inv|tax)\//.test(num)) {
+  if (isSalesVoucher(inv)) {
     return { isVendor: false, isLedger: false };
   }
 
   // 3. Customer Receipts (Money IN from customer)
-  if (['receipt', 'bank receipt', 'cash receipt'].some(t => vtype.includes(t)) || /^(rec|rcpt|rct)-/.test(num) || /^sb-r/.test(num) || dir === 'received') {
+  if (isReceiptVoucher(inv)) {
     return { isVendor: false, isLedger: false };
   }
 
   // 4. Vendor Purchases (Money OUT to supplier)
-  if (['purchase', 'purchase order'].some(t => vtype.includes(t)) || /^(pur|po)-/.test(num) || /^(sb-pur|kbs\/|idak|ne0k|sb-i|ipaa|ybs\/|lcr|v00[2-9])/.test(num) || dir === 'payable') {
+  if (isPurchaseVoucher(inv)) {
     return { isVendor: true, isLedger: false };
   }
 
@@ -52,13 +52,9 @@ const getDirection = (inv) => {
     return { isVendor: false, isLedger: false };
   }
 
-  // 8. Journal Entries — Driver-* party names are outgoing wage payments
-  if (vtype === 'journal' || /^(sb-jou|jou)-/.test(num)) {
-    const partyName = (inv?.client_name || '').toLowerCase();
-    if (dir === 'paid_out' || partyName.startsWith('driver-') || partyName.startsWith('driver ')) {
-      return { isVendor: true, isLedger: false };
-    }
-    return { isVendor: false, isLedger: false };
+  // 8. Journal Entries (Internal adjustments/wages) — always non-sales
+  if (vtype === 'journal' || /^(sb-jou|jou|srp-jou)-/.test(num)) {
+    return { isVendor: true, isLedger: false };
   }
 
   // 9. VCH-* with no voucher_type and no direction = outgoing payment voucher
@@ -83,6 +79,9 @@ function getPeriodWindow(period) {
   } else if (period === 'quarter') {
     from = new Date(now);
     from.setMonth(now.getMonth() - 3);
+  } else if (period === 'all') {
+    from = new Date(0);
+    return { from, to: new Date(now.getTime() + 86400000) };
   } else {
     // default: month
     from = new Date(now);
@@ -106,6 +105,7 @@ const Reports = () => {
   const [campaigns, setCampaigns] = useState([]);
   const [allInvoices, setAllInvoices] = useState([]);
   const [customerMaster, setCustomerMaster] = useState([]);
+  const [tallyMasterSummary, setTallyMasterSummary] = useState(null);
   const [autoRuns, setAutoRuns] = useState([]);
   const [stats, setStats] = useState(null);
   const [syncingSheets, setSyncingSheets] = useState(false);
@@ -170,13 +170,14 @@ const Reports = () => {
 
   const loadData = async () => {
     setLoading(true);
-    const [sRes, lRes, cRes, iRes, aRes, mRes] = await Promise.all([
+    const [sRes, lRes, cRes, iRes, aRes, mRes, tRes] = await Promise.all([
       getDashboardStats(),
       getLeads(),
       getCampaigns(),
       getInvoices(),
       getAutomationRuns(),
       getCustomerMaster(),
+      getTallyMasterSummary(),
     ]);
     setStats(sRes.data || {});
     setLeads(lRes.data || []);
@@ -184,6 +185,7 @@ const Reports = () => {
     setAllInvoices(iRes.data || []);
     setCustomerMaster(mRes.data || []);
     setAutoRuns(aRes.data || []);
+    setTallyMasterSummary(tRes.data || null);
     setLoading(false);
   };
 
@@ -211,6 +213,11 @@ const Reports = () => {
     if (n >= 100000) return '₹' + (n / 100000).toFixed(1) + 'L';
     return '₹' + Number(n || 0).toLocaleString('en-IN');
   };
+
+  // ── Authoritative Tally Sundry Debtors & Advances from live database ──────────
+  const tallySummary = useMemo(() => {
+    return computeTallyDebtors(allInvoices, activeCompany, isConsolidated, tallyMasterSummary);
+  }, [allInvoices, activeCompany, isConsolidated, tallyMasterSummary]);
 
   // ── Period-filtered data ──────────────────────────────────────────────────
   const { from: periodFrom, to: periodTo } = useMemo(() => getPeriodWindow(period), [period]);
@@ -245,10 +252,10 @@ const Reports = () => {
   const convertedLeads = filteredLeads.filter(l => l.status === 'Converted').length;
   const conversionRate = totalLeads > 0 ? ((convertedLeads / totalLeads) * 100).toFixed(1) : '0.0';
 
-  const totalWaSent = filteredCampaigns.reduce((s, c) => s + (c.total_sent || 0), 0);
-  const totalWaDelivered = filteredCampaigns.reduce((s, c) => s + (c.delivered || 0), 0);
-  const totalWaRead = filteredCampaigns.reduce((s, c) => s + (c.read_count || 0), 0);
-  const totalWaReplied = filteredCampaigns.reduce((s, c) => s + (c.replied || 0), 0);
+  const totalWaSent = filteredCampaigns.reduce((s, c) => s + (c.total_sent || c.sent_count || c.sent || 0), 0);
+  const totalWaDelivered = filteredCampaigns.reduce((s, c) => s + (c.delivered || c.total_delivered || c.delivered_count || 0), 0);
+  const totalWaRead = filteredCampaigns.reduce((s, c) => s + (c.total_read ?? c.read_count ?? c.read ?? 0), 0);
+  const totalWaReplied = filteredCampaigns.reduce((s, c) => s + (c.total_replied ?? c.replied ?? c.replies ?? 0), 0);
 
   // ── Sales Invoices only for revenue & collections (excludes customer receipt vouchers from billing totals)
   const salesInvoices = useMemo(() => filteredInvoices.filter(isSalesVoucher), [filteredInvoices]);
@@ -317,6 +324,23 @@ const Reports = () => {
           paid: mInvoices.reduce((s, i) => s + (i.status === 'Paid' ? Number(i.amount || 0) : Number(i.paid_amount || 0)), 0),
         };
       });
+    } else if (period === 'all') {
+      // Month-by-month buckets for recorded financial months (Apr to Sep)
+      const months = [
+        { label: 'Apr', m: 3 }, { label: 'May', m: 4 }, { label: 'Jun', m: 5 },
+        { label: 'Jul', m: 6 }, { label: 'Aug', m: 7 }, { label: 'Sep', m: 8 }
+      ];
+      return months.map(mon => {
+        const mInvoices = salesOnly.filter(inv => {
+          const d = parseDate(inv.invoice_date || inv.due_date || inv.created_at);
+          return d && d.getMonth() === mon.m;
+        });
+        return {
+          label: mon.label,
+          invoiced: mInvoices.reduce((s, i) => s + Number(i.amount || 0), 0),
+          paid: mInvoices.reduce((s, i) => s + (i.status === 'Paid' ? Number(i.amount || 0) : Number(i.paid_amount || 0)), 0),
+        };
+      });
     } else {
       // Last 30 days in 4 weekly buckets
       return Array.from({ length: 4 }, (_, i) => {
@@ -338,7 +362,7 @@ const Reports = () => {
   }, [period, invoices, periodFrom, periodTo]);
 
   const maxRevBar = Math.max(1, ...revenueChartData.map(d => d.invoiced || d.paid));
-  const periodLabel = period === 'week' ? 'Last 7 Days' : period === 'quarter' ? 'Last 3 Months' : 'Last 30 Days';
+  const periodLabel = period === 'week' ? 'Last 7 Days' : period === 'quarter' ? 'Last 3 Months' : period === 'all' ? 'All Time (Full FY)' : 'Last 30 Days';
 
   return (
     <div className="page-container animate-fade-in">
@@ -352,10 +376,10 @@ const Reports = () => {
         </div>
         <div className="page-actions">
           <div style={{ display: 'flex', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
-            {['week', 'month', 'quarter'].map(p => (
+            {['week', 'month', 'quarter', 'all'].map(p => (
               <button key={p} onClick={() => setPeriod(p)} className="btn"
                 style={{ borderRadius: 0, background: period === p ? 'var(--accent-primary)' : 'var(--bg-tertiary)', color: period === p ? 'white' : 'var(--text-secondary)', padding: '0.4rem 0.875rem', textTransform: 'capitalize' }}>
-                {p}
+                {p === 'all' ? 'All Time' : p}
               </button>
             ))}
           </div>
@@ -376,7 +400,7 @@ const Reports = () => {
 
       {loading ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-          <SkeletonStats count={4} />
+          <SkeletonStats count={5} />
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1.25rem' }}>
             <div className="glass-card" style={{ padding: '1.5rem', minHeight: '260px' }}>
               <Skeleton width="160px" height="18px" borderRadius="4px" style={{ marginBottom: '1rem' }} />
@@ -394,6 +418,7 @@ const Reports = () => {
           <div className="stats-grid">
             {[
               { label: 'Total Revenue', value: fmtAmount(totalInvoiced), trend: `${fmtAmount(totalPaid)} Collected`, up: true, color: 'var(--success)', bg: 'var(--success-bg)', icon: <TrendingUp size={20} /> },
+              { label: 'Tally Outstanding', value: fmtAmount(tallySummary.net), trend: tallySummary.credit > 0 ? `Dr: ${fmtAmount(tallySummary.debit)} · Adv: ${fmtAmount(tallySummary.credit)}` : `Dr: ${fmtAmount(tallySummary.debit)} (Net)`, up: false, color: '#ef4444', bg: 'rgba(239,68,68,0.1)', icon: <IndianRupee size={20} /> },
               { label: 'CRM Leads', value: totalLeads.toString(), trend: `${hotLeads} Hot · ${convertedLeads} Won`, up: true, color: 'var(--accent-primary)', bg: 'var(--accent-glow)', icon: <Users size={20} /> },
               { label: 'WA Messages Sent', value: totalWaSent.toLocaleString(), trend: `${totalWaRead} Read · ${totalWaReplied} Replied`, up: true, color: 'var(--whatsapp)', bg: 'var(--whatsapp-bg)', icon: <MessageCircle size={20} /> },
               { label: 'Conversion Rate', value: conversionRate + '%', trend: `${convertedLeads} of ${totalLeads} leads`, up: parseFloat(conversionRate) > 0, color: 'var(--warning)', bg: 'var(--warning-bg)', icon: <Target size={20} /> },
@@ -664,7 +689,7 @@ const Reports = () => {
                 {
                   name: 'Finance / Tally',
                   usage: salesInvoices.length > 0 ? Math.round((salesInvoices.filter(i => i.status === 'Paid').length / salesInvoices.length) * 100) : 0,
-                  note: `${salesInvoices.filter(i => i.status === 'Paid').length} of ${salesInvoices.length} sales invoices paid`,
+                  note: `${fmtAmount(tallySummary.net)} Tally net due · ${salesInvoices.filter(i => i.status === 'Paid').length}/${salesInvoices.length} paid bills`,
                   color: 'var(--warning)'
                 },
                 {

@@ -293,6 +293,8 @@ const Dashboard = () => {
   const tasksDueCt = taskList.filter(t => t.status !== 'Done').length;
   const totalWaSent = campaigns.reduce((s, c) => s + (c.total_sent || c.sent || 0), 0);
   const totalWaDelivered = campaigns.reduce((s, c) => s + (c.delivered || c.total_delivered || c.total_sent || 0), 0);
+  const totalWaRead = campaigns.reduce((s, c) => s + (c.total_read ?? c.read_count ?? c.read ?? 0), 0);
+  const totalWaReplied = campaigns.reduce((s, c) => s + (c.total_replied ?? c.replied ?? c.replies ?? 0), 0);
 
   // Pipeline funnel
   const STAGES = ['New', 'Hot', 'Warm', 'Cold', 'Converted', 'Lost'];
@@ -403,6 +405,8 @@ const Dashboard = () => {
       `"Hot Leads","${hotLeads}"`,
       `"Converted Leads","${convertedLeads}"`,
       `"WhatsApp Delivered","${totalWaDelivered}"`,
+      `"WhatsApp Read","${totalWaRead}"`,
+      `"WhatsApp Replied","${totalWaReplied}"`,
       `"WhatsApp Broadcasts","${campaigns.length}"`,
       `"Open Tasks","${tasksDueCt}"`,
       ``,
@@ -506,7 +510,7 @@ const Dashboard = () => {
             </div>
             <div className="stat-footer">
               <span className="stat-trend up"><ArrowUpRight size={13} /> {totalWaSent} Sent</span>
-              <span className="stat-period">{campaigns.length} Campaigns</span>
+              <span className="stat-period">{totalWaRead} Read · {campaigns.length} Campaigns</span>
             </div>
           </div>
 

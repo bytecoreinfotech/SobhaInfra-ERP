@@ -852,15 +852,14 @@ export function computeCompanyDebtors(invoices = [], companyName = '', masterSum
                       (compUpper.includes('SHOBHA') && !isBuildtech && !compUpper.includes('TECH'));
 
   // 1. Check if authoritative Tally Master Summary exists for this company
-  // For Buildtech, calculate 100% dynamically from live database records and live vouchers as requested
   let matchedMaster = null;
-  if (!isBuildtech && masterSummaries && typeof masterSummaries === 'object') {
+  if (masterSummaries && typeof masterSummaries === 'object') {
     if (companyName && masterSummaries[companyName]) {
       matchedMaster = masterSummaries[companyName];
     } else if (companyName) {
       const foundKey = Object.keys(masterSummaries).find(k => {
         const kUpper = k.toUpperCase();
-        return kUpper === compUpper || (isReadyPlast && kUpper.includes('READY PLAST'));
+        return kUpper === compUpper || (isBuildtech && kUpper.includes('BUILDTECH')) || (isReadyPlast && kUpper.includes('READY PLAST'));
       });
       if (foundKey) matchedMaster = masterSummaries[foundKey];
     }
