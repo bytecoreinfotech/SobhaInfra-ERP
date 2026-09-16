@@ -101,36 +101,73 @@ echo Set oShell = CreateObject^("WScript.Shell"^)
 echo oShell.Run "cmd /c cd /d ""%INSTALL_DIR%"" ^&^& ""%PY_EXE%"" tally-sync.py >> ""%INSTALL_DIR%\sync.log"" 2^>^&1", 0, False
 ) > "%INSTALL_DIR%\start_silent.vbs"
 
-:: 8. Create a quick helper to view live logs
+:: 8. Create a rich, 1-click Sync Status & Log Monitor Tool
 (
 echo @echo off
-echo title SobhaInfra ERP - Live Sync Log Monitor
-echo color 0A
+echo title SobhaInfra ERP - Tally Sync Status ^& Live Monitor
+echo color 0B
 echo ============================================================
-echo   SOBHAINFRA ERP - TALLY SYNC LIVE LOGS
-echo   (Press Ctrl+C to exit monitor - Sync keeps running in background)
+echo   SOBHAINFRA ERP - TALLY SYNC STATUS ^& DIAGNOSTICS
 echo ============================================================
 echo.
-echo if not exist "%INSTALL_DIR%\sync.log" type nul ^> "%INSTALL_DIR%\sync.log"
-echo powershell -NoProfile -Command "Get-Content -Path '%INSTALL_DIR%\sync.log' -Wait -Tail 30"
-) > "%INSTALL_DIR%\view_sync_log.bat"
+echo [*] 1. Checking if Background Sync Process is Running...
+echo.
+powershell -NoProfile -Command "$p = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like '*tally-sync.py*' -and $_.Name -ne 'powershell.exe' }; if ($p) { Write-Host '  [OK] SYNC PROCESS IS RUNNING (Process ID: ' $p.ProcessId ')' -ForegroundColor Green } else { Write-Host '  [WARNING] Sync process is NOT currently running!' -ForegroundColor Yellow; Write-Host '  [*] Starting sync now...'; Start-Process wscript.exe -ArgumentList '\"%INSTALL_DIR%\start_silent.vbs\"'; Start-Sleep -Seconds 2; Write-Host '  [OK] Started background sync!' -ForegroundColor Green }"
+echo.
+echo [*] 2. Checking TallyPrime Connection on Port 9000...
+powershell -NoProfile -Command "$t = Test-NetConnection -ComputerName 127.0.0.1 -Port 9000 -WarningAction SilentlyContinue; if ($t.TcpTestSucceeded) { Write-Host '  [OK] TALLYPRIME IS CONNECTED ^& RESPONDING ON PORT 9000' -ForegroundColor Green } else { Write-Host '  [!] TallyPrime is closed or Port 9000 is not enabled.' -ForegroundColor Red; Write-Host '      Please open TallyPrime. (In Tally: F1 Help -^> Settings -^> Connectivity -^> Client/Server: Both, Port: 9000)' -ForegroundColor Yellow }"
+echo.
+echo [*] 3. Recent Real-Time Sync Logs (Last 15 lines):
+echo ------------------------------------------------------------
+if exist "%INSTALL_DIR%\sync.log" (
+    powershell -NoProfile -Command "Get-Content -Path '%INSTALL_DIR%\sync.log' -Tail 15"
+) else (
+    echo [No logs created yet. Waiting for first sync cycle...]
+)
+echo ------------------------------------------------------------
+echo.
+echo Options:
+echo   [1] Watch live streaming logs (Press Ctrl+C to exit)
+echo   [2] Force restart sync process now
+echo   [3] Exit
+echo.
+set /p "CHOICE=Enter your choice [1, 2, or 3]: "
+if "%CHOICE%"=="1" (
+    cls
+    echo Streaming live logs... (Press Ctrl+C to return)
+    powershell -NoProfile -Command "Get-Content -Path '%INSTALL_DIR%\sync.log' -Wait -Tail 30"
+)
+if "%CHOICE%"=="2" (
+    echo Restarting sync process...
+    powershell -NoProfile -Command "Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like '*tally-sync.py*' -and $_.Name -ne 'powershell.exe' } | Stop-Process -Force"
+    wscript.exe "%INSTALL_DIR%\start_silent.vbs"
+    echo [OK] Restarted! Check status again.
+    pause
+)
+) > "%INSTALL_DIR%\Check_Tally_Sync_Status.bat"
 
-:: Also put view_sync_log.bat on Desktop for easy monitoring
+:: 9. Copy Status Tool to Desktop (Both Public Desktop and User Desktop)
+if exist "C:\Users\Public\Desktop" (
+    copy /y "%INSTALL_DIR%\Check_Tally_Sync_Status.bat" "C:\Users\Public\Desktop\Check_Tally_Sync_Status.bat" >nul 2>&1
+)
 if exist "%USERPROFILE%\Desktop" (
-    copy /y "%INSTALL_DIR%\view_sync_log.bat" "%USERPROFILE%\Desktop\Check_Tally_Sync_Logs.bat" >nul 2>&1
+    copy /y "%INSTALL_DIR%\Check_Tally_Sync_Status.bat" "%USERPROFILE%\Desktop\Check_Tally_Sync_Status.bat" >nul 2>&1
 )
 
-:: 9. Register Scheduled Task (Runs on logon, highest privileges, hidden)
+:: 10. Install to Windows "All Users" Startup Folder (Runs 100% reliably for EVERY user on boot)
+set "ALL_STARTUP=C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Startup"
+if exist "%ALL_STARTUP%" (
+    echo [*] Installing to Windows Startup folder for all users...
+    copy /y "%INSTALL_DIR%\start_silent.vbs" "%ALL_STARTUP%\Start_SobhaInfra_Sync.vbs" >nul 2>&1
+)
+
+:: 11. Register Scheduled Task as secondary backup
 echo [*] Registering Windows Scheduled Task (%TASK_NAME%)...
 schtasks /delete /tn "%TASK_NAME%" /f >nul 2>&1
-schtasks /create /tn "%TASK_NAME%" /tr "wscript.exe \"%INSTALL_DIR%\start_silent.vbs\"" /sc ONLOGON /ru "%USERNAME%" /rl HIGHEST /f >nul 2>&1
-if %errorlevel% neq 0 (
-    schtasks /create /tn "%TASK_NAME%" /tr "wscript.exe \"%INSTALL_DIR%\start_silent.vbs\"" /sc ONLOGON /rl HIGHEST /f >nul 2>&1
-)
+schtasks /create /tn "%TASK_NAME%" /tr "wscript.exe \"%INSTALL_DIR%\start_silent.vbs\"" /sc ONLOGON /rl HIGHEST /f >nul 2>&1
 
-:: 10. Kill any old zombie tally-sync instance and start fresh now
+:: 12. Kill any old zombie instance and start fresh now
 powershell -NoProfile -Command "Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like '*tally-sync.py*' -and $_.Name -ne 'powershell.exe' } | Stop-Process -Force" >nul 2>&1
-wmic process where "commandline like '%%tally-sync.py%%' and not name='wmic.exe'" call terminate >nul 2>&1
 wscript.exe "%INSTALL_DIR%\start_silent.vbs"
 
 echo.
@@ -146,7 +183,7 @@ echo      as soon as the client opens TallyPrime.
 echo.
 echo  Installation: %INSTALL_DIR%
 echo  Live Logs:    %INSTALL_DIR%\sync.log
-echo  Desktop Tool: "Check_Tally_Sync_Logs.bat"
+echo  Desktop Tool: "Check_Tally_Sync_Status.bat"
 echo.
 echo  NOTE FOR CLIENT:
 echo  The client just needs to open TallyPrime as usual.

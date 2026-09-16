@@ -92,8 +92,10 @@ function AppInner() {
   if (loading) return <LoadingScreen />;
   if (!user) return <Login />;
 
+  const isShowcase = user?.role === 'Showcase Viewer';
+
   return (
-    <div className="app-layout">
+    <div className={`app-layout ${isShowcase ? 'showcase-read-only' : ''}`}>
       <GlobalTooltip />
       <Sidebar
         collapsed={sidebarCollapsed}
@@ -102,6 +104,36 @@ function AppInner() {
         onMobileClose={() => setMobileOpen(false)}
       />
       <div className={`app-main ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
+        {isShowcase && (
+          <div style={{
+            background: 'linear-gradient(90deg, #1e3a8a 0%, #2563eb 50%, #4f46e5 100%)',
+            color: '#ffffff',
+            padding: '0.4rem 1rem',
+            fontSize: '0.78rem',
+            fontWeight: 600,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            borderBottom: '1px solid rgba(255,255,255,0.15)',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+            position: 'sticky',
+            top: 0,
+            zIndex: 1000
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <span style={{ fontSize: '0.9rem' }}>👁️</span>
+              <span><strong>Client Showcase Preview Account</strong> &bull; Full Platform Demonstration Tour</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.72rem' }}>
+              <span style={{ background: 'rgba(255,255,255,0.2)', padding: '0.15rem 0.45rem', borderRadius: '4px' }}>
+                All Modules Unlocked
+              </span>
+              <span style={{ opacity: 0.85 }}>
+                (Live Dispatches & Changes Disabled)
+              </span>
+            </div>
+          </div>
+        )}
         <Header onMobileMenuOpen={() => setMobileOpen(true)} />
         <main className="main-content">
           <Routes>

@@ -43,6 +43,12 @@ const ROLE_ACTION_MAP = {
     'field:checkin': false, 'field:view_all': false, 'field:approve': false,
     'roles:manage': false, 'settings:manage': false,
   },
+  'Showcase Viewer': {
+    'tasks:create': false, 'tasks:assign': false, 'tasks:complete': false, 'tasks:delete': false,
+    'tasks:view_all': true, 'tasks:manage_templates': false, 'tasks:view_analytics': true,
+    'field:checkin': false, 'field:view_all': true, 'field:approve': false,
+    'roles:manage': false, 'settings:manage': false,
+  },
 };
 
 export const AuthProvider = ({ children }) => {
@@ -275,6 +281,8 @@ export const AuthProvider = ({ children }) => {
   const hasPermission = (moduleOrPerm) => {
     if (!user) return false;
     if (user.role === 'Super Admin' || user.permissions?.includes('all')) return true;
+    // Showcase Viewer has read-only access to all modules for full product tour
+    if (user.role === 'Showcase Viewer') return true;
     if (user.permissions?.includes(moduleOrPerm)) return true;
 
     // Use cached matrix from Supabase (loaded on mount)
@@ -298,6 +306,8 @@ export const AuthProvider = ({ children }) => {
   // ACTION-LEVEL: controls what specific operations a user can do
   const canPerformAction = (actionCode) => {
     if (!user) return false;
+    // Showcase Viewer is strictly read-only; cannot perform any mutating actions
+    if (user.role === 'Showcase Viewer') return false;
     if (user.role === 'Super Admin' || user.permissions?.includes('all')) return true;
     if (user.permissions?.includes(actionCode)) return true;
 
@@ -318,6 +328,7 @@ export const AuthProvider = ({ children }) => {
         hasPermission,
         canPerformAction,
         isDemo: !!user?.isDemo,
+        isShowcaseGuest: user?.role === 'Showcase Viewer',
         organizationId: user?.organization_id || DEFAULT_ORG_ID,
       }}
     >
