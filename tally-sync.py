@@ -41,21 +41,23 @@ if sys.platform == 'win32':
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Auto-load .env file if present in script directory
-env_path = os.path.join(SCRIPT_DIR, ".env")
-if os.path.exists(env_path):
-    try:
-        with open(env_path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    k, v = line.split("=", 1)
-                    k = k.strip()
-                    v = v.strip().strip("'\"")
-                    if k and k not in os.environ:
-                        os.environ[k] = v
-    except Exception as e:
-        pass
+# Auto-load .env or env file if present in script directory
+for env_name in [".env", "env"]:
+    env_path = os.path.join(SCRIPT_DIR, env_name)
+    if os.path.exists(env_path):
+        try:
+            with open(env_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, v = line.split("=", 1)
+                        k = k.strip()
+                        v = v.strip().strip("'\"")
+                        if k and k not in os.environ:
+                            os.environ[k] = v
+            break
+        except Exception as e:
+            pass
 
 # -- Configuration --
 TALLY_HOST        = os.environ.get("TALLY_HOST", "http://localhost:9000")

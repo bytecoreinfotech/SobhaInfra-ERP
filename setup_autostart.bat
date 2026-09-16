@@ -1,7 +1,7 @@
 @echo off
-setlocal enabledelayedexpansion
 title SobhaInfra ERP - Client PC Auto-Start Setup
 color 0A
+cd /d "%~dp0"
 
 echo ============================================================
 echo   SOBHAINFRA ERP - TALLY AUTO-START SETUP (ONE-TIME)
@@ -21,21 +21,20 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-:: 2. Determine Current Folder and Permanent Installation Directory
+:: 2. Source and Target Directories
 set "SOURCE_DIR=%~dp0"
 if "%SOURCE_DIR:~-1%"=="\" set "SOURCE_DIR=%SOURCE_DIR:~0,-1%"
-set "INSTALL_DIR=C:\Users\Public\SobhaInfra_Sync"
-set "TASK_NAME=SobhaInfra_Tally_Sync"
+set "INSTALL_DIR=%SOURCE_DIR%"
 
-echo [*] Source directory:      %SOURCE_DIR%
-echo [*] Installation target:   %INSTALL_DIR%
+echo [*] Setup running from: %SOURCE_DIR%
 echo.
 
-:: 3. Verify tally-sync.py exists in source
+:: 3. Verify tally-sync.py exists
 if not exist "%SOURCE_DIR%\tally-sync.py" (
     color 0C
     echo [ERROR] 'tally-sync.py' was not found in:
     echo %SOURCE_DIR%
+    echo.
     echo Please make sure setup_autostart.bat and tally-sync.py are in the same folder.
     echo.
     pause
@@ -52,7 +51,6 @@ if not defined PY_EXE (
         if not defined PY_EXE set "PY_EXE=%%I"
     )
 )
-:: Common Windows installation fallback paths
 if not defined PY_EXE (
     for /d %%D in ("%LOCALAPPDATA%\Programs\Python\Python*") do (
         if exist "%%D\python.exe" set "PY_EXE=%%D\python.exe"
@@ -64,130 +62,77 @@ if not defined PY_EXE (
     )
 )
 if not defined PY_EXE (
+    for /d %%D in ("C:\Python*") do (
+        if exist "%%D\python.exe" set "PY_EXE=%%D\python.exe"
+    )
+)
+
+if not defined PY_EXE (
     color 0C
     echo [ERROR] Python was not found on this computer!
     echo.
     echo Please install Python 3.10+ from https://www.python.org/downloads/
-    echo CRITICAL: During installation, check the box:
+    echo IMPORTANT: During installation, make sure to check:
     echo    [x] "Add Python to PATH"
     echo.
     pause
     exit /b 1
 )
 
-echo [*] Python found: %PY_EXE%
+echo [*] Python executable found: %PY_EXE%
+echo.
 
-:: 5. Install required Python packages
-echo [*] Installing/Verifying Python dependencies (requests)...
+:: 5. Install Python dependencies
+echo [*] Checking required Python packages (requests)...
 "%PY_EXE%" -m pip install requests --quiet >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [*] Retrying pip install requests...
+    echo [*] Installing requests...
     "%PY_EXE%" -m pip install requests
 )
 
-:: 6. Create permanent installation directory
-if not exist "%INSTALL_DIR%" mkdir "%INSTALL_DIR%"
-
-:: Copy files
-echo [*] Copying sync files to permanent directory...
-copy /y "%SOURCE_DIR%\tally-sync.py" "%INSTALL_DIR%\" >nul
-if exist "%SOURCE_DIR%\.env" copy /y "%SOURCE_DIR%\.env" "%INSTALL_DIR%\" >nul
-if exist "%SOURCE_DIR%\requirements.txt" copy /y "%SOURCE_DIR%\requirements.txt" "%INSTALL_DIR%\" >nul
-
-:: 7. Create silent VBS launcher
+:: 6. Create silent background launcher (WScript VBS)
 echo [*] Creating silent background runner...
-(
-echo Set oShell = CreateObject^("WScript.Shell"^)
-echo oShell.Run "cmd /c cd /d ""%INSTALL_DIR%"" ^&^& ""%PY_EXE%"" tally-sync.py >> ""%INSTALL_DIR%\sync.log"" 2^>^&1", 0, False
-) > "%INSTALL_DIR%\start_silent.vbs"
+echo Set oShell = CreateObject("WScript.Shell") > "%INSTALL_DIR%\start_silent.vbs"
+echo oShell.Run "cmd /c cd /d ""%INSTALL_DIR%"" ^&^& ""%PY_EXE%"" tally-sync.py >> ""%INSTALL_DIR%\sync.log"" 2^>^&1", 0, False >> "%INSTALL_DIR%\start_silent.vbs"
 
-:: 8. Create a rich, 1-click Sync Status & Log Monitor Tool
-(
-echo @echo off
-echo title SobhaInfra ERP - Tally Sync Status ^& Live Monitor
-echo color 0B
-echo ============================================================
-echo   SOBHAINFRA ERP - TALLY SYNC STATUS ^& DIAGNOSTICS
-echo ============================================================
-echo.
-echo [*] 1. Checking if Background Sync Process is Running...
-echo.
-powershell -NoProfile -Command "$p = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like '*tally-sync.py*' -and $_.Name -ne 'powershell.exe' }; if ($p) { Write-Host '  [OK] SYNC PROCESS IS RUNNING (Process ID: ' $p.ProcessId ')' -ForegroundColor Green } else { Write-Host '  [WARNING] Sync process is NOT currently running!' -ForegroundColor Yellow; Write-Host '  [*] Starting sync now...'; Start-Process wscript.exe -ArgumentList '\"%INSTALL_DIR%\start_silent.vbs\"'; Start-Sleep -Seconds 2; Write-Host '  [OK] Started background sync!' -ForegroundColor Green }"
-echo.
-echo [*] 2. Checking TallyPrime Connection on Port 9000...
-powershell -NoProfile -Command "$t = Test-NetConnection -ComputerName 127.0.0.1 -Port 9000 -WarningAction SilentlyContinue; if ($t.TcpTestSucceeded) { Write-Host '  [OK] TALLYPRIME IS CONNECTED ^& RESPONDING ON PORT 9000' -ForegroundColor Green } else { Write-Host '  [!] TallyPrime is closed or Port 9000 is not enabled.' -ForegroundColor Red; Write-Host '      Please open TallyPrime. (In Tally: F1 Help -^> Settings -^> Connectivity -^> Client/Server: Both, Port: 9000)' -ForegroundColor Yellow }"
-echo.
-echo [*] 3. Recent Real-Time Sync Logs (Last 15 lines):
-echo ------------------------------------------------------------
-if exist "%INSTALL_DIR%\sync.log" (
-    powershell -NoProfile -Command "Get-Content -Path '%INSTALL_DIR%\sync.log' -Tail 15"
-) else (
-    echo [No logs created yet. Waiting for first sync cycle...]
-)
-echo ------------------------------------------------------------
-echo.
-echo Options:
-echo   [1] Watch live streaming logs (Press Ctrl+C to exit)
-echo   [2] Force restart sync process now
-echo   [3] Exit
-echo.
-set /p "CHOICE=Enter your choice [1, 2, or 3]: "
-if "%CHOICE%"=="1" (
-    cls
-    echo Streaming live logs... (Press Ctrl+C to return)
-    powershell -NoProfile -Command "Get-Content -Path '%INSTALL_DIR%\sync.log' -Wait -Tail 30"
-)
-if "%CHOICE%"=="2" (
-    echo Restarting sync process...
-    powershell -NoProfile -Command "Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like '*tally-sync.py*' -and $_.Name -ne 'powershell.exe' } | Stop-Process -Force"
-    wscript.exe "%INSTALL_DIR%\start_silent.vbs"
-    echo [OK] Restarted! Check status again.
-    pause
-)
-) > "%INSTALL_DIR%\Check_Tally_Sync_Status.bat"
-
-:: 9. Copy Status Tool to Desktop (Both Public Desktop and User Desktop)
-if exist "C:\Users\Public\Desktop" (
-    copy /y "%INSTALL_DIR%\Check_Tally_Sync_Status.bat" "C:\Users\Public\Desktop\Check_Tally_Sync_Status.bat" >nul 2>&1
-)
-if exist "%USERPROFILE%\Desktop" (
-    copy /y "%INSTALL_DIR%\Check_Tally_Sync_Status.bat" "%USERPROFILE%\Desktop\Check_Tally_Sync_Status.bat" >nul 2>&1
+:: 7. Copy Diagnostic Monitor to Desktop
+echo [*] Installing Desktop Status Monitor...
+if exist "%SOURCE_DIR%\Check_Sync_Status.bat" (
+    copy /y "%SOURCE_DIR%\Check_Sync_Status.bat" "C:\Users\Public\Desktop\Check_Tally_Sync_Status.bat" >nul 2>&1
+    copy /y "%SOURCE_DIR%\Check_Sync_Status.bat" "%USERPROFILE%\Desktop\Check_Tally_Sync_Status.bat" >nul 2>&1
 )
 
-:: 10. Install to Windows "All Users" Startup Folder (Runs 100% reliably for EVERY user on boot)
+:: 8. Install to Windows "All Users" Startup Folder (Runs automatically on PC restart)
+echo [*] Installing to Windows All Users Startup folder...
 set "ALL_STARTUP=C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Startup"
 if exist "%ALL_STARTUP%" (
-    echo [*] Installing to Windows Startup folder for all users...
     copy /y "%INSTALL_DIR%\start_silent.vbs" "%ALL_STARTUP%\Start_SobhaInfra_Sync.vbs" >nul 2>&1
 )
 
-:: 11. Register Scheduled Task as secondary backup
-echo [*] Registering Windows Scheduled Task (%TASK_NAME%)...
-schtasks /delete /tn "%TASK_NAME%" /f >nul 2>&1
-schtasks /create /tn "%TASK_NAME%" /tr "wscript.exe \"%INSTALL_DIR%\start_silent.vbs\"" /sc ONLOGON /rl HIGHEST /f >nul 2>&1
+:: 9. Register Windows Scheduled Task as secondary fallback
+echo [*] Registering Windows Scheduled Task (SobhaInfra_Tally_Sync)...
+schtasks /delete /tn "SobhaInfra_Tally_Sync" /f >nul 2>&1
+schtasks /create /tn "SobhaInfra_Tally_Sync" /tr "wscript.exe \"%INSTALL_DIR%\start_silent.vbs\"" /sc ONLOGON /rl HIGHEST /f >nul 2>&1
 
-:: 12. Kill any old zombie instance and start fresh now
+:: 10. Terminate any previous sync instances and launch fresh
+echo [*] Starting sync service in background now...
 powershell -NoProfile -Command "Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like '*tally-sync.py*' -and $_.Name -ne 'powershell.exe' } | Stop-Process -Force" >nul 2>&1
 wscript.exe "%INSTALL_DIR%\start_silent.vbs"
 
 echo.
 echo ============================================================
-echo   SETUP COMPLETE! AUTO-START IS CONFIGURED & RUNNING
+echo   SETUP COMPLETE! AUTO-START IS CONFIGURED ^& RUNNING
 echo ============================================================
 echo.
-echo  [x] Runs automatically whenever Windows boots/logs in.
-echo  [x] Completely invisible in background (no black cmd window).
-echo  [x] Continuous sync: checks Tally every 5 minutes.
-echo  [x] If Tally is closed, it waits and automatically connects
-echo      as soon as the client opens TallyPrime.
+echo  [OK] Sync runs automatically in background whenever Windows starts.
+echo  [OK] Completely silent (no black command prompt window).
+echo  [OK] Auto-reconnects as soon as TallyPrime is opened.
 echo.
-echo  Installation: %INSTALL_DIR%
-echo  Live Logs:    %INSTALL_DIR%\sync.log
-echo  Desktop Tool: "Check_Tally_Sync_Status.bat"
-echo.
-echo  NOTE FOR CLIENT:
-echo  The client just needs to open TallyPrime as usual.
-echo  Nothing else is required!
+echo  DESKTOP TOOL INSTALLED:
+echo    "Check_Tally_Sync_Status.bat"
+echo    Double-click this anytime to verify sync status, port 9000,
+echo    and view live logs!
 echo ============================================================
 echo.
 pause
+exit /b 0
