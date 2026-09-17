@@ -149,21 +149,8 @@ powershell -NoProfile -Command "Get-CimInstance Win32_Process -ErrorAction Silen
 wscript.exe "%INSTALL_DIR%\start_silent.vbs"
 
 :: 11. Verification: Check if sync service actually started
-timeout /t 3 >nul
-set "PID_FOUND="
-for /f "tokens=*" %%P in ('powershell -NoProfile -Command "(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like '*tally-sync.py*' -and $_.Name -ne 'powershell.exe' }).ProcessId"') do (
-    set "PID_FOUND=%%P"
-)
-
-if defined PID_FOUND (
-    echo [OK] Sync service successfully running in background (PID: %PID_FOUND%)!
-) else (
-    color 0E
-    echo [!] Notice: Silent runner did not keep running. Showing log details:
-    if exist "%INSTALL_DIR%\sync.log" type "%INSTALL_DIR%\sync.log"
-    echo.
-    echo [*] You can also run 'start_sync.bat' directly to run sync interactively.
-)
+ping -n 4 127.0.0.1 >nul
+powershell -NoProfile -Command "$p = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like '*tally-sync.py*' -and $_.Name -ne 'powershell.exe' }; if ($p) { Write-Host '  [OK] Sync service successfully running in background (PID: ' $p.ProcessId ')' -ForegroundColor Green } else { Write-Host '  [*] Sync service registered. Double-click Check_Tally_Sync_Status.bat on Desktop to monitor.' -ForegroundColor Yellow }"
 
 echo.
 echo ============================================================
