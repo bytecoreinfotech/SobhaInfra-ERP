@@ -41,18 +41,15 @@ if not exist "%SOURCE_DIR%\tally-sync.py" (
     exit /b 1
 )
 
-:: 4. Locate Python Executable
+:: 4. Locate Python Executable (Bypass WindowsApps execution alias)
 set "PY_EXE="
-for /f "delims=" %%I in ('where python 2^>nul') do (
-    if not defined PY_EXE set "PY_EXE=%%I"
+
+:: 4a. Check real Python installation paths first
+for /d %%D in ("%LOCALAPPDATA%\Programs\Python\Python*") do (
+    if exist "%%D\python.exe" set "PY_EXE=%%D\python.exe"
 )
 if not defined PY_EXE (
-    for /f "delims=" %%I in ('where py 2^>nul') do (
-        if not defined PY_EXE set "PY_EXE=%%I"
-    )
-)
-if not defined PY_EXE (
-    for /d %%D in ("%LOCALAPPDATA%\Programs\Python\Python*") do (
+    for /d %%D in ("C:\Users\*\AppData\Local\Programs\Python\Python*") do (
         if exist "%%D\python.exe" set "PY_EXE=%%D\python.exe"
     )
 )
@@ -62,8 +59,40 @@ if not defined PY_EXE (
     )
 )
 if not defined PY_EXE (
+    for /d %%D in ("C:\Program Files (x86)\Python*") do (
+        if exist "%%D\python.exe" set "PY_EXE=%%D\python.exe"
+    )
+)
+if not defined PY_EXE (
     for /d %%D in ("C:\Python*") do (
         if exist "%%D\python.exe" set "PY_EXE=%%D\python.exe"
+    )
+)
+
+:: 4b. Check official Python Launcher py.exe
+if not defined PY_EXE (
+    for /f "delims=" %%I in ('where py 2^>nul') do (
+        if not defined PY_EXE (
+            echo "%%I" | findstr /i "WindowsApps" >nul
+            if errorlevel 1 set "PY_EXE=%%I"
+        )
+    )
+)
+
+:: 4c. Check where python, filtering out WindowsApps alias
+if not defined PY_EXE (
+    for /f "delims=" %%I in ('where python 2^>nul') do (
+        if not defined PY_EXE (
+            echo "%%I" | findstr /i "WindowsApps" >nul
+            if errorlevel 1 set "PY_EXE=%%I"
+        )
+    )
+)
+
+:: 4d. Fallback if only WindowsApps is present
+if not defined PY_EXE (
+    for /f "delims=" %%I in ('where python 2^>nul') do (
+        if not defined PY_EXE set "PY_EXE=%%I"
     )
 )
 
@@ -118,6 +147,23 @@ schtasks /create /tn "SobhaInfra_Tally_Sync" /tr "wscript.exe \"%INSTALL_DIR%\st
 echo [*] Starting sync service in background now...
 powershell -NoProfile -Command "Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like '*tally-sync.py*' -and $_.Name -ne 'powershell.exe' } | Stop-Process -Force" >nul 2>&1
 wscript.exe "%INSTALL_DIR%\start_silent.vbs"
+
+:: 11. Verification: Check if sync service actually started
+timeout /t 3 >nul
+set "PID_FOUND="
+for /f "tokens=*" %%P in ('powershell -NoProfile -Command "(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like '*tally-sync.py*' -and $_.Name -ne 'powershell.exe' }).ProcessId"') do (
+    set "PID_FOUND=%%P"
+)
+
+if defined PID_FOUND (
+    echo [OK] Sync service successfully running in background (PID: %PID_FOUND%)!
+) else (
+    color 0E
+    echo [!] Notice: Silent runner did not keep running. Showing log details:
+    if exist "%INSTALL_DIR%\sync.log" type "%INSTALL_DIR%\sync.log"
+    echo.
+    echo [*] You can also run 'start_sync.bat' directly to run sync interactively.
+)
 
 echo.
 echo ============================================================

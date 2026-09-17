@@ -8,23 +8,45 @@ echo   SobhaInfra ERP - TallyPrime Cloud Sync Service
 echo ===================================================
 echo.
 
-:: Check if Python is installed
-python --version >nul 2>&1
+:: Locate Python Executable
+set "PY_CMD=python"
+for /d %%D in ("%LOCALAPPDATA%\Programs\Python\Python*") do (
+    if exist "%%D\python.exe" set "PY_CMD=%%D\python.exe"
+)
+if "%PY_CMD%"=="python" (
+    for /d %%D in ("C:\Program Files\Python*") do (
+        if exist "%%D\python.exe" set "PY_CMD=%%D\python.exe"
+    )
+)
+if "%PY_CMD%"=="python" (
+    for /f "delims=" %%I in ('where py 2^>nul') do (
+        echo "%%I" | findstr /i "WindowsApps" >nul
+        if errorlevel 1 set "PY_CMD=py"
+    )
+)
+
+:: Check if Python is runnable
+"%PY_CMD%" --version >nul 2>&1
 if %errorlevel% neq 0 (
-    color 0C
-    echo [ERROR] Python is not installed or not in PATH!
-    echo Please download and install Python from https://www.python.org/downloads/
-    echo Make sure to check "Add Python to PATH" during installation.
-    echo.
-    pause
-    exit /b
+    python --version >nul 2>&1
+    if %errorlevel% neq 0 (
+        color 0C
+        echo [ERROR] Python is not installed or not in PATH!
+        echo Please download and install Python from https://www.python.org/downloads/
+        echo Make sure to check "Add Python to PATH" during installation.
+        echo.
+        pause
+        exit /b 1
+    ) else (
+        set "PY_CMD=python"
+    )
 )
 
 :: Install dependencies if missing
-echo [*] Checking and installing required Python packages...
-pip install -r requirements.txt --quiet
+echo [*] Checking and installing required Python packages (requests)...
+"%PY_CMD%" -m pip install requests --quiet >nul 2>&1
 if %errorlevel% neq 0 (
-    pip install requests
+    "%PY_CMD%" -m pip install requests
 )
 
 echo.
@@ -34,6 +56,6 @@ echo [*] Live Cloud Target: https://sobhainfra-erp.netlify.app
 echo.
 
 :: Run sync script
-python tally-sync.py
+"%PY_CMD%" tally-sync.py
 
 pause

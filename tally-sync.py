@@ -130,7 +130,7 @@ ALL_VOUCHERS_UNFILTERED_XML = """<?xml version="1.0" encoding="utf-8"?>
             <TYPE>Voucher</TYPE>
             <FETCH>DATE, VOUCHERNUMBER, VOUCHERTYPENAME, PARTYLEDGERNAME, BASICBUYERNAME,
                    AMOUNT, NARRATION, PARTYGSTIN, BASICBUYERADDRESS, ISCANCELLED, ISDELETED,
-                   ALLLEDGERENTRIES.LIST</FETCH>
+                   ALLLEDGERENTRIES.LIST, BILLALLOCATIONS.LIST</FETCH>
           </COLLECTION>
         </TDLMESSAGE>
       </TDL>
@@ -258,6 +258,7 @@ DAYBOOK_XML = f"""<?xml version="1.0" encoding="utf-8"?>
             <FILTER>SalesDayBookFilter</FILTER>
           </COLLECTION>
           <SYSTEM TYPE="Formulae" NAME="SalesDayBookFilter">
+            $$IsSales:$VoucherTypeName OR $$IsPurchase:$VoucherTypeName OR $$IsCreditNote:$VoucherTypeName OR $$IsDebitNote:$VoucherTypeName OR
             $VoucherTypeName = "Sales" OR $VoucherTypeName = "Tax Invoice" OR $VoucherTypeName = "Sales Order" OR
             $VoucherTypeName = "Purchase" OR $VoucherTypeName = "Purchase Order" OR
             $VoucherTypeName = "Credit Note" OR $VoucherTypeName = "Debit Note"
@@ -297,6 +298,7 @@ VOUCHERS_XML = f"""<?xml version="1.0" encoding="utf-8"?>
             <FILTER>ReceiptPaymentFilter</FILTER>
           </COLLECTION>
           <SYSTEM TYPE="Formulae" NAME="ReceiptPaymentFilter">
+            $$IsReceipt:$VoucherTypeName OR $$IsPayment:$VoucherTypeName OR
             $VoucherTypeName = "Receipt" OR $VoucherTypeName = "Payment" OR
             $VoucherTypeName = "Cash Receipt" OR $VoucherTypeName = "Bank Receipt" OR
             $VoucherTypeName = "Cash Payment" OR $VoucherTypeName = "Bank Payment" OR
@@ -2056,6 +2058,9 @@ def fetch_from_tally():
             # Strategy 3: Receipt & Payment DayBook vouchers (current FYs, captures bank settlements & bill allocations)
             (f"3_ReceiptPayment_{comp}" if comp else "3_ReceiptPayment",
              inject_company_into_xml(VOUCHERS_XML, comp)),
+            # Strategy 4: Unfiltered Voucher Collection (safety net for any non-standard/custom voucher types)
+            (f"4_AllVouchersFull_{comp}" if comp else "4_AllVouchersFull",
+             inject_company_into_xml(ALL_VOUCHERS_UNFILTERED_XML, comp)),
         ]
 
         # FIX 1: Collect records from ALL strategies (no break after first success)
