@@ -2823,20 +2823,28 @@ def push_to_cloud(vouchers, master_summaries=None):
     # When vouchers are deleted in TallyPrime (Alt+D), they completely vanish from
     # Tally's collections. Here we compare surviving vouchers against Supabase,
     # prune orphans for synced companies, and write audit trail records.
-    fy_start_date_iso = f"{_fy_start_year}-04-01"
     if SUPABASE_URL and SUPABASE_KEY and vouchers:
         try:
             active_by_company = {}
+            dates_by_company = {}
             for v in vouchers:
                 inv_no = str(v.get("invoice_number", "")).strip()
                 raw_no = str(v.get("raw_voucher_number", "")).strip()
                 c_name = (v.get("company_name") or "").strip()
+                d_str  = str(v.get("invoice_date") or v.get("date") or "").strip()
+
                 if c_name:
                     active_by_company.setdefault(c_name, set())
+                    dates_by_company.setdefault(c_name, [])
                     if inv_no:
                         active_by_company[c_name].add(inv_no.upper())
                     if raw_no:
                         active_by_company[c_name].add(raw_no.upper())
+                    if d_str:
+                        if len(d_str) == 8 and d_str.isdigit():
+                            dates_by_company[c_name].append(f"{d_str[:4]}-{d_str[4:6]}-{d_str[6:8]}")
+                        elif len(d_str) == 10 and d_str[4] == "-" and d_str[7] == "-":
+                            dates_by_company[c_name].append(d_str)
 
             for comp_name, active_set in active_by_company.items():
                 if not comp_name or comp_name in ("Tally Company", "Default"):
@@ -2845,13 +2853,22 @@ def push_to_cloud(vouchers, master_summaries=None):
                 if len(active_set) == 0:
                     continue
 
+                comp_dates = dates_by_company.get(comp_name, [])
+                if comp_dates:
+                    min_sync_date = min(comp_dates)
+                    max_sync_date = max(comp_dates)
+                else:
+                    min_sync_date = f"{_fy_start_year}-04-01"
+                    max_sync_date = datetime.now().strftime("%Y-%m-%d")
+
                 encoded_comp = urllib.parse.quote(comp_name)
-                # Fetch company vouchers from current financial year onwards
+                # Fetch company vouchers within the exact active synced date window
                 db_url = (
                     f"{SUPABASE_URL}/rest/v1/invoices"
                     f"?organization_id=eq.{ORGANIZATION_ID}"
                     f"&company_name=ilike.{encoded_comp}"
-                    f"&invoice_date=gte.{fy_start_date_iso}"
+                    f"&invoice_date=gte.{min_sync_date}"
+                    f"&invoice_date=lte.{max_sync_date}"
                     f"&select=id,invoice_number,status,amount,tally_voucher_number,invoice_date,client_name"
                     f"&limit=10000"
                 )
@@ -2876,7 +2893,7 @@ def push_to_cloud(vouchers, master_summaries=None):
 
                     is_active = (inv_num in active_set) or (tally_num and tally_num in active_set)
                     if not is_active:
-                        orphan_ids.append(inv.get("id"))
+                        orphan_ids.append(str(inv.get("id")))
                         orphan_records.append(inv)
 
                 if not orphan_ids:
@@ -2884,11 +2901,11 @@ def push_to_cloud(vouchers, master_summaries=None):
                     continue
 
                 total_db_count = len(db_invoices)
-                # Safety Circuit Breaker: If > 50% missing and sample size > 10, abort to protect data
-                if total_db_count > 10 and len(orphan_ids) > (total_db_count * 0.5):
+                # Safety Circuit Breaker: Only trip if a large database set (>50) loses >85% at once
+                if total_db_count > 50 and len(orphan_ids) > (total_db_count * 0.85):
                     log.error(
                         f"  [Orphan Reconcile] ⚠️ SAFETY CIRCUIT BREAKER TRIGGERED for '{comp_name}': "
-                        f"{len(orphan_ids)} of {total_db_count} vouchers missing (>50%). "
+                        f"{len(orphan_ids)} of {total_db_count} vouchers missing (>85%). "
                         f"Aborting deletion to protect data integrity."
                     )
                     continue
@@ -2898,7 +2915,7 @@ def push_to_cloud(vouchers, master_summaries=None):
                 for d_idx in range(0, len(orphan_ids), 50):
                     del_batch_ids = orphan_ids[d_idx:d_idx + 50]
                     del_batch_recs = orphan_records[d_idx:d_idx + 50]
-                    joined_ids = ",".join(f'"{i}"' for i in del_batch_ids)
+                    joined_ids = ",".join(del_batch_ids)
 
                     del_url = f"{SUPABASE_URL}/rest/v1/invoices?organization_id=eq.{ORGANIZATION_ID}&id=in.({joined_ids})"
                     del_resp = requests.delete(del_url, headers=sb_headers, timeout=15)
