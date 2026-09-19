@@ -563,9 +563,25 @@ export function invalidateCustomerMasterCache() {
   _customerMasterCacheTime = 0;
 }
 
+let _lastAutoSyncCheck = 0;
+const AUTO_SYNC_CHECK_INTERVAL = 15 * 60 * 1000; // 15 mins
+
 export async function getCustomerMaster(options = {}) {
   const { forceRefresh = false } = (typeof options === 'object' && options !== null) ? options : {};
   const now = Date.now();
+
+  // Background auto-fetch: If last sync check was > 15 mins ago, verify sheet sync freshness
+  if (isSupabaseConfigured && (now - _lastAutoSyncCheck > AUTO_SYNC_CHECK_INTERVAL)) {
+    _lastAutoSyncCheck = now;
+    getSheetSyncLog().then(({ data: log }) => {
+      const lastSyncMs = log?.synced_at ? new Date(log.synced_at).getTime() : 0;
+      if (!log || (now - lastSyncMs > AUTO_SYNC_CHECK_INTERVAL)) {
+        console.log('[db] Auto-fetching latest Google Sheet customer changes...');
+        triggerSheetSync().catch(() => {});
+      }
+    }).catch(() => {});
+  }
+
   if (!forceRefresh && _customerMasterCache && (now - _customerMasterCacheTime < CUSTOMER_MASTER_CACHE_TTL)) {
     return { data: _customerMasterCache, error: null };
   }

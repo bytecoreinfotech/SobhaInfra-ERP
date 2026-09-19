@@ -211,6 +211,7 @@ exports.handler = async (event) => {
           // Match against Google Sheet customer_master (authoritative contact phone)
           let verifiedSheetPhone = '';
           let verifiedSheetName = '';
+          let isSheetCustomer = false;
           const cleanLedger = String(v.ledger_name || '').trim().toUpperCase();
           if (cleanLedger && allCustomers.length > 0) {
             const normLedger = cleanLedger.replace(/[^A-Z0-9]/g, '');
@@ -219,24 +220,33 @@ exports.handler = async (event) => {
               const normC = cName.replace(/[^A-Z0-9]/g, '');
               return normC && (normC === normLedger || normC.includes(normLedger) || normLedger.includes(normC));
             });
-            if (matchedCust?.contact_number) {
-              const rawDigits = String(matchedCust.contact_number).replace(/[^\d]/g, '');
-              if (rawDigits.length >= 10) {
-                verifiedSheetPhone = `+91${rawDigits.slice(-10)}`;
-                verifiedSheetName = matchedCust.contact_person
-                  ? `${matchedCust.contact_person} (${matchedCust.company_name})`
-                  : matchedCust.company_name;
+            if (matchedCust) {
+              isSheetCustomer = true;
+              if (matchedCust.contact_number) {
+                const rawDigits = String(matchedCust.contact_number).replace(/[^\d]/g, '');
+                if (rawDigits.length >= 10) {
+                  verifiedSheetPhone = `+91${rawDigits.slice(-10)}`;
+                  verifiedSheetName = matchedCust.contact_person
+                    ? `${matchedCust.contact_person} (${matchedCust.company_name})`
+                    : matchedCust.company_name;
+                }
               }
             }
           }
 
-          // Find matching lead by normalized phone or exact name as secondary fallback
-          const matchedLead = allLeads.find(l =>
-            (normVoucherPhone && normalizePhone(l.phone) === normVoucherPhone) ||
-            (v.ledger_name && l.name && l.name.toLowerCase() === v.ledger_name.toLowerCase())
-          );
-
-          const resolvedClientPhone = verifiedSheetPhone || normVoucherPhone || (matchedLead ? matchedLead.phone : '');
+          // If party is managed in Google Sheet, Google Sheet contact number is strictly authoritative:
+          // If the client removed the contact number from Google Sheet, DO NOT resurrect it from Tally voucher or leads!
+          let resolvedClientPhone = '';
+          if (isSheetCustomer) {
+            resolvedClientPhone = verifiedSheetPhone; // empty if contact number was removed in sheet
+          } else {
+            // Find matching lead by normalized phone or exact name as secondary fallback only for unlisted parties
+            const matchedLead = allLeads.find(l =>
+              (normVoucherPhone && normalizePhone(l.phone) === normVoucherPhone) ||
+              (v.ledger_name && l.name && l.name.toLowerCase() === v.ledger_name.toLowerCase())
+            );
+            resolvedClientPhone = normVoucherPhone || (matchedLead ? matchedLead.phone : '');
+          }
 
           let finalPdfUrl = v.pdf_url || null;
 

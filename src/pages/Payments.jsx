@@ -198,9 +198,12 @@ const Payments = () => {
         const isSheetVerified = match.status === 'verified' && !!match.customer;
         const sheetCustomer = isSheetVerified ? match.customer : null;
 
+        // If customer exists in Google Sheet, Google Sheet is strictly authoritative:
+        // If contact_number is empty/removed, DO NOT fall back to tally phone!
         const sheetPhone = (sheetCustomer?.contact_number || '').trim();
         const tallyPhone = (inv.client_phone || '').trim();
-        const activePhone = sheetPhone || tallyPhone;
+        const isPhoneRemovedByClient = isSheetVerified && !sheetPhone;
+        const activePhone = isSheetVerified ? sheetPhone : (sheetPhone || tallyPhone);
         const digits = activePhone.replace(/\D/g, '');
         const hasVerifiedPhone = digits.length >= 10;
 
@@ -208,6 +211,7 @@ const Payments = () => {
           ...inv,
           _sheet_customer: sheetCustomer,
           _is_sheet_customer: isSheetVerified,
+          _is_phone_removed: isPhoneRemovedByClient,
           _has_verified_phone: hasVerifiedPhone,
           _verified_phone: hasVerifiedPhone ? activePhone : '',
           _contact_person: sheetCustomer?.contact_person || '',
@@ -237,6 +241,7 @@ const Payments = () => {
           contactPerson: inv._contact_person || '',
           phone: inv._verified_phone || '',
           hasPhone: inv._has_verified_phone,
+          isPhoneRemoved: inv._is_phone_removed || false,
           invoices: [],
           totalBilled: 0,
           totalPending: 0,
@@ -252,6 +257,7 @@ const Payments = () => {
 
       const grp = groupMap.get(key);
       grp.invoices.push(inv);
+      if (inv._is_phone_removed) grp.isPhoneRemoved = true;
 
       const amt = Number(inv.amount || 0);
       const bal = Number(inv.pending_amount !== undefined && inv.status !== 'Paid' ? inv.pending_amount : (inv.status === 'Paid' ? 0 : amt));
@@ -897,6 +903,26 @@ const Payments = () => {
                               <span style={{ fontSize: '0.75rem', color: 'var(--success)', fontWeight: 600 }}>
                                 ✓ Cleared
                               </span>
+                            ) : grp.isPhoneRemoved ? (
+                              <button
+                                type="button"
+                                className="btn btn-secondary btn-sm"
+                                disabled
+                                style={{
+                                  opacity: 0.85,
+                                  cursor: 'not-allowed',
+                                  fontSize: '0.68rem',
+                                  padding: '0.22rem 0.5rem',
+                                  borderColor: 'rgba(239, 68, 68, 0.4)',
+                                  color: '#ef4444',
+                                  background: 'rgba(239, 68, 68, 0.08)',
+                                  fontWeight: 600,
+                                }}
+                                data-tooltip="Follow-up Stopped: Contact number was removed from Google Sheet for this company."
+                                data-tooltip-pos="left"
+                              >
+                                <AlertTriangle size={11} color="#ef4444" /> Follow-up Stopped
+                              </button>
                             ) : !hasPhone ? (
                               <button
                                 type="button"

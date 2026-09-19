@@ -171,17 +171,21 @@ async function getCustomerEmailDirectory(supabase, forceRefresh = false) {
           const company = compIdx >= 0 ? cols[compIdx] : cols[0];
           const contact = custIdx >= 0 ? cols[custIdx] : cols[1];
           const phone = phoneIdx >= 0 ? cols[phoneIdx] : cols[2];
-          const email = emailIdx >= 0 ? cols[emailIdx] : (cols[3] || '');
+          const rawEmail = emailIdx >= 0 ? cols[emailIdx] : (cols[3] || '');
+          const cleanEmail = (rawEmail && typeof rawEmail === 'string' && rawEmail.includes('@'))
+            ? rawEmail.trim().toLowerCase()
+            : null;
 
-          if (company && email && email.includes('@')) {
+          if (company) {
             const key = normalizeKey(company);
-            const cleanEmail = email.trim().toLowerCase();
-            directory[key] = {
+            const entry = {
               email: cleanEmail,
               company_name: company,
               contact_person: contact || '',
               contact_number: phone || '',
+              is_sheet_customer: true,
             };
+            directory[key] = entry;
             // Also index phone digits if available
             const digits = (phone || '').replace(/\D/g, '').slice(-10);
             if (digits) {
@@ -215,47 +219,52 @@ async function getCustomerEmailDirectory(supabase, forceRefresh = false) {
 
 // ── Resolve Customer Email ────────────────────────────────────────────────────
 async function resolveCustomerEmail(supabase, { companyName, clientName, phone, email } = {}) {
-  // 0. Direct email provided on voucher or party
+  const directory = await getCustomerEmailDirectory(supabase);
+
+  // Check if company exists in Google Sheet customer email directory
+  const targetNames = [companyName, clientName].filter(Boolean);
+  for (const name of targetNames) {
+    const key = normalizeKey(name);
+    if (!key) continue;
+
+    // Direct key match
+    if (directory[key]) {
+      const entry = directory[key];
+      // If email is explicitly null or empty, client removed it in Google Sheet -> STOP EMAIL FOLLOW-UP
+      if (!entry.email) {
+        return null;
+      }
+      return entry.email;
+    }
+
+    // Substring / partial key match against sheet companies
+    for (const [k, item] of Object.entries(directory)) {
+      if (k.startsWith('phone_')) continue;
+      if (k && key && (k === key || k.includes(key) || key.includes(k))) {
+        if (!item.email) {
+          return null; // Opted out / removed in Google Sheet
+        }
+        return item.email;
+      }
+    }
+  }
+
+  // Check phone digits in sheet directory
+  if (phone) {
+    const digits = String(phone).replace(/\D/g, '').slice(-10);
+    if (digits && directory[`phone_${digits}`] !== undefined) {
+      const sheetEmail = directory[`phone_${digits}`];
+      if (!sheetEmail) return null; // Removed in sheet
+      return sheetEmail;
+    }
+  }
+
+  // 0. Direct email provided on voucher or party (only for parties not managed in sheet)
   if (email && typeof email === 'string' && email.includes('@')) {
     return email.trim().toLowerCase();
   }
 
-  const directory = await getCustomerEmailDirectory(supabase);
-
-  // 1. Match by normalized company name
-  if (companyName) {
-    const key = normalizeKey(companyName);
-    if (directory[key]?.email) return directory[key].email;
-    // Partial substring match
-    for (const [k, item] of Object.entries(directory)) {
-      if (k.startsWith('phone_')) continue;
-      if (k && key && (k.includes(key) || key.includes(k))) {
-        return item.email;
-      }
-    }
-  }
-
-  // 2. Match by normalized client name
-  if (clientName) {
-    const key = normalizeKey(clientName);
-    if (directory[key]?.email) return directory[key].email;
-    for (const [k, item] of Object.entries(directory)) {
-      if (k.startsWith('phone_')) continue;
-      if (k && key && (k.includes(key) || key.includes(k))) {
-        return item.email;
-      }
-    }
-  }
-
-  // 3. Match by phone digits
-  if (phone) {
-    const digits = String(phone).replace(/\D/g, '').slice(-10);
-    if (digits && directory[`phone_${digits}`]) {
-      return directory[`phone_${digits}`];
-    }
-  }
-
-  // 4. Fallback: query Supabase leads table
+  // Fallback for unlisted parties: query Supabase leads table
   if (supabase && (companyName || clientName || phone)) {
     try {
       const q = supabase.from('leads').select('email').not('email', 'is', null);

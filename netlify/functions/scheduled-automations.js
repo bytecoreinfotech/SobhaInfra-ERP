@@ -203,6 +203,20 @@ exports.handler = async (event) => {
   // Step 3: Process scheduled campaigns
   await processScheduledCampaigns(supabase);
 
+  // Step 3.5: Auto-fetch live changes from Google Sheet before payment reminder run
+  try {
+    console.log('[Scheduler] Auto-fetching latest customer master & emails from Google Sheet...');
+    const { syncCustomerMaster } = require('./sync-customer-master');
+    if (typeof syncCustomerMaster === 'function') {
+      const sheetSyncRes = await syncCustomerMaster(supabase);
+      results.sheetSync = sheetSyncRes;
+      console.log(`[Scheduler] Google Sheet auto-sync complete: ${sheetSyncRes.synced} customers synced.`);
+    }
+  } catch (sheetErr) {
+    console.warn('[Scheduler] Google Sheet auto-sync notice:', sheetErr.message);
+    results.sheetSync = { error: sheetErr.message };
+  }
+
   // Step 4: Bill-by-Bill Automated Payment Reminders (1-day before due date + interval loop)
   try {
     const { runAutomatedPaymentReminders } = require('./send-reminder');

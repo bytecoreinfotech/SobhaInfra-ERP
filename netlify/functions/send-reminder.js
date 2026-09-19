@@ -617,6 +617,32 @@ exports.handler = async (event) => {
 
     const inv = singleInv;
 
+    // Check Google Sheet customer master for authoritative contact verification
+    let isSheetCustomer = false;
+    let sheetPhone = null;
+    try {
+      const partyName = (inv.client_name || inv.party_name || '').trim();
+      const normParty = partyName.toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (normParty) {
+        const { data: sheetCust } = await supabase
+          .from('customer_master')
+          .select('company_name, contact_number, normalized_key')
+          .or(`normalized_key.eq.${normParty},company_name.ilike.%${partyName}%`)
+          .limit(1)
+          .maybeSingle();
+
+        if (sheetCust) {
+          isSheetCustomer = true;
+          sheetPhone = sheetCust.contact_number ? String(sheetCust.contact_number).trim() : null;
+          // If customer is in Google Sheet, sheet contact number is authoritative:
+          // If not explicitly entered as an override in modal body, use sheet contact
+          if (!body.phone) {
+            inv.client_phone = sheetPhone;
+          }
+        }
+      }
+    } catch (_) {}
+
     // Resolve customer email (from request body or Google Sheet customer directory)
     let targetEmail = body.email || null;
     if (!targetEmail && (inv.client_name || inv.party_name)) {
@@ -634,7 +660,12 @@ exports.handler = async (event) => {
       return {
         statusCode: 400,
         headers: cors,
-        body: JSON.stringify({ success: false, error: 'Neither a valid phone number nor email address is available for this customer.' }),
+        body: JSON.stringify({
+          success: false,
+          error: isSheetCustomer && !sheetPhone && !targetEmail
+            ? 'Payment follow-up is stopped for this customer (contact number and email were removed in Google Sheet).'
+            : 'Neither a valid phone number nor email address is available for this customer.'
+        }),
       };
     }
 
@@ -841,6 +872,49 @@ async function runAutomatedPaymentReminders(supabase) {
   const todayStr = now.toISOString().split('T')[0];
   const todayMs = now.getTime();
 
+  // Step A: Auto-fetch latest changes from Google Sheet if last sync was > 10 mins ago
+  try {
+    const { data: syncLog } = await supabase
+      .from('sheet_sync_log')
+      .select('synced_at')
+      .eq('organization_id', DEFAULT_ORG_ID)
+      .order('synced_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    const lastSyncMs = syncLog?.synced_at ? new Date(syncLog.synced_at).getTime() : 0;
+    const tenMinutesAgo = Date.now() - (10 * 60 * 1000);
+
+    if (!syncLog || lastSyncMs < tenMinutesAgo) {
+      console.log('[Automated Reminders] Auto-fetching Google Sheet changes (last sync > 10 mins ago)...');
+      const { syncCustomerMaster } = require('./sync-customer-master');
+      if (typeof syncCustomerMaster === 'function') {
+        await syncCustomerMaster(supabase);
+      }
+    }
+  } catch (syncErr) {
+    console.warn('[Automated Reminders] Sheet auto-sync notice:', syncErr.message);
+  }
+
+  // Step B: Load all Google Sheet customer_master records and email directory into memory
+  let allCustomers = [];
+  try {
+    const { data: custData } = await supabase
+      .from('customer_master')
+      .select('company_name, contact_person, contact_number, normalized_key')
+      .eq('organization_id', DEFAULT_ORG_ID)
+      .limit(5000);
+    allCustomers = custData || [];
+  } catch (cmErr) {
+    console.warn('[Automated Reminders] customer_master fetch error:', cmErr.message);
+  }
+
+  let emailDirectory = {};
+  try {
+    const { getCustomerEmailDirectory } = require('./utils/customerEmailHelper');
+    emailDirectory = await getCustomerEmailDirectory(supabase);
+  } catch (_) {}
+
   // Fetch all pending and overdue receivable invoices
   const { data: rawInvoices, error: fetchErr } = await supabase
     .from('invoices')
@@ -873,34 +947,72 @@ async function runAutomatedPaymentReminders(supabase) {
       continue;
     }
 
-    // 2. Resolve client phone (check invoice first, fallback to customer_master)
-    let phone = inv.client_phone ? String(inv.client_phone).trim() : '';
-    if (!phone && inv.client_name) {
-      try {
-        const { data: cust } = await supabase.from('customer_master')
-          .select('contact_number')
-          .ilike('company_name', `%${inv.client_name.trim()}%`)
-          .limit(1)
-          .maybeSingle();
-        if (cust?.contact_number) {
-          phone = String(cust.contact_number).trim();
+    // 2. Authoritative Contact Resolution against Google Sheet
+    const partyName = (inv.client_name || inv.party_name || '').trim();
+    const normParty = partyName.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+    const matchedCustomer = allCustomers.find(c => {
+      if (!c.company_name) return false;
+      const cNorm = c.company_name.toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (cNorm && (cNorm === normParty || cNorm.includes(normParty) || normParty.includes(cNorm))) return true;
+      if (c.normalized_key && (c.normalized_key === normParty || normParty.includes(c.normalized_key))) return true;
+      return false;
+    });
+
+    let phone = null;
+    let email = null;
+    let followUpStoppedReason = null;
+
+    if (matchedCustomer) {
+      // Customer is managed in Google Sheet — Google Sheet is strictly authoritative!
+      if (matchedCustomer.contact_number) {
+        const digits = String(matchedCustomer.contact_number).replace(/\D/g, '').slice(-10);
+        if (digits.length === 10) {
+          phone = `+91${digits}`;
           inv.client_phone = phone;
         }
-      } catch {}
+      } else {
+        // Contact number was removed or left blank in Google Sheet by client!
+        // WhatsApp follow-up is STOPPED for this customer.
+        phone = null;
+        followUpStoppedReason = `Contact number removed in Google Sheet for "${matchedCustomer.company_name}" (WhatsApp follow-up stopped)`;
+
+        // Wipe any stale client_phone on invoice in DB if it was set
+        if (inv.client_phone) {
+          supabase.from('invoices').update({ client_phone: null }).eq('id', inv.id).then(() => {}).catch(() => {});
+          inv.client_phone = null;
+        }
+      }
+
+      // Email resolution for sheet customer from directory
+      const emailEntry = emailDirectory[normParty] || (matchedCustomer.normalized_key ? emailDirectory[matchedCustomer.normalized_key] : null);
+      if (emailEntry?.email && emailEntry.email.includes('@')) {
+        email = emailEntry.email.trim().toLowerCase();
+      } else {
+        // Email was removed or left blank in Google Sheet by client!
+        // Email follow-up is STOPPED for this customer.
+        email = null;
+      }
+    } else {
+      // Company is NOT listed in Google Sheet customer master.
+      // As per policy, only verified Google Sheet clients receive automated reminders.
+      results.skippedNoPhone++;
+      results.details.push({
+        invoice: inv.invoice_number || inv.id,
+        client: partyName,
+        reason: `Party "${partyName}" is not listed in Google Sheet customer master — follow-up skipped.`,
+      });
+      continue;
     }
 
-    // Resolve client email from Google Sheet / customer_email_directory / leads
-    let email = null;
-    try {
-      email = await resolveCustomerEmail(supabase, {
-        companyName: inv.company_name,
-        clientName: inv.client_name || inv.party_name,
-        phone: phone,
-      });
-    } catch (_) {}
-
+    // If both phone and email are absent, completely stop follow-up
     if (!phone && !email) {
       results.skippedNoPhone++;
+      results.details.push({
+        invoice: inv.invoice_number || inv.id,
+        client: partyName,
+        reason: followUpStoppedReason || `No contact phone or email authorized in Google Sheet (Follow-up stopped).`,
+      });
       continue;
     }
 

@@ -31,11 +31,18 @@ export default function PaymentReminderModal({
     ? statementPdfUrl
     : (primaryInvoice?.pdf_url || primaryInvoice?.metadata?.pdf_url || null);
 
-  const defaultPhone = customer?.contact_number || primaryInvoice?._verified_phone || primaryInvoice?.client_phone || '';
+  const isSheetCustomer = Boolean(customer?.sheet_row_index || primaryInvoice?._is_sheet_customer);
+  const isPhoneRemoved = isSheetCustomer && !(customer?.contact_number || primaryInvoice?._verified_phone);
+
+  const defaultPhone = isSheetCustomer
+    ? (customer?.contact_number || primaryInvoice?._verified_phone || '')
+    : (customer?.contact_number || primaryInvoice?._verified_phone || primaryInvoice?.client_phone || '');
   const [targetPhone, setTargetPhone] = useState(defaultPhone);
   const [isEditingPhone, setIsEditingPhone] = useState(false);
 
-  const defaultEmail = customer?.email || customer?.email_address || primaryInvoice?._verified_email || primaryInvoice?.client_email || primaryInvoice?.email || '';
+  const defaultEmail = isSheetCustomer
+    ? (customer?.email || primaryInvoice?._verified_email || '')
+    : (customer?.email || customer?.email_address || primaryInvoice?._verified_email || primaryInvoice?.client_email || primaryInvoice?.email || '');
   const [targetEmail, setTargetEmail] = useState(defaultEmail);
   const [isEditingEmail, setIsEditingEmail] = useState(false);
   const [channel, setChannel] = useState('all'); // 'all' | 'whatsapp' | 'email'
@@ -165,14 +172,20 @@ export default function PaymentReminderModal({
             try {
               const dict = JSON.parse(data.value);
               const normKey = clientName.toLowerCase().replace(/[^a-z0-9]/g, '');
-              if (dict[normKey]?.email) {
-                setTargetEmail(dict[normKey].email);
-              } else {
-                for (const [k, v] of Object.entries(dict)) {
-                  if (!k.startsWith('phone_') && (k.includes(normKey) || normKey.includes(k))) {
+              const entry = dict[normKey];
+              if (entry) {
+                // Only populate if a valid email exists in sheet; if null, client removed it!
+                if (entry.email) {
+                  setTargetEmail(entry.email);
+                }
+                return;
+              }
+              for (const [k, v] of Object.entries(dict)) {
+                if (!k.startsWith('phone_') && (k.includes(normKey) || normKey.includes(k))) {
+                  if (v?.email) {
                     setTargetEmail(v.email);
-                    break;
                   }
+                  return;
                 }
               }
             } catch (_) {}
@@ -455,6 +468,17 @@ export default function PaymentReminderModal({
               </div>
             </div>
           </div>
+
+          {isPhoneRemoved && (
+            <div style={{
+              padding: '0.45rem 0.75rem', borderRadius: 6,
+              background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)',
+              fontSize: '0.74rem', color: '#ef4444', display: 'flex', alignItems: 'center', gap: '0.4rem'
+            }}>
+              <AlertTriangle size={14} />
+              <span><strong>Follow-up Stopped:</strong> Contact number was removed from Google Sheet for this client. Enter a phone number above if you wish to override.</span>
+            </div>
+          )}
 
           {/* Delivery Channel Selector */}
           <div>
