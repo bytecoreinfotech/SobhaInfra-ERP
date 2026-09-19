@@ -161,12 +161,26 @@ export async function deleteFromStorage(publicUrl) {
  * from native columns (media_url, message_type) and embedded tags.
  */
 export function parseMessageMedia(m) {
-  if (!m) return { text: '', cleanText: '', mediaUrl: null, mediaType: 'text', fileName: null };
+  if (!m) return { text: '', cleanText: '', mediaUrl: null, mediaType: 'text', fileName: null, invoiceMeta: null };
 
-  let text = m.body || '';
+  let text = m.body || m.text || m.content || '';
   let mediaUrl = m.media_url || null;
-  let mediaType = m.message_type || null;
+  let mediaType = (m.message_type || '').toLowerCase();
   let fileName = null;
+  let invoiceMeta = null;
+
+  // 0. Check raw_payload for document/image if not in media_url
+  if (!mediaUrl && m.raw_payload) {
+    const raw = m.raw_payload;
+    if (raw.document?.link) {
+      mediaUrl = raw.document.link;
+      fileName = raw.document.filename;
+      mediaType = 'document';
+    } else if (raw.image?.link) {
+      mediaUrl = raw.image.link;
+      mediaType = 'image';
+    }
+  }
 
   // 1. Check for [PDF Document Attached: ...] or similar tags
   const pdfTagRegex = /\[PDF Document Attached:\s*([^\]]+)\]/i;
@@ -208,23 +222,57 @@ export function parseMessageMedia(m) {
     }
   }
 
-  // 4. If mediaType is document, derive clean fileName
-  if (mediaType === 'document' && mediaUrl) {
-    if (!fileName) {
-      const parts = mediaUrl.split('/');
-      const rawName = parts[parts.length - 1]?.split('?')[0];
-      fileName = rawName ? decodeURIComponent(rawName) : 'Sobha_Infratech_Product_Catalog.pdf';
+  // Auto-detect mediaType if URL clearly points to media (regardless of template or text)
+  if (mediaUrl) {
+    const lowerUrl = mediaUrl.toLowerCase();
+    if (lowerUrl.includes('.pdf') || lowerUrl.includes('/invoices/') || lowerUrl.includes('document')) {
+      mediaType = 'document';
+    } else if (/\.(jpg|jpeg|png|webp|gif|svg)(\?.*)?$/i.test(lowerUrl) || lowerUrl.includes('/images/')) {
+      mediaType = 'image';
+    } else if (/\.(mp4|webm|mov|mkv)(\?.*)?$/i.test(lowerUrl)) {
+      mediaType = 'video';
+    } else if (/\.(mp3|ogg|wav|m4a|aac)(\?.*)?$/i.test(lowerUrl)) {
+      mediaType = 'audio';
+    } else if (/\.(docx?|xlsx?|csv|txt)(\?.*)?$/i.test(lowerUrl)) {
+      mediaType = 'document';
+    } else if (!mediaType || mediaType === 'text' || mediaType === 'template') {
+      mediaType = 'document'; // default fallback for attached file URL
     }
   }
 
-  if (mediaUrl && (!mediaType || mediaType === 'text')) {
-    mediaType = mediaUrl.endsWith('.pdf') ? 'document' : 'image';
+  // 4. Derive clean fileName
+  if (mediaUrl) {
+    if (!fileName) {
+      const parts = mediaUrl.split('/');
+      const rawName = parts[parts.length - 1]?.split('?')[0];
+      fileName = rawName ? decodeURIComponent(rawName) : (mediaType === 'document' ? 'Document.pdf' : 'Attachment');
+    }
+  }
+
+  // 5. Check if text or mediaUrl describes a Tax Invoice
+  // E.g.: "Tax Invoice Dispatched: SB/0264/26-27 | ₹76,385.00 | SHOBHA BUILDTECH"
+  const invMatch = text.match(/Tax\s+Invoice\s+(?:Dispatched:\s*)?([^|]+)\s*\|\s*([^|]+)\s*\|\s*(.+)/i);
+  if (invMatch) {
+    invoiceMeta = {
+      isInvoice: true,
+      invoiceNumber: invMatch[1].trim(),
+      amount: invMatch[2].trim(),
+      company: invMatch[3].trim(),
+    };
+  } else if (/invoice/i.test(text) || (fileName && /invoice/i.test(fileName))) {
+    const invNumMatch = (text + ' ' + (fileName || '')).match(/(?:SRP|SB|ST)[\/-]\d+[\/-]\d+-\d+/i);
+    if (invNumMatch) {
+      invoiceMeta = {
+        isInvoice: true,
+        invoiceNumber: invNumMatch[0].trim(),
+      };
+    }
   }
 
   // If document attachment and body is just the filename, keep cleanText empty so only document card renders
   const isPureDocName = mediaType === 'document' && (
-    text === fileName || 
-    text.endsWith('.pdf') || 
+    text === fileName ||
+    text.endsWith('.pdf') ||
     text === 'Sobha_Infratech_Product_Catalog.pdf'
   );
 
@@ -234,6 +282,7 @@ export function parseMessageMedia(m) {
     mediaUrl,
     mediaType: mediaType || 'text',
     fileName,
+    invoiceMeta,
   };
 }
 

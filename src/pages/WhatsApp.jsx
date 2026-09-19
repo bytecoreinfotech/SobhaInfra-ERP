@@ -5,7 +5,8 @@ import {
   CheckCircle2, Clock, XCircle, FileText, Zap, RefreshCw,
   Search, User, Phone, Shield, Pause, Play, CheckCheck, Eye,
   UserCheck, ThumbsUp, ThumbsDown, MessageSquare, Award, Sparkles, ExternalLink,
-  ShieldCheck, RotateCcw, AlertTriangle, ArrowRight, UserPlus, PhoneCall, Check, X as XIcon, Pencil
+  ShieldCheck, RotateCcw, AlertTriangle, ArrowRight, UserPlus, PhoneCall, Check, X as XIcon, Pencil,
+  Download, Calendar, ZoomIn, ZoomOut, Maximize2, Receipt, File
 } from 'lucide-react';
 import {
   getCampaigns, getLeads,
@@ -24,6 +25,56 @@ import { uploadToWhatsAppMedia, getWhatsAppMediaType, parseMessageMedia } from '
 import { supabase } from '../lib/supabase';
 import { useLiveCounts } from '../context/LiveCountsContext';
 import './Pages.css';
+
+// ── WhatsApp Date Divider Helper ──
+function getChatDateLabel(dateStr) {
+  if (!dateStr) return '';
+  const date = new Date(dateStr);
+  if (isNaN(date.getTime())) return '';
+
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const target = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const diffDays = Math.round((today - target) / (1000 * 60 * 60 * 24));
+
+  if (diffDays === 0) return 'Today';
+  if (diffDays === 1) return 'Yesterday';
+
+  if (date.getFullYear() === now.getFullYear()) {
+    return date.toLocaleDateString('en-IN', {
+      day: 'numeric',
+      month: 'long',
+      weekday: 'short'
+    });
+  }
+
+  return date.toLocaleDateString('en-IN', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric'
+  });
+}
+
+// ── WhatsApp Conversation List Date Helper ──
+function formatConversationDate(dateStr) {
+  if (!dateStr) return '';
+  const date = new Date(dateStr);
+  if (isNaN(date.getTime())) return '';
+
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const target = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const diffDays = Math.round((today - target) / (1000 * 60 * 60 * 24));
+
+  if (diffDays === 0) {
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+  if (diffDays === 1) return 'Yesterday';
+  if (diffDays < 7) {
+    return date.toLocaleDateString('en-IN', { weekday: 'short' });
+  }
+  return date.toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: '2-digit' });
+}
 
 const statusConfig = {
   'Completed': 'badge-success',
@@ -122,6 +173,23 @@ const WhatsApp = () => {
   const [editNameValue, setEditNameValue] = useState('');
   const [savingName, setSavingName] = useState(false);
   const editNameRef = useRef(null);
+
+  // Document & Image Previews
+  const [previewDoc, setPreviewDoc] = useState(null); // { url, name, title, invoiceMeta }
+  const [previewImage, setPreviewImage] = useState(null); // { url, name }
+  const [imageZoom, setImageZoom] = useState(1);
+
+  // Close preview modals on Escape key
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        if (previewDoc) setPreviewDoc(null);
+        if (previewImage) setPreviewImage(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [previewDoc, previewImage]);
 
   const startEditName = () => {
     setEditNameValue(selectedConv?.contact_name || '');
@@ -1003,8 +1071,11 @@ const WhatsApp = () => {
                             </span>
                           )}
                         </div>
-                        <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>
-                          {c.last_message_at ? new Date(c.last_message_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                        <span
+                          style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}
+                          title={c.last_message_at ? new Date(c.last_message_at).toLocaleString('en-IN') : ''}
+                        >
+                          {formatConversationDate(c.last_message_at)}
                         </span>
                       </div>
                       <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginBottom: '0.15rem', display: 'flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap' }}>
@@ -1211,11 +1282,21 @@ const WhatsApp = () => {
                   className="whatsapp-chat-messages"
                   style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.85rem', flex: 1, overflowY: 'auto', background: 'var(--bg-primary)' }}
                 >
-                  {messages.map(m => {
+                  {messages.map((m, mIdx) => {
                     const isOutbound = m.direction === 'outbound';
                     const parsed = parseMessageMedia(m);
                     let displayText = (parsed.cleanText || parsed.text || m.body || m.text || m.content || '').trim();
-                    
+
+                    // If invoiceMeta is present and displayText starts with "Tax Invoice Dispatched:", hide redundant text since the invoice card renders cleanly
+                    if (parsed.invoiceMeta && displayText.startsWith('Tax Invoice Dispatched:')) {
+                      displayText = '';
+                    }
+
+                    const currentDateLabel = getChatDateLabel(m.created_at);
+                    const prevMessage = mIdx > 0 ? messages[mIdx - 1] : null;
+                    const prevDateLabel = prevMessage ? getChatDateLabel(prevMessage.created_at) : null;
+                    const showDateDivider = currentDateLabel && currentDateLabel !== prevDateLabel;
+
                     if (!displayText && m.raw_payload) {
                       if (m.raw_payload.interactive?.button_reply?.title) {
                         displayText = m.raw_payload.interactive.button_reply.title;
@@ -1246,133 +1327,367 @@ const WhatsApp = () => {
                     );
 
                     return (
-                      <div
-                        key={m.id}
-                        className={`whatsapp-bubble ${isOutbound ? 'outbound' : 'inbound'}`}
-                        style={{
-                          maxWidth: '78%',
-                          alignSelf: isOutbound ? 'flex-end' : 'flex-start',
-                          padding: '0.75rem 1rem',
-                          borderRadius: '12px',
-                          borderTopRightRadius: isOutbound ? '2px' : '12px',
-                          borderTopLeftRadius: isOutbound ? '12px' : '2px',
-                          fontSize: '0.82rem',
-                          position: 'relative',
-                          background: isOutbound
-                            ? 'linear-gradient(135deg, rgba(16, 185, 129, 0.12) 0%, rgba(5, 150, 105, 0.06) 100%)'
-                            : 'var(--bg-card, #ffffff)',
-                          border: isOutbound
-                            ? '1px solid rgba(16, 185, 129, 0.28)'
-                            : '1px solid var(--border-color, rgba(226, 232, 240, 0.85))',
-                          boxShadow: '0 2px 8px rgba(0, 0, 0, 0.04)',
-                          color: 'var(--text-primary)',
-                        }}
-                      >
-                        {/* Bubble Header: Sender & Time */}
-                        <div style={{ fontSize: '0.68rem', marginBottom: '0.35rem', fontWeight: 600, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem' }}>
-                          <span style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '0.3rem',
-                            color: isOutbound
-                              ? (m.sender_type === 'human_agent' ? 'var(--accent-primary)' : '#059669')
-                              : 'var(--text-secondary)'
-                          }}>
-                            {isOutbound ? (
-                              m.sender_type === 'human_agent' ? (
-                                <>
-                                  <User size={11} />
-                                  <span>👤 Sales Executive</span>
-                                </>
-                              ) : (
-                                <>
-                                  <Sparkles size={11} />
-                                  <span>⚡ AI Assistant</span>
-                                </>
-                              )
-                            ) : (
-                              <span>{getDisplayName(selectedConv.contact_name, selectedConv.contact_phone)}</span>
-                            )}
-                          </span>
-                          <span style={{ fontSize: '0.64rem', color: 'var(--text-muted)', fontWeight: 400 }}>
-                            {m.created_at ? new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
-                          </span>
-                        </div>
-
-                        {/* Button Selection Badge for Inbound */}
-                        {isButtonSelection && (
-                          <div style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '0.35rem',
-                            background: 'rgba(99, 102, 241, 0.09)',
-                            border: '1px solid rgba(99, 102, 241, 0.22)',
-                            borderRadius: 6,
-                            padding: '0.15rem 0.45rem',
-                            fontSize: '0.68rem',
-                            fontWeight: 600,
-                            color: 'var(--accent-primary)',
-                            marginBottom: '0.4rem',
-                          }}>
-                            <span>🔘 Button Selected</span>
-                          </div>
-                        )}
-
-                        {/* Image attachment */}
-                        {mediaUrl && mediaType === 'image' && (
-                          <div style={{ marginBottom: displayText ? '0.45rem' : 0 }}>
-                            <img src={mediaUrl} alt="attachment" style={{ maxWidth: '100%', maxHeight: 240, borderRadius: 8, objectFit: 'cover', display: 'block' }} />
-                          </div>
-                        )}
-
-                        {/* Audio attachment */}
-                        {mediaUrl && mediaType === 'audio' && (
-                          <div style={{ marginBottom: displayText ? '0.45rem' : 0 }}>
-                            <audio controls style={{ width: '100%', minWidth: 220 }}>
-                              <source src={mediaUrl} />
-                            </audio>
-                          </div>
-                        )}
-
-                        {/* Document / PDF attachment */}
-                        {mediaUrl && mediaType === 'document' && (
-                          <div style={{ marginBottom: displayText ? '0.55rem' : 0 }}>
-                            <a
-                              href={mediaUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
+                      <React.Fragment key={m.id || mIdx}>
+                        {/* WhatsApp Centered Date Divider */}
+                        {showDateDivider && (
+                          <div
+                            style={{
+                              display: 'flex',
+                              justifyContent: 'center',
+                              alignItems: 'center',
+                              margin: '0.85rem 0 0.5rem 0',
+                              position: 'relative',
+                              userSelect: 'none'
+                            }}
+                          >
+                            <span
                               style={{
-                                display: 'flex',
+                                background: 'var(--bg-card, #ffffff)',
+                                color: 'var(--text-secondary, #64748b)',
+                                fontSize: '0.72rem',
+                                fontWeight: 600,
+                                padding: '0.28rem 0.95rem',
+                                borderRadius: '12px',
+                                boxShadow: '0 1px 3px rgba(0, 0, 0, 0.08)',
+                                border: '1px solid var(--border-color, rgba(226, 232, 240, 0.8))',
+                                letterSpacing: '0.3px',
+                                display: 'inline-flex',
                                 alignItems: 'center',
-                                gap: '0.65rem',
-                                padding: '0.65rem 0.85rem',
-                                background: 'rgba(239, 68, 68, 0.08)',
-                                border: '1px solid rgba(239, 68, 68, 0.3)',
-                                borderRadius: 8,
-                                color: 'var(--text-primary)',
-                                textDecoration: 'none',
-                                transition: 'all 0.2s',
+                                gap: '0.4rem'
                               }}
                             >
-                              <span style={{ fontSize: '1.4rem', flexShrink: 0 }}>📄</span>
-                              <div style={{ flex: 1, minWidth: 0 }}>
-                                <div style={{ fontWeight: 600, fontSize: '0.78rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                  {fileName || (mediaUrl.split('/').pop().split('?')[0]) || 'Sobha_Infratech_Product_Catalog.pdf'}
-                                </div>
-                                <div style={{ fontSize: '0.68rem', color: 'var(--accent-primary)', fontWeight: 500 }}>
-                                  PDF Document · Click to View / Download ↗
-                                </div>
-                              </div>
-                            </a>
+                              <Calendar size={12} style={{ opacity: 0.7 }} />
+                              <span>{currentDateLabel}</span>
+                            </span>
                           </div>
                         )}
 
-                        {/* Message Text */}
-                        {displayText && (
-                          <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.5, wordBreak: 'break-word', color: 'var(--text-primary)' }}>
-                            {displayText}
+                        <div
+                          className={`whatsapp-bubble ${isOutbound ? 'outbound' : 'inbound'}`}
+                          style={{
+                            maxWidth: '78%',
+                            alignSelf: isOutbound ? 'flex-end' : 'flex-start',
+                            padding: '0.75rem 1rem',
+                            borderRadius: '12px',
+                            borderTopRightRadius: isOutbound ? '2px' : '12px',
+                            borderTopLeftRadius: isOutbound ? '12px' : '2px',
+                            fontSize: '0.82rem',
+                            position: 'relative',
+                            background: isOutbound
+                              ? 'linear-gradient(135deg, rgba(16, 185, 129, 0.12) 0%, rgba(5, 150, 105, 0.06) 100%)'
+                              : 'var(--bg-card, #ffffff)',
+                            border: isOutbound
+                              ? '1px solid rgba(16, 185, 129, 0.28)'
+                              : '1px solid var(--border-color, rgba(226, 232, 240, 0.85))',
+                            boxShadow: '0 2px 8px rgba(0, 0, 0, 0.04)',
+                            color: 'var(--text-primary)',
+                          }}
+                        >
+                          {/* Bubble Header: Sender & Time (with Date Tooltip) */}
+                          <div style={{ fontSize: '0.68rem', marginBottom: '0.35rem', fontWeight: 600, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem' }}>
+                            <span style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '0.3rem',
+                              color: isOutbound
+                                ? (m.sender_type === 'human_agent' ? 'var(--accent-primary)' : '#059669')
+                                : 'var(--text-secondary)'
+                            }}>
+                              {isOutbound ? (
+                                m.sender_type === 'human_agent' ? (
+                                  <>
+                                    <User size={11} />
+                                    <span>👤 Sales Executive</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Sparkles size={11} />
+                                    <span>⚡ AI Assistant</span>
+                                  </>
+                                )
+                              ) : (
+                                <span>{getDisplayName(selectedConv.contact_name, selectedConv.contact_phone)}</span>
+                              )}
+                            </span>
+                            <span
+                              style={{ fontSize: '0.64rem', color: 'var(--text-muted)', fontWeight: 400 }}
+                              title={m.created_at ? new Date(m.created_at).toLocaleString('en-IN') : ''}
+                            >
+                              {m.created_at ? new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                            </span>
                           </div>
-                        )}
+
+                          {/* Button Selection Badge for Inbound */}
+                          {isButtonSelection && (
+                            <div style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '0.35rem',
+                              background: 'rgba(99, 102, 241, 0.09)',
+                              border: '1px solid rgba(99, 102, 241, 0.22)',
+                              borderRadius: 6,
+                              padding: '0.15rem 0.45rem',
+                              fontSize: '0.68rem',
+                              fontWeight: 600,
+                              color: 'var(--accent-primary)',
+                              marginBottom: '0.4rem',
+                            }}>
+                              <span>🔘 Button Selected</span>
+                            </div>
+                          )}
+
+                          {/* Image attachment with Hover Overlay & Lightbox */}
+                          {mediaUrl && mediaType === 'image' && (
+                            <div style={{ marginBottom: displayText ? '0.55rem' : 0 }}>
+                              <div
+                                onClick={() => { setPreviewImage({ url: mediaUrl, name: fileName || 'Image' }); setImageZoom(1); }}
+                                style={{
+                                  cursor: 'pointer',
+                                  position: 'relative',
+                                  borderRadius: 8,
+                                  overflow: 'hidden',
+                                  border: '1px solid rgba(0,0,0,0.08)',
+                                  background: 'rgba(0,0,0,0.03)',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  maxHeight: 280,
+                                }}
+                                title="Click to view high-res image"
+                              >
+                                <img
+                                  src={mediaUrl}
+                                  alt={fileName || 'attachment'}
+                                  style={{ maxWidth: '100%', maxHeight: 280, borderRadius: 8, objectFit: 'contain', display: 'block' }}
+                                />
+                                <div style={{
+                                  position: 'absolute',
+                                  bottom: 8,
+                                  right: 8,
+                                  background: 'rgba(15, 23, 42, 0.75)',
+                                  backdropFilter: 'blur(4px)',
+                                  color: '#ffffff',
+                                  borderRadius: 6,
+                                  padding: '0.2rem 0.5rem',
+                                  fontSize: '0.66rem',
+                                  fontWeight: 600,
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '0.3rem'
+                                }}>
+                                  <ZoomIn size={12} /> Tap to View
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Audio attachment */}
+                          {mediaUrl && mediaType === 'audio' && (
+                            <div style={{ marginBottom: displayText ? '0.45rem' : 0 }}>
+                              <audio controls style={{ width: '100%', minWidth: 220 }}>
+                                <source src={mediaUrl} />
+                              </audio>
+                            </div>
+                          )}
+
+                          {/* Video attachment */}
+                          {mediaUrl && mediaType === 'video' && (
+                            <div style={{ marginBottom: displayText ? '0.45rem' : 0 }}>
+                              <video controls style={{ maxWidth: '100%', maxHeight: 260, borderRadius: 8, display: 'block' }}>
+                                <source src={mediaUrl} />
+                              </video>
+                            </div>
+                          )}
+
+                          {/* Document / PDF / Tax Invoice Card */}
+                          {mediaUrl && mediaType === 'document' && (
+                            <div style={{
+                              marginBottom: displayText ? '0.55rem' : 0,
+                              background: 'var(--bg-secondary, #f8fafc)',
+                              border: '1px solid var(--border-color, #e2e8f0)',
+                              borderRadius: '10px',
+                              overflow: 'hidden',
+                              boxShadow: '0 2px 6px rgba(0, 0, 0, 0.04)'
+                            }}>
+                              {/* Invoice Header Badge if invoiceMeta exists */}
+                              {parsed.invoiceMeta && (
+                                <div style={{
+                                  background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.14) 0%, rgba(5, 150, 105, 0.08) 100%)',
+                                  borderBottom: '1px solid rgba(16, 185, 129, 0.25)',
+                                  padding: '0.5rem 0.85rem',
+                                  display: 'flex',
+                                  justifyContent: 'space-between',
+                                  alignItems: 'center',
+                                  gap: '0.5rem'
+                                }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                    <Receipt size={14} color="#059669" />
+                                    <div>
+                                      <div style={{ fontWeight: 800, fontSize: '0.78rem', color: '#065f46', letterSpacing: '0.3px' }}>
+                                        TAX INVOICE · {parsed.invoiceMeta.invoiceNumber}
+                                      </div>
+                                      {parsed.invoiceMeta.company && (
+                                        <div style={{ fontSize: '0.64rem', color: 'var(--text-muted)', fontWeight: 600 }}>
+                                          🏢 {parsed.invoiceMeta.company}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                  {parsed.invoiceMeta.amount && (
+                                    <div style={{ textAlign: 'right' }}>
+                                      <span style={{ fontSize: '0.86rem', fontWeight: 800, color: '#059669' }}>
+                                        {parsed.invoiceMeta.amount}
+                                      </span>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+
+                              {/* Document Body Row */}
+                              <div style={{
+                                padding: '0.7rem 0.85rem',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.75rem',
+                                background: 'var(--bg-card, #ffffff)'
+                              }}>
+                                <div style={{
+                                  width: 40,
+                                  height: 46,
+                                  borderRadius: 6,
+                                  background: '#ef4444',
+                                  color: '#fff',
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  flexShrink: 0,
+                                  boxShadow: '0 2px 4px rgba(239, 68, 68, 0.25)'
+                                }}>
+                                  <FileText size={17} />
+                                  <span style={{ fontSize: '0.56rem', fontWeight: 900, letterSpacing: '0.5px', marginTop: 1 }}>PDF</span>
+                                </div>
+
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{
+                                    fontWeight: 700,
+                                    fontSize: '0.8rem',
+                                    color: 'var(--text-primary)',
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap'
+                                  }}>
+                                    {fileName || (mediaUrl.split('/').pop().split('?')[0]) || 'Document.pdf'}
+                                  </div>
+                                  <div style={{
+                                    fontSize: '0.68rem',
+                                    color: 'var(--text-muted)',
+                                    marginTop: '0.15rem',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '0.4rem'
+                                  }}>
+                                    <span>PDF Document</span>
+                                    <span>•</span>
+                                    <span style={{ color: '#10b981', fontWeight: 600 }}>Preview Available</span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Interactive Actions: Preview, Download, Open */}
+                              <div style={{
+                                display: 'flex',
+                                borderTop: '1px solid var(--border-color, #e2e8f0)',
+                                background: 'var(--bg-secondary, #f8fafc)'
+                              }}>
+                                <button
+                                  type="button"
+                                  onClick={() => setPreviewDoc({
+                                    url: mediaUrl,
+                                    name: fileName || 'Document.pdf',
+                                    title: parsed.invoiceMeta?.invoiceNumber ? `Tax Invoice ${parsed.invoiceMeta.invoiceNumber}` : (fileName || 'PDF Document'),
+                                    invoiceMeta: parsed.invoiceMeta
+                                  })}
+                                  style={{
+                                    flex: 1,
+                                    padding: '0.5rem 0.5rem',
+                                    background: 'none',
+                                    border: 'none',
+                                    borderRight: '1px solid var(--border-color, #e2e8f0)',
+                                    cursor: 'pointer',
+                                    fontSize: '0.74rem',
+                                    fontWeight: 700,
+                                    color: 'var(--accent-primary, #6366f1)',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    gap: '0.35rem',
+                                    transition: 'background 0.15s'
+                                  }}
+                                  title="Preview document in viewer"
+                                >
+                                  <Eye size={13} /> Preview
+                                </button>
+
+                                <a
+                                  href={mediaUrl}
+                                  download={fileName || 'document.pdf'}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  style={{
+                                    flex: 1,
+                                    padding: '0.5rem 0.5rem',
+                                    background: 'none',
+                                    border: 'none',
+                                    borderRight: '1px solid var(--border-color, #e2e8f0)',
+                                    cursor: 'pointer',
+                                    fontSize: '0.74rem',
+                                    fontWeight: 700,
+                                    color: '#059669',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    gap: '0.35rem',
+                                    textDecoration: 'none',
+                                    transition: 'background 0.15s'
+                                  }}
+                                  title="Download PDF file"
+                                >
+                                  <Download size={13} /> Download
+                                </a>
+
+                                <a
+                                  href={mediaUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  style={{
+                                    padding: '0.5rem 0.75rem',
+                                    background: 'none',
+                                    border: 'none',
+                                    cursor: 'pointer',
+                                    fontSize: '0.74rem',
+                                    fontWeight: 600,
+                                    color: 'var(--text-muted)',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    gap: '0.25rem',
+                                    textDecoration: 'none'
+                                  }}
+                                  title="Open in new browser tab"
+                                >
+                                  <ExternalLink size={12} />
+                                </a>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Message Text */}
+                          {displayText && (
+                            <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.5, wordBreak: 'break-word', color: 'var(--text-primary)' }}>
+                              {displayText}
+                            </div>
+                          )}
 
                         {/* Interactive Quick Reply Buttons Preview for Outbound */}
                         {buttonsSent && buttonsSent.length > 0 && (
@@ -1450,8 +1765,9 @@ const WhatsApp = () => {
                           </div>
                         )}
                       </div>
-                    );
-                  })}
+                    </React.Fragment>
+                  );
+                })}
                   <div ref={messagesEndRef} />
                 </div>
 
@@ -2163,6 +2479,245 @@ const WhatsApp = () => {
           onClose={() => setSelected360LeadId(null)}
           onLeadUpdated={loadAllData}
         />
+      )}
+
+      {/* PDF & Document In-App Preview Modal */}
+      {previewDoc && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(15, 23, 42, 0.75)',
+            backdropFilter: 'blur(6px)',
+            zIndex: 9999,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '1.25rem',
+            animation: 'fadeIn 0.15s ease'
+          }}
+          onClick={() => setPreviewDoc(null)}
+        >
+          <div
+            style={{
+              background: 'var(--bg-card, #ffffff)',
+              borderRadius: 14,
+              width: '100%',
+              maxWidth: 950,
+              height: '88vh',
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.45)',
+              border: '1px solid var(--border-color, rgba(226, 232, 240, 0.8))'
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Modal Top Header */}
+            <div style={{
+              padding: '0.85rem 1.25rem',
+              borderBottom: '1px solid var(--border-color, #e2e8f0)',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              background: 'var(--bg-secondary, #f8fafc)'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', minWidth: 0 }}>
+                <div style={{
+                  width: 34,
+                  height: 34,
+                  borderRadius: 8,
+                  background: '#ef4444',
+                  color: '#fff',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                  boxShadow: '0 2px 4px rgba(239, 68, 68, 0.3)'
+                }}>
+                  <FileText size={18} />
+                </div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontWeight: 800, fontSize: '0.88rem', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {previewDoc.title || previewDoc.name}
+                  </div>
+                  <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                    <span>{previewDoc.name}</span>
+                    {previewDoc.invoiceMeta?.amount && (
+                      <>
+                        <span>•</span>
+                        <strong style={{ color: '#059669' }}>{previewDoc.invoiceMeta.amount}</strong>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <a
+                  href={previewDoc.url}
+                  download={previewDoc.name}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn btn-sm"
+                  style={{
+                    background: '#10b981',
+                    color: '#fff',
+                    border: 'none',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.35rem',
+                    textDecoration: 'none',
+                    padding: '0.35rem 0.75rem',
+                    borderRadius: 6,
+                    fontWeight: 600,
+                    fontSize: '0.75rem'
+                  }}
+                  title="Download Document"
+                >
+                  <Download size={13} /> Download
+                </a>
+                <a
+                  href={previewDoc.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn btn-sm btn-secondary"
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', textDecoration: 'none', padding: '0.35rem 0.65rem' }}
+                  title="Open in new window / full tab"
+                >
+                  <ExternalLink size={13} /> New Tab
+                </a>
+                <button
+                  onClick={() => setPreviewDoc(null)}
+                  className="btn btn-sm btn-secondary"
+                  style={{ padding: '0.35rem 0.55rem', color: 'var(--text-muted)' }}
+                  title="Close Preview (Esc)"
+                >
+                  <XIcon size={16} />
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Iframe Body with Fallback */}
+            <div style={{ flex: 1, background: '#1e293b', position: 'relative' }}>
+              <iframe
+                src={previewDoc.url}
+                title={previewDoc.name}
+                style={{ width: '100%', height: '100%', border: 'none' }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Full-Screen Image Lightbox Modal */}
+      {previewImage && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(0, 0, 0, 0.9)',
+            backdropFilter: 'blur(8px)',
+            zIndex: 9999,
+            display: 'flex',
+            flexDirection: 'column',
+            padding: '1rem 1.5rem',
+            animation: 'fadeIn 0.15s ease'
+          }}
+          onClick={() => setPreviewImage(null)}
+        >
+          {/* Lightbox Topbar */}
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              padding: '0.4rem 0.5rem 0.8rem 0.5rem',
+              color: '#ffffff',
+              zIndex: 10
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div style={{ fontSize: '0.86rem', fontWeight: 600, color: 'rgba(255,255,255,0.9)' }}>
+              {previewImage.name}
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+              <button
+                onClick={() => setImageZoom(z => Math.min(z + 0.25, 3))}
+                style={{ background: 'rgba(255,255,255,0.15)', border: 'none', color: '#fff', padding: '0.4rem 0.6rem', borderRadius: 6, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.72rem' }}
+                title="Zoom In"
+              >
+                <ZoomIn size={14} /> Zoom +
+              </button>
+              <button
+                onClick={() => setImageZoom(z => Math.max(z - 0.25, 0.5))}
+                style={{ background: 'rgba(255,255,255,0.15)', border: 'none', color: '#fff', padding: '0.4rem 0.6rem', borderRadius: 6, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.72rem' }}
+                title="Zoom Out"
+              >
+                <ZoomOut size={14} /> Zoom -
+              </button>
+              <button
+                onClick={() => setImageZoom(1)}
+                style={{ background: 'rgba(255,255,255,0.15)', border: 'none', color: '#fff', padding: '0.4rem 0.6rem', borderRadius: 6, cursor: 'pointer', fontSize: '0.72rem' }}
+                title="Reset Zoom"
+              >
+                Reset
+              </button>
+              <a
+                href={previewImage.url}
+                download={previewImage.name}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ background: '#10b981', border: 'none', color: '#fff', padding: '0.4rem 0.75rem', borderRadius: 6, cursor: 'pointer', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.75rem', fontWeight: 600 }}
+                title="Download Image"
+              >
+                <Download size={14} /> Download
+              </a>
+              <button
+                onClick={() => setPreviewImage(null)}
+                style={{ background: 'rgba(239,68,68,0.85)', border: 'none', color: '#fff', padding: '0.4rem 0.6rem', borderRadius: 6, cursor: 'pointer' }}
+                title="Close (Esc)"
+              >
+                <XIcon size={16} />
+              </button>
+            </div>
+          </div>
+
+          {/* Lightbox Center Image View */}
+          <div
+            style={{
+              flex: 1,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              overflow: 'auto',
+              padding: '0.5rem'
+            }}
+            onClick={e => { if (e.target === e.currentTarget) setPreviewImage(null); }}
+          >
+            <img
+              src={previewImage.url}
+              alt={previewImage.name}
+              style={{
+                maxWidth: '90vw',
+                maxHeight: '80vh',
+                objectFit: 'contain',
+                borderRadius: 8,
+                boxShadow: '0 20px 40px rgba(0,0,0,0.5)',
+                transform: `scale(${imageZoom})`,
+                transition: 'transform 0.15s ease'
+              }}
+              onClick={e => e.stopPropagation()}
+            />
+          </div>
+        </div>
       )}
     </div>
   );

@@ -487,13 +487,13 @@ const Customer360Modal = ({ leadId, onClose, onLeadUpdated }) => {
                           }}>
                             <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginBottom: '0.25rem' }}>
                               {m.sender_type === 'customer' ? data.lead.name : m.sender_type === 'ai' ? '🤖 AI Sales Assistant' : '👤 Sales Agent'}
-                              {' · '}{new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              {' · '}{new Date(m.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}{' '}{new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                               {m.status === 'failed' && <span style={{ color: 'var(--danger, #ef4444)', marginLeft: 4 }}>✕ Failed</span>}
                             </div>
 
                             {/* Smart Media & Text Rendering */}
                             {(() => {
-                              const { text: cleanText, mediaUrl, mediaType } = parseMessageMedia(m);
+                              const { text: cleanText, mediaUrl, mediaType, fileName, invoiceMeta } = parseMessageMedia(m);
                               return (
                                 <>
                                   {/* Image preview */}
@@ -540,6 +540,22 @@ const Customer360Modal = ({ leadId, onClose, onLeadUpdated }) => {
                                   {/* Document PDF Card Preview */}
                                   {mediaUrl && mediaType === 'document' && (
                                     <div style={{ marginBottom: cleanText ? '0.55rem' : 0 }}>
+                                      {invoiceMeta && (
+                                        <div style={{
+                                          background: 'rgba(16, 185, 129, 0.12)',
+                                          border: '1px solid rgba(16, 185, 129, 0.3)',
+                                          borderRadius: '8px 8px 0 0',
+                                          padding: '0.4rem 0.65rem',
+                                          display: 'flex',
+                                          justifyContent: 'space-between',
+                                          fontSize: '0.72rem',
+                                          fontWeight: 700,
+                                          color: '#10b981'
+                                        }}>
+                                          <span>🧾 Tax Invoice: {invoiceMeta.invoiceNumber}</span>
+                                          {invoiceMeta.amount && <span>{invoiceMeta.amount}</span>}
+                                        </div>
+                                      )}
                                       <a
                                         href={mediaUrl}
                                         target="_blank"
@@ -551,7 +567,8 @@ const Customer360Modal = ({ leadId, onClose, onLeadUpdated }) => {
                                           padding: '0.6rem 0.85rem',
                                           background: 'rgba(239, 68, 68, 0.1)',
                                           border: '1px solid rgba(239, 68, 68, 0.35)',
-                                          borderRadius: 8,
+                                          borderRadius: invoiceMeta ? '0 0 8px 8px' : 8,
+                                          borderTop: invoiceMeta ? 'none' : undefined,
                                           color: 'var(--text-primary)',
                                           textDecoration: 'none',
                                           transition: 'all 0.2s',
