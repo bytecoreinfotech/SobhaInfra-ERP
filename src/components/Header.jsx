@@ -1,9 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Search, Bell, Sun, Moon, Menu, MessageCircle, CheckCircle2, AlertCircle, IndianRupee, LogOut, Users, Building2, ChevronDown, PlusCircle, Globe, Check } from 'lucide-react';
+import { Search, Bell, Sun, Moon, Menu, MessageCircle, CheckCircle2, AlertCircle, IndianRupee, LogOut, Users, Building2, ChevronDown, PlusCircle, Globe, Check, Calendar } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { useLiveCounts } from '../context/LiveCountsContext';
 import { useCompany } from '../context/CompanyContext';
+import { useFinancialYear } from '../context/FinancialYearContext';
 import { useLocation, useNavigate } from 'react-router-dom';
 import ProfileModal from './ProfileModal';
 import './Header.css';
@@ -49,12 +50,15 @@ const Header = ({ onMobileMenuOpen }) => {
   const { user, signOut } = useAuth();
   const { notifications: liveNotifs } = useLiveCounts();
   const { companyProfiles, activeCompanyId, activeCompany, isConsolidated, setActiveCompanyId } = useCompany();
+  const { activeFYId, activeFY, fyOptions, setActiveFYId, isAllYears } = useFinancialYear();
   const [showNotif, setShowNotif] = useState(false);
   const [showCompanyMenu, setShowCompanyMenu] = useState(false);
+  const [showFYMenu, setShowFYMenu] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [readIds, setReadIds] = useState(new Set());
   const notifRef = useRef(null);
   const companyMenuRef = useRef(null);
+  const fyMenuRef = useRef(null);
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -76,6 +80,7 @@ const Header = ({ onMobileMenuOpen }) => {
     const handleClickOutside = (e) => {
       if (notifRef.current && !notifRef.current.contains(e.target)) setShowNotif(false);
       if (companyMenuRef.current && !companyMenuRef.current.contains(e.target)) setShowCompanyMenu(false);
+      if (fyMenuRef.current && !fyMenuRef.current.contains(e.target)) setShowFYMenu(false);
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
@@ -248,6 +253,101 @@ const Header = ({ onMobileMenuOpen }) => {
               >
                 <PlusCircle size={14} /> Manage Company Profiles
               </button>
+            </div>
+          )}
+        </div>
+
+        {/* Universal Financial Year Switcher Pill */}
+        <div className="fy-switcher-wrap" ref={fyMenuRef}>
+          <button
+            className="fy-switcher-btn"
+            onClick={() => setShowFYMenu(prev => !prev)}
+            title="Active Financial Year for ERP (Universal)"
+            style={{
+              background: isAllYears ? 'rgba(99, 102, 241, 0.1)' : 'rgba(16, 185, 129, 0.12)',
+              borderColor: isAllYears ? 'rgba(99, 102, 241, 0.3)' : 'rgba(16, 185, 129, 0.35)',
+              color: isAllYears ? 'var(--accent-primary)' : '#10b981',
+            }}
+          >
+            <Calendar size={13} style={{ flexShrink: 0 }} />
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {activeFY?.shortLabel || 'FY 2026-27'}
+            </span>
+            <ChevronDown size={13} style={{ opacity: 0.7, flexShrink: 0 }} />
+          </button>
+
+          {showFYMenu && (
+            <div className="fy-dropdown-menu">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.4rem 0.6rem 0.5rem' }}>
+                <span style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  Financial Year / Period
+                </span>
+                <span style={{ fontSize: '0.64rem', color: '#10b981', fontWeight: 800, background: 'rgba(16, 185, 129, 0.12)', padding: '0.1rem 0.4rem', borderRadius: 10 }}>
+                  Universal
+                </span>
+              </div>
+
+              {/* Options list */}
+              <div style={{ maxHeight: 250, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                {fyOptions.map(fy => {
+                  const isSelected = activeFYId === fy.id;
+                  return (
+                    <button
+                      key={fy.id}
+                      onClick={() => {
+                        setActiveFYId(fy.id);
+                        setShowFYMenu(false);
+                      }}
+                      style={{
+                        width: '100%',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '0.5rem 0.65rem',
+                        borderRadius: '8px',
+                        border: 'none',
+                        background: isSelected ? 'rgba(16, 185, 129, 0.15)' : 'transparent',
+                        color: isSelected ? '#10b981' : 'var(--text-primary)',
+                        cursor: 'pointer',
+                        textAlign: 'left',
+                        fontSize: '0.8rem',
+                        fontWeight: isSelected ? 700 : 500,
+                        transition: 'background 0.15s ease',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.55rem', overflow: 'hidden' }}>
+                        <div style={{
+                          width: 22, height: 22, borderRadius: 6,
+                          background: isSelected ? 'rgba(16, 185, 129, 0.25)' : (fy.isAll ? 'rgba(99, 102, 241, 0.12)' : 'var(--bg-tertiary)'),
+                          display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
+                        }}>
+                          <Calendar size={12} color={isSelected ? '#10b981' : (fy.isAll ? 'var(--accent-primary)' : 'var(--text-muted)')} />
+                        </div>
+                        <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                            <span>{fy.label}</span>
+                            {fy.isCurrent && (
+                              <span style={{ fontSize: '0.6rem', fontWeight: 800, color: '#10b981', background: 'rgba(16, 185, 129, 0.2)', padding: '0.05rem 0.35rem', borderRadius: 4 }}>
+                                ACTIVE
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ fontSize: '0.66rem', color: 'var(--text-muted)' }}>
+                            {fy.periodText}
+                          </div>
+                        </div>
+                      </div>
+                      {isSelected && <Check size={14} color="#10b981" style={{ flexShrink: 0, marginLeft: 6 }} />}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div style={{ height: 1, background: 'var(--border-color)', margin: '0.35rem 0' }} />
+
+              <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', padding: '0.2rem 0.5rem', textAlign: 'center' }}>
+                🌐 Applies across Dashboard, Finance &amp; Reports
+              </div>
             </div>
           )}
         </div>

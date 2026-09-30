@@ -24,6 +24,7 @@ import EmailHub from './pages/EmailHub';
 import PublicInvoice from './pages/PublicInvoice';
 import GlobalTooltip from './components/GlobalTooltip';
 import { CompanyProvider } from './context/CompanyContext';
+import { FinancialYearProvider } from './context/FinancialYearContext';
 import './index.css';
 import './App.css';
 
@@ -165,11 +166,13 @@ function App() {
     <ThemeProvider>
       <AuthProvider>
         <CompanyProvider>
-          <LiveCountsProvider>
-            <Router>
-              <AppInner />
-            </Router>
-          </LiveCountsProvider>
+          <FinancialYearProvider>
+            <LiveCountsProvider>
+              <Router>
+                <AppInner />
+              </Router>
+            </LiveCountsProvider>
+          </FinancialYearProvider>
         </CompanyProvider>
       </AuthProvider>
     </ThemeProvider>

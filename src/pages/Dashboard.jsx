@@ -14,6 +14,7 @@ import { reconcileCustomerInvoices, isSalesVoucher, isReceiptVoucher, isPurchase
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { useCompany } from '../context/CompanyContext';
+import { useFinancialYear } from '../context/FinancialYearContext';
 import { Skeleton, SkeletonStats } from '../components/Skeleton';
 import './Pages.css';
 
@@ -79,6 +80,7 @@ const Dashboard = () => {
   const navigate = useNavigate();
   const { user, hasPermission } = useAuth();
   const { activeCompany, isConsolidated } = useCompany();
+  const { activeFYId, activeFY, fyOptions, setActiveFYId, isAllYears, currentFYStartYear } = useFinancialYear();
   const [stats, setStats] = useState(null);
   const [activities, setActivities] = useState([]);
   const [taskList, setTaskList] = useState([]);
@@ -152,16 +154,8 @@ const Dashboard = () => {
     setTimeout(() => setSheetSyncToast(''), 4500);
   };
 
-  // ── Financial Year selector ───────────────────────────────────────────────
-  // Indian FY runs Apr 1 – Mar 31. Derive current FY start year.
-  const _nowForFY = new Date();
-  const _curFYStart = _nowForFY.getMonth() >= 3 ? _nowForFY.getFullYear() : _nowForFY.getFullYear() - 1;
-  // Build list of last 4 FYs for the dropdown
-  const FY_OPTIONS = [0, 1, 2, 3].map(offset => {
-    const startY = _curFYStart - offset;
-    return { label: `FY ${startY}-${String(startY + 1).slice(2)}`, startYear: startY };
-  });
-  const [selectedFYStart, setSelectedFYStart] = useState(_curFYStart);
+  // ── Financial Year selector (Unified with Universal Header FY) ──────────
+  const selectedFYStart = isAllYears ? currentFYStartYear : (Number(activeFYId) || currentFYStartYear);
 
   useEffect(() => {
     loadData();
@@ -331,13 +325,14 @@ const Dashboard = () => {
 
   // Customer Sales Invoices that fall within the selected FY
   const fyInvoices = useMemo(() => {
+    if (isAllYears) return customerSales;
     return customerSales.filter(inv => {
       const dStr = inv.invoice_date || inv.due_date || inv.created_at;
       if (!dStr) return false;
       const d = new Date(dStr);
       return !isNaN(d.getTime()) && d >= fyFrom && d <= fyTo;
     });
-  }, [customerSales, fyFrom, fyTo]);
+  }, [customerSales, fyFrom, fyTo, isAllYears]);
 
   const monthlyStats = useMemo(() => {
     return FY_MONTH_ORDER.map(({ name, jsMonth }) => {
@@ -591,8 +586,8 @@ const Dashboard = () => {
             <div style={{ display: 'flex', gap: '0.65rem', alignItems: 'center', flexWrap: 'wrap' }}>
               {/* FY Dropdown */}
               <select
-                value={selectedFYStart}
-                onChange={e => setSelectedFYStart(Number(e.target.value))}
+                value={activeFYId}
+                onChange={e => setActiveFYId(e.target.value)}
                 style={{
                   padding: '0.3rem 0.75rem',
                   borderRadius: 'var(--radius-md)',
@@ -605,8 +600,8 @@ const Dashboard = () => {
                   outline: 'none',
                 }}
               >
-                {FY_OPTIONS.map(fy => (
-                  <option key={fy.startYear} value={fy.startYear}>{fy.label}</option>
+                {fyOptions.map(fy => (
+                  <option key={fy.id} value={fy.id}>{fy.label}</option>
                 ))}
               </select>
               <span className="badge badge-neutral" style={{ fontSize: '0.72rem' }}>Billed: {fmtAmount(fyTotalBilled)}</span>

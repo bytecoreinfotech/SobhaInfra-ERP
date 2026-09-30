@@ -337,8 +337,54 @@
   max-width: calc(100vw - 20px);
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
-  borderRadius: 12px;
+  border-radius: 12px;
   box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+  padding: 0.5rem;
+  z-index: 9999;
+  animation: fadeIn 0.15s ease;
+}
+
+/* Universal Financial Year Switcher in Header */
+.fy-switcher-wrap {
+  position: relative;
+  margin-left: 0.45rem;
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+.fy-switcher-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.75rem;
+  border-radius: 20px;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  background: rgba(16, 185, 129, 0.08);
+  color: #10b981;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  max-width: 175px;
+  min-width: 0;
+}
+
+.fy-switcher-btn:hover {
+  background: rgba(16, 185, 129, 0.16);
+  border-color: rgba(16, 185, 129, 0.5);
+  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.2);
+}
+
+.fy-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  width: 295px;
+  max-width: calc(100vw - 20px);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  box-shadow: 0 12px 28px rgba(0,0,0,0.35);
   padding: 0.5rem;
   z-index: 9999;
   animation: fadeIn 0.15s ease;
@@ -376,6 +422,14 @@
     padding: 0.25rem 0.55rem;
     font-size: 0.75rem;
   }
+  .fy-switcher-wrap {
+    margin-left: 0.25rem;
+  }
+  .fy-switcher-btn {
+    max-width: 120px;
+    padding: 0.25rem 0.55rem;
+    font-size: 0.75rem;
+  }
   .header-search { display: none; }
   .hide-mobile { display: none !important; }
   .user-info { display: none; }
@@ -389,9 +443,14 @@
     gap: 0.35rem;
   }
   .company-switcher-btn {
-    max-width: 110px;
-    padding: 0.2rem 0.45rem;
-    font-size: 0.72rem;
+    max-width: 105px;
+    padding: 0.2rem 0.4rem;
+    font-size: 0.7rem;
+  }
+  .fy-switcher-btn {
+    max-width: 95px;
+    padding: 0.2rem 0.4rem;
+    font-size: 0.7rem;
   }
   .theme-toggle, .notif-btn {
     width: 32px;

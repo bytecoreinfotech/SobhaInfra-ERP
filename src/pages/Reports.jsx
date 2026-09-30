@@ -9,6 +9,7 @@ import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { buildCustomerIndex, matchCustomer } from '../lib/customerMatcher';
 import { reconcileCustomerInvoices, isSalesVoucher, isReceiptVoucher, isPurchaseVoucher, computeTallyDebtors } from '../lib/reconciliation';
 import { useCompany } from '../context/CompanyContext';
+import { useFinancialYear } from '../context/FinancialYearContext';
 import { Skeleton, SkeletonStats } from '../components/Skeleton';
 import './Pages.css';
 
@@ -70,7 +71,7 @@ const getDirection = (inv) => {
 };
 
 // ── Helper: build a date-range window from the period selector ───────────────
-function getPeriodWindow(period) {
+function getPeriodWindow(period, activeFY = null) {
   const now = new Date();
   let from;
   if (period === 'week') {
@@ -79,6 +80,10 @@ function getPeriodWindow(period) {
   } else if (period === 'quarter') {
     from = new Date(now);
     from.setMonth(now.getMonth() - 3);
+  } else if (period === 'fy' && activeFY && activeFY.startDate) {
+    from = new Date(activeFY.startDate);
+    const toDate = new Date(activeFY.endDate);
+    return { from, to: toDate > now ? now : toDate };
   } else if (period === 'all') {
     from = new Date(0);
     return { from, to: new Date(now.getTime() + 86400000) };
@@ -99,6 +104,7 @@ function parseDate(str) {
 
 const Reports = () => {
   const { activeCompany, isConsolidated } = useCompany();
+  const { activeFY, activeFYId, isAllYears } = useFinancialYear();
   const [period, setPeriod] = useState('month');
   const [loading, setLoading] = useState(true);
   const [leads, setLeads] = useState([]);
@@ -220,7 +226,7 @@ const Reports = () => {
   }, [allInvoices, activeCompany, isConsolidated, tallyMasterSummary]);
 
   // ── Period-filtered data ──────────────────────────────────────────────────
-  const { from: periodFrom, to: periodTo } = useMemo(() => getPeriodWindow(period), [period]);
+  const { from: periodFrom, to: periodTo } = useMemo(() => getPeriodWindow(period, activeFY), [period, activeFY]);
 
   const filteredInvoices = useMemo(() => invoices.filter(inv => {
     const d = parseDate(inv.invoice_date || inv.due_date || inv.created_at);
@@ -362,7 +368,15 @@ const Reports = () => {
   }, [period, invoices, periodFrom, periodTo]);
 
   const maxRevBar = Math.max(1, ...revenueChartData.map(d => d.invoiced || d.paid));
-  const periodLabel = period === 'week' ? 'Last 7 Days' : period === 'quarter' ? 'Last 3 Months' : period === 'all' ? 'All Time (Full FY)' : 'Last 30 Days';
+  const periodLabel = period === 'week'
+    ? 'Last 7 Days'
+    : period === 'quarter'
+      ? 'Last 3 Months'
+      : period === 'fy'
+        ? (activeFY?.label || 'Active FY')
+        : period === 'all'
+          ? 'All Time'
+          : 'Last 30 Days';
 
   return (
     <div className="page-container animate-fade-in">
@@ -376,10 +390,10 @@ const Reports = () => {
         </div>
         <div className="page-actions">
           <div style={{ display: 'flex', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
-            {['week', 'month', 'quarter', 'all'].map(p => (
+            {['week', 'month', 'quarter', 'fy', 'all'].map(p => (
               <button key={p} onClick={() => setPeriod(p)} className="btn"
-                style={{ borderRadius: 0, background: period === p ? 'var(--accent-primary)' : 'var(--bg-tertiary)', color: period === p ? 'white' : 'var(--text-secondary)', padding: '0.4rem 0.875rem', textTransform: 'capitalize' }}>
-                {p === 'all' ? 'All Time' : p}
+                style={{ borderRadius: 0, background: period === p ? 'var(--accent-primary)' : 'var(--bg-tertiary)', color: period === p ? 'white' : 'var(--text-secondary)', padding: '0.4rem 0.875rem', textTransform: p === 'fy' ? 'none' : 'capitalize' }}>
+                {p === 'all' ? 'All Time' : p === 'fy' ? (activeFY?.shortLabel || 'Active FY') : p}
               </button>
             ))}
           </div>

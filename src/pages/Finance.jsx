@@ -5,7 +5,7 @@ import {
   Download, Send, RefreshCw, X, FileText, Check, ShieldCheck,
   Server, Link, AlertOctagon, HelpCircle, Building2,
   PauseCircle, PlayCircle, CalendarClock, MessageSquare, ExternalLink,
-  Layers, ChevronDown, ChevronUp
+  Layers, ChevronDown, ChevronUp, Calendar
 } from 'lucide-react';
 import {
   getInvoices, getTallyConnectionStatus, triggerTallySyncNow,
@@ -22,6 +22,7 @@ import {
 } from '../lib/reconciliation';
 import { supabase } from '../lib/supabase';
 import { useCompany } from '../context/CompanyContext';
+import { useFinancialYear } from '../context/FinancialYearContext';
 import LedgerDetailDrawer from '../components/LedgerDetailDrawer';
 import InvoiceDocModal from '../components/InvoiceDocModal';
 import { Skeleton } from '../components/Skeleton';
@@ -156,6 +157,7 @@ const getDirection = (inv) => {
 
 const Finance = () => {
   const { activeCompany, isConsolidated, activeCompanyId } = useCompany();
+  const { activeFYId, activeFY, fyOptions, setActiveFYId, isAllYears, isDateInFY } = useFinancialYear();
   const [activeTab, setActiveTab] = useState('invoices'); // 'invoices' | 'tally' | 'mappings' | 'errors'
   const [financeView, setFinanceView] = useState('receivables'); // 'receivables' | 'payables'
   
@@ -181,7 +183,7 @@ const Finance = () => {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [filter, sheetCustomerFilter, search, dateFrom, dateTo, sortBy, financeView, activeTab, dateFilterField, activeCompanyId]);
+  }, [filter, sheetCustomerFilter, search, dateFrom, dateTo, sortBy, financeView, activeTab, dateFilterField, activeCompanyId, activeFYId]);
 
   // Tally Connector State
   const [tallyStatus, setTallyStatus] = useState(null);
@@ -460,7 +462,7 @@ const Finance = () => {
     }
   };
 
-  // 1. Date Range Filter slice
+  // 1. Date Range Filter slice (Respects local dateFrom/dateTo and Universal FY)
   const dateFilteredInvoices = invoices.filter(inv => {
     const invInvoiceDate = toDateOnlyStr(inv.invoice_date || inv.created_at);
     const invDueDate = toDateOnlyStr(inv.due_date);
@@ -468,8 +470,15 @@ const Finance = () => {
       ? (invDueDate || invInvoiceDate)
       : (invInvoiceDate || invDueDate);
 
+    // If local custom date range is set, prioritize it
     if (dateFrom && targetDate && targetDate < dateFrom) return false;
     if (dateTo && targetDate && targetDate > dateTo) return false;
+
+    // When no local custom date range is set and active FY is not 'all', filter by Universal FY
+    if (!dateFrom && !dateTo && !isAllYears && targetDate) {
+      if (!isDateInFY(targetDate)) return false;
+    }
+
     return true;
   });
 
@@ -824,7 +833,7 @@ const Finance = () => {
             <span style={{ color: dateFrom || dateTo ? 'var(--text-primary)' : 'var(--text-muted)', fontWeight: dateFrom || dateTo ? 700 : 400, whiteSpace: 'nowrap' }}>
               {dateFrom || dateTo
                 ? `${dateFrom ? fmtD(new Date(dateFrom)) : 'Beginning'} → ${dateTo ? fmtD(new Date(dateTo)) : 'Today'}`
-                : 'All dates'}
+                : (isAllYears ? 'All Time (No FY restriction)' : `${activeFY?.label || 'Current FY'}`)}
             </span>
             <span style={{ color: 'var(--text-muted)' }}>·</span>
             <span style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
@@ -1014,7 +1023,7 @@ const Finance = () => {
 
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: '0.1rem' }}>
                       <span>Peak: <strong style={{ color: 'var(--text-primary)' }}>{fmtCurrency(monthlyRegister.peakAmount)}</strong></span>
-                      <span style={{ color: '#10b981', fontWeight: 600 }}>● FY 2026-27 Active</span>
+                      <span style={{ color: '#10b981', fontWeight: 600 }}>● {activeFY?.label || 'FY 2026-27 Active'}</span>
                     </div>
                   </div>
                 )}
@@ -1468,7 +1477,7 @@ const Finance = () => {
                   {[
                     { label: '📦 All DB Data', key: 'all_db' },
                     { label: 'This Month', key: 'month' },
-                    { label: 'This FY', key: 'fy' },
+                    { label: activeFY?.shortLabel || 'Active FY', key: 'fy' },
                   ].map(preset => {
                     const isActive = activeDatePreset === preset.key;
                     return (
@@ -1489,13 +1498,39 @@ const Finance = () => {
                     );
                   })}
 
+                  {/* Quick FY Selector directly in Finance Bar */}
+                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
+                    <select
+                      value={activeFYId}
+                      onChange={e => {
+                        setActiveFYId(e.target.value);
+                        setActiveDatePreset('');
+                        setDateFrom('');
+                        setDateTo('');
+                      }}
+                      className="input-field"
+                      title="Switch Financial Year (Universal)"
+                      style={{
+                        padding: '0.15rem 0.45rem', fontSize: '0.7rem', width: 125, height: 26,
+                        borderRadius: 14, cursor: 'pointer', fontWeight: 600,
+                        border: '1px solid rgba(16, 185, 129, 0.4)',
+                        background: 'rgba(16, 185, 129, 0.08)',
+                        color: '#10b981',
+                      }}
+                    >
+                      {fyOptions.map(fy => (
+                        <option key={fy.id} value={fy.id}>{fy.shortLabel}</option>
+                      ))}
+                    </select>
+                  </div>
+
                   {/* Extended presets dropdown */}
                   <select
                     value={['today', 'week', '3m', '6m', 'last_fy'].includes(activeDatePreset) ? activeDatePreset : ''}
                     onChange={e => handleDatePreset(e.target.value)}
                     className="input-field"
                     style={{
-                      padding: '0.2rem 0.45rem', fontSize: '0.7rem', width: 125, height: 26,
+                      padding: '0.2rem 0.45rem', fontSize: '0.7rem', width: 115, height: 26,
                       borderRadius: 14, cursor: 'pointer',
                       border: ['today', 'week', '3m', '6m', 'last_fy'].includes(activeDatePreset)
                         ? '1px solid var(--accent-primary)' : '1px solid var(--border-color)',
