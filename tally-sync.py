@@ -1968,7 +1968,7 @@ def build_tally_master_summary(comp: str, comp_records: list) -> dict:
                 subgroups[parent]["net"] += abs_amt
                 subgroups[parent]["count"] += 1
 
-        elif any(k in vtype for k in ["sales", "tax invoice", "sales order"]) or dir_val == "receivable" or (not vtype and (num.startswith("SRP/") or num.startswith("SB/"))):
+        elif any(k in vtype for k in ["sales", "tax invoice", "sales order"]) or (not vtype and (num.startswith("SRP/") or num.startswith("SB/"))):
             total_sales_turnover += amt
             sales_count += 1
             is_cur_fy = (iso_date >= fy_start_str and iso_date <= fy_end_str) if iso_date else True

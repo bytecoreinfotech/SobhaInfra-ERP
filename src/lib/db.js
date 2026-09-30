@@ -3128,6 +3128,31 @@ export async function getTeamMembers() {
   return { data: MOCK_STORE.users, error: null };
 }
 
+export async function deleteTeamMember(userId, email = null) {
+  if (isSupabaseConfigured) {
+    try {
+      let query = supabase.from('users').delete();
+      if (userId) {
+        query = query.eq('id', userId);
+      } else if (email) {
+        query = query.eq('email', email.trim().toLowerCase());
+      }
+      const { error } = await query;
+      if (error) {
+        console.warn('[db] deleteTeamMember error:', error);
+        return { error };
+      }
+      MOCK_STORE.users = MOCK_STORE.users.filter(u => u.id !== userId && (!email || u.email !== email.trim().toLowerCase()));
+      return { error: null };
+    } catch (err) {
+      console.warn('[db] deleteTeamMember exception:', err.message);
+      return { error: err };
+    }
+  }
+  MOCK_STORE.users = MOCK_STORE.users.filter(u => u.id !== userId && (!email || u.email !== email?.trim().toLowerCase()));
+  return { error: null };
+}
+
 export async function inviteTeamMember(userData) {
   const initialPassword = userData.password || userData.password_hash || 'demo1234';
   const cleanEmail = (userData.email || '').trim().toLowerCase();
@@ -3142,8 +3167,43 @@ export async function inviteTeamMember(userData) {
     last_login_at: 'Never',
     avatar: (userData.full_name || 'U').slice(0, 2).toUpperCase()
   };
+
   if (isSupabaseConfigured) {
     try {
+      // 1. Check if an account with this email already exists (for reallocation)
+      const { data: existingUser } = await supabase
+        .from('users')
+        .select('id, email')
+        .eq('email', cleanEmail)
+        .maybeSingle();
+
+      if (existingUser?.id) {
+        // Reallocate existing account to new employee
+        const { data: updated, error: updateErr } = await supabase
+          .from('users')
+          .update({
+            full_name: userData.full_name,
+            phone: userData.phone || '',
+            role: userData.role || 'Sales Executive',
+            password_hash: initialPassword,
+            organization_id: DEFAULT_ORG_ID,
+            is_active: true,
+            avatar: newUser.avatar,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', existingUser.id)
+          .select()
+          .single();
+
+        if (!updateErr && updated) {
+          const idx = MOCK_STORE.users.findIndex(u => u.email === cleanEmail);
+          if (idx !== -1) MOCK_STORE.users[idx] = updated;
+          else MOCK_STORE.users.unshift(updated);
+          return { data: updated, error: null };
+        }
+      }
+
+      // 2. Insert new user
       const { data, error } = await supabase.from('users').insert([{
         full_name: userData.full_name,
         email: cleanEmail,
@@ -3155,14 +3215,50 @@ export async function inviteTeamMember(userData) {
         avatar: newUser.avatar,
         last_login_at: 'Never'
       }]).select().single();
-      if (!error && data) return { data, error: null };
+
+      if (!error && data) {
+        MOCK_STORE.users.unshift(data);
+        return { data, error: null };
+      }
+
       if (error) {
+        // Fallback for race condition: if duplicate key error, update the existing row
+        if (error.code === '23505' || error.message?.includes('duplicate key') || error.message?.includes('unique constraint')) {
+          const { data: updated, error: updateErr } = await supabase
+            .from('users')
+            .update({
+              full_name: userData.full_name,
+              phone: userData.phone || '',
+              role: userData.role || 'Sales Executive',
+              password_hash: initialPassword,
+              organization_id: DEFAULT_ORG_ID,
+              is_active: true,
+              avatar: newUser.avatar,
+              updated_at: new Date().toISOString()
+            })
+            .eq('email', cleanEmail)
+            .select()
+            .single();
+
+          if (!updateErr && updated) {
+            const idx = MOCK_STORE.users.findIndex(u => u.email === cleanEmail);
+            if (idx !== -1) MOCK_STORE.users[idx] = updated;
+            else MOCK_STORE.users.unshift(updated);
+            return { data: updated, error: null };
+          }
+        }
         console.warn('[db] inviteTeamMember error from Supabase:', error);
         return { data: null, error };
       }
     } catch (err) {
       console.warn('[db] inviteTeamMember exception:', err.message);
     }
+  }
+
+  const existingIdx = MOCK_STORE.users.findIndex(u => u.email === cleanEmail);
+  if (existingIdx !== -1) {
+    MOCK_STORE.users[existingIdx] = { ...MOCK_STORE.users[existingIdx], ...newUser };
+    return { data: MOCK_STORE.users[existingIdx], error: null };
   }
   MOCK_STORE.users.unshift(newUser);
   return { data: newUser, error: null };

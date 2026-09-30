@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Shield, Plus, X, Edit2, Edit3, Trash2, User, Check, RefreshCw, AlertCircle, Save, RotateCcw, Lock, CheckSquare, Square, ToggleLeft, ToggleRight } from 'lucide-react';
-import { getRoles, createRole, updateRole, deleteRole, getTeamMembers, inviteTeamMember, getPermissionMatrix, savePermissionMatrix } from '../lib/db';
+import { getRoles, createRole, updateRole, deleteRole, getTeamMembers, inviteTeamMember, deleteTeamMember, getPermissionMatrix, savePermissionMatrix } from '../lib/db';
 import { useAuth } from '../context/AuthContext';
 import { Skeleton } from '../components/Skeleton';
 import './Pages.css';
@@ -96,6 +96,27 @@ const Roles = () => {
       setFeedbackMsg({ type: 'error', text: error?.message || 'Failed to invite user.' });
     }
     setSubmitting(false);
+  };
+
+  const handleDeleteUser = async (u) => {
+    if (!u?.id) return;
+    if (u.role === 'Super Admin') {
+      alert('Super Admin cannot be deleted.');
+      return;
+    }
+    const confirmDelete = window.confirm(`Are you sure you want to completely delete "${u.full_name || u.email}"? All credentials will be released for reallocation.`);
+    if (!confirmDelete) return;
+
+    // Optimistic local state update
+    setTeamMembers(prev => prev.filter(m => m.id !== u.id));
+    const { error } = await deleteTeamMember(u.id, u.email);
+    if (error) {
+      setFeedbackMsg({ type: 'error', text: `Failed to delete from database: ${error.message}` });
+      loadData();
+    } else {
+      setFeedbackMsg({ type: 'success', text: `Employee "${u.full_name || u.email}" permanently deleted. Email "${u.email}" is now released.` });
+    }
+    setTimeout(() => setFeedbackMsg(null), 5000);
   };
 
   const handleCreateRole = async (e) => {
@@ -371,7 +392,7 @@ const Roles = () => {
                               className="btn-icon"
                               style={{ color: 'var(--danger)' }}
                               title="Remove Member"
-                              onClick={() => setTeamMembers(p => p.filter(m => m.id !== u.id))}
+                              onClick={() => handleDeleteUser(u)}
                             >
                               <Trash2 size={14} />
                             </button>

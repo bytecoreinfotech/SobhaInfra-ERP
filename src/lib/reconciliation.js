@@ -1157,9 +1157,9 @@ export function computeCollectionStats(bills = [], masterCollections = null, aut
     return s + Number(b.paid_amount || 0);
   }, 0);
 
+  const hasMasterRate = Boolean(masterCollections && Number(masterCollections.collection_rate_pct) > 0);
   const dynamicRate = totalInvoiced > 0 ? Math.round((totalPaid / totalInvoiced) * 1000) / 10 : 0;
-  const hasMasterRate = masterCollections && Number(masterCollections.collection_rate_pct) > 0;
-  const rate = hasMasterRate && bills.length > 500 ? Number(masterCollections.collection_rate_pct) : dynamicRate;
+  const rate = dynamicRate;
 
   return {
     realizationRate: rate,

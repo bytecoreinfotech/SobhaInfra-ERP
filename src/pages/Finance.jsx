@@ -222,17 +222,22 @@ const Finance = () => {
   useEffect(() => {
     loadAllFinanceData();
 
+    let debounceTimer = null;
     const channel = supabase
       .channel('realtime:finance_invoices')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'invoices' }, () => {
-        invalidateInvoicesCache();
-        getInvoices({ forceRefresh: true }).then(invRes => {
-          if (invRes?.data) setAllInvoices(invRes.data);
-        });
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          invalidateInvoicesCache();
+          getInvoices({ forceRefresh: true }).then(invRes => {
+            if (invRes?.data) setAllInvoices(invRes.data);
+          });
+        }, 1500);
       })
       .subscribe();
 
     return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
       // Clear any lingering progress poll when unmounting
       if (syncPollRef.current) clearInterval(syncPollRef.current);
       supabase.removeChannel(channel);
@@ -582,19 +587,8 @@ const Finance = () => {
   // Rich monthly register breakdown (matches Tally Sales Register / Purchase Register)
   const monthlyRegister = useMemo(() => {
     const isPayables = financeView === 'payables';
-    const compName = activeCompany?.company_name || '';
-    let compMaster = null;
-    if (tallyMasterSummary) {
-      if (compName && tallyMasterSummary[compName]) {
-        compMaster = tallyMasterSummary[compName];
-      } else if (!compName) {
-        const firstKey = Object.keys(tallyMasterSummary).find(k => !k.startsWith('_'));
-        if (firstKey) compMaster = tallyMasterSummary[firstKey];
-      }
-    }
-    const masterReg = isPayables ? compMaster?.purchase_register : compMaster?.sales_register;
-    return computeMonthlyRegister(activeBills, isPayables, masterReg);
-  }, [activeBills, financeView, activeCompany, tallyMasterSummary]);
+    return computeMonthlyRegister(activeBills, isPayables);
+  }, [activeBills, financeView]);
 
   // Master ledger closing balance sum for the active view
   const tallyClosingSum = useMemo(() => {
@@ -605,28 +599,7 @@ const Finance = () => {
     return currentTallyDebtors?.net ?? 0;
   }, [invoices, financeView, isVendorLedger, currentTallyDebtors]);
 
-  // If user selected custom start/end dates, use custom range calculations
-  const isCustomDateActive = Boolean(dateFrom || dateTo);
-
-  // Authoritative Tally billing turnover:
-  // If no custom date filter is active and we have authoritative Tally Register for the selected FY,
-  // display Tally's exact billing total (e.g. ₹6.15 Cr for Ready Plast FY 2026-27).
-  const displayBilledAmount = useMemo(() => {
-    if (!isCustomDateActive && monthlyRegister?.isTallyMaster && monthlyRegister.totalAmount > 0) {
-      return monthlyRegister.totalAmount;
-    }
-    return totalInvoiced;
-  }, [isCustomDateActive, monthlyRegister, totalInvoiced]);
-
-  const displayBilledCount = useMemo(() => {
-    if (!isCustomDateActive && monthlyRegister?.isTallyMaster && monthlyRegister.monthly) {
-      const tallyCount = monthlyRegister.monthly.reduce((s, m) => s + Number(m.count || 0), 0);
-      if (tallyCount > 0) return tallyCount;
-    }
-    return activeBills.length;
-  }, [isCustomDateActive, monthlyRegister, activeBills]);
-
-  // Rich collection & settlement efficiency metrics
+  // Rich collection & settlement efficiency metrics (strictly against active billing)
   const collectionStats = useMemo(() => {
     const compName = activeCompany?.company_name || '';
     let compMaster = null;
@@ -638,8 +611,8 @@ const Finance = () => {
         if (firstKey) compMaster = tallyMasterSummary[firstKey];
       }
     }
-    return computeCollectionStats(activeBills, compMaster?.collections, displayBilledAmount);
-  }, [activeBills, activeCompany, tallyMasterSummary, displayBilledAmount]);
+    return computeCollectionStats(activeBills, compMaster?.collections, totalInvoiced);
+  }, [activeBills, activeCompany, tallyMasterSummary, totalInvoiced]);
 
   const tallyDebitTotal = financeView === 'receivables' ? (currentTallyDebtors?.debit ?? 0) : tallyClosingSum;
   const tallyCreditTotal = financeView === 'receivables' ? (currentTallyDebtors?.credit ?? 0) : 0;
@@ -955,10 +928,8 @@ const Finance = () => {
               { 
                 type: 'register',
                 label: 'Total Billed to Customers', 
-                value: fmtCurrency(displayBilledAmount), 
-                sub: monthlyRegister?.isTallyMaster && displayBilledCount > activeBills.length
-                  ? `${displayBilledCount} sales invoices in Tally Prime (${activeBills.length} synced to cloud)`
-                  : `${displayBilledCount} sales invoices (matches Tally)`, 
+                value: fmtCurrency(totalInvoiced), 
+                sub: `${activeBills.length} sales invoices (matches Tally)`, 
                 icon: <DollarSign size={20} />, 
                 color: '#6366f1', 
                 bg: 'rgba(99,102,241,0.12)' 
@@ -976,10 +947,8 @@ const Finance = () => {
               { 
                 type: 'register',
                 label: 'Total Vendor Bills', 
-                value: fmtCurrency(displayBilledAmount), 
-                sub: monthlyRegister?.isTallyMaster && displayBilledCount > activeBills.length
-                  ? `${displayBilledCount} bills in Tally Prime (${activeBills.length} synced)`
-                  : `${displayBilledCount} bills (matches Tally Purchase Register)`, 
+                value: fmtCurrency(totalInvoiced), 
+                sub: `${activeBills.length} bills (matches Tally Purchase Register)`, 
                 icon: <DollarSign size={20} />, 
                 color: '#f59e0b', 
                 bg: 'rgba(245,158,11,0.12)' 
@@ -1176,10 +1145,14 @@ const Finance = () => {
                   )}
                   <div style={{
                     width: 40, height: 40, borderRadius: 10,
-                    background: 'rgba(239,68,68,0.1)',
+                    background: currentTallyDebtors?.isTallyMaster ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                   }}>
-                    <AlertTriangle size={20} style={{ color: '#ef4444' }} />
+                    {currentTallyDebtors?.isTallyMaster ? (
+                      <ShieldCheck size={20} style={{ color: '#10b981' }} />
+                    ) : (
+                      <AlertTriangle size={20} style={{ color: '#ef4444' }} />
+                    )}
                   </div>
                 </div>
               </div>

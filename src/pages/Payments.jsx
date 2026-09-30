@@ -102,15 +102,20 @@ const Payments = () => {
     loadAll();
 
     if (!isSupabaseConfigured) return;
+    let debounceTimer = null;
     const channel = supabase
       .channel('realtime:payments_invoices')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'invoices' }, () => {
-        invalidateInvoicesCache();
-        loadAll(true);
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          invalidateInvoicesCache();
+          loadAll(true);
+        }, 1500);
       })
       .subscribe();
 
     return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
       supabase.removeChannel(channel);
     };
   }, []);

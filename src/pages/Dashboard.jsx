@@ -161,17 +161,22 @@ const Dashboard = () => {
     loadData();
 
     if (!isSupabaseConfigured) return;
+    let debounceTimer = null;
     const channel = supabase
       .channel('realtime:dashboard_invoices')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'invoices' }, () => {
-        invalidateInvoicesCache();
-        getInvoices({ forceRefresh: true }).then(invRes => {
-          if (invRes?.data) setAllInvoices(invRes.data);
-        });
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          invalidateInvoicesCache();
+          getInvoices({ forceRefresh: true }).then(invRes => {
+            if (invRes?.data) setAllInvoices(invRes.data);
+          });
+        }, 1500);
       })
       .subscribe();
 
     return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
       supabase.removeChannel(channel);
     };
   }, []);
@@ -290,32 +295,7 @@ const Dashboard = () => {
   const overdueInvoices = activeBills.filter(i => i.status === 'Overdue').length;
   const overdueAmount = activeBills.filter(i => i.status === 'Overdue').reduce((s, i) => s + Number(i.pending_amount ?? i.amount ?? 0), 0);
   const paidInvoicesCount = activeBills.filter(i => i.status === 'Paid').length;
-
-  // Authoritative Tally Total Invoiced:
-  // If FY 2026-27 is selected and Tally Master Summary contains the verified Sales Register (6cr+ for Ready Plast),
-  // prioritize Tally's exact billing total so KPI cards match Tally Prime 100%.
-  const displayTotalInvoiced = useMemo(() => {
-    if (!isAllYears && selectedFYStart === 2026) {
-      const compName = activeCompany?.company_name || '';
-      let compMaster = null;
-      if (tallyMasterSummary) {
-        if (compName && tallyMasterSummary[compName]) {
-          compMaster = tallyMasterSummary[compName];
-        } else if (!compName || isConsolidated) {
-          const firstKey = Object.keys(tallyMasterSummary).find(k => !k.startsWith('_'));
-          if (firstKey) compMaster = tallyMasterSummary[firstKey];
-        }
-      }
-      const masterMonthly = compMaster?.sales_register?.monthly;
-      if (masterMonthly && masterMonthly.length > 0) {
-        const fyTotal = masterMonthly.reduce((s, m) => s + Number(m.credit || m.debit || 0), 0);
-        if (fyTotal > 0) return fyTotal;
-      }
-    }
-    return totalInvoiced;
-  }, [isAllYears, selectedFYStart, activeCompany, isConsolidated, tallyMasterSummary, totalInvoiced]);
-
-  const collectionRate = displayTotalInvoiced > 0 ? ((totalPaid / displayTotalInvoiced) * 100).toFixed(1) : '0.0';
+  const collectionRate = totalInvoiced > 0 ? ((totalPaid / totalInvoiced) * 100).toFixed(1) : '0.0';
 
   // Dynamic Tally Sundry Debtors & Advances from live database
   const tallySummary = useMemo(() => {
@@ -363,19 +343,6 @@ const Dashboard = () => {
   ];
 
   const monthlyStats = useMemo(() => {
-    const compName = activeCompany?.company_name || '';
-    let compMaster = null;
-    if (tallyMasterSummary) {
-      if (compName && tallyMasterSummary[compName]) {
-        compMaster = tallyMasterSummary[compName];
-      } else if (!compName || isConsolidated) {
-        const firstKey = Object.keys(tallyMasterSummary).find(k => !k.startsWith('_'));
-        if (firstKey) compMaster = tallyMasterSummary[firstKey];
-      }
-    }
-    const masterMonthly = compMaster?.sales_register?.monthly;
-    const hasMaster = masterMonthly && masterMonthly.length > 0 && masterMonthly.some(m => Number(m.credit || m.debit || 0) > 0);
-
     return FY_MONTH_ORDER.map(({ name, jsMonth }) => {
       // For Jan/Feb/Mar, they belong to selectedFYStart+1 calendar year
       const calYear = jsMonth <= 2 ? selectedFYStart + 1 : selectedFYStart;
@@ -385,23 +352,13 @@ const Dashboard = () => {
         const d = new Date(dStr);
         return !isNaN(d.getTime()) && d.getMonth() === jsMonth && d.getFullYear() === calYear;
       });
-      const dbBilled = monthInvoices.reduce((s, inv) => s + Number(inv.amount || 0), 0);
+      const totalBilled = monthInvoices.reduce((s, inv) => s + Number(inv.amount || 0), 0);
       const paidAmt     = monthInvoices.reduce((s, inv) => s + (inv.status === 'Paid' ? Number(inv.amount || 0) : Number(inv.paid_amount || 0)), 0);
       const pendingAmt  = monthInvoices.reduce((s, inv) => s + (inv.status !== 'Paid' ? Number(inv.pending_amount ?? inv.amount ?? 0) : 0), 0);
 
-      let totalBilled = dbBilled;
-      let count = monthInvoices.length;
-      if (hasMaster && selectedFYStart === 2026) {
-        const mRecord = masterMonthly.find(m => m.month === name);
-        if (mRecord && Number(mRecord.credit || mRecord.debit || 0) > 0) {
-          totalBilled = Number(mRecord.credit || mRecord.debit || 0);
-          count = mRecord.count || count;
-        }
-      }
-
-      return { month: name, jsMonth, calYear, invoiced: totalBilled, paid: paidAmt, pending: pendingAmt, count };
+      return { month: name, jsMonth, calYear, invoiced: totalBilled, paid: paidAmt, pending: pendingAmt, count: monthInvoices.length };
     });
-  }, [fyInvoices, selectedFYStart, activeCompany, isConsolidated, tallyMasterSummary]);
+  }, [fyInvoices, selectedFYStart]);
 
   // Totals for selected FY
   const fyTotalBilled = useMemo(() => {

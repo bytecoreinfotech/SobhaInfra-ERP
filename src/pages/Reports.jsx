@@ -159,17 +159,22 @@ const Reports = () => {
     loadData(); 
 
     if (!isSupabaseConfigured) return;
+    let debounceTimer = null;
     const channel = supabase
       .channel('realtime:reports_invoices')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'invoices' }, () => {
-        invalidateInvoicesCache();
-        getInvoices({ forceRefresh: true }).then(invRes => {
-          if (invRes?.data) setAllInvoices(invRes.data);
-        });
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          invalidateInvoicesCache();
+          getInvoices({ forceRefresh: true }).then(invRes => {
+            if (invRes?.data) setAllInvoices(invRes.data);
+          });
+        }, 1500);
       })
       .subscribe();
 
     return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
       supabase.removeChannel(channel);
     };
   }, []);
