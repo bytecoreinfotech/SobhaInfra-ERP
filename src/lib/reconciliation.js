@@ -985,33 +985,33 @@ export function computeCompanyDebtors(invoices = [], companyName = '', masterSum
     });
   }
 
-  // Dynamic incorporation of newly created or synced sales invoices
-  const salesInvoices = invoices.filter(inv => {
-    const num = (inv?.invoice_number || '').toUpperCase();
-    if (num.includes('LEDGER-') || num.startsWith('OP-')) return false;
-    const c = (inv.company_name || inv.metadata?.tally_company || '').toUpperCase();
-    const matchComp = isBuildtech ? c.includes('BUILDTECH') : (isReadyPlast ? (c.includes('READY PLAST') || (c.includes('SHOBHA') && !c.includes('BUILDTECH') && !c.includes('TECH'))) : (compUpper ? c.includes(compUpper) : true));
-    if (!matchComp) return false;
-    const vtype = (inv.voucher_type || inv.metadata?.voucher_type || '').toLowerCase();
-    return vtype.includes('sales') || /^(srp|sb)\//i.test(num);
-  });
+  // Dynamic incorporation of newly created local ERP sales invoices (only when Tally Master is absent)
+  if (!matchedMaster) {
+    const salesInvoices = invoices.filter(inv => {
+      const num = (inv?.invoice_number || '').toUpperCase();
+      if (num.includes('LEDGER-') || num.startsWith('OP-')) return false;
+      const c = (inv.company_name || inv.metadata?.tally_company || '').toUpperCase();
+      const matchComp = isBuildtech ? c.includes('BUILDTECH') : (isReadyPlast ? (c.includes('READY PLAST') || (c.includes('SHOBHA') && !c.includes('BUILDTECH') && !c.includes('TECH'))) : (compUpper ? c.includes(compUpper) : true));
+      if (!matchComp) return false;
+      return isSalesVoucher(inv);
+    });
 
-  let unmappedSalesDebit = 0;
-  salesInvoices.forEach(s => {
-    const rawName = s.client_name || s.party_name || '';
-    const normKey = rawName.toUpperCase().replace(/[^A-Z0-9]/g, '');
-    const isNewParty = normKey && !partyMap.has(normKey);
-
-    if (isNewParty) {
-      if (s.status !== 'Paid') {
-        const pAmt = Number(s.pending_amount !== undefined ? s.pending_amount : s.amount) || 0;
-        unmappedSalesDebit += pAmt;
-        groups.push({ name: rawName, debit: pAmt, credit: 0, net: pAmt, parent: 'Sundry Debtors', is_new: true });
+    let unmappedSalesDebit = 0;
+    salesInvoices.forEach(s => {
+      const isManualLocal = !s.tally_voucher_number && !s.metadata?.tally_guid && (s.source === 'manual' || s.source === 'erp');
+      if (isManualLocal && s.status !== 'Paid') {
+        const rawName = s.client_name || s.party_name || '';
+        const normKey = rawName.toUpperCase().replace(/[^A-Z0-9]/g, '');
+        if (normKey && !partyMap.has(normKey)) {
+          const pAmt = Number(s.pending_amount !== undefined ? s.pending_amount : s.amount) || 0;
+          unmappedSalesDebit += pAmt;
+          groups.push({ name: rawName, debit: pAmt, credit: 0, net: pAmt, parent: 'Sundry Debtors', is_new: true });
+        }
       }
-    }
-  });
+    });
 
-  debit += unmappedSalesDebit;
+    debit += unmappedSalesDebit;
+  }
 
   groups.sort((a, b) => b.net - a.net);
 
@@ -1144,8 +1144,10 @@ export function computeMonthlyRegister(bills = [], isPayables = false, masterReg
 /**
  * Computes rich collection efficiency metrics for Card 2 blank space
  */
-export function computeCollectionStats(bills = [], masterCollections = null) {
-  const totalInvoiced = bills.reduce((s, b) => s + Number(b.amount || 0), 0);
+export function computeCollectionStats(bills = [], masterCollections = null, authoritativeBilled = null) {
+  const totalInvoiced = Number(authoritativeBilled) > 0 
+    ? Number(authoritativeBilled) 
+    : bills.reduce((s, b) => s + Number(b.amount || 0), 0);
   const paidBills = bills.filter(b => b.status === 'Paid');
   const pendingBills = bills.filter(b => b.status === 'Pending');
   const overdueBills = bills.filter(b => b.status === 'Overdue');
@@ -1155,9 +1157,9 @@ export function computeCollectionStats(bills = [], masterCollections = null) {
     return s + Number(b.paid_amount || 0);
   }, 0);
 
-  const rate = masterCollections?.collection_rate_pct !== undefined 
-    ? masterCollections.collection_rate_pct 
-    : (totalInvoiced > 0 ? Math.round((totalPaid / totalInvoiced) * 1000) / 10 : 0);
+  const dynamicRate = totalInvoiced > 0 ? Math.round((totalPaid / totalInvoiced) * 1000) / 10 : 0;
+  const hasMasterRate = masterCollections && Number(masterCollections.collection_rate_pct) > 0;
+  const rate = hasMasterRate && bills.length > 500 ? Number(masterCollections.collection_rate_pct) : dynamicRate;
 
   return {
     realizationRate: rate,
@@ -1167,7 +1169,7 @@ export function computeCollectionStats(bills = [], masterCollections = null) {
     pendingCount: pendingBills.length,
     overdueCount: overdueBills.length,
     totalCount: bills.length,
-    isTallyMaster: Boolean(masterCollections),
+    isTallyMaster: Boolean(hasMasterRate),
   };
 }
 

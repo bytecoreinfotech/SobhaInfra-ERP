@@ -1879,27 +1879,43 @@ def build_tally_master_summary(comp: str, comp_records: list) -> dict:
     receipts_count = 0
     total_sales_turnover = 0.0
     sales_count = 0
+    fy_sales_turnover = 0.0
+    fy_sales_count = 0
     total_purchases = 0.0
     purchases_count = 0
+
+    # Current FY boundaries (2026-04-01 to 2027-03-31)
+    fy_start_str = "2026-04-01"
+    fy_end_str = "2027-03-31"
 
     for r in comp_records:
         num = str(r.get("invoice_number", "")).upper()
         vtype = str(r.get("voucher_type") or (r.get("metadata") or {}).get("voucher_type", "")).lower()
         dir_val = str(r.get("direction", "")).lower()
         amt = float(r.get("amount") or 0.0)
-        dt = str(r.get("invoice_date") or r.get("date") or "")
+        dt = str(r.get("invoice_date") or r.get("date") or "").strip()
         
         m_abbr = None
+        iso_date = ""
         if dt:
             try:
                 if "-" in dt:
-                    dt_obj = datetime.strptime(dt[:10], "%Y-%m-%d")
+                    parts = dt.split("-")
+                    if len(parts[0]) == 4:
+                        dt_obj = datetime.strptime(dt[:10], "%Y-%m-%d")
+                    elif len(parts) == 3 and len(parts[2]) == 2:
+                        dt_obj = datetime.strptime(dt[:9], "%d-%b-%y")
+                    elif len(parts) == 3 and len(parts[2]) == 4:
+                        dt_obj = datetime.strptime(dt[:11], "%d-%b-%Y")
+                    else:
+                        dt_obj = None
                 elif len(dt) == 8 and dt.isdigit():
                     dt_obj = datetime.strptime(dt, "%Y%m%d")
                 else:
                     dt_obj = None
                 if dt_obj:
                     m_abbr = dt_obj.strftime("%b")
+                    iso_date = dt_obj.strftime("%Y-%m-%d")
             except Exception:
                 pass
 
@@ -1955,9 +1971,13 @@ def build_tally_master_summary(comp: str, comp_records: list) -> dict:
         elif any(k in vtype for k in ["sales", "tax invoice", "sales order"]) or dir_val == "receivable" or (not vtype and (num.startswith("SRP/") or num.startswith("SB/"))):
             total_sales_turnover += amt
             sales_count += 1
-            if m_abbr and m_abbr in sales_monthly:
-                sales_monthly[m_abbr]["credit"] += amt
-                sales_monthly[m_abbr]["count"] += 1
+            is_cur_fy = (iso_date >= fy_start_str and iso_date <= fy_end_str) if iso_date else True
+            if is_cur_fy:
+                fy_sales_turnover += amt
+                fy_sales_count += 1
+                if m_abbr and m_abbr in sales_monthly:
+                    sales_monthly[m_abbr]["credit"] += amt
+                    sales_monthly[m_abbr]["count"] += 1
 
         elif any(k in vtype for k in ["receipt", "bank receipt", "cash receipt"]) or dir_val == "received" or "REC-" in num:
             total_collected += amt
@@ -1993,8 +2013,10 @@ def build_tally_master_summary(comp: str, comp_records: list) -> dict:
             "subgroups": subgroup_list,
         },
         "sales_register": {
-            "total_sales": round(total_sales_turnover, 2),
-            "invoices_count": sales_count,
+            "total_sales": round(fy_sales_turnover, 2) if fy_sales_turnover > 0 else round(total_sales_turnover, 2),
+            "invoices_count": fy_sales_count if fy_sales_count > 0 else sales_count,
+            "all_time_sales": round(total_sales_turnover, 2),
+            "all_time_count": sales_count,
             "monthly": [sales_monthly[m] for m in month_abbrs if sales_monthly[m]["credit"] > 0 or m in ["Apr", "May", "Jun", "Jul", "Aug", "Sep"]],
         },
         "purchase_register": {

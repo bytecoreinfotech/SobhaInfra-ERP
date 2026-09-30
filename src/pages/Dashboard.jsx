@@ -267,13 +267,55 @@ const Dashboard = () => {
     return customerInvoices.filter(isSalesVoucher);
   }, [customerInvoices]);
 
-  const totalInvoiced = customerSales.reduce((s, i) => s + Number(i.amount || 0), 0);
-  const totalPaid = customerSales.reduce((s, i) => s + (i.status === 'Paid' ? Number(i.amount || 0) : Number(i.paid_amount || 0)), 0);
-  const pendingAmount = customerSales.filter(i => i.status === 'Pending').reduce((s, i) => s + Number(i.pending_amount ?? i.amount ?? 0), 0);
-  const overdueInvoices = customerSales.filter(i => i.status === 'Overdue').length;
-  const overdueAmount = customerSales.filter(i => i.status === 'Overdue').reduce((s, i) => s + Number(i.pending_amount ?? i.amount ?? 0), 0);
-  const paidInvoicesCount = customerSales.filter(i => i.status === 'Paid').length;
-  const collectionRate = totalInvoiced > 0 ? ((totalPaid / totalInvoiced) * 100).toFixed(1) : '0.0';
+  // FY date boundaries for selected year
+  const fyFrom = useMemo(() => new Date(selectedFYStart, 3, 1), [selectedFYStart]);       // 1-Apr-startYear
+  const fyTo   = useMemo(() => new Date(selectedFYStart + 1, 2, 31, 23, 59, 59), [selectedFYStart]);  // 31-Mar-nextYear
+
+  // Customer Sales Invoices that fall within the selected FY
+  const fyInvoices = useMemo(() => {
+    if (isAllYears) return customerSales;
+    return customerSales.filter(inv => {
+      const dStr = inv.invoice_date || inv.due_date || inv.created_at;
+      if (!dStr) return false;
+      const d = new Date(dStr);
+      return !isNaN(d.getTime()) && d >= fyFrom && d <= fyTo;
+    });
+  }, [customerSales, fyFrom, fyTo, isAllYears]);
+
+  const activeBills = fyInvoices;
+
+  const totalInvoiced = activeBills.reduce((s, i) => s + Number(i.amount || 0), 0);
+  const totalPaid = activeBills.reduce((s, i) => s + (i.status === 'Paid' ? Number(i.amount || 0) : Number(i.paid_amount || 0)), 0);
+  const pendingAmount = activeBills.filter(i => i.status === 'Pending').reduce((s, i) => s + Number(i.pending_amount ?? i.amount ?? 0), 0);
+  const overdueInvoices = activeBills.filter(i => i.status === 'Overdue').length;
+  const overdueAmount = activeBills.filter(i => i.status === 'Overdue').reduce((s, i) => s + Number(i.pending_amount ?? i.amount ?? 0), 0);
+  const paidInvoicesCount = activeBills.filter(i => i.status === 'Paid').length;
+
+  // Authoritative Tally Total Invoiced:
+  // If FY 2026-27 is selected and Tally Master Summary contains the verified Sales Register (6cr+ for Ready Plast),
+  // prioritize Tally's exact billing total so KPI cards match Tally Prime 100%.
+  const displayTotalInvoiced = useMemo(() => {
+    if (!isAllYears && selectedFYStart === 2026) {
+      const compName = activeCompany?.company_name || '';
+      let compMaster = null;
+      if (tallyMasterSummary) {
+        if (compName && tallyMasterSummary[compName]) {
+          compMaster = tallyMasterSummary[compName];
+        } else if (!compName || isConsolidated) {
+          const firstKey = Object.keys(tallyMasterSummary).find(k => !k.startsWith('_'));
+          if (firstKey) compMaster = tallyMasterSummary[firstKey];
+        }
+      }
+      const masterMonthly = compMaster?.sales_register?.monthly;
+      if (masterMonthly && masterMonthly.length > 0) {
+        const fyTotal = masterMonthly.reduce((s, m) => s + Number(m.credit || m.debit || 0), 0);
+        if (fyTotal > 0) return fyTotal;
+      }
+    }
+    return totalInvoiced;
+  }, [isAllYears, selectedFYStart, activeCompany, isConsolidated, tallyMasterSummary, totalInvoiced]);
+
+  const collectionRate = displayTotalInvoiced > 0 ? ((totalPaid / displayTotalInvoiced) * 100).toFixed(1) : '0.0';
 
   // Dynamic Tally Sundry Debtors & Advances from live database
   const tallySummary = useMemo(() => {
@@ -282,7 +324,8 @@ const Dashboard = () => {
 
   // Total Customer Outstanding (Matches Tally Net Closing Balance)
   const totalCustomerOutstanding = tallySummary?.net ?? 0;
-  const totalOpeningBalance = Math.max(0, Math.round((totalCustomerOutstanding - (overdueAmount + pendingAmount)) * 100) / 100);
+  const tallyGrossDebit = tallySummary?.debit ?? totalCustomerOutstanding;
+  const totalOpeningBalance = Math.max(0, Math.round((tallyGrossDebit - (overdueAmount + pendingAmount)) * 100) / 100);
 
   const tasksDueCt = taskList.filter(t => t.status !== 'Done').length;
   const totalWaSent = campaigns.reduce((s, c) => s + (c.total_sent || c.sent || 0), 0);
@@ -319,22 +362,20 @@ const Dashboard = () => {
     { name: 'Mar', jsMonth: 2 },
   ];
 
-  // FY date boundaries for selected year
-  const fyFrom = useMemo(() => new Date(selectedFYStart, 3, 1), [selectedFYStart]);       // 1-Apr-startYear
-  const fyTo   = useMemo(() => new Date(selectedFYStart + 1, 2, 31, 23, 59, 59), [selectedFYStart]);  // 31-Mar-nextYear
-
-  // Customer Sales Invoices that fall within the selected FY
-  const fyInvoices = useMemo(() => {
-    if (isAllYears) return customerSales;
-    return customerSales.filter(inv => {
-      const dStr = inv.invoice_date || inv.due_date || inv.created_at;
-      if (!dStr) return false;
-      const d = new Date(dStr);
-      return !isNaN(d.getTime()) && d >= fyFrom && d <= fyTo;
-    });
-  }, [customerSales, fyFrom, fyTo, isAllYears]);
-
   const monthlyStats = useMemo(() => {
+    const compName = activeCompany?.company_name || '';
+    let compMaster = null;
+    if (tallyMasterSummary) {
+      if (compName && tallyMasterSummary[compName]) {
+        compMaster = tallyMasterSummary[compName];
+      } else if (!compName || isConsolidated) {
+        const firstKey = Object.keys(tallyMasterSummary).find(k => !k.startsWith('_'));
+        if (firstKey) compMaster = tallyMasterSummary[firstKey];
+      }
+    }
+    const masterMonthly = compMaster?.sales_register?.monthly;
+    const hasMaster = masterMonthly && masterMonthly.length > 0 && masterMonthly.some(m => Number(m.credit || m.debit || 0) > 0);
+
     return FY_MONTH_ORDER.map(({ name, jsMonth }) => {
       // For Jan/Feb/Mar, they belong to selectedFYStart+1 calendar year
       const calYear = jsMonth <= 2 ? selectedFYStart + 1 : selectedFYStart;
@@ -344,15 +385,28 @@ const Dashboard = () => {
         const d = new Date(dStr);
         return !isNaN(d.getTime()) && d.getMonth() === jsMonth && d.getFullYear() === calYear;
       });
-      const totalBilled = monthInvoices.reduce((s, inv) => s + Number(inv.amount || 0), 0);
+      const dbBilled = monthInvoices.reduce((s, inv) => s + Number(inv.amount || 0), 0);
       const paidAmt     = monthInvoices.reduce((s, inv) => s + (inv.status === 'Paid' ? Number(inv.amount || 0) : Number(inv.paid_amount || 0)), 0);
       const pendingAmt  = monthInvoices.reduce((s, inv) => s + (inv.status !== 'Paid' ? Number(inv.pending_amount ?? inv.amount ?? 0) : 0), 0);
-      return { month: name, jsMonth, calYear, invoiced: totalBilled, paid: paidAmt, pending: pendingAmt, count: monthInvoices.length };
+
+      let totalBilled = dbBilled;
+      let count = monthInvoices.length;
+      if (hasMaster && selectedFYStart === 2026) {
+        const mRecord = masterMonthly.find(m => m.month === name);
+        if (mRecord && Number(mRecord.credit || mRecord.debit || 0) > 0) {
+          totalBilled = Number(mRecord.credit || mRecord.debit || 0);
+          count = mRecord.count || count;
+        }
+      }
+
+      return { month: name, jsMonth, calYear, invoiced: totalBilled, paid: paidAmt, pending: pendingAmt, count };
     });
-  }, [fyInvoices, selectedFYStart]);
+  }, [fyInvoices, selectedFYStart, activeCompany, isConsolidated, tallyMasterSummary]);
 
   // Totals for selected FY
-  const fyTotalBilled  = fyInvoices.reduce((s, inv) => s + Number(inv.amount || 0), 0);
+  const fyTotalBilled = useMemo(() => {
+    return monthlyStats.reduce((s, m) => s + m.invoiced, 0);
+  }, [monthlyStats]);
   const fyTotalPaid    = fyInvoices.reduce((s, inv) => s + (inv.status === 'Paid' ? Number(inv.amount || 0) : Number(inv.paid_amount || 0)), 0);
   const maxRevBar = Math.max(1, ...monthlyStats.map(m => m.invoiced));
 
@@ -548,7 +602,7 @@ const Dashboard = () => {
               </div>
               <div className="stat-footer">
                 <span className="stat-trend up"><ArrowUpRight size={13} /> {paidInvoicesCount} Paid Invoices</span>
-                <span className="stat-period">{collectionRate}% of {fmtAmount(totalInvoiced)}</span>
+                <span className="stat-period">{collectionRate}% of {fmtAmount(displayTotalInvoiced)}</span>
               </div>
             </div>
           ) : (

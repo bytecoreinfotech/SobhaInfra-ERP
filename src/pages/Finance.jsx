@@ -596,6 +596,36 @@ const Finance = () => {
     return computeMonthlyRegister(activeBills, isPayables, masterReg);
   }, [activeBills, financeView, activeCompany, tallyMasterSummary]);
 
+  // Master ledger closing balance sum for the active view
+  const tallyClosingSum = useMemo(() => {
+    if (financeView === 'payables') {
+      const vendLedgers = invoices.filter(isVendorLedger);
+      return vendLedgers.reduce((s, l) => s + Number(l.amount || 0), 0);
+    }
+    return currentTallyDebtors?.net ?? 0;
+  }, [invoices, financeView, isVendorLedger, currentTallyDebtors]);
+
+  // If user selected custom start/end dates, use custom range calculations
+  const isCustomDateActive = Boolean(dateFrom || dateTo);
+
+  // Authoritative Tally billing turnover:
+  // If no custom date filter is active and we have authoritative Tally Register for the selected FY,
+  // display Tally's exact billing total (e.g. ₹6.15 Cr for Ready Plast FY 2026-27).
+  const displayBilledAmount = useMemo(() => {
+    if (!isCustomDateActive && monthlyRegister?.isTallyMaster && monthlyRegister.totalAmount > 0) {
+      return monthlyRegister.totalAmount;
+    }
+    return totalInvoiced;
+  }, [isCustomDateActive, monthlyRegister, totalInvoiced]);
+
+  const displayBilledCount = useMemo(() => {
+    if (!isCustomDateActive && monthlyRegister?.isTallyMaster && monthlyRegister.monthly) {
+      const tallyCount = monthlyRegister.monthly.reduce((s, m) => s + Number(m.count || 0), 0);
+      if (tallyCount > 0) return tallyCount;
+    }
+    return activeBills.length;
+  }, [isCustomDateActive, monthlyRegister, activeBills]);
+
   // Rich collection & settlement efficiency metrics
   const collectionStats = useMemo(() => {
     const compName = activeCompany?.company_name || '';
@@ -608,17 +638,8 @@ const Finance = () => {
         if (firstKey) compMaster = tallyMasterSummary[firstKey];
       }
     }
-    return computeCollectionStats(activeBills, compMaster?.collections);
-  }, [activeBills, activeCompany, tallyMasterSummary]);
-
-  // Master ledger closing balance sum for the active view
-  const tallyClosingSum = useMemo(() => {
-    if (financeView === 'payables') {
-      const vendLedgers = dateFilteredInvoices.filter(isVendorLedger);
-      return vendLedgers.reduce((s, l) => s + Number(l.amount || 0), 0);
-    }
-    return currentTallyDebtors?.net ?? 0;
-  }, [dateFilteredInvoices, financeView, isVendorLedger, currentTallyDebtors]);
+    return computeCollectionStats(activeBills, compMaster?.collections, displayBilledAmount);
+  }, [activeBills, activeCompany, tallyMasterSummary, displayBilledAmount]);
 
   const tallyDebitTotal = financeView === 'receivables' ? (currentTallyDebtors?.debit ?? 0) : tallyClosingSum;
   const tallyCreditTotal = financeView === 'receivables' ? (currentTallyDebtors?.credit ?? 0) : 0;
@@ -934,8 +955,10 @@ const Finance = () => {
               { 
                 type: 'register',
                 label: 'Total Billed to Customers', 
-                value: fmtCurrency(totalInvoiced), 
-                sub: `${activeBills.length} sales invoices (matches Tally)`, 
+                value: fmtCurrency(displayBilledAmount), 
+                sub: monthlyRegister?.isTallyMaster && displayBilledCount > activeBills.length
+                  ? `${displayBilledCount} sales invoices in Tally Prime (${activeBills.length} synced to cloud)`
+                  : `${displayBilledCount} sales invoices (matches Tally)`, 
                 icon: <DollarSign size={20} />, 
                 color: '#6366f1', 
                 bg: 'rgba(99,102,241,0.12)' 
@@ -953,8 +976,10 @@ const Finance = () => {
               { 
                 type: 'register',
                 label: 'Total Vendor Bills', 
-                value: fmtCurrency(totalInvoiced), 
-                sub: `${activeBills.length} bills (matches Tally Purchase Register)`, 
+                value: fmtCurrency(displayBilledAmount), 
+                sub: monthlyRegister?.isTallyMaster && displayBilledCount > activeBills.length
+                  ? `${displayBilledCount} bills in Tally Prime (${activeBills.length} synced)`
+                  : `${displayBilledCount} bills (matches Tally Purchase Register)`, 
                 icon: <DollarSign size={20} />, 
                 color: '#f59e0b', 
                 bg: 'rgba(245,158,11,0.12)' 
@@ -1477,7 +1502,6 @@ const Finance = () => {
                   {[
                     { label: '📦 All DB Data', key: 'all_db' },
                     { label: 'This Month', key: 'month' },
-                    { label: activeFY?.shortLabel || 'Active FY', key: 'fy' },
                   ].map(preset => {
                     const isActive = activeDatePreset === preset.key;
                     return (
