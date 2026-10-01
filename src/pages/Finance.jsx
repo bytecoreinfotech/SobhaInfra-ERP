@@ -12,7 +12,8 @@ import {
   getLedgerMappings, updateLedgerMapping, getSyncErrors,
   sendPaymentReminderWhatsApp, getLeads, normalizePhone,
   pauseInvoiceReminder, resumeInvoiceReminder, createLead,
-  getCustomerMaster, invalidateInvoicesCache, getTallyMasterSummary
+  getCustomerMaster, invalidateInvoicesCache, getTallyMasterSummary,
+  getCachedInvoicesSync
 } from '../lib/db';
 import { buildCustomerIndex, matchCustomer } from '../lib/customerMatcher';
 import {
@@ -162,9 +163,11 @@ const Finance = () => {
   const [financeView, setFinanceView] = useState('receivables'); // 'receivables' | 'payables'
   
   // Invoices & Outstandings State
-  const [allInvoices, setAllInvoices] = useState([]);
+  const [allInvoices, setAllInvoices] = useState(() => getCachedInvoicesSync() || []);
   const [customerMaster, setCustomerMaster] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !(getCachedInvoicesSync()?.length > 0));
+  const [isHydrating, setIsHydrating] = useState(false);
+  const [hydratedCount, setHydratedCount] = useState(0);
   const [filter, setFilter] = useState('All');
   const [sheetCustomerFilter, setSheetCustomerFilter] = useState('all'); // 'all' | 'verified_only' | 'tally_only'
   const [search, setSearch] = useState('');
@@ -276,42 +279,62 @@ const Finance = () => {
 
   const customerIndex = useMemo(() => buildCustomerIndex(customerMaster), [customerMaster]);
 
+  // Fast Company Scoping FIRST (reduces items from 20,225 down to ~1,400 before heavy reconciliation)
+  const scopedInvoices = useMemo(() => {
+    if (isConsolidated || !activeCompany) return allInvoices;
+    const compName = (activeCompany.company_name || '').toUpperCase();
+    const aliases = Array.isArray(activeCompany.alias_names)
+      ? activeCompany.alias_names.map(a => a.toUpperCase())
+      : [];
+    const allNames = [compName, ...aliases];
+    return allInvoices.filter(inv => {
+      const invCompany = (inv.company_name || inv.tally_company || '').toUpperCase();
+      if (!invCompany) return false;
+      return allNames.some(n => n && (invCompany.includes(n) || n.includes(invCompany)));
+    });
+  }, [allInvoices, activeCompany, isConsolidated]);
+
   // Re-filter when company switcher changes + tag verified sheet customers
   const invoices = useMemo(() => {
-    // Authoritatively reconcile vouchers:
+    // Authoritatively reconcile vouchers on scoped invoices (only ~1,400 rows instead of 20,225!)
     // 1. Customer sales reconciled against customer receipts & ledger closing balances
-    const customerReconciled = reconcileCustomerInvoices(allInvoices);
+    const customerReconciled = reconcileCustomerInvoices(scopedInvoices);
     // 2. Vendor purchase bills reconciled against outgoing payments & bill allocations
     const fullyReconciled = reconcileVendorInvoices(customerReconciled);
 
-    const base = isConsolidated
-      ? fullyReconciled
-      : fullyReconciled.filter(inv => {
-          if (!activeCompany) return true;
-          const compName = (activeCompany.company_name || '').toUpperCase();
-          const aliases = Array.isArray(activeCompany.alias_names)
-            ? activeCompany.alias_names.map(a => a.toUpperCase())
-            : [];
-          const allNames = [compName, ...aliases];
-          const invCompany = (inv.company_name || inv.tally_company || '').toUpperCase();
-          if (!invCompany) return false;
-          return allNames.some(n => n && (invCompany.includes(n) || n.includes(invCompany)));
-        });
-
-    return base.map(inv => {
+    return fullyReconciled.map(inv => {
       const match = customerIndex ? matchCustomer(inv, customerIndex) : { status: 'unverified' };
       return {
         ...inv,
         _is_sheet_customer: match.status === 'verified',
       };
     });
-  }, [allInvoices, activeCompany, isConsolidated, customerIndex]);
+  }, [scopedInvoices, customerIndex]);
 
   const loadAllFinanceData = async (showSpinner = true, forceRefresh = false) => {
-    if (showSpinner) setLoading(true);
+    const cached = getCachedInvoicesSync();
+    if (showSpinner && (!cached || cached.length === 0)) setLoading(true);
     if (forceRefresh) invalidateInvoicesCache();
+
     const [invRes, tallyRes, mapRes, errRes, leadsRes, masterRes, tallyMasterRes] = await Promise.all([
-      getInvoices({ forceRefresh }),
+      getInvoices({
+        forceRefresh,
+        onInitialBatch: (initial, meta) => {
+          setAllInvoices(initial);
+          setLoading(false);
+          if (!meta.isComplete) {
+            setIsHydrating(true);
+            setHydratedCount(initial.length);
+          }
+        },
+        onProgress: (chunk, meta) => {
+          setAllInvoices(chunk);
+          setHydratedCount(chunk.length);
+          if (meta.isComplete) {
+            setIsHydrating(false);
+          }
+        },
+      }),
       getTallyConnectionStatus(),
       getLedgerMappings(),
       getSyncErrors(),
@@ -319,14 +342,21 @@ const Finance = () => {
       getCustomerMaster({ forceRefresh }),
       getTallyMasterSummary({ forceRefresh }),
     ]);
-    setAllInvoices(invRes.data || []);
+
+    if (invRes?.data && invRes.data.length > 0) {
+      setAllInvoices(invRes.data);
+      setHydratedCount(invRes.data.length);
+    }
     setCustomerMaster(masterRes.data || []);
     setTallyStatus(tallyRes.data || null);
     setMappings(mapRes.data || []);
     setSyncErrors(errRes.data || []);
     setLeads(leadsRes.data || []);
     setTallyMasterSummary(tallyMasterRes.data || null);
-    if (showSpinner) setLoading(false);
+    setLoading(false);
+    if (!invRes?.backgroundHydration) {
+      setIsHydrating(false);
+    }
   };
 
   const handleSyncNow = async () => {
@@ -509,7 +539,7 @@ const Finance = () => {
   // Sets of verified customer and vendor parties to accurately distinguish ledgers
   const customerPartySet = useMemo(() => {
     const set = new Set();
-    allInvoices.forEach(inv => {
+    scopedInvoices.forEach(inv => {
       const num = (inv?.invoice_number || '').toUpperCase();
       if (!num.includes('LEDGER-') && !num.startsWith('OP-') && isSalesVoucher(inv)) {
         set.add((inv.client_name || '').trim().toUpperCase());
@@ -519,18 +549,18 @@ const Finance = () => {
       if (cm?.company_name) set.add(cm.company_name.trim().toUpperCase());
     });
     return set;
-  }, [allInvoices, customerMaster]);
+  }, [scopedInvoices, customerMaster]);
 
   const vendorPartySet = useMemo(() => {
     const set = new Set();
-    allInvoices.forEach(inv => {
+    scopedInvoices.forEach(inv => {
       const num = (inv?.invoice_number || '').toUpperCase();
       if (!num.includes('LEDGER-') && !num.startsWith('OP-') && isPurchaseVoucher(inv)) {
         set.add((inv.client_name || '').trim().toUpperCase());
       }
     });
     return set;
-  }, [allInvoices]);
+  }, [scopedInvoices]);
 
   const isCustomerLedger = useCallback((inv) => {
     const num = (inv?.invoice_number || inv?.tally_voucher_number || '').toUpperCase();
@@ -893,6 +923,23 @@ const Finance = () => {
               {earliest && latest ? `${fmtD(earliest)} → ${fmtD(latest)}` : 'No data yet'}
             </span>
             {months > 0 && <span style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>({months} mo · {allInvoices.length} records)</span>}
+            {isHydrating && (
+              <span style={{
+                color: 'var(--accent-primary)',
+                background: 'rgba(99,102,241,0.12)',
+                padding: '2px 8px',
+                borderRadius: 10,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 5,
+                fontWeight: 700,
+                fontSize: '0.68rem',
+                whiteSpace: 'nowrap',
+              }}>
+                <RefreshCw size={10} className="animate-spin" />
+                Syncing archives ({hydratedCount.toLocaleString('en-IN')})...
+              </span>
+            )}
 
             {/* Divider */}
             <div style={{ width: 1, height: 12, background: 'var(--border-color)', flexShrink: 0 }} />

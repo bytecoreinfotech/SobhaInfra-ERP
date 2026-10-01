@@ -8,7 +8,7 @@ import {
   Download, Printer, FileSpreadsheet, FileText, ExternalLink, X,
   RotateCcw, ShieldCheck, Share2
 } from 'lucide-react';
-import { getDashboardStats, getActivityFeed, getTasks, getLeads, getCampaigns, getInvoices, getTeamMembers, getEmployeeLivePings, getSiteVisits, getCustomerMaster, triggerSheetSync, invalidateCustomerMasterCache, invalidateInvoicesCache, getTallyMasterSummary } from '../lib/db';
+import { getDashboardStats, getActivityFeed, getTasks, getLeads, getCampaigns, getInvoices, getTeamMembers, getEmployeeLivePings, getSiteVisits, getCustomerMaster, triggerSheetSync, invalidateCustomerMasterCache, invalidateInvoicesCache, getTallyMasterSummary, getCachedInvoicesSync } from '../lib/db';
 import { buildCustomerIndex, matchCustomer } from '../lib/customerMatcher';
 import { reconcileCustomerInvoices, isSalesVoucher, isReceiptVoucher, isPurchaseVoucher, computeTallyDebtors } from '../lib/reconciliation';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
@@ -86,13 +86,13 @@ const Dashboard = () => {
   const [taskList, setTaskList] = useState([]);
   const [leads, setLeads] = useState([]);
   const [campaigns, setCampaigns] = useState([]);
-  const [allInvoices, setAllInvoices] = useState([]);
+  const [allInvoices, setAllInvoices] = useState(() => getCachedInvoicesSync() || []);
   const [customerMaster, setCustomerMaster] = useState([]);
   const [teamMembers, setTeamMembers] = useState([]);
   const [livePings, setLivePings] = useState([]);
   const [recentVisits, setRecentVisits] = useState([]);
   const [dashboardPreviewVisit, setDashboardPreviewVisit] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !(getCachedInvoicesSync()?.length > 0));
   const [showReportModal, setShowReportModal] = useState(false);
   const [syncingSheet, setSyncingSheet] = useState(false);
   const [sheetSyncToast, setSheetSyncToast] = useState('');
@@ -184,27 +184,26 @@ const Dashboard = () => {
   // Build memoized customer index for 100% strict Google Sheet customer verification
   const customerIndex = useMemo(() => buildCustomerIndex(customerMaster), [customerMaster]);
 
-  // Reconcile invoices authoritatively (settles receipts, Tally closing balances, computes exact paid & pending amounts)
-  const reconciledInvoices = useMemo(() => {
-    return reconcileCustomerInvoices(allInvoices);
-  }, [allInvoices]);
-
-  // Filter invoices by active company
-  const invoices = useMemo(() => {
-    if (isConsolidated) return reconciledInvoices;
-    if (!activeCompany) return reconciledInvoices;
+  // Filter invoices by active company FIRST before heavy reconciliation!
+  const scopedInvoices = useMemo(() => {
+    if (isConsolidated || !activeCompany) return allInvoices;
     const compName = (activeCompany.company_name || '').toUpperCase();
     const aliases = Array.isArray(activeCompany.alias_names) ? activeCompany.alias_names.map(a => a.toUpperCase()) : [];
-    return reconciledInvoices.filter(inv => {
+    return allInvoices.filter(inv => {
       const invCompany = (inv.company_name || inv.tally_company || '').toUpperCase();
       if (!invCompany) return false;
       return [compName, ...aliases].some(n => n && (invCompany.includes(n) || n.includes(invCompany)));
     });
-  }, [reconciledInvoices, activeCompany, isConsolidated]);
+  }, [allInvoices, activeCompany, isConsolidated]);
 
+  // Reconcile invoices authoritatively on scoped company dataset (instant, 0 lag!)
+  const invoices = useMemo(() => {
+    return reconcileCustomerInvoices(scopedInvoices);
+  }, [scopedInvoices]);
 
   const loadData = async (isForce = false) => {
-    setLoading(true);
+    const cached = getCachedInvoicesSync();
+    if (!cached || cached.length === 0) setLoading(true);
     if (isForce) invalidateInvoicesCache();
     const [statsRes, actRes, taskRes, leadRes, campRes, invRes, membersRes, liveRes, visitsRes, masterRes, tallyMasterRes] = await Promise.all([
       getDashboardStats(),
@@ -212,7 +211,16 @@ const Dashboard = () => {
       getTasks(),
       getLeads(),
       getCampaigns(),
-      getInvoices({ forceRefresh: isForce }),
+      getInvoices({
+        forceRefresh: isForce,
+        onInitialBatch: (initial) => {
+          setAllInvoices(initial);
+          setLoading(false);
+        },
+        onProgress: (chunk) => {
+          setAllInvoices(chunk);
+        },
+      }),
       getTeamMembers(),
       getEmployeeLivePings(),
       getSiteVisits(),
@@ -224,7 +232,7 @@ const Dashboard = () => {
     setTaskList(taskRes.data || []);
     setLeads(leadRes.data || []);
     setCampaigns(campRes.data || []);
-    setAllInvoices(invRes.data || []);
+    if (invRes?.data && invRes.data.length > 0) setAllInvoices(invRes.data);
     setCustomerMaster(masterRes.data || []);
     setTeamMembers(membersRes.data || []);
     setLivePings(liveRes.data || []);

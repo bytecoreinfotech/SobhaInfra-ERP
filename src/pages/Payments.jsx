@@ -7,7 +7,7 @@ import {
   ChevronDown, ChevronUp, Users, Download, Printer,
   PauseCircle, PlayCircle, CalendarClock, MessageSquare
 } from 'lucide-react';
-import { getInvoices, getCustomerMaster, triggerSheetSync, getSheetSyncLog, invalidateInvoicesCache, invalidateCustomerMasterCache, pauseInvoiceReminder, resumeInvoiceReminder, getTallyMasterSummary } from '../lib/db';
+import { getInvoices, getCustomerMaster, triggerSheetSync, getSheetSyncLog, invalidateInvoicesCache, invalidateCustomerMasterCache, pauseInvoiceReminder, resumeInvoiceReminder, getTallyMasterSummary, getCachedInvoicesSync } from '../lib/db';
 import { reconcileCustomerInvoices, isSalesVoucher, computeTallyDebtors } from '../lib/reconciliation';
 import { buildCustomerIndex, matchCustomer } from '../lib/customerMatcher';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
@@ -63,10 +63,10 @@ const getDirection = (inv, customerIndex) => {
 
 const Payments = () => {
   const { activeCompany, isConsolidated, companyProfiles } = useCompany();
-  const [allInvoices, setAllInvoices]         = useState([]);
+  const [allInvoices, setAllInvoices]         = useState(() => getCachedInvoicesSync() || []);
   const [customerMaster, setCustomerMaster]   = useState([]);
   const [tallyMasterSummary, setTallyMasterSummary] = useState(null);
-  const [loading, setLoading]                 = useState(true);
+  const [loading, setLoading]                 = useState(() => !(getCachedInvoicesSync()?.length > 0));
   const [syncing, setSyncing]                 = useState(false);
   const [syncMsg, setSyncMsg]                 = useState('');
   const [lastSynced, setLastSynced]           = useState(null);
@@ -155,14 +155,24 @@ const Payments = () => {
   };
 
   const loadAll = async (forceRefresh = false) => {
-    setLoading(true);
+    const cached = getCachedInvoicesSync();
+    if (!cached || cached.length === 0) setLoading(true);
     const [invRes, masterRes, logRes, tallyRes] = await Promise.all([
-      getInvoices({ forceRefresh }),
+      getInvoices({
+        forceRefresh,
+        onInitialBatch: (initial) => {
+          setAllInvoices(initial);
+          setLoading(false);
+        },
+        onProgress: (chunk) => {
+          setAllInvoices(chunk);
+        },
+      }),
       getCustomerMaster({ forceRefresh }),
       getSheetSyncLog(),
       getTallyMasterSummary({ forceRefresh }),
     ]);
-    setAllInvoices(invRes.data || []);
+    if (invRes?.data && invRes.data.length > 0) setAllInvoices(invRes.data);
     setCustomerMaster(masterRes.data || []);
     setTallyMasterSummary(tallyRes.data || null);
     if (logRes.data?.synced_at) setLastSynced(logRes.data.synced_at);
@@ -172,19 +182,21 @@ const Payments = () => {
   // Build memoized customer index once per customerMaster update
   const customerIndex = useMemo(() => buildCustomerIndex(customerMaster), [customerMaster]);
 
-  // Company filtering across active workspace
-  const invoices = useMemo(() => {
-    const reconciled = reconcileCustomerInvoices(allInvoices);
-    if (isConsolidated) return reconciled;
-    if (!activeCompany) return reconciled;
+  // Company filtering across active workspace FIRST before heavy reconciliation!
+  const scopedInvoices = useMemo(() => {
+    if (isConsolidated || !activeCompany) return allInvoices;
     const compName = (activeCompany.company_name || '').toUpperCase();
     const aliases = Array.isArray(activeCompany.alias_names) ? activeCompany.alias_names.map(a => a.toUpperCase()) : [];
-    return reconciled.filter(inv => {
+    return allInvoices.filter(inv => {
       const invCompany = (inv.company_name || inv.tally_company || '').toUpperCase();
       if (!invCompany) return false;
       return [compName, ...aliases].some(n => n && (invCompany.includes(n) || n.includes(invCompany)));
     });
   }, [allInvoices, activeCompany, isConsolidated]);
+
+  const invoices = useMemo(() => {
+    return reconcileCustomerInvoices(scopedInvoices);
+  }, [scopedInvoices]);
 
   // Exclude non-transactional ledger closing balance lines and OP- fake invoices; strictly sales vouchers
   const transactionalInvoices = useMemo(() => {

@@ -498,61 +498,175 @@ export async function sendPaymentReminderWhatsApp(invoiceId) {
 // ─────────────────────────────────────────────────────────────────────────────
 let _invoicesCache = null;
 let _invoicesCacheTime = 0;
-const INVOICES_CACHE_TTL = 3 * 60 * 1000; // 3 minutes
+const INVOICES_CACHE_TTL = 5 * 60 * 1000; // 5 minutes fresh in-memory cache
 
 export function invalidateInvoicesCache() {
   _invoicesCache = null;
   _invoicesCacheTime = 0;
+  try {
+    sessionStorage.removeItem('erppro_initial_invoices');
+  } catch (_) {}
+}
+
+export function getCachedInvoicesSync() {
+  if (_invoicesCache && _invoicesCache.length > 0) return _invoicesCache;
+  try {
+    const raw = sessionStorage.getItem('erppro_initial_invoices');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch (_) {}
+  return null;
 }
 
 export async function getInvoices(options = {}) {
-  const { forceRefresh = false } = (typeof options === 'object' && options !== null) ? options : {};
+  const {
+    forceRefresh = false,
+    onInitialBatch = null,     // callback(initialRecords, meta) -> called immediately when Batch 1 arrives (< 500ms!)
+    onProgress = null,         // callback(allRecordsSoFar, meta) -> called as background batches arrive
+  } = (typeof options === 'object' && options !== null) ? options : {};
+
   const now = Date.now();
   if (!forceRefresh && _invoicesCache && (now - _invoicesCacheTime < INVOICES_CACHE_TTL)) {
+    if (onInitialBatch) onInitialBatch(_invoicesCache, { isComplete: true, count: _invoicesCache.length });
     return { data: _invoicesCache, error: null };
   }
 
-  if (!isSupabaseConfigured) return { data: MOCK_STORE.invoices, error: null };
-  try {
-    let allData = [];
-    let offset = 0;
-    const batchSize = 1000;
-    while (true) {
-      const { data, error } = await supabase
-        .from('invoices')
-        .select('*')
-        .range(offset, offset + batchSize - 1)
-        .order('created_at', { ascending: false });
-
-      if (error) {
-        console.warn('[db] getInvoices batch error:', error.message);
-        break;
+  // Fast Instant Paint from SessionStorage if memory cache is cold
+  if (!forceRefresh && onInitialBatch) {
+    try {
+      const stored = sessionStorage.getItem('erppro_initial_invoices');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          onInitialBatch(parsed, { fromSessionStorage: true, isComplete: false, count: parsed.length });
+        }
       }
-      if (!data || data.length === 0) break;
-      allData.push(...data);
-      if (data.length < batchSize) break;
-      offset += batchSize;
-    }
+    } catch (_) {}
+  }
 
-    // Helper: treat JS 'undefined'/'null' strings stored in DB as truly empty
+  if (!isSupabaseConfigured) return { data: MOCK_STORE.invoices, error: null };
+
+  try {
     const cleanStr = (v) => {
       if (v === null || v === undefined) return '';
       const s = String(v).trim();
       return (s === 'undefined' || s === 'null' || s === 'NaN') ? '' : s;
     };
 
-    const normalized = (allData.length > 0 ? allData : []).map(inv => ({
+    const normalizeRecord = (inv) => ({
       ...inv,
       voucher_type: cleanStr(inv.voucher_type) || cleanStr(inv.metadata?.voucher_type) || '',
       direction: cleanStr(inv.direction) || cleanStr(inv.metadata?.direction) || '',
       company_name: cleanStr(inv.company_name) || cleanStr(inv.metadata?.tally_company) || cleanStr(inv.tally_company) || '',
       invoice_number: cleanStr(inv.invoice_number) || cleanStr(inv.tally_voucher_number) || `INV-${inv.id?.slice(0, 8)}`,
       tally_voucher_number: cleanStr(inv.tally_voucher_number) || cleanStr(inv.invoice_number) || '',
-    }));
+    });
 
-    _invoicesCache = normalized;
-    _invoicesCacheTime = Date.now();
-    return { data: normalized, error: null };
+    // ─────────────────────────────────────────────────────────────────────────
+    // STAGE 1: Ultra-Fast Priority Batch (Newest 1,000 vouchers & ledgers)
+    // Resolves in < 500ms to immediately unblock UI & display active FY vouchers!
+    // ─────────────────────────────────────────────────────────────────────────
+    const batchSize = 1000;
+    const { data: firstBatch, error: firstErr } = await supabase
+      .from('invoices')
+      .select('*')
+      .range(0, batchSize - 1)
+      .order('invoice_date', { ascending: false, nullsFirst: false });
+
+    if (firstErr) throw firstErr;
+
+    const initialNormalized = (firstBatch || []).map(normalizeRecord);
+
+    // Save initial batch to sessionStorage for 0ms instant cold-start on refresh
+    try {
+      sessionStorage.setItem('erppro_initial_invoices', JSON.stringify(initialNormalized.slice(0, 600)));
+    } catch (_) {}
+
+    // Instantly notify caller with Stage 1 data!
+    if (onInitialBatch) {
+      onInitialBatch(initialNormalized, { isComplete: (firstBatch?.length || 0) < batchSize, count: initialNormalized.length });
+    }
+
+    if (!firstBatch || firstBatch.length < batchSize) {
+      _invoicesCache = initialNormalized;
+      _invoicesCacheTime = Date.now();
+      return { data: initialNormalized, error: null };
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // STAGE 2: High-Speed Parallel Background Hydration
+    // Fetches remaining historical records concurrently (chunks of 3 batches)
+    // without blocking the main UI thread!
+    // ─────────────────────────────────────────────────────────────────────────
+    const backgroundHydrationPromise = (async () => {
+      let accumulated = [...initialNormalized];
+      let offset = batchSize;
+      const concurrency = 3; // 3 parallel requests = 3000 rows per round
+
+      while (true) {
+        const ranges = [];
+        for (let i = 0; i < concurrency; i++) {
+          const from = offset + (i * batchSize);
+          const to = from + batchSize - 1;
+          ranges.push([from, to]);
+        }
+
+        const responses = await Promise.all(
+          ranges.map(([from, to]) =>
+            supabase
+              .from('invoices')
+              .select('*')
+              .range(from, to)
+              .order('invoice_date', { ascending: false, nullsFirst: false })
+          )
+        );
+
+        let hitEnd = false;
+        for (const resp of responses) {
+          if (resp.error) {
+            console.warn('[db] Background invoices batch error:', resp.error.message);
+            hitEnd = true;
+            break;
+          }
+          const batch = resp.data || [];
+          if (batch.length > 0) {
+            const batchNormalized = batch.map(normalizeRecord);
+            accumulated = accumulated.concat(batchNormalized);
+          }
+          if (batch.length < batchSize) {
+            hitEnd = true;
+            break;
+          }
+        }
+
+        // Notify progressive arrival of background records
+        if (onProgress) {
+          onProgress(accumulated, { isComplete: hitEnd, count: accumulated.length });
+        }
+
+        if (hitEnd) break;
+        offset += concurrency * batchSize;
+      }
+
+      _invoicesCache = accumulated;
+      _invoicesCacheTime = Date.now();
+      return accumulated;
+    })();
+
+    // If caller provided onInitialBatch, return initial batch immediately (caller already unblocked!)
+    // The background hydration promise populates the rest seamlessly in the background.
+    if (onInitialBatch) {
+      backgroundHydrationPromise.catch(e => console.warn('[db] Background hydration notice:', e));
+      return { data: initialNormalized, error: null, backgroundHydration: backgroundHydrationPromise };
+    }
+
+    // Otherwise, if caller did not provide callbacks (standard await getInvoices()),
+    // await full dataset for 100% backward compatibility
+    const fullData = await backgroundHydrationPromise;
+    return { data: fullData, error: null };
+
   } catch (err) {
     console.warn('[db] getInvoices error:', err.message);
     return { data: _invoicesCache || [], error: err };

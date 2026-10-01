@@ -4,7 +4,7 @@ import {
   Bot, Zap, RefreshCw, IndianRupee, Target, Phone, CheckCircle2,
   FileSpreadsheet, ExternalLink, Printer, Calendar
 } from 'lucide-react';
-import { getDashboardStats, getLeads, getCampaigns, getInvoices, getAutomationRuns, syncToGoogleSheets, exportLiveTableCsv, getCustomerMaster, invalidateInvoicesCache, getTallyMasterSummary } from '../lib/db';
+import { getDashboardStats, getLeads, getCampaigns, getInvoices, getAutomationRuns, syncToGoogleSheets, exportLiveTableCsv, getCustomerMaster, invalidateInvoicesCache, getTallyMasterSummary, getCachedInvoicesSync } from '../lib/db';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { buildCustomerIndex, matchCustomer } from '../lib/customerMatcher';
 import { reconcileCustomerInvoices, isSalesVoucher, isReceiptVoucher, isPurchaseVoucher, computeTallyDebtors } from '../lib/reconciliation';
@@ -106,10 +106,10 @@ const Reports = () => {
   const { activeCompany, isConsolidated } = useCompany();
   const { activeFY, activeFYId, isAllYears } = useFinancialYear();
   const [period, setPeriod] = useState('month');
-  const [loading, setLoading] = useState(true);
+  const [allInvoices, setAllInvoices] = useState(() => getCachedInvoicesSync() || []);
+  const [loading, setLoading] = useState(() => !(getCachedInvoicesSync()?.length > 0));
   const [leads, setLeads] = useState([]);
   const [campaigns, setCampaigns] = useState([]);
-  const [allInvoices, setAllInvoices] = useState([]);
   const [customerMaster, setCustomerMaster] = useState([]);
   const [tallyMasterSummary, setTallyMasterSummary] = useState(null);
   const [autoRuns, setAutoRuns] = useState([]);
@@ -120,24 +120,22 @@ const Reports = () => {
   // ── Customer index for 100% verified Google Sheet customer directory matching ──
   const customerIndex = useMemo(() => buildCustomerIndex(customerMaster), [customerMaster]);
 
-  // ── Reconcile customer invoices authoritatively (settles receipts, computes exact paid & pending) ──
-  const reconciledInvoices = useMemo(() => {
-    return reconcileCustomerInvoices(allInvoices);
-  }, [allInvoices]);
+  // ── Company-filtered invoices FIRST before heavy reconciliation! ──
+  const scopedInvoices = useMemo(() => {
+    if (isConsolidated || !activeCompany) return allInvoices;
+    const compName = (activeCompany.company_name || '').toUpperCase();
+    const aliases = Array.isArray(activeCompany.alias_names) ? activeCompany.alias_names.map(a => a.toUpperCase()) : [];
+    return allInvoices.filter(inv => {
+      const invCompany = (inv.company_name || inv.tally_company || '').toUpperCase();
+      if (!invCompany) return false;
+      return [compName, ...aliases].some(n => n && (invCompany.includes(n) || n.includes(invCompany)));
+    });
+  }, [allInvoices, activeCompany, isConsolidated]);
 
-  // ── Company-filtered invoices (same pattern as Finance/Dashboard/Payments) ──
+  // ── Reconcile customer invoices authoritatively on scoped company dataset (instant, 0 lag!) ──
   const companyFilteredInvoices = useMemo(() => {
-    return isConsolidated
-      ? reconciledInvoices
-      : reconciledInvoices.filter(inv => {
-          if (!activeCompany) return true;
-          const compName = (activeCompany.company_name || '').toUpperCase();
-          const aliases = Array.isArray(activeCompany.alias_names) ? activeCompany.alias_names.map(a => a.toUpperCase()) : [];
-          const invCompany = (inv.company_name || inv.tally_company || '').toUpperCase();
-          if (!invCompany) return false;
-          return [compName, ...aliases].some(n => n && (invCompany.includes(n) || n.includes(invCompany)));
-        });
-  }, [reconciledInvoices, activeCompany, isConsolidated]);
+    return reconcileCustomerInvoices(scopedInvoices);
+  }, [scopedInvoices]);
 
   // ── Customer-only invoices (excludes vendor payables and LEDGER- records) ──
   const invoices = useMemo(() => {
@@ -180,12 +178,21 @@ const Reports = () => {
   }, []);
 
   const loadData = async () => {
-    setLoading(true);
+    const cached = getCachedInvoicesSync();
+    if (!cached || cached.length === 0) setLoading(true);
     const [sRes, lRes, cRes, iRes, aRes, mRes, tRes] = await Promise.all([
       getDashboardStats(),
       getLeads(),
       getCampaigns(),
-      getInvoices(),
+      getInvoices({
+        onInitialBatch: (initial) => {
+          setAllInvoices(initial);
+          setLoading(false);
+        },
+        onProgress: (chunk) => {
+          setAllInvoices(chunk);
+        },
+      }),
       getAutomationRuns(),
       getCustomerMaster(),
       getTallyMasterSummary(),
@@ -193,7 +200,7 @@ const Reports = () => {
     setStats(sRes.data || {});
     setLeads(lRes.data || []);
     setCampaigns(cRes.data || []);
-    setAllInvoices(iRes.data || []);
+    if (iRes?.data && iRes.data.length > 0) setAllInvoices(iRes.data);
     setCustomerMaster(mRes.data || []);
     setAutoRuns(aRes.data || []);
     setTallyMasterSummary(tRes.data || null);
