@@ -25,6 +25,7 @@ import base64
 import hashlib
 import urllib.parse
 from datetime import datetime, timedelta, timezone
+import html
 
 # Zero-Lag Architecture (v5.0):
 # PDFs are generated on-demand in the browser client-side (via HTML5 Canvas & jsPDF in InvoiceDocModal.jsx).
@@ -3053,11 +3054,23 @@ def push_to_cloud(vouchers, master_summaries=None):
                     company_groups.setdefault(comp, []).append(r)
 
                 for comp_name, comp_recs in company_groups.items():
-                    rebuilt_summaries[comp_name] = build_tally_master_summary(comp_name, comp_recs)
+                    rebuilt = build_tally_master_summary(comp_name, comp_recs)
+                    # CRITICAL: Preserve authoritative sundry_debtors from the direct Tally XML extraction.
+                    # The DB contains multiple/historical LEDGER records that would inflate closing balances.
+                    if master_summaries and comp_name in master_summaries and "sundry_debtors" in master_summaries[comp_name]:
+                        orig_sd = master_summaries[comp_name]["sundry_debtors"]
+                        if orig_sd and orig_sd.get("gross_debit", 0) > 0:
+                            rebuilt["sundry_debtors"] = orig_sd
+                    rebuilt_summaries[comp_name] = rebuilt
                     log.info(f"  [Master Summary] Rebuilt '{comp_name}': "
                              f"Sales={rebuilt_summaries[comp_name]['sales_register']['total_sales']}, "
                              f"Receipts={rebuilt_summaries[comp_name]['collections']['total_collected']}, "
                              f"Debtors Net={rebuilt_summaries[comp_name]['sundry_debtors']['net_closing']}")
+
+                # Preserve any companies in original master_summaries not present in DB rebuilt_summaries
+                for orig_comp, orig_summ in (master_summaries or {}).items():
+                    if orig_comp not in rebuilt_summaries:
+                        rebuilt_summaries[orig_comp] = orig_summ
 
                 master_summaries = rebuilt_summaries
 

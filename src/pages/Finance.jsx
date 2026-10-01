@@ -559,11 +559,6 @@ const Finance = () => {
       : activeViewInvoices.filter(isSalesVoucher);
   }, [activeViewInvoices, financeView]);
 
-  // Customer receipt vouchers in the active date range (for DB-computed collections total)
-  const activeReceipts = useMemo(() => {
-    return financeView === 'payables' ? [] : customerInvoices.filter(isReceiptVoucher);
-  }, [customerInvoices, financeView]);
-
   // KPI metrics for the active view (strictly based on actual bills, with accurate paid_amount and pending_amount)
   const totalInvoiced = activeBills.reduce((s, i) => s + Number(i.amount || 0), 0);
   const totalPaid     = activeBills.reduce((s, i) => s + (i.status === 'Paid' ? Number(i.amount || 0) : Number(i.paid_amount || 0)), 0);
@@ -618,17 +613,6 @@ const Finance = () => {
   // register sparklines, and collection rate — never for headline totals.
   // ══════════════════════════════════════════════════════════════════════════
 
-  // "Total Billed" — sum of all sales/purchase voucher amounts in the DB
-  const effectiveTotalInvoiced = totalInvoiced;
-  const effectiveBillsCount = activeBills.length;
-
-  // "Collected" — paid portion of current-FY sales/purchase bills.
-  // Uses totalPaid (from activeBills reconciled status) so Collected ≤ Billed always.
-  // Receipt vouchers are NOT used here because they include payments for
-  // prior-year invoices which would make Collected > Billed (confusing).
-  const effectiveTotalPaid = totalPaid;
-  const effectivePaidCount = activeBills.filter(i => i.status === 'Paid').length;
-
   // Rich monthly register breakdown (matches Tally Sales Register / Purchase Register)
   const monthlyRegister = useMemo(() => {
     const isPayables = financeView === 'payables';
@@ -637,6 +621,32 @@ const Finance = () => {
       : currentTallyDebtors?.salesRegister;
     return computeMonthlyRegister(activeBills, isPayables, isMasterFYView ? masterReg : null);
   }, [activeBills, financeView, isMasterFYView, currentTallyDebtors]);
+
+  // "Total Billed" — sum of all sales/purchase voucher amounts.
+  // When viewing current FY without custom date range filters (isMasterFYView) and Tally Master summary has authoritative register turnover,
+  // display Tally's exact billing total (e.g. ₹6,86,90,114.00 for Ready Plast FY 2026-27).
+  // This guarantees the headline card ALWAYS equals the exact sum of the monthly bars below it without a 1-rupee difference!
+  const effectiveTotalInvoiced = useMemo(() => {
+    if (isMasterFYView && monthlyRegister?.isTallyMaster && monthlyRegister.totalAmount > 0) {
+      return monthlyRegister.totalAmount;
+    }
+    return totalInvoiced;
+  }, [isMasterFYView, monthlyRegister, totalInvoiced]);
+
+  const effectiveBillsCount = useMemo(() => {
+    if (isMasterFYView && monthlyRegister?.isTallyMaster && monthlyRegister.monthly) {
+      const tallyCount = monthlyRegister.monthly.reduce((s, m) => s + Number(m.count || 0), 0);
+      if (tallyCount > 0) return tallyCount;
+    }
+    return activeBills.length;
+  }, [isMasterFYView, monthlyRegister, activeBills]);
+
+  // "Collected" — paid portion of current-FY sales/purchase bills.
+  // Uses totalPaid (from activeBills reconciled status) so Collected ≤ Billed always.
+  // Receipt vouchers are NOT used here because they include payments for
+  // prior-year invoices which would make Collected > Billed (confusing).
+  const effectiveTotalPaid = totalPaid;
+  const effectivePaidCount = activeBills.filter(i => i.status === 'Paid').length;
 
   // Master ledger closing balance sum for the active view
   const tallyClosingSum = useMemo(() => {
