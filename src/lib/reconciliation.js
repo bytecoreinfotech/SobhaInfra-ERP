@@ -1044,11 +1044,64 @@ export function computeTallyDebtors(invoices = [], activeCompany = null, isConso
     ];
     allGroups.sort((a, b) => b.net - a.net);
 
+    // Synthesize consolidated salesRegister, purchaseRegister & collections if available
+    const hasSalesReg = readyPlastRes?.salesRegister || buildtechRes?.salesRegister;
+    const consolidatedSalesRegister = hasSalesReg ? {
+      total_sales: (readyPlastRes?.salesRegister?.total_sales || 0) + (buildtechRes?.salesRegister?.total_sales || 0),
+      invoices_count: (readyPlastRes?.salesRegister?.invoices_count || 0) + (buildtechRes?.salesRegister?.invoices_count || 0),
+      all_time_sales: (readyPlastRes?.salesRegister?.all_time_sales || 0) + (buildtechRes?.salesRegister?.all_time_sales || 0),
+      all_time_count: (readyPlastRes?.salesRegister?.all_time_count || 0) + (buildtechRes?.salesRegister?.all_time_count || 0),
+      monthly: ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar'].map(abbr => {
+        const m1 = readyPlastRes?.salesRegister?.monthly?.find(m => m.month === abbr) || { amount: 0, count: 0, credit: 0, debit: 0 };
+        const m2 = buildtechRes?.salesRegister?.monthly?.find(m => m.month === abbr) || { amount: 0, count: 0, credit: 0, debit: 0 };
+        const credit = (m1.credit || m1.amount || 0) + (m2.credit || m2.amount || 0);
+        return {
+          month: abbr,
+          fullName: m1.fullName || m2.fullName || abbr,
+          debit: 0,
+          credit: credit,
+          amount: credit,
+          count: (m1.count || 0) + (m2.count || 0),
+        };
+      }).filter(m => m.credit > 0 || ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep'].includes(m.month)),
+    } : null;
+
+    const hasPurReg = readyPlastRes?.purchaseRegister || buildtechRes?.purchaseRegister;
+    const consolidatedPurchaseRegister = hasPurReg ? {
+      total_purchases: (readyPlastRes?.purchaseRegister?.total_purchases || 0) + (buildtechRes?.purchaseRegister?.total_purchases || 0),
+      bills_count: (readyPlastRes?.purchaseRegister?.bills_count || 0) + (buildtechRes?.purchaseRegister?.bills_count || 0),
+      monthly: ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar'].map(abbr => {
+        const m1 = readyPlastRes?.purchaseRegister?.monthly?.find(m => m.month === abbr) || { amount: 0, count: 0, credit: 0, debit: 0 };
+        const m2 = buildtechRes?.purchaseRegister?.monthly?.find(m => m.month === abbr) || { amount: 0, count: 0, credit: 0, debit: 0 };
+        const debit = (m1.debit || m1.amount || 0) + (m2.debit || m2.amount || 0);
+        return {
+          month: abbr,
+          fullName: m1.fullName || m2.fullName || abbr,
+          debit: debit,
+          credit: 0,
+          amount: debit,
+          count: (m1.count || 0) + (m2.count || 0),
+        };
+      }).filter(m => m.debit > 0 || ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep'].includes(m.month)),
+    } : null;
+
+    const hasCollections = readyPlastRes?.collections || buildtechRes?.collections;
+    const consolidatedCollections = hasCollections ? {
+      total_collected: (readyPlastRes?.collections?.total_collected || 0) + (buildtechRes?.collections?.total_collected || 0),
+      receipts_count: (readyPlastRes?.collections?.receipts_count || 0) + (buildtechRes?.collections?.receipts_count || 0),
+      collection_rate_pct: consolidatedSalesRegister?.total_sales
+        ? Math.round(((readyPlastRes?.collections?.total_collected || 0) + (buildtechRes?.collections?.total_collected || 0)) / consolidatedSalesRegister.total_sales * 1000) / 10
+        : 100,
+    } : null;
+
     return {
       debit: Math.round(totDeb * 100) / 100,
       credit: Math.round(totCred * 100) / 100,
       net: Math.round((totDeb - totCred) * 100) / 100,
       groups: allGroups,
+      salesRegister: consolidatedSalesRegister,
+      purchaseRegister: consolidatedPurchaseRegister,
+      collections: consolidatedCollections,
       isTallyMaster: Boolean(readyPlastRes?.isTallyMaster || buildtechRes?.isTallyMaster),
     };
   }

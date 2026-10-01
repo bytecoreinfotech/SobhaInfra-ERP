@@ -270,13 +270,19 @@ export async function getTallyConnectionStatus() {
     const { data, error } = await supabase.from('tally_connections').select('*').limit(1).maybeSingle();
     if (!error && data) {
       const isOnline = data.sync_status === 'Connected' || data.status === 'ONLINE' || data.sync_progress_phase === 'done';
+      const syncTimes = [data.last_sync_at, data.sync_progress_updated_at, data.updated_at]
+        .filter(Boolean)
+        .map(t => new Date(t).getTime())
+        .filter(t => !isNaN(t));
+      const latestSyncAt = syncTimes.length ? new Date(Math.max(...syncTimes)).toISOString() : (data.last_sync_at || data.updated_at);
+
       return {
         data: {
           ...data,
           status: isOnline ? 'ONLINE' : (data.status || data.sync_status || 'DISCONNECTED'),
           tally_company: data.company_name || data.tally_company || 'SHOBHA READY PLAST',
           tally_host: data.tally_host || 'Client Office PC (Port 9000)',
-          last_sync_at: data.last_sync_at || data.updated_at,
+          last_sync_at: latestSyncAt,
         },
         error: null,
       };

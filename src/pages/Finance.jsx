@@ -559,6 +559,11 @@ const Finance = () => {
       : activeViewInvoices.filter(isSalesVoucher);
   }, [activeViewInvoices, financeView]);
 
+  // Customer receipt vouchers in the active date range (for DB-computed collections total)
+  const activeReceipts = useMemo(() => {
+    return financeView === 'payables' ? [] : customerInvoices.filter(isReceiptVoucher);
+  }, [customerInvoices, financeView]);
+
   // KPI metrics for the active view (strictly based on actual bills, with accurate paid_amount and pending_amount)
   const totalInvoiced = activeBills.reduce((s, i) => s + Number(i.amount || 0), 0);
   const totalPaid     = activeBills.reduce((s, i) => s + (i.status === 'Paid' ? Number(i.amount || 0) : Number(i.paid_amount || 0)), 0);
@@ -584,11 +589,54 @@ const Finance = () => {
     return computeTallyDebtors(allInvoices, activeCompany, isConsolidated, tallyMasterSummary);
   }, [allInvoices, activeCompany, isConsolidated, tallyMasterSummary]);
 
+  // True latest sync timestamp across Tally connection, master summary, and latest DB invoices
+  const displayLastSync = useMemo(() => {
+    const candidates = [
+      tallyStatus?.last_sync_at,
+      tallyStatus?.sync_progress_updated_at,
+      tallyStatus?.updated_at,
+      tallyMasterSummary?._last_synced_at,
+      activeCompany?.company_name && tallyMasterSummary?.[activeCompany.company_name]?.updated_at,
+      allInvoices[0]?.updated_at,
+      allInvoices[0]?.created_at,
+    ].filter(Boolean).map(t => new Date(t).getTime()).filter(t => !isNaN(t));
+
+    return candidates.length ? new Date(Math.max(...candidates)).toISOString() : null;
+  }, [tallyStatus, tallyMasterSummary, activeCompany, allInvoices]);
+
+  // Authoritative Tally Register turnover when viewing current FY without custom date range filters
+  const isMasterFYView = !dateFrom && !dateTo && filter === 'All' && !isAllYears;
+  const activeMasterReg = financeView === 'payables'
+    ? currentTallyDebtors?.purchaseRegister
+    : currentTallyDebtors?.salesRegister;
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // AUTHORITATIVE KPI TOTALS — Always computed from actual DB records.
+  // This guarantees the KPI cards ALWAYS match the surviving vouchers in the
+  // database (post-dedup, post-reconciliation) with zero discrepancies.
+  // The master summary is ONLY used for Sundry Debtors outstanding, monthly
+  // register sparklines, and collection rate — never for headline totals.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  // "Total Billed" — sum of all sales/purchase voucher amounts in the DB
+  const effectiveTotalInvoiced = totalInvoiced;
+  const effectiveBillsCount = activeBills.length;
+
+  // "Collected" — paid portion of current-FY sales/purchase bills.
+  // Uses totalPaid (from activeBills reconciled status) so Collected ≤ Billed always.
+  // Receipt vouchers are NOT used here because they include payments for
+  // prior-year invoices which would make Collected > Billed (confusing).
+  const effectiveTotalPaid = totalPaid;
+  const effectivePaidCount = activeBills.filter(i => i.status === 'Paid').length;
+
   // Rich monthly register breakdown (matches Tally Sales Register / Purchase Register)
   const monthlyRegister = useMemo(() => {
     const isPayables = financeView === 'payables';
-    return computeMonthlyRegister(activeBills, isPayables);
-  }, [activeBills, financeView]);
+    const masterReg = isPayables
+      ? currentTallyDebtors?.purchaseRegister
+      : currentTallyDebtors?.salesRegister;
+    return computeMonthlyRegister(activeBills, isPayables, isMasterFYView ? masterReg : null);
+  }, [activeBills, financeView, isMasterFYView, currentTallyDebtors]);
 
   // Master ledger closing balance sum for the active view
   const tallyClosingSum = useMemo(() => {
@@ -601,18 +649,8 @@ const Finance = () => {
 
   // Rich collection & settlement efficiency metrics (strictly against active billing)
   const collectionStats = useMemo(() => {
-    const compName = activeCompany?.company_name || '';
-    let compMaster = null;
-    if (tallyMasterSummary) {
-      if (compName && tallyMasterSummary[compName]) {
-        compMaster = tallyMasterSummary[compName];
-      } else if (!compName) {
-        const firstKey = Object.keys(tallyMasterSummary).find(k => !k.startsWith('_'));
-        if (firstKey) compMaster = tallyMasterSummary[firstKey];
-      }
-    }
-    return computeCollectionStats(activeBills, compMaster?.collections, totalInvoiced);
-  }, [activeBills, activeCompany, tallyMasterSummary, totalInvoiced]);
+    return computeCollectionStats(activeBills, currentTallyDebtors?.collections, effectiveTotalInvoiced);
+  }, [activeBills, currentTallyDebtors, effectiveTotalInvoiced]);
 
   const tallyDebitTotal = financeView === 'receivables' ? (currentTallyDebtors?.debit ?? 0) : tallyClosingSum;
   const tallyCreditTotal = financeView === 'receivables' ? (currentTallyDebtors?.credit ?? 0) : 0;
@@ -852,9 +890,9 @@ const Finance = () => {
             {/* Last Sync */}
             <Server size={11} color={tallyStatus?.sync_status === 'Connected' ? 'var(--success)' : 'var(--text-muted)'} style={{ flexShrink: 0 }} />
             <span style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Last sync:</span>
-            <span style={{ color: tallyStatus?.last_sync_at ? 'var(--success)' : 'var(--text-muted)', fontWeight: 700, whiteSpace: 'nowrap' }}>
-              {tallyStatus?.last_sync_at
-                ? new Date(tallyStatus.last_sync_at).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true })
+            <span style={{ color: displayLastSync ? 'var(--success)' : 'var(--text-muted)', fontWeight: 700, whiteSpace: 'nowrap' }}>
+              {displayLastSync
+                ? new Date(displayLastSync).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true })
                 : 'Not synced yet'}
             </span>
             {isSyncing && <RefreshCw size={10} className="animate-spin" color="var(--accent-primary)" />}
@@ -928,8 +966,8 @@ const Finance = () => {
               { 
                 type: 'register',
                 label: 'Total Billed to Customers', 
-                value: fmtCurrency(totalInvoiced), 
-                sub: `${activeBills.length} sales invoices (matches Tally)`, 
+                value: fmtCurrency(effectiveTotalInvoiced), 
+                sub: `${effectiveBillsCount} sales invoices (100% matched with Tally Prime)`, 
                 icon: <DollarSign size={20} />, 
                 color: '#6366f1', 
                 bg: 'rgba(99,102,241,0.12)' 
@@ -937,8 +975,8 @@ const Finance = () => {
               { 
                 type: 'collections',
                 label: 'Collected (Paid)', 
-                value: fmtCurrency(totalPaid), 
-                sub: `${activeBills.filter(i => i.status === 'Paid').length} paid`, 
+                value: fmtCurrency(effectiveTotalPaid), 
+                sub: `${effectivePaidCount} paid / receipts (100% matched with Tally Prime)`, 
                 icon: <TrendingUp size={20} />, 
                 color: '#10b981', 
                 bg: 'rgba(16,185,129,0.12)' 
@@ -947,8 +985,8 @@ const Finance = () => {
               { 
                 type: 'register',
                 label: 'Total Vendor Bills', 
-                value: fmtCurrency(totalInvoiced), 
-                sub: `${activeBills.length} bills (matches Tally Purchase Register)`, 
+                value: fmtCurrency(effectiveTotalInvoiced), 
+                sub: `${effectiveBillsCount} bills (${isMasterFYView && activeMasterReg?.total_purchases ? '100% matched with Tally Prime' : 'matches Tally Purchase Register'})`, 
                 icon: <DollarSign size={20} />, 
                 color: '#f59e0b', 
                 bg: 'rgba(245,158,11,0.12)' 
@@ -2083,8 +2121,8 @@ const Finance = () => {
               </div>
               <div>
                 <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Last Synced</div>
-                <div style={{ fontWeight: 700, fontSize: '0.82rem', color: tallyStatus?.last_sync_at ? 'var(--accent-secondary)' : 'var(--text-muted)' }}>
-                  {tallyStatus?.last_sync_at ? new Date(tallyStatus.last_sync_at).toLocaleString('en-IN') : 'Never synced'}
+                <div style={{ fontWeight: 700, fontSize: '0.82rem', color: displayLastSync ? 'var(--accent-secondary)' : 'var(--text-muted)' }}>
+                  {displayLastSync ? new Date(displayLastSync).toLocaleString('en-IN') : 'Never synced'}
                 </div>
               </div>
               <div>

@@ -24,8 +24,7 @@ import math
 import base64
 import hashlib
 import urllib.parse
-import html
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 # Zero-Lag Architecture (v5.0):
 # PDFs are generated on-demand in the browser client-side (via HTML5 Canvas & jsPDF in InvoiceDocModal.jsx).
@@ -1971,7 +1970,7 @@ def build_tally_master_summary(comp: str, comp_records: list) -> dict:
         elif any(k in vtype for k in ["sales", "tax invoice", "sales order"]) or (not vtype and (num.startswith("SRP/") or num.startswith("SB/"))):
             total_sales_turnover += amt
             sales_count += 1
-            is_cur_fy = (iso_date >= fy_start_str and iso_date <= fy_end_str) if iso_date else True
+            is_cur_fy = (iso_date >= fy_start_str and iso_date <= fy_end_str) if iso_date else False
             if is_cur_fy:
                 fy_sales_turnover += amt
                 fy_sales_count += 1
@@ -1980,15 +1979,19 @@ def build_tally_master_summary(comp: str, comp_records: list) -> dict:
                     sales_monthly[m_abbr]["count"] += 1
 
         elif any(k in vtype for k in ["receipt", "bank receipt", "cash receipt"]) or dir_val == "received" or "REC-" in num:
-            total_collected += amt
-            receipts_count += 1
+            is_cur_fy_rcpt = (iso_date >= fy_start_str and iso_date <= fy_end_str) if iso_date else False
+            if is_cur_fy_rcpt:
+                total_collected += amt
+                receipts_count += 1
 
         elif any(k in vtype for k in ["purchase", "purchase order"]) or dir_val == "payable" or "PUR-" in num:
-            total_purchases += amt
-            purchases_count += 1
-            if m_abbr and m_abbr in pur_monthly:
-                pur_monthly[m_abbr]["debit"] += amt
-                pur_monthly[m_abbr]["count"] += 1
+            is_cur_fy_pur = (iso_date >= fy_start_str and iso_date <= fy_end_str) if iso_date else False
+            if is_cur_fy_pur:
+                total_purchases += amt
+                purchases_count += 1
+                if m_abbr and m_abbr in pur_monthly:
+                    pur_monthly[m_abbr]["debit"] += amt
+                    pur_monthly[m_abbr]["count"] += 1
 
     cum_sales = 0.0
     for abbr in month_abbrs:
@@ -2984,9 +2987,81 @@ def push_to_cloud(vouchers, master_summaries=None):
         except Exception as e:
             log.warning(f"  [Orphan Reconcile] Non-fatal orphan pruning notice: {e}")
 
-    # ── Step 4: Persist Authoritative Tally Master Summary (Option 2) ─────────
-    if master_summaries and SUPABASE_URL and SUPABASE_KEY:
+    # ── Step 4: Rebuild & Persist Master Summary from surviving DB records ──────
+    # CRITICAL: Rebuild the master summary from the ACTUAL surviving records in
+    # the database (post-dedup, post-orphan-prune) instead of from the raw
+    # pre-processed comp_records. This guarantees that the KPI cards in the
+    # Finance page always show values that match the database exactly, with
+    # zero discrepancies — not a single rupee or paisa difference.
+    if SUPABASE_URL and SUPABASE_KEY:
         try:
+            log.info("  [Master Summary] Rebuilding from surviving DB records...")
+            sb_inv_url = f"{SUPABASE_URL}/rest/v1/invoices"
+            sb_read_headers = {
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+                "Content-Type": "application/json",
+            }
+
+            # Read all surviving invoices from Supabase (paginated)
+            surviving_records = []
+            offset = 0
+            batch_size = 1000
+            while True:
+                resp = requests.get(
+                    sb_inv_url,
+                    params={
+                        "organization_id": f"eq.{ORGANIZATION_ID}",
+                        "select": "invoice_number,client_name,amount,status,invoice_date,company_name,voucher_type,direction,metadata",
+                        "offset": offset,
+                        "limit": batch_size,
+                        "order": "created_at.desc",
+                    },
+                    headers={**sb_read_headers, "Range": f"{offset}-{offset + batch_size - 1}"},
+                    timeout=15,
+                )
+                if resp.status_code not in (200, 206):
+                    log.warning(f"  [Master Summary] DB read HTTP {resp.status_code}")
+                    break
+                batch = resp.json()
+                if not batch:
+                    break
+                # Normalize: merge metadata fields into top-level for build_tally_master_summary compatibility
+                for r in batch:
+                    meta = r.get("metadata") or {}
+                    if not r.get("voucher_type"):
+                        r["voucher_type"] = meta.get("voucher_type", "")
+                    if not r.get("direction"):
+                        r["direction"] = meta.get("direction", "")
+                    if not r.get("company_name"):
+                        r["company_name"] = meta.get("tally_company", "")
+                surviving_records.extend(batch)
+                if len(batch) < batch_size:
+                    break
+                offset += batch_size
+
+            log.info(f"  [Master Summary] Read {len(surviving_records)} surviving records from DB")
+
+            if surviving_records:
+                # Group by company and rebuild master summaries
+                rebuilt_summaries = {}
+                company_groups = {}
+                for r in surviving_records:
+                    comp = (r.get("company_name") or "").strip()
+                    if not comp:
+                        continue
+                    company_groups.setdefault(comp, []).append(r)
+
+                for comp_name, comp_recs in company_groups.items():
+                    rebuilt_summaries[comp_name] = build_tally_master_summary(comp_name, comp_recs)
+                    log.info(f"  [Master Summary] Rebuilt '{comp_name}': "
+                             f"Sales={rebuilt_summaries[comp_name]['sales_register']['total_sales']}, "
+                             f"Receipts={rebuilt_summaries[comp_name]['collections']['total_collected']}, "
+                             f"Debtors Net={rebuilt_summaries[comp_name]['sundry_debtors']['net_closing']}")
+
+                master_summaries = rebuilt_summaries
+
+            # Persist the rebuilt master summary
             sb_settings_url = f"{SUPABASE_URL}/rest/v1/org_settings"
             requests.post(
                 sb_settings_url,
@@ -3004,9 +3079,31 @@ def push_to_cloud(vouchers, master_summaries=None):
                 },
                 timeout=10,
             )
-            log.info("  [Master Summary] Successfully synced Tally Master Summary to Supabase org_settings")
+            log.info("  [Master Summary] Successfully synced rebuilt Tally Master Summary to Supabase org_settings")
         except Exception as e:
-            log.warning(f"  [Master Summary] Supabase direct push notice: {e}")
+            log.warning(f"  [Master Summary] Rebuild/persist notice: {e}")
+            # Fallback: persist original pre-processed summaries if rebuild fails
+            if master_summaries:
+                try:
+                    sb_settings_url = f"{SUPABASE_URL}/rest/v1/org_settings"
+                    requests.post(
+                        sb_settings_url,
+                        json=[{
+                            "organization_id": ORGANIZATION_ID,
+                            "key": "tally_master_summary",
+                            "value": json.dumps(master_summaries),
+                            "updated_at": datetime.now().isoformat(),
+                        }],
+                        headers={
+                            "apikey": SUPABASE_KEY,
+                            "Authorization": f"Bearer {SUPABASE_KEY}",
+                            "Content-Type": "application/json",
+                            "Prefer": "resolution=merge-duplicates",
+                        },
+                        timeout=10,
+                    )
+                except Exception:
+                    pass
 
     # ── Status ping & WhatsApp dispatch to Netlify ────────────────────────────
     try:
@@ -3054,16 +3151,23 @@ def _push_sync_progress(done: int, total: int, phase: str = "fetch"):
         return
     try:
         pct = int((done / total) * 100) if total else 0
+        now_iso = datetime.now(timezone.utc).isoformat()
+        payload = {
+            "sync_progress": pct,
+            "sync_progress_done": done,
+            "sync_progress_total": total,
+            "sync_progress_phase": phase,
+            "sync_progress_updated_at": now_iso,
+            "updated_at": now_iso,
+            "sync_status": "Connected",
+        }
+        if phase == "done" or done > 0:
+            payload["last_sync_at"] = now_iso
+
         requests.patch(
             f"{SUPABASE_URL}/rest/v1/tally_connections"
             f"?organization_id=eq.{ORGANIZATION_ID}",
-            json={
-                "sync_progress": pct,
-                "sync_progress_done": done,
-                "sync_progress_total": total,
-                "sync_progress_phase": phase,
-                "sync_progress_updated_at": datetime.now().isoformat(),
-            },
+            json=payload,
             headers={
                 "apikey": SUPABASE_KEY,
                 "Authorization": f"Bearer {SUPABASE_KEY}",
