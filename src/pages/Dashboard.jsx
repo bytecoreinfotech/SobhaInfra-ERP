@@ -305,12 +305,19 @@ const Dashboard = () => {
   const paidInvoicesCount = activeBills.filter(i => i.status === 'Paid').length;
   const collectionRate = totalInvoiced > 0 ? ((totalPaid / totalInvoiced) * 100).toFixed(1) : '0.0';
 
-  // Dynamic Tally Sundry Debtors & Advances from live database
   const tallySummary = useMemo(() => {
     return computeTallyDebtors(allInvoices, activeCompany, isConsolidated, tallyMasterSummary);
   }, [allInvoices, activeCompany, isConsolidated, tallyMasterSummary]);
 
-  // Total Customer Outstanding (Matches Tally Net Closing Balance)
+  // Align authoritative sales total with Tally Master when in FY view
+  const displayTotalInvoiced = useMemo(() => {
+    if (tallySummary?.salesRegister?.total_sales && !isAllYears) {
+      return tallySummary.salesRegister.total_sales;
+    }
+    return totalInvoiced;
+  }, [tallySummary, isAllYears, totalInvoiced]);
+
+  // Total Customer Outstanding (Matches Tally Sundry Debtors)
   const totalCustomerOutstanding = tallySummary?.net ?? 0;
   const tallyGrossDebit = tallySummary?.debit ?? totalCustomerOutstanding;
   const totalOpeningBalance = Math.max(0, Math.round((tallyGrossDebit - (overdueAmount + pendingAmount)) * 100) / 100);
@@ -533,7 +540,7 @@ const Dashboard = () => {
               <div className="stat-header">
                 <div>
                   <div className="stat-label">Total Customer Outstanding</div>
-                  <div className="stat-value">{fmtAmount(totalCustomerOutstanding)}</div>
+                  <div className="stat-value">{fmtAmount(tallyGrossDebit)}</div>
                 </div>
                 <div className="stat-icon" style={{ background: 'var(--danger-bg)' }}>
                   <CreditCard size={22} style={{ color: 'var(--danger)' }} />
@@ -545,10 +552,10 @@ const Dashboard = () => {
                 ) : (
                   <span className="stat-trend up" style={{ color: 'var(--success)' }}><CheckCircle2 size={13} /> 0 Overdue</span>
                 )}
-                <span className="stat-period" title={`Tally Debit: ₹${(tallySummary?.debit ?? 0).toLocaleString('en-IN')}${tallySummary?.credit > 0 ? ` • Tally Credit (Advances): ₹${(tallySummary?.credit ?? 0).toLocaleString('en-IN')}` : ''}`}>
+                <span className="stat-period" title={`Tally Debit: ₹${(tallySummary?.debit ?? 0).toLocaleString('en-IN')}${tallySummary?.credit > 0 ? ` • Advances: ₹${(tallySummary?.credit ?? 0).toLocaleString('en-IN')}` : ''} • Net: ₹${totalCustomerOutstanding.toLocaleString('en-IN')}`}>
                   {tallySummary?.credit > 0
-                    ? `Dr: ${fmtAmount(tallySummary.debit)} • Cr: ${fmtAmount(tallySummary.credit)}`
-                    : `Dr: ${fmtAmount(tallySummary.debit)}`}
+                    ? `Net: ${fmtAmount(totalCustomerOutstanding)} (Adv: ${fmtAmount(tallySummary.credit)})`
+                    : `Net: ${fmtAmount(totalCustomerOutstanding)}`}
                 </span>
               </div>
             </div>

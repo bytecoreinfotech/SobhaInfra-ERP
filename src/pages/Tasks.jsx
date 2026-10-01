@@ -12,7 +12,7 @@ import {
   getTasks, createTask, updateTask, deleteTask, addTaskComment,
   getTeamMembers, getTaskTemplates, saveTaskTemplate, deleteTaskTemplate,
   getTasksByEmployee, getLeads, generateDailyTasksForClients,
-  toggleTaskTemplateActive, checkAndRunRecurringTaskRoutines
+  toggleTaskTemplateActive, checkAndRunRecurringTaskRoutines, advanceTaskToNextDay
 } from '../lib/db';
 import { useAuth } from '../context/AuthContext';
 import { Skeleton, SkeletonCard, SkeletonTable } from '../components/Skeleton';
@@ -374,6 +374,41 @@ const Tasks = () => {
       approved_by: user?.name,
       comments: updatedComments
     };
+
+    // Auto-advance: If task is a daily recurring task, schedule the fresh occurrence for the next day
+    if (selectedTask.is_recurring) {
+      const curDue = selectedTask.due_date ? new Date(selectedTask.due_date) : new Date();
+      let nextDue;
+      if (isNaN(curDue.getTime())) {
+        const d = new Date();
+        d.setDate(d.getDate() + 1);
+        nextDue = d.toISOString().split('T')[0];
+      } else {
+        curDue.setDate(curDue.getDate() + 1);
+        nextDue = curDue.toISOString().split('T')[0];
+      }
+
+      const nextTaskPayload = {
+        title: selectedTask.title,
+        description: selectedTask.description || '',
+        status: 'To Do',
+        priority: selectedTask.priority || 'Medium',
+        due_date: nextDue,
+        tags: selectedTask.tags || [],
+        assigned_to: selectedTask.assigned_to || '',
+        client_name: selectedTask.client_name || '',
+        client_phone: selectedTask.client_phone || '',
+        is_recurring: true,
+        recurrence_interval: selectedTask.recurrence_interval || 'Daily',
+      };
+      const { data: nextCreated } = await createTask(nextTaskPayload);
+      if (nextCreated) {
+        setTasks(prev => [nextCreated, ...prev.map(t => t.id === selectedTask.id ? updatedTask : t)]);
+        setSelectedTask(updatedTask);
+        showToast(`Task approved! Next daily routine scheduled for ${nextDue} 🔁`);
+        return;
+      }
+    }
 
     setSelectedTask(updatedTask);
     setTasks(prev => prev.map(t => t.id === selectedTask.id ? updatedTask : t));
@@ -1332,6 +1367,31 @@ const Tasks = () => {
                     </span>
                   )}
                 </div>
+                {selectedTask.is_recurring && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.45rem', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: '0.72rem', color: 'var(--accent-primary)', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '0.3rem', background: 'rgba(99,102,241,0.12)', padding: '0.2rem 0.5rem', borderRadius: 4, border: '1px solid rgba(99,102,241,0.25)' }}>
+                      <Repeat size={11} /> {selectedTask.recurrence_interval || 'Daily'} Routine • Due: <strong>{selectedTask.due_date || 'Today'}</strong>
+                    </span>
+                    {canCreate && (
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        style={{ fontSize: '0.7rem', padding: '0.2rem 0.5rem', color: 'var(--accent-primary)', borderColor: 'var(--accent-primary)' }}
+                        onClick={async () => {
+                          const res = await advanceTaskToNextDay(selectedTask.id);
+                          if (res?.data) {
+                            setSelectedTask(res.data);
+                            setTasks(prev => prev.map(t => t.id === selectedTask.id ? res.data : t));
+                            showToast(`Task rolled over to ${res.data.due_date} 🚀`);
+                          }
+                        }}
+                        title="Advance task to next day (e.g. 2 October)"
+                      >
+                        <CalendarDays size={11} /> Advance to Next Day (+1d)
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
               <button className="modal-close-btn" onClick={() => setSelectedTask(null)}>✕</button>
             </div>
@@ -1907,15 +1967,52 @@ const Tasks = () => {
               </div>
 
               {/* Recurring Task Option */}
-              <div style={{ padding: '0.65rem 0.85rem', borderRadius: 8, background: 'var(--bg-secondary)', border: '1px solid var(--border-color)' }}>
+              <div style={{ padding: '0.65rem 0.85rem', borderRadius: 8, background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}>
                   <input
                     type="checkbox"
                     checked={form.is_recurring}
-                    onChange={e => setForm(p => ({ ...p, is_recurring: e.target.checked }))}
+                    onChange={e => {
+                      const chk = e.target.checked;
+                      setForm(p => ({
+                        ...p,
+                        is_recurring: chk,
+                        recurrence_interval: chk ? (p.recurrence_interval || 'Daily') : 'Daily'
+                      }));
+                    }}
                   />
-                  <span>🔁 Repeat Daily Routine</span>
+                  <span>🔁 Recurring Task Routine</span>
                 </label>
+                {form.is_recurring && (
+                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginTop: '0.2rem' }}>
+                    <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Frequency:</label>
+                    <select
+                      className="input-field"
+                      style={{ fontSize: '0.78rem', padding: '0.25rem 0.5rem' }}
+                      value={form.recurrence_interval || 'Daily'}
+                      onChange={e => {
+                        const val = e.target.value;
+                        let newDue = form.due_date;
+                        if (val === 'Weekly (Monday)' || val === 'Weekly') {
+                          const d = new Date();
+                          const cur = d.getDay();
+                          let diff = 1 - cur;
+                          if (diff <= 0) diff += 7;
+                          d.setDate(d.getDate() + diff);
+                          newDue = d.toISOString().split('T')[0];
+                        } else if (val === 'Daily' && !newDue) {
+                          newDue = new Date().toISOString().split('T')[0];
+                        }
+                        setForm(p => ({ ...p, recurrence_interval: val, due_date: newDue }));
+                      }}
+                    >
+                      <option value="Daily">Daily (Every Day • Auto-advances to next date)</option>
+                      <option value="Weekly (Monday)">Weekly on Monday (Scheduled for upcoming Monday)</option>
+                      <option value="Weekdays">Weekdays Only (Mon to Fri)</option>
+                      <option value="Monthly">Monthly</option>
+                    </select>
+                  </div>
+                )}
               </div>
 
               <div>

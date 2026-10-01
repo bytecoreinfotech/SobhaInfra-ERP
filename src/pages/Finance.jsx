@@ -1189,18 +1189,18 @@ const Finance = () => {
                   </div>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem', marginTop: '0.2rem', flexWrap: 'wrap' }}>
                     <div style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--text-primary)' }}>
-                      {fmtCurrency(totalOutstanding)}
+                      {fmtCurrency(financeView === 'receivables' ? tallyDebitTotal : totalOutstanding)}
                     </div>
                     {financeView === 'receivables' && (
                       <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 600 }}>
-                        (Net Closing Balance)
+                        (Net Closing Balance: <strong style={{ color: 'var(--text-primary)' }}>{fmtCurrency(totalOutstanding)}</strong>)
                       </div>
                     )}
                   </div>
                   <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.2rem', display: 'flex', flexWrap: 'wrap', gap: '0.4rem', alignItems: 'center' }}>
                     {financeView === 'receivables' ? (
                       <>
-                        <span>Tally Debit: <strong style={{ color: 'var(--text-primary)' }}>{fmtCurrency(tallyDebitTotal)}</strong></span>
+                        <span>Tally Debit (Gross Pending): <strong style={{ color: 'var(--text-primary)' }}>{fmtCurrency(tallyDebitTotal)}</strong></span>
                         <span>•</span>
                         {tallyCreditTotal > 0 ? (
                           <>
@@ -1359,7 +1359,7 @@ const Finance = () => {
                       <Layers size={14} style={{ color: 'var(--primary-color)' }} />
                       <span>Tally Group Summary: Sundry Debtors ({isConsolidated ? 'Consolidated' : (activeCompany?.company_name || 'Shobha Ready Plast')})</span>
                     </div>
-                    <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>Period: 01-Apr-2026 to 11-Sep-2026</span>
+                    <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>Period: 1-Apr-26 to 30-Sep-26</span>
                   </div>
                   <table style={{ width: '100%', fontSize: '0.72rem', borderCollapse: 'collapse', textAlign: 'left' }}>
                     <thead>

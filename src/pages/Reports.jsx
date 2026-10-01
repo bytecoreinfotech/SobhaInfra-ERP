@@ -280,6 +280,14 @@ const Reports = () => {
   const totalInvoiced = salesInvoices.reduce((s, i) => s + Number(i.amount || 0), 0);
   const totalPaid = salesInvoices.reduce((s, i) => s + (i.status === 'Paid' ? Number(i.amount || 0) : Number(i.paid_amount || 0)), 0);
 
+  // Authoritative Tally sales billing alignment when viewing full FY
+  const displayTotalInvoiced = useMemo(() => {
+    if (period === 'fy' && tallySummary?.salesRegister?.total_sales) {
+      return tallySummary.salesRegister.total_sales;
+    }
+    return totalInvoiced;
+  }, [period, tallySummary, totalInvoiced]);
+
   // ── Lead funnel from filtered data ───────────────────────────────────────
   const STAGES = ['New', 'Hot', 'Warm', 'Cold', 'Converted', 'Lost'];
   const funnelData = STAGES.map(s => ({ stage: s, count: filteredLeads.filter(l => l.status === s).length }));
@@ -443,8 +451,8 @@ const Reports = () => {
           {/* ── Top KPI Cards ─────────────────────────────────────────── */}
           <div className="stats-grid">
             {[
-              { label: 'Total Revenue', value: fmtAmount(totalInvoiced), trend: `${fmtAmount(totalPaid)} Collected`, up: true, color: 'var(--success)', bg: 'var(--success-bg)', icon: <TrendingUp size={20} /> },
-              { label: 'Tally Outstanding', value: fmtAmount(tallySummary.net), trend: tallySummary.credit > 0 ? `Dr: ${fmtAmount(tallySummary.debit)} · Adv: ${fmtAmount(tallySummary.credit)}` : `Dr: ${fmtAmount(tallySummary.debit)} (Net)`, up: false, color: '#ef4444', bg: 'rgba(239,68,68,0.1)', icon: <IndianRupee size={20} /> },
+              { label: 'Total Revenue', value: fmtAmount(displayTotalInvoiced), trend: `${fmtAmount(totalPaid)} Collected`, up: true, color: 'var(--success)', bg: 'var(--success-bg)', icon: <TrendingUp size={20} /> },
+              { label: 'Tally Outstanding', value: fmtAmount(tallySummary.debit), trend: tallySummary.credit > 0 ? `Net: ${fmtAmount(tallySummary.net)} (Adv: ${fmtAmount(tallySummary.credit)})` : `Net: ${fmtAmount(tallySummary.net)}`, up: false, color: '#ef4444', bg: 'rgba(239,68,68,0.1)', icon: <IndianRupee size={20} /> },
               { label: 'CRM Leads', value: totalLeads.toString(), trend: `${hotLeads} Hot · ${convertedLeads} Won`, up: true, color: 'var(--accent-primary)', bg: 'var(--accent-glow)', icon: <Users size={20} /> },
               { label: 'WA Messages Sent', value: totalWaSent.toLocaleString(), trend: `${totalWaRead} Read · ${totalWaReplied} Replied`, up: true, color: 'var(--whatsapp)', bg: 'var(--whatsapp-bg)', icon: <MessageCircle size={20} /> },
               { label: 'Conversion Rate', value: conversionRate + '%', trend: `${convertedLeads} of ${totalLeads} leads`, up: parseFloat(conversionRate) > 0, color: 'var(--warning)', bg: 'var(--warning-bg)', icon: <Target size={20} /> },

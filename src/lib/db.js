@@ -2305,10 +2305,6 @@ export async function checkAndRunRecurringTaskRoutines(forceTemplateId = null) {
     return t.is_auto_recurring && t.is_active !== false;
   });
 
-  if (activeTemplates.length === 0) {
-    return { success: true, count: 0, message: 'No active recurring routines found to run.' };
-  }
-
   const { data: teamMembers } = await getTeamMembers();
   const { data: leads } = await getLeads();
   const today = new Date();
@@ -2319,38 +2315,102 @@ export async function checkAndRunRecurringTaskRoutines(forceTemplateId = null) {
   let totalTasksGenerated = 0;
   const triggeredRoutines = [];
 
-  for (const tpl of activeTemplates) {
-    // If not manually forced by admin, check schedule condition
-    if (!forceTemplateId) {
-      if (tpl.last_generated_date === todayStr) {
-        // Already spawned today
-        continue;
+  // Helper to find the next upcoming calendar date for a given day abbreviation (e.g. 'Mon')
+  const getUpcomingDayDate = (dayAbbr) => {
+    const map = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+    const targetDay = map[dayAbbr] !== undefined ? map[dayAbbr] : 1;
+    const d = new Date();
+    const cur = d.getDay();
+    let diff = targetDay - cur;
+    if (diff <= 0) diff += 7;
+    d.setDate(d.getDate() + diff);
+    return d.toISOString().split('T')[0];
+  };
+
+  // ── 1. DAILY TASK AUTO-ROLLOVER & ADVANCEMENT ──────────────────────────────
+  // When a daily task is created (e.g. for 1 October), when tomorrow arrives (2 October),
+  // or whenever the current date > due_date, automatically advance its due_date to todayStr.
+  // If it was marked 'Done' on a previous day, reset status to 'To Do' for today's active work!
+  try {
+    const { data: existingTasks } = await getTasks();
+    if (existingTasks && existingTasks.length > 0) {
+      for (const t of existingTasks) {
+        if (t.is_recurring && (t.recurrence_interval === 'Daily' || !t.recurrence_interval || t.recurrence_interval?.toLowerCase() === 'daily')) {
+          const taskDue = (t.due_date || '').split('T')[0];
+          if (taskDue && taskDue < todayStr) {
+            const updates = {
+              due_date: todayStr,
+              updated_at: new Date().toISOString()
+            };
+            if (t.status === 'Done') {
+              updates.status = 'To Do';
+              updates.completed_at = null;
+              updates.review_submitted_at = null;
+            }
+            await updateTask(t.id, updates);
+            totalTasksGenerated++;
+          }
+        }
       }
+    }
+  } catch (err) {
+    console.warn('[db] Daily task rollover check notice:', err);
+  }
 
-      let isDueToday = false;
-      const recType = tpl.recurrence_type || 'daily';
+  // ── 2. PROCESS RECURRING ROUTINE TEMPLATES ─────────────────────────────────
+  const { data: currentTasks } = await getTasks();
+  const existingTaskTitles = new Set((currentTasks || []).map(t => `${t.title}::${t.due_date}::${t.assigned_to}`));
 
+  for (const tpl of activeTemplates) {
+    let targetDueDate = todayStr;
+    const recType = tpl.recurrence_type || 'daily';
+
+    if (!forceTemplateId) {
       if (recType === 'daily') {
-        isDueToday = true;
+        targetDueDate = todayStr;
       } else if (recType === 'weekdays') {
-        // Mon-Fri
-        isDueToday = dayOfWeekNum >= 1 && dayOfWeekNum <= 5;
+        if (dayOfWeekNum >= 1 && dayOfWeekNum <= 5) {
+          targetDueDate = todayStr;
+        } else {
+          // Weekend: schedule for upcoming Monday
+          targetDueDate = getUpcomingDayDate('Mon');
+        }
       } else if (recType === 'weekly') {
-        const days = Array.isArray(tpl.recurrence_days) ? tpl.recurrence_days : [];
-        isDueToday = days.includes(dayOfWeekAbbr);
+        const days = Array.isArray(tpl.recurrence_days) && tpl.recurrence_days.length > 0
+          ? tpl.recurrence_days
+          : ['Mon'];
+
+        if (days.includes(dayOfWeekAbbr)) {
+          targetDueDate = todayStr;
+        } else {
+          // Calculate earliest upcoming scheduled day (e.g. Next Monday)
+          const candidateDates = days.map(d => getUpcomingDayDate(d));
+          candidateDates.sort();
+          targetDueDate = candidateDates[0] || getUpcomingDayDate('Mon');
+        }
       } else if (recType === 'interval_days') {
         if (!tpl.last_generated_date) {
-          isDueToday = true;
+          targetDueDate = todayStr;
         } else {
           const diffTime = Math.abs(new Date(todayStr) - new Date(tpl.last_generated_date));
           const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-          isDueToday = diffDays >= (Number(tpl.interval_days) || 1);
+          const interval = Number(tpl.interval_days) || 1;
+          if (diffDays >= interval) {
+            targetDueDate = todayStr;
+          } else {
+            const nextD = new Date(tpl.last_generated_date);
+            nextD.setDate(nextD.getDate() + interval);
+            targetDueDate = nextD.toISOString().split('T')[0];
+          }
         }
       } else if (recType === 'monthly') {
-        isDueToday = today.getDate() === (Number(tpl.interval_days) || 1);
+        targetDueDate = todayStr;
       }
 
-      if (!isDueToday) continue;
+      // If already spawned for this target due date, skip duplicate creation
+      if (tpl.last_generated_date === targetDueDate) {
+        continue;
+      }
     }
 
     // Determine target assignees
@@ -2372,24 +2432,27 @@ export async function checkAndRunRecurringTaskRoutines(forceTemplateId = null) {
         targetEmployees = [{ full_name: tpl.default_assignee }];
       }
     } else if (targetType === 'per_client') {
-      // Loop over clients
       const targetLeads = leads || [];
       for (const client of targetLeads) {
         const clientAssignee = tpl.default_assignee || client.assigned_to || 'Sales Executive';
+        const taskKey = `${tpl.title} — ${client.name}::${targetDueDate}::${clientAssignee}`;
+        if (existingTaskTitles.has(taskKey)) continue;
+
         const taskPayload = {
           title: `${tpl.title} — ${client.name}`,
           description: `${tpl.description || ''}\n\nClient Contact: ${client.phone || 'N/A'}\nCompany: ${client.company_name || 'N/A'}\nInterest: ${client.property_interest || 'General'}`,
           status: 'To Do',
           priority: tpl.priority || 'Medium',
-          due_date: todayStr,
-          tags: Array.from(new Set([...(tpl.tags || []), 'Daily Routine', 'Auto-Scheduled'])),
+          due_date: targetDueDate,
+          tags: Array.from(new Set([...(tpl.tags || []), 'Routine', 'Auto-Scheduled'])),
           assigned_to: clientAssignee,
           client_name: client.name,
           client_phone: client.phone,
           is_recurring: true,
-          recurrence_interval: tpl.recurrence_type || 'Daily',
+          recurrence_interval: tpl.recurrence_type === 'weekly' ? 'Weekly' : 'Daily',
         };
         await createTask(taskPayload);
+        existingTaskTitles.add(taskKey);
         totalTasksGenerated++;
       }
       targetEmployees = [];
@@ -2397,28 +2460,33 @@ export async function checkAndRunRecurringTaskRoutines(forceTemplateId = null) {
 
     // Spawn for target employees
     for (const emp of targetEmployees) {
+      const assigneeName = emp.full_name || emp.name || tpl.default_assignee;
+      const taskKey = `${tpl.title}::${targetDueDate}::${assigneeName}`;
+      if (existingTaskTitles.has(taskKey)) continue;
+
       const taskPayload = {
         title: `${tpl.title}`,
         description: tpl.description || '',
         status: 'To Do',
         priority: tpl.priority || 'Medium',
-        due_date: todayStr,
-        tags: Array.from(new Set([...(tpl.tags || []), 'Daily Routine', 'Auto-Scheduled'])),
-        assigned_to: emp.full_name || emp.name || tpl.default_assignee,
+        due_date: targetDueDate,
+        tags: Array.from(new Set([...(tpl.tags || []), 'Routine', 'Auto-Scheduled'])),
+        assigned_to: assigneeName,
         client_name: '',
         client_phone: '',
         is_recurring: true,
-        recurrence_interval: tpl.recurrence_type || 'Daily',
+        recurrence_interval: tpl.recurrence_type === 'weekly' ? 'Weekly' : 'Daily',
       };
       await createTask(taskPayload);
+      existingTaskTitles.add(taskKey);
       totalTasksGenerated++;
     }
 
     // Update last_generated_date on template
-    tpl.last_generated_date = todayStr;
+    tpl.last_generated_date = targetDueDate;
     if (isSupabaseConfigured) {
       try {
-        await supabase.from('task_templates').update({ last_generated_date: todayStr }).eq('id', tpl.id);
+        await supabase.from('task_templates').update({ last_generated_date: targetDueDate }).eq('id', tpl.id);
       } catch {}
     }
     try {
@@ -2438,6 +2506,33 @@ export async function checkAndRunRecurringTaskRoutines(forceTemplateId = null) {
     totalTasksGenerated,
     triggeredRoutines,
   };
+}
+
+export async function advanceTaskToNextDay(taskId) {
+  const { data: allTasks } = await getTasks();
+  const task = (allTasks || []).find(t => t.id === taskId);
+  if (!task) return { error: 'Task not found' };
+
+  let nextDateStr;
+  const currentDue = task.due_date ? new Date(task.due_date) : new Date();
+  if (isNaN(currentDue.getTime())) {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    nextDateStr = d.toISOString().split('T')[0];
+  } else {
+    currentDue.setDate(currentDue.getDate() + 1);
+    nextDateStr = currentDue.toISOString().split('T')[0];
+  }
+
+  const updates = {
+    due_date: nextDateStr,
+    status: 'To Do',
+    completed_at: null,
+    review_submitted_at: null,
+    updated_at: new Date().toISOString()
+  };
+
+  return await updateTask(taskId, updates);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
