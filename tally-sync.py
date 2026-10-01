@@ -1888,7 +1888,21 @@ def build_tally_master_summary(comp: str, comp_records: list) -> dict:
     fy_start_str = "2026-04-01"
     fy_end_str = "2027-03-31"
 
+    # Deduplicate ledgers by normalized party name to prevent double counting
+    seen_parties = {}
+    other_records = []
     for r in comp_records:
+        num = str(r.get("invoice_number", "")).upper()
+        if "LEDGER-" in num:
+            party_key = re.sub(r'[^A-Z0-9]', '', (r.get("client_name") or r.get("ledger_name") or num).upper())
+            is_pref = any(p in num for p in ["SB-", "SRP-", "STPL-"])
+            if party_key not in seen_parties or is_pref:
+                seen_parties[party_key] = r
+        else:
+            other_records.append(r)
+    clean_records = list(seen_parties.values()) + other_records
+
+    for r in clean_records:
         num = str(r.get("invoice_number", "")).upper()
         vtype = str(r.get("voucher_type") or (r.get("metadata") or {}).get("voucher_type", "")).lower()
         dir_val = str(r.get("direction", "")).lower()
@@ -1939,13 +1953,19 @@ def build_tally_master_summary(comp: str, comp_records: list) -> dict:
             if any(k in parent_lower for k in excluded_kw) or dir_val == "payable":
                 continue
 
-            debtor_parents = {
-                'sundry debtors', 'debtors', 'debtors 1', 'mumbai', 'thane', 'palghar',
-                'mira/bhayandar', 'bhiwandi', 'navi mumbai', 'shahpur/kalyan', 'karan',
-                'sundry debtors - stc', 'dubey ji', 'kalpesh bhai', 'customer advances',
-                'vie win enterprises', 'yadav trading company', 'vnr infratech', 'sales bills to make'
-            }
-            if not ('debtor' in parent_lower or parent_lower in debtor_parents or dir_val == 'receivable' or is_adv or is_sales_bills):
+            # Universal Debtor Check: applies identically to ALL companies
+            is_debtor = (
+                'debtor' in parent_lower or 
+                dir_val == 'receivable' or 
+                is_adv or 
+                is_sales_bills or
+                any(sub in parent_lower for sub in [
+                    'mumbai', 'thane', 'palghar', 'mira/bhayandar', 'bhiwandi', 
+                    'navi mumbai', 'shahpur/kalyan', 'karan', 'dubey ji', 'kalpesh bhai',
+                    'customer advances', 'vie win', 'yadav trading', 'vnr infra'
+                ])
+            )
+            if not is_debtor:
                 continue
 
             abs_amt = abs(amt)

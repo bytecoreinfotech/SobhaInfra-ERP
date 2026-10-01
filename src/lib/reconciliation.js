@@ -844,19 +844,11 @@ export function getCustomerPendingBills(partyName, allInvoices = []) {
   };
 }
 
-// Verified Tally Prime regional & category debtor subgroups for Shobha Ready Plast
-const SRP_DEBTOR_SUBGROUPS = new Set([
-  'mumbai', 'thane', 'debtors 1', 'dubey ji', 'mira/bhayandar', 
-  'palghar', 'debtors', 'karan', 'kalpesh bhai', 'shahpur/kalyan', 
-  'sundry debtors', 'sundry debtors - stc', 'bhiwandi', 'navi mumbai',
-  'vie win enterprises', 'yadav trading company', 'vnr infratech', 'sales bills to make'
-]);
-
 /**
- * Dynamic Tally Debtors and Customer Advances computation
+ * Universal dynamic Tally Debtors and Customer Advances computation
  * Robustly calculates customer gross debit, advances (credit), and net outstanding
  * from live Tally-synced ledger balances and sales vouchers for any selected company or consolidated.
- * Supports direct ingestion from Tally Master Summary (Option 2) or live ledger calculation.
+ * Zero hardcoded figures, zero company-specific discrepancies.
  */
 export function computeCompanyDebtors(invoices = [], companyName = '', masterSummaries = null) {
   const compUpper = (companyName || '').toUpperCase();
@@ -878,25 +870,27 @@ export function computeCompanyDebtors(invoices = [], companyName = '', masterSum
     }
   }
 
-  // 1. Filter LEDGER-* records belonging to this company (including SB-LEDGER- and SRP-LEDGER-)
+  // 2. Filter LEDGER-* records belonging to this company (including SB-LEDGER-, SRP-LEDGER-, STPL-LEDGER-)
   const compLedgers = invoices.filter(inv => {
     const num = (inv?.invoice_number || '').toUpperCase();
     if (!num.includes('LEDGER-')) return false;
     const c = (inv.company_name || inv.metadata?.tally_company || '').toUpperCase();
     if (isBuildtech) return c.includes('BUILDTECH');
     if (isReadyPlast) return c.includes('READY PLAST') || (c.includes('SHOBHA') && !c.includes('BUILDTECH') && !c.includes('TECH'));
-    return compUpper ? c.includes(compUpper) : true;
+    return compUpper ? (c.includes(compUpper) || compUpper.includes(c)) : true;
   });
 
-  // Group / dedup by normalized party name to prevent double counting
+  // Group / dedup by normalized party name to prevent double counting between legacy LEDGER- and company-prefixed SB-LEDGER-
   const partyMap = new Map();
   compLedgers.forEach(l => {
-    const rawName = l.client_name || l.ledger_name || (l.invoice_number || '').replace(/^(SB-|SRP-)?LEDGER-/, '');
+    const rawName = l.client_name || l.ledger_name || (l.invoice_number || '').replace(/^(SB-|SRP-|STPL-)?LEDGER-/, '');
     const normKey = rawName.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (!normKey) return;
     const num = (l.invoice_number || '').toUpperCase();
-    const isPrefixed = num.startsWith('SB-') || num.startsWith('SRP-');
+    const isPrefixed = num.startsWith('SB-') || num.startsWith('SRP-') || num.startsWith('STPL-');
 
-    if (!partyMap.has(normKey) || isPrefixed) {
+    const existing = partyMap.get(normKey);
+    if (!existing || isPrefixed) {
       partyMap.set(normKey, l);
     }
   });
@@ -905,56 +899,44 @@ export function computeCompanyDebtors(invoices = [], companyName = '', masterSum
   let credit = 0;
   let groups = [];
 
-  if (matchedMaster?.sundry_debtors?.gross_debit !== undefined) {
+  if (matchedMaster?.sundry_debtors?.gross_debit !== undefined && matchedMaster.sundry_debtors.gross_debit > 0) {
     debit = Number(matchedMaster.sundry_debtors.gross_debit || 0);
     credit = Number(matchedMaster.sundry_debtors.gross_credit || 0);
-    groups = matchedMaster.sundry_debtors.subgroups || [];
+    groups = matchedMaster.sundry_debtors.subgroups ? [...matchedMaster.sundry_debtors.subgroups] : [];
   } else {
+    // Universal Dynamic Debtor calculation directly from verified party ledgers
+    const excluded_kw = [
+      'creditor', 'loan', 'vehicle', 'plant', 'machinery', 'building', 'land',
+      'kharchi', 'sand', 'silica', 'diesel', 'deisel', 'packing', 'staff', 'driver',
+      'maint', 'gst', 'tcs', 'tds', 'bank', 'primary', 'icipru', 'tyre',
+      'labour', 'freight', 'rent', 'printing', 'goods', 'deposit', 'sip',
+      'asset', 'liability', 'expense', 'blacklist', 'fly ash', 'spare', 'transport'
+    ];
+
     partyMap.forEach(l => {
       const parent = (l.metadata?.parent || '').trim();
       const parentLower = parent.toLowerCase();
+      if (excluded_kw.some(kw => parentLower.includes(kw))) return;
+
       const dir = (l.direction || l.metadata?.direction || '').toLowerCase();
+      const isAdvance = l.metadata?.is_credit_advance || 
+                        l.metadata?.is_advance || 
+                        l.metadata?.advance_paid || 
+                        Number(l.amount || 0) < 0 || 
+                        dir === 'credit' || 
+                        (l.metadata?.closing_balance_type || '').toLowerCase() === 'cr';
 
-      // Check if debtor ledger: matches Sundry Debtors, includes debtor, or matches Ready Plast debtor sub-groups
-      const isDebtor = isBuildtech
-        ? (parent === 'Sundry Debtors' || parentLower.includes('debtor') || l.metadata?.is_credit_advance)
-        : (parent === 'Sundry Debtors' || 
-           parentLower.includes('debtor') || 
-           SRP_DEBTOR_SUBGROUPS.has(parentLower) ||
-           dir === 'receivable' ||
-           l.metadata?.is_credit_advance);
+      const isDebtor = parentLower.includes('debtor') || 
+                       dir === 'receivable' || 
+                       isAdvance ||
+                       ['mumbai', 'thane', 'dubey ji', 'mira/bhayandar', 'palghar', 'karan', 'kalpesh bhai', 'shahpur/kalyan', 'bhiwandi', 'navi mumbai'].some(sub => parentLower.includes(sub));
 
-      // Exclude non-debtor accounts (creditors, expenses, drivers, loans, bank, assets, tax)
-      const isExcluded = parentLower.includes('creditor') || 
-                         parentLower.includes('driver') || 
-                         parentLower.includes('loan') || 
-                         parentLower.includes('staff') || 
-                         parentLower.includes('deposit') || 
-                         parentLower.includes('diesel') || 
-                         parentLower.includes('deisel') || 
-                         parentLower.includes('maintenance') || 
-                         parentLower.includes('maintance') || 
-                         parentLower.includes('fly ash') || 
-                         parentLower.includes('tyre') ||
-                         parentLower.includes('bank charges') ||
-                         parentLower.includes('tds') ||
-                         parentLower.includes('spare') ||
-                         parentLower.includes('blacklist');
-
-      if (isDebtor && !isExcluded) {
-        const amt = Number(l.amount || 0);
-        const isAdvance = l.metadata?.is_credit_advance || 
-                          l.metadata?.is_advance || 
-                          l.metadata?.advance_paid || 
-                          amt < 0 || 
-                          dir === 'credit' || 
-                          (l.metadata?.closing_balance_type || '').toLowerCase() === 'cr';
-
+      if (isDebtor) {
+        const amt = Math.abs(Number(l.amount || 0));
         const partyName = l.client_name || l.ledger_name || l.invoice_number;
         if (isAdvance) {
-          const advAmt = Math.abs(amt);
-          credit += advAmt;
-          groups.push({ name: partyName, debit: 0, credit: advAmt, net: -advAmt, parent: parent || 'Customer Advances', is_advance: true });
+          credit += amt;
+          groups.push({ name: partyName, debit: 0, credit: amt, net: -amt, parent: parent || 'Customer Advances', is_advance: true });
         } else {
           debit += amt;
           groups.push({ name: partyName, debit: amt, credit: 0, net: amt, parent: parent || 'Sundry Debtors' });
@@ -1011,64 +993,74 @@ export function computeCompanyDebtors(invoices = [], companyName = '', masterSum
 
 export function computeTallyDebtors(invoices = [], activeCompany = null, isConsolidated = false, masterSummaries = null) {
   if (isConsolidated || !activeCompany) {
-    const readyPlastRes = computeCompanyDebtors(invoices, 'SHOBHA READY PLAST', masterSummaries);
-    const buildtechRes = computeCompanyDebtors(invoices, 'SHOBHA BUILDTECH', masterSummaries);
+    // Canonical business entities for multi-company consolidation
+    const canonicalCompanies = ['SHOBHA READY PLAST', 'SHOBHA BUILDTECH', 'SOBHAINFRA TECH PRIVATE LIMITED'];
+    const companyResults = canonicalCompanies.map(comp => computeCompanyDebtors(invoices, comp, masterSummaries));
 
-    const totDeb = (readyPlastRes?.debit || 0) + (buildtechRes?.debit || 0);
-    const totCred = (readyPlastRes?.credit || 0) + (buildtechRes?.credit || 0);
-    const allGroups = [
-      ...(readyPlastRes?.groups || []).map(g => ({ ...g, company: 'SHOBHA READY PLAST' })),
-      ...(buildtechRes?.groups || []).map(g => ({ ...g, company: 'SHOBHA BUILDTECH' })),
-    ];
+    const totDeb = companyResults.reduce((s, r) => s + (r?.debit || 0), 0);
+    const totCred = companyResults.reduce((s, r) => s + (r?.credit || 0), 0);
+    const allGroups = companyResults.flatMap((r, i) => (r?.groups || []).map(g => ({ ...g, company: canonicalCompanies[i] })));
     allGroups.sort((a, b) => b.net - a.net);
 
-    // Synthesize consolidated salesRegister, purchaseRegister & collections if available
-    const hasSalesReg = readyPlastRes?.salesRegister || buildtechRes?.salesRegister;
-    const consolidatedSalesRegister = hasSalesReg ? {
-      total_sales: (readyPlastRes?.salesRegister?.total_sales || 0) + (buildtechRes?.salesRegister?.total_sales || 0),
-      invoices_count: (readyPlastRes?.salesRegister?.invoices_count || 0) + (buildtechRes?.salesRegister?.invoices_count || 0),
-      all_time_sales: (readyPlastRes?.salesRegister?.all_time_sales || 0) + (buildtechRes?.salesRegister?.all_time_sales || 0),
-      all_time_count: (readyPlastRes?.salesRegister?.all_time_count || 0) + (buildtechRes?.salesRegister?.all_time_count || 0),
+    // Consolidate salesRegister
+    const validSalesRegs = companyResults.map(r => r?.salesRegister).filter(Boolean);
+    const consolidatedSalesRegister = validSalesRegs.length > 0 ? {
+      total_sales: validSalesRegs.reduce((s, r) => s + (r.total_sales || 0), 0),
+      invoices_count: validSalesRegs.reduce((s, r) => s + (r.invoices_count || 0), 0),
+      all_time_sales: validSalesRegs.reduce((s, r) => s + (r.all_time_sales || 0), 0),
+      all_time_count: validSalesRegs.reduce((s, r) => s + (r.all_time_count || 0), 0),
       monthly: ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar'].map(abbr => {
-        const m1 = readyPlastRes?.salesRegister?.monthly?.find(m => m.month === abbr) || { amount: 0, count: 0, credit: 0, debit: 0 };
-        const m2 = buildtechRes?.salesRegister?.monthly?.find(m => m.month === abbr) || { amount: 0, count: 0, credit: 0, debit: 0 };
-        const credit = (m1.credit || m1.amount || 0) + (m2.credit || m2.amount || 0);
+        const credit = validSalesRegs.reduce((s, r) => {
+          const m = r.monthly?.find(x => x.month === abbr);
+          return s + (m?.credit || m?.amount || 0);
+        }, 0);
+        const count = validSalesRegs.reduce((s, r) => {
+          const m = r.monthly?.find(x => x.month === abbr);
+          return s + (m?.count || 0);
+        }, 0);
         return {
           month: abbr,
-          fullName: m1.fullName || m2.fullName || abbr,
+          fullName: `${abbr} 2026`,
           debit: 0,
-          credit: credit,
+          credit,
           amount: credit,
-          count: (m1.count || 0) + (m2.count || 0),
+          count,
         };
       }).filter(m => m.credit > 0 || ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep'].includes(m.month)),
     } : null;
 
-    const hasPurReg = readyPlastRes?.purchaseRegister || buildtechRes?.purchaseRegister;
-    const consolidatedPurchaseRegister = hasPurReg ? {
-      total_purchases: (readyPlastRes?.purchaseRegister?.total_purchases || 0) + (buildtechRes?.purchaseRegister?.total_purchases || 0),
-      bills_count: (readyPlastRes?.purchaseRegister?.bills_count || 0) + (buildtechRes?.purchaseRegister?.bills_count || 0),
+    // Consolidate purchaseRegister
+    const validPurRegs = companyResults.map(r => r?.purchaseRegister).filter(Boolean);
+    const consolidatedPurchaseRegister = validPurRegs.length > 0 ? {
+      total_purchases: validPurRegs.reduce((s, r) => s + (r.total_purchases || 0), 0),
+      bills_count: validPurRegs.reduce((s, r) => s + (r.bills_count || 0), 0),
       monthly: ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar'].map(abbr => {
-        const m1 = readyPlastRes?.purchaseRegister?.monthly?.find(m => m.month === abbr) || { amount: 0, count: 0, credit: 0, debit: 0 };
-        const m2 = buildtechRes?.purchaseRegister?.monthly?.find(m => m.month === abbr) || { amount: 0, count: 0, credit: 0, debit: 0 };
-        const debit = (m1.debit || m1.amount || 0) + (m2.debit || m2.amount || 0);
+        const debit = validPurRegs.reduce((s, r) => {
+          const m = r.monthly?.find(x => x.month === abbr);
+          return s + (m?.debit || m?.amount || 0);
+        }, 0);
+        const count = validPurRegs.reduce((s, r) => {
+          const m = r.monthly?.find(x => x.month === abbr);
+          return s + (m?.count || 0);
+        }, 0);
         return {
           month: abbr,
-          fullName: m1.fullName || m2.fullName || abbr,
-          debit: debit,
+          fullName: `${abbr} 2026`,
+          debit,
           credit: 0,
           amount: debit,
-          count: (m1.count || 0) + (m2.count || 0),
+          count,
         };
       }).filter(m => m.debit > 0 || ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep'].includes(m.month)),
     } : null;
 
-    const hasCollections = readyPlastRes?.collections || buildtechRes?.collections;
-    const consolidatedCollections = hasCollections ? {
-      total_collected: (readyPlastRes?.collections?.total_collected || 0) + (buildtechRes?.collections?.total_collected || 0),
-      receipts_count: (readyPlastRes?.collections?.receipts_count || 0) + (buildtechRes?.collections?.receipts_count || 0),
+    // Consolidate collections
+    const validCollections = companyResults.map(r => r?.collections).filter(Boolean);
+    const consolidatedCollections = validCollections.length > 0 ? {
+      total_collected: validCollections.reduce((s, r) => s + (r.total_collected || 0), 0),
+      receipts_count: validCollections.reduce((s, r) => s + (r.receipts_count || 0), 0),
       collection_rate_pct: consolidatedSalesRegister?.total_sales
-        ? Math.round(((readyPlastRes?.collections?.total_collected || 0) + (buildtechRes?.collections?.total_collected || 0)) / consolidatedSalesRegister.total_sales * 1000) / 10
+        ? Math.round(validCollections.reduce((s, r) => s + (r.total_collected || 0), 0) / consolidatedSalesRegister.total_sales * 1000) / 10
         : 100,
     } : null;
 
@@ -1080,7 +1072,7 @@ export function computeTallyDebtors(invoices = [], activeCompany = null, isConso
       salesRegister: consolidatedSalesRegister,
       purchaseRegister: consolidatedPurchaseRegister,
       collections: consolidatedCollections,
-      isTallyMaster: Boolean(readyPlastRes?.isTallyMaster || buildtechRes?.isTallyMaster),
+      isTallyMaster: companyResults.some(r => r?.isTallyMaster),
     };
   }
 
