@@ -27,13 +27,53 @@ export function normalizePhone(phone) {
   // Fallback default: if 10+ digits starting with 91
   if (digits.length > 10 && digits.startsWith('91')) return '+' + digits;
   // If 10 digits or less, assume Indian standard (+91)
-  if (digits.length <= 10) return '+91' + digits;
   return '+' + digits;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// LOCAL IN-MEMORY MOCK STORE
+// CALENDAR & LOCAL DATE UTILITIES (Avoids UTC midnight boundary shifts in IST)
 // ─────────────────────────────────────────────────────────────────────────────
+export function getTodayDateStr(d = new Date()) {
+  const date = typeof d === 'string' ? new Date(d) : (d || new Date());
+  if (isNaN(date.getTime())) {
+    const fallback = new Date();
+    return `${fallback.getFullYear()}-${String(fallback.getMonth() + 1).padStart(2, '0')}-${String(fallback.getDate()).padStart(2, '0')}`;
+  }
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+export function getNextDateStr(dateStr) {
+  if (!dateStr) return getTodayDateStr();
+  const cleanStr = String(dateStr).split('T')[0];
+  const parts = cleanStr.split('-');
+  if (parts.length === 3) {
+    const y = parseInt(parts[0], 10);
+    const m = parseInt(parts[1], 10) - 1;
+    const d = parseInt(parts[2], 10);
+    const dateObj = new Date(y, m, d + 1);
+    return getTodayDateStr(dateObj);
+  }
+  const d = new Date(dateStr);
+  d.setDate(d.getDate() + 1);
+  return getTodayDateStr(d);
+}
+
+export const formatTaskDate = (dateStr) => {
+  if (!dateStr) return '—';
+  const cleanStr = String(dateStr).split('T')[0];
+  const parts = cleanStr.split('-');
+  if (parts.length === 3) {
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const mIdx = parseInt(parts[1], 10) - 1;
+    const day = parseInt(parts[2], 10);
+    return `${months[mIdx] || ''} ${day}`;
+  }
+  return dateStr;
+};
+
 const MOCK_STORE = {
   roles: [
     { id: 'role-1', name: 'Super Admin', color: '#ef4444', users_count: 1, permissions: ['all'], is_system: true },
@@ -2128,7 +2168,7 @@ export async function addTaskComment(taskId, commentData, author = 'Admin') {
 }
 
 export async function generateDailyTasksForClients(config = {}) {
-  const { template, clients = [], assignee = '', dueDate = new Date().toISOString().split('T')[0] } = config;
+  const { template, clients = [], assignee = '', dueDate = getTodayDateStr() } = config;
   if (!template) return { data: [], error: 'Template required' };
 
   const createdTasks = [];
@@ -2307,8 +2347,8 @@ export async function checkAndRunRecurringTaskRoutines(forceTemplateId = null) {
 
   const { data: teamMembers } = await getTeamMembers();
   const { data: leads } = await getLeads();
+  const todayStr = getTodayDateStr();
   const today = new Date();
-  const todayStr = today.toISOString().split('T')[0];
   const dayOfWeekAbbr = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][today.getDay()];
   const dayOfWeekNum = today.getDay(); // 0: Sun, 1: Mon ... 6: Sat
 
@@ -2324,13 +2364,15 @@ export async function checkAndRunRecurringTaskRoutines(forceTemplateId = null) {
     let diff = targetDay - cur;
     if (diff <= 0) diff += 7;
     d.setDate(d.getDate() + diff);
-    return d.toISOString().split('T')[0];
+    return getTodayDateStr(d);
   };
 
   // ── 1. DAILY TASK AUTO-ROLLOVER & ADVANCEMENT ──────────────────────────────
-  // When a daily task is created (e.g. for 1 October), when tomorrow arrives (2 October),
-  // or whenever the current date > due_date, automatically advance its due_date to todayStr.
-  // If it was marked 'Done' on a previous day, reset status to 'To Do' for today's active work!
+  // When a daily task is created (e.g. 1 October), when tomorrow arrives (2 October),
+  // or whenever the current date > due_date:
+  // - If it was marked 'Done' on a previous day: keep that completed task intact for historical
+  //   and monthly reporting, and spawn a fresh task instance for today (due_date = todayStr, status = 'To Do')!
+  // - If it was in 'To Do' / 'In Progress': advance due_date to todayStr so the employee works on today's active date!
   try {
     const { data: existingTasks } = await getTasks();
     if (existingTasks && existingTasks.length > 0) {
@@ -2338,17 +2380,37 @@ export async function checkAndRunRecurringTaskRoutines(forceTemplateId = null) {
         if (t.is_recurring && (t.recurrence_interval === 'Daily' || !t.recurrence_interval || t.recurrence_interval?.toLowerCase() === 'daily')) {
           const taskDue = (t.due_date || '').split('T')[0];
           if (taskDue && taskDue < todayStr) {
-            const updates = {
-              due_date: todayStr,
-              updated_at: new Date().toISOString()
-            };
             if (t.status === 'Done') {
-              updates.status = 'To Do';
-              updates.completed_at = null;
-              updates.review_submitted_at = null;
+              const alreadySpawnedToday = existingTasks.some(other =>
+                other.id !== t.id &&
+                other.title === t.title &&
+                other.assigned_to === t.assigned_to &&
+                (other.due_date || '').split('T')[0] === todayStr
+              );
+              if (!alreadySpawnedToday) {
+                await createTask({
+                  title: t.title,
+                  description: t.description || '',
+                  status: 'To Do',
+                  priority: t.priority || 'Medium',
+                  due_date: todayStr,
+                  tags: t.tags || [],
+                  assigned_to: t.assigned_to || '',
+                  client_name: t.client_name || '',
+                  client_phone: t.client_phone || '',
+                  is_recurring: true,
+                  recurrence_interval: 'Daily'
+                });
+                totalTasksGenerated++;
+              }
+            } else {
+              const updates = {
+                due_date: todayStr,
+                updated_at: new Date().toISOString()
+              };
+              await updateTask(t.id, updates);
+              totalTasksGenerated++;
             }
-            await updateTask(t.id, updates);
-            totalTasksGenerated++;
           }
         }
       }
@@ -2400,7 +2462,7 @@ export async function checkAndRunRecurringTaskRoutines(forceTemplateId = null) {
           } else {
             const nextD = new Date(tpl.last_generated_date);
             nextD.setDate(nextD.getDate() + interval);
-            targetDueDate = nextD.toISOString().split('T')[0];
+            targetDueDate = getTodayDateStr(nextD);
           }
         }
       } else if (recType === 'monthly') {
@@ -2513,16 +2575,7 @@ export async function advanceTaskToNextDay(taskId) {
   const task = (allTasks || []).find(t => t.id === taskId);
   if (!task) return { error: 'Task not found' };
 
-  let nextDateStr;
-  const currentDue = task.due_date ? new Date(task.due_date) : new Date();
-  if (isNaN(currentDue.getTime())) {
-    const d = new Date();
-    d.setDate(d.getDate() + 1);
-    nextDateStr = d.toISOString().split('T')[0];
-  } else {
-    currentDue.setDate(currentDue.getDate() + 1);
-    nextDateStr = currentDue.toISOString().split('T')[0];
-  }
+  const nextDateStr = getNextDateStr(task.due_date);
 
   const updates = {
     due_date: nextDateStr,
@@ -2547,10 +2600,19 @@ export async function getTasksByEmployee(month, year) {
   const { data: members } = await getTeamMembers();
   const teamMembers = members || [];
   
-  // Filter tasks by month/year if provided
+  // Filter tasks by month/year if provided (prioritize due_date for daily scheduled work)
   const filtered = tasks.filter(t => {
     if (!month || !year) return true;
-    const d = new Date(t.created_at || t.due_date);
+    const dateStr = t.due_date || t.created_at;
+    if (!dateStr) return false;
+    const cleanDate = String(dateStr).split('T')[0];
+    const parts = cleanDate.split('-');
+    if (parts.length === 3) {
+      const taskY = parseInt(parts[0], 10);
+      const taskM = parseInt(parts[1], 10);
+      return taskM === month && taskY === year;
+    }
+    const d = new Date(dateStr);
     return d.getMonth() + 1 === month && d.getFullYear() === year;
   });
   

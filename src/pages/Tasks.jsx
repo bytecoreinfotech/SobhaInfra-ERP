@@ -12,7 +12,8 @@ import {
   getTasks, createTask, updateTask, deleteTask, addTaskComment,
   getTeamMembers, getTaskTemplates, saveTaskTemplate, deleteTaskTemplate,
   getTasksByEmployee, getLeads, generateDailyTasksForClients,
-  toggleTaskTemplateActive, checkAndRunRecurringTaskRoutines, advanceTaskToNextDay
+  toggleTaskTemplateActive, checkAndRunRecurringTaskRoutines, advanceTaskToNextDay,
+  getTodayDateStr, getNextDateStr, formatTaskDate
 } from '../lib/db';
 import { useAuth } from '../context/AuthContext';
 import { Skeleton, SkeletonCard, SkeletonTable } from '../components/Skeleton';
@@ -116,7 +117,7 @@ const Tasks = () => {
     targetType: 'all', // 'all' | 'selected'
     selectedClientIds: [],
     assignee: '',
-    dueDate: new Date().toISOString().split('T')[0]
+    dueDate: getTodayDateStr()
   });
   const [generatingDaily, setGeneratingDaily] = useState(false);
 
@@ -139,9 +140,15 @@ const Tasks = () => {
   const canViewAnalytics = canPerformAction('tasks:view_analytics');
 
   useEffect(() => {
-    loadTasks();
-    loadTemplates();
-    triggerAutoRecurringCheck();
+    const initPageTasks = async () => {
+      try {
+        await checkAndRunRecurringTaskRoutines();
+      } catch (err) {
+        console.warn('Initial recurring routine check notice:', err);
+      }
+      await Promise.all([loadTasks(), loadTemplates()]);
+    };
+    initPageTasks();
   }, []);
 
   const triggerAutoRecurringCheck = async () => {
@@ -377,16 +384,7 @@ const Tasks = () => {
 
     // Auto-advance: If task is a daily recurring task, schedule the fresh occurrence for the next day
     if (selectedTask.is_recurring) {
-      const curDue = selectedTask.due_date ? new Date(selectedTask.due_date) : new Date();
-      let nextDue;
-      if (isNaN(curDue.getTime())) {
-        const d = new Date();
-        d.setDate(d.getDate() + 1);
-        nextDue = d.toISOString().split('T')[0];
-      } else {
-        curDue.setDate(curDue.getDate() + 1);
-        nextDue = curDue.toISOString().split('T')[0];
-      }
+      const nextDue = getNextDateStr(selectedTask.due_date || getTodayDateStr());
 
       const nextTaskPayload = {
         title: selectedTask.title,
@@ -564,7 +562,7 @@ const Tasks = () => {
       description: tpl.description || '',
       status: 'To Do',
       priority: tpl.priority || 'Medium',
-      due_date: new Date().toISOString().split('T')[0],
+      due_date: getTodayDateStr(),
       tags: tpl.tags || [],
       assigned_to: tpl.default_assignee || '',
       is_recurring: tpl.is_recurring || false,
@@ -632,7 +630,7 @@ const Tasks = () => {
   );
 
   const allVisibleTasks = tasks.filter(t => matchesAssignee(t) && matchesTypeFilter(t) && (!search || t.title.toLowerCase().includes(search.toLowerCase())));
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = getTodayDateStr();
   const recurringTasks = tasks.filter(t => matchesAssignee(t) && t.is_recurring);
   const todayRecurring = recurringTasks.filter(t => t.due_date === todayStr || t.due_date?.startsWith(todayStr));
   const recurringDone = todayRecurring.filter(t => t.status === 'Done').length;
@@ -746,7 +744,15 @@ const Tasks = () => {
               )}
 
               {canCreate && (
-                <button className="btn btn-primary" onClick={() => setShowAdd(true)}><Plus size={15} /> Create Task</button>
+                <button
+                  className="btn btn-primary"
+                  onClick={() => {
+                    setForm({ ...EMPTY_TASK, due_date: getTodayDateStr() });
+                    setShowAdd(true);
+                  }}
+                >
+                  <Plus size={15} /> Create Task
+                </button>
               )}
             </div>
           </div>
@@ -932,7 +938,7 @@ const Tasks = () => {
                                   {task.due_date && (
                                     <div className="kanban-due">
                                       <Calendar size={11} />
-                                      {new Date(task.due_date).toLocaleDateString([], { month: 'short', day: 'numeric' })}
+                                      {formatTaskDate(task.due_date)}
                                     </div>
                                   )}
                                   <span className="badge" style={{ fontSize: '0.62rem', background: 'transparent', color: priorityColors[task.priority], border: `1px solid ${priorityColors[task.priority]}` }}>
@@ -1192,7 +1198,7 @@ const Tasks = () => {
                     </div>
                     {tpl.last_generated_date && (
                       <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>
-                        Last Spawned: {tpl.last_generated_date === new Date().toISOString().split('T')[0] ? '🟢 Today' : tpl.last_generated_date}
+                        Last Spawned: {tpl.last_generated_date === getTodayDateStr() ? '🟢 Today' : tpl.last_generated_date}
                       </div>
                     )}
                   </div>
@@ -1999,9 +2005,9 @@ const Tasks = () => {
                           let diff = 1 - cur;
                           if (diff <= 0) diff += 7;
                           d.setDate(d.getDate() + diff);
-                          newDue = d.toISOString().split('T')[0];
-                        } else if (val === 'Daily' && !newDue) {
-                          newDue = new Date().toISOString().split('T')[0];
+                          newDue = getTodayDateStr(d);
+                        } else if (val === 'Daily' && (!newDue || newDue < getTodayDateStr())) {
+                          newDue = getTodayDateStr();
                         }
                         setForm(p => ({ ...p, recurrence_interval: val, due_date: newDue }));
                       }}
