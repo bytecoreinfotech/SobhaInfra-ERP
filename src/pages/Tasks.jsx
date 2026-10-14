@@ -9,7 +9,7 @@ import {
   Play, Pause, Zap, ToggleLeft, ToggleRight, CalendarDays, Users, Layers
 } from 'lucide-react';
 import {
-  getTasks, createTask, updateTask, deleteTask, addTaskComment,
+  getTasks, getTaskComments, createTask, updateTask, deleteTask, addTaskComment,
   getTeamMembers, getTaskTemplates, saveTaskTemplate, deleteTaskTemplate,
   getTasksByEmployee, getLeads, generateDailyTasksForClients,
   toggleTaskTemplateActive, checkAndRunRecurringTaskRoutines, advanceTaskToNextDay,
@@ -62,6 +62,7 @@ const Tasks = () => {
   const [teamMembers, setTeamMembers] = useState([]);
   const [leads, setLeads] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
   const [view, setView] = useState('kanban');
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState(EMPTY_TASK);
@@ -70,6 +71,8 @@ const Tasks = () => {
   const [assigneeFilter, setAssigneeFilter] = useState('All');
   const [mobileActiveCol, setMobileActiveCol] = useState('All');
   const [taskTypeFilter, setTaskTypeFilter] = useState('all'); // 'all' | 'recurring' | 'manual'
+  const [taskDateFilter, setTaskDateFilter] = useState('all'); // 'all' | 'today' | 'yesterday' | 'overdue' | 'custom'
+  const [customDateFilter, setCustomDateFilter] = useState('');
 
   // Task Details & Comment Drawer
   const [selectedTask, setSelectedTask] = useState(null);
@@ -180,11 +183,26 @@ const Tasks = () => {
       getTeamMembers(),
       getLeads(),
     ]);
+    // A failed read must never look like "no tasks" — surface it with a retry.
+    setLoadError(taskRes.error || null);
     setTasks(taskRes.data || []);
     setTeamMembers(membersRes.data || []);
     setLeads(leadsRes.data || []);
     setLoading(false);
   };
+
+  // Comments can be deferred (heavy rows): load them on demand when a task is opened.
+  useEffect(() => {
+    if (!selectedTask?._commentsDeferred) return;
+    let cancelled = false;
+    const taskId = selectedTask.id;
+    getTaskComments(taskId).then(({ data, error }) => {
+      if (cancelled || error) return;
+      setSelectedTask(prev => (prev && prev.id === taskId ? { ...prev, comments: data, _commentsDeferred: false } : prev));
+      setTasks(prev => prev.map(t => (t.id === taskId ? { ...t, comments: data, _commentsDeferred: false } : t)));
+    });
+    return () => { cancelled = true; };
+  }, [selectedTask?.id, selectedTask?._commentsDeferred]);
 
   const loadAnalytics = async () => {
     setAnalyticsLoading(true);
@@ -207,14 +225,17 @@ const Tasks = () => {
   const handleCreate = async () => {
     if (!form.title.trim() || !canCreate) return;
     setSaving(true);
-    const { data } = await createTask(form);
+    const { data, error } = await createTask(form);
     if (data) {
       setTasks(prev => [data, ...prev]);
       showToast('Task created successfully!');
+      setShowAdd(false);
+      setForm(EMPTY_TASK);
+    } else {
+      // Keep the form open so nothing the user typed is lost.
+      showToast(`Task could NOT be saved: ${error?.message || 'database error'}. Please retry.`, 'error');
     }
     setSaving(false);
-    setShowAdd(false);
-    setForm(EMPTY_TASK);
   };
 
   const moveTask = async (task, newStatus) => {
@@ -232,11 +253,19 @@ const Tasks = () => {
       if (!allowedMoves.includes(newStatus)) return;
     }
 
+    const previousStatus = task.status;
     setTasks(prev => prev.map(t => t.id === task.id ? { ...t, status: newStatus } : t));
     if (selectedTask?.id === task.id) {
       setSelectedTask(prev => ({ ...prev, status: newStatus }));
     }
-    await updateTask(task.id, { status: newStatus });
+    const { error: moveErr } = await updateTask(task.id, { status: newStatus });
+    if (moveErr) {
+      // Roll back the optimistic move so the board matches the database.
+      setTasks(prev => prev.map(t => t.id === task.id ? { ...t, status: previousStatus } : t));
+      if (selectedTask?.id === task.id) setSelectedTask(prev => ({ ...prev, status: previousStatus }));
+      showToast(`Could not update task: ${moveErr.message}`, 'error');
+      return;
+    }
     showToast(`Task status updated to "${newStatus}"`);
   };
 
@@ -281,7 +310,11 @@ const Tasks = () => {
       is_proof: false,
     };
 
-    const { data: createdComment } = await addTaskComment(selectedTask.id, commentPayload, authorName);
+    const { data: createdComment, error: commentErr } = await addTaskComment(selectedTask.id, commentPayload, authorName);
+
+    if (!createdComment) {
+      showToast(`Comment not saved: ${commentErr?.message || 'database error'}`, 'error');
+    }
 
     if (createdComment) {
       const updatedComments = [...(selectedTask.comments || []), createdComment];
@@ -324,7 +357,13 @@ const Tasks = () => {
     };
 
     // 1. Add proof comment
-    const { data: createdComment } = await addTaskComment(selectedTask.id, proofComment, authorName);
+    const { data: createdComment, error: proofErr } = await addTaskComment(selectedTask.id, proofComment, authorName);
+    if (!createdComment) {
+      // Do not move the task to review without its proof actually saved.
+      showToast(`Proof not saved: ${proofErr?.message || 'upload failed'}. Please retry.`, 'error');
+      setSubmittingProof(false);
+      return;
+    }
 
     // 2. Transition status to 'Under Review'
     await updateTask(selectedTask.id, {
@@ -616,9 +655,24 @@ const Tasks = () => {
     return false;
   };
 
+  const todayStr = getTodayDateStr();
+  const yesterdayDate = new Date();
+  yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+  const yesterdayStr = getTodayDateStr(yesterdayDate);
+
   const matchesTypeFilter = (t) => {
     if (taskTypeFilter === 'recurring') return t.is_recurring === true;
     if (taskTypeFilter === 'manual') return !t.is_recurring;
+    return true;
+  };
+
+  const matchesDateFilter = (t) => {
+    if (taskDateFilter === 'all') return true;
+    const d = (t.due_date || '').split('T')[0];
+    if (taskDateFilter === 'today') return d === todayStr;
+    if (taskDateFilter === 'yesterday') return d === yesterdayStr;
+    if (taskDateFilter === 'overdue') return d && d < todayStr && t.status !== 'Done';
+    if (taskDateFilter === 'custom' && customDateFilter) return d === customDateFilter;
     return true;
   };
 
@@ -626,11 +680,21 @@ const Tasks = () => {
     t.status === col &&
     matchesAssignee(t) &&
     matchesTypeFilter(t) &&
+    matchesDateFilter(t) &&
     (!search || t.title.toLowerCase().includes(search.toLowerCase()))
   );
 
-  const allVisibleTasks = tasks.filter(t => matchesAssignee(t) && matchesTypeFilter(t) && (!search || t.title.toLowerCase().includes(search.toLowerCase())));
-  const todayStr = getTodayDateStr();
+  const allVisibleTasks = tasks.filter(t =>
+    matchesAssignee(t) &&
+    matchesTypeFilter(t) &&
+    matchesDateFilter(t) &&
+    (!search || t.title.toLowerCase().includes(search.toLowerCase()))
+  );
+
+  const countToday = tasks.filter(t => matchesAssignee(t) && matchesTypeFilter(t) && (t.due_date || '').split('T')[0] === todayStr).length;
+  const countYesterday = tasks.filter(t => matchesAssignee(t) && matchesTypeFilter(t) && (t.due_date || '').split('T')[0] === yesterdayStr).length;
+  const countOverdue = tasks.filter(t => matchesAssignee(t) && matchesTypeFilter(t) && (t.due_date || '').split('T')[0] < todayStr && t.status !== 'Done').length;
+
   const recurringTasks = tasks.filter(t => matchesAssignee(t) && t.is_recurring);
   const todayRecurring = recurringTasks.filter(t => t.due_date === todayStr || t.due_date?.startsWith(todayStr));
   const recurringDone = todayRecurring.filter(t => t.status === 'Done').length;
@@ -715,6 +779,32 @@ const Tasks = () => {
                   ))}
                 </select>
               )}
+
+              {/* Task Type Filter Buttons */}
+              <div style={{ display: 'flex', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
+                {[
+                  { id: 'all', label: 'All Tasks' },
+                  { id: 'recurring', label: '🔁 Routines' },
+                  { id: 'manual', label: 'Single' },
+                ].map(t => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => setTaskTypeFilter(t.id)}
+                    className="btn"
+                    style={{
+                      borderRadius: 0,
+                      background: taskTypeFilter === t.id ? 'var(--accent-primary)' : 'var(--bg-tertiary)',
+                      color: taskTypeFilter === t.id ? 'white' : 'var(--text-secondary)',
+                      padding: '0.4rem 0.65rem',
+                      fontSize: '0.74rem',
+                      fontWeight: taskTypeFilter === t.id ? 700 : 500,
+                    }}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
             </div>
 
             <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
@@ -757,11 +847,89 @@ const Tasks = () => {
             </div>
           </div>
 
+          {/* 📅 Date-Wise Filter Bar */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem',
+            flexWrap: 'wrap',
+            marginBottom: '1rem',
+            padding: '0.55rem 0.85rem',
+            background: 'var(--bg-secondary)',
+            borderRadius: 'var(--radius-md)',
+            border: '1px solid var(--border-color)',
+            fontSize: '0.78rem'
+          }}>
+            <span style={{ color: 'var(--text-muted)', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+              <Calendar size={13} color="var(--accent-primary)" /> Date Filter:
+            </span>
+
+            {[
+              { id: 'all', label: `All Dates (${tasks.length})` },
+              { id: 'today', label: `🟢 Today (${countToday})` },
+              { id: 'yesterday', label: `⏪ Yesterday (${countYesterday})` },
+              { id: 'overdue', label: `⚠ Overdue (${countOverdue})` },
+            ].map(f => (
+              <button
+                key={f.id}
+                type="button"
+                onClick={() => { setTaskDateFilter(f.id); setCustomDateFilter(''); }}
+                style={{
+                  padding: '0.3rem 0.75rem',
+                  borderRadius: 20,
+                  border: taskDateFilter === f.id ? '1px solid var(--accent-primary)' : '1px solid var(--border-color)',
+                  background: taskDateFilter === f.id ? 'var(--accent-primary)' : 'var(--bg-card)',
+                  color: taskDateFilter === f.id ? 'white' : 'var(--text-secondary)',
+                  fontWeight: taskDateFilter === f.id ? 700 : 500,
+                  fontSize: '0.74rem',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                {f.label}
+              </button>
+            ))}
+
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', marginLeft: 'auto' }}>
+              <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 600 }}>Specific Date:</span>
+              <input
+                type="date"
+                className="input-field"
+                style={{ padding: '0.25rem 0.5rem', fontSize: '0.74rem', width: 'auto' }}
+                value={customDateFilter}
+                onChange={e => {
+                  setCustomDateFilter(e.target.value);
+                  setTaskDateFilter(e.target.value ? 'custom' : 'all');
+                }}
+              />
+              {customDateFilter && (
+                <button
+                  type="button"
+                  onClick={() => { setCustomDateFilter(''); setTaskDateFilter('all'); }}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)', fontSize: '0.8rem', fontWeight: 700 }}
+                  title="Clear custom date"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          </div>
+
           {/* Role info banner for non-admin users */}
           {!canViewAll && (
             <div style={{ padding: '0.65rem 1rem', background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: 8, marginBottom: '1rem', fontSize: '0.8rem', color: 'var(--accent-primary)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <UserCheck size={16} />
               <span>Showing tasks assigned to <strong>{user?.name}</strong>. Complete tasks and click <strong>"Submit for Review"</strong> with proof for supervisor approval.</span>
+            </div>
+          )}
+
+          {loadError && (
+            <div id="tasks-load-error-banner" style={{ padding: '0.75rem 1rem', background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.35)', borderRadius: 8, marginBottom: '1rem', fontSize: '0.82rem', color: 'var(--danger)', display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+              <span style={{ flex: 1, minWidth: 220 }}>
+                <strong>Tasks could not be loaded from the server</strong> ({loadError.message}).
+                {loadError.stale ? ' Showing the last saved copy — it may be out of date.' : ' Your tasks are safe; this is only a display problem.'}
+              </span>
+              <button className="btn btn-secondary btn-sm" onClick={loadTasks}>Retry</button>
             </div>
           )}
 
@@ -935,12 +1103,30 @@ const Tasks = () => {
                                 )}
 
                                 <div className="kanban-card-meta">
-                                  {task.due_date && (
-                                    <div className="kanban-due">
-                                      <Calendar size={11} />
-                                      {formatTaskDate(task.due_date)}
-                                    </div>
-                                  )}
+                                  {task.due_date && (() => {
+                                    const d = (task.due_date || '').split('T')[0];
+                                    const isPast = d < todayStr && task.status !== 'Done';
+                                    const isToday = d === todayStr;
+                                    return (
+                                      <div
+                                        className="kanban-due"
+                                        style={{
+                                          color: isPast ? '#ef4444' : isToday ? 'var(--accent-primary)' : 'var(--text-muted)',
+                                          fontWeight: isPast || isToday ? 700 : 500,
+                                          background: isPast ? 'rgba(239,68,68,0.1)' : isToday ? 'rgba(99,102,241,0.1)' : 'transparent',
+                                          padding: '0.15rem 0.4rem',
+                                          borderRadius: 4,
+                                          border: isPast ? '1px solid rgba(239,68,68,0.25)' : isToday ? '1px solid rgba(99,102,241,0.25)' : 'none',
+                                          display: 'inline-flex',
+                                          alignItems: 'center',
+                                          gap: '0.25rem'
+                                        }}
+                                      >
+                                        <Calendar size={11} />
+                                        {isPast ? `Overdue • ${formatTaskDate(task.due_date)}` : isToday ? `Today • ${formatTaskDate(task.due_date)}` : formatTaskDate(task.due_date)}
+                                      </div>
+                                    );
+                                  })()}
                                   <span className="badge" style={{ fontSize: '0.62rem', background: 'transparent', color: priorityColors[task.priority], border: `1px solid ${priorityColors[task.priority]}` }}>
                                     {task.priority}
                                   </span>
@@ -977,8 +1163,11 @@ const Tasks = () => {
                       </tr>
                     </thead>
                     <tbody>
-                      {tasks.filter(t => matchesAssignee(t) && matchesTypeFilter(t) && (!search || t.title.toLowerCase().includes(search.toLowerCase()))).map(task => {
+                      {allVisibleTasks.map(task => {
                         const hasProof = (task.comments || []).some(c => c.is_proof);
+                        const d = (task.due_date || '').split('T')[0];
+                        const isPast = d && d < todayStr && task.status !== 'Done';
+                        const isToday = d === todayStr;
                         return (
                           <tr key={task.id} onClick={() => setSelectedTask(task)} style={{ cursor: 'pointer' }}>
                             <td>
@@ -992,7 +1181,20 @@ const Tasks = () => {
                                 {task.priority}
                               </span>
                             </td>
-                            <td style={{ fontSize: '0.78rem' }}>{task.due_date || '—'}</td>
+                            <td style={{ fontSize: '0.78rem' }}>
+                              {task.due_date ? (
+                                <span style={{
+                                  fontWeight: isPast || isToday ? 700 : 500,
+                                  color: isPast ? '#ef4444' : isToday ? 'var(--accent-primary)' : 'inherit',
+                                  background: isPast ? 'rgba(239,68,68,0.1)' : isToday ? 'rgba(99,102,241,0.1)' : 'transparent',
+                                  padding: '0.2rem 0.45rem',
+                                  borderRadius: 4,
+                                  display: 'inline-block'
+                                }}>
+                                  {isPast ? `⚠ Overdue (${task.due_date})` : isToday ? `🟢 Today (${task.due_date})` : task.due_date}
+                                </span>
+                              ) : '—'}
+                            </td>
                             <td>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                                 <span className={`badge ${statusBadge[task.status]}`}>{task.status}</span>
@@ -1341,6 +1543,90 @@ const Tasks = () => {
                   </tbody>
                 </table>
               </div>
+
+              {/* 📅 Date-Wise Daily Routine Audit Matrix */}
+              <div style={{ marginTop: '1.75rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                  <div>
+                    <h3 style={{ fontSize: '0.95rem', fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                      <CalendarDays size={16} color="var(--accent-primary)" />
+                      Daily Date-Wise Employee Task Log
+                    </h3>
+                    <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', margin: '0.2rem 0 0 0' }}>
+                      Audit day-by-day task allocation and completion status across all employees.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="glass-card table-container">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Date</th>
+                        <th style={{ textAlign: 'center' }}>Total Tasks</th>
+                        <th style={{ textAlign: 'center' }}>Done</th>
+                        <th style={{ textAlign: 'center' }}>To Do / Pending</th>
+                        <th style={{ textAlign: 'center' }}>Under Review</th>
+                        <th>Per-Employee Breakdown</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {analyticsData.dailyBreakdown?.length > 0 ? (
+                        analyticsData.dailyBreakdown.map(dayRow => {
+                          const isToday = dayRow.date === todayStr;
+                          return (
+                            <tr key={dayRow.date}>
+                              <td>
+                                <span style={{
+                                  fontWeight: 700,
+                                  fontSize: '0.82rem',
+                                  color: isToday ? 'var(--accent-primary)' : 'inherit',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '0.35rem'
+                                }}>
+                                  <Calendar size={13} />
+                                  {formatTaskDate(dayRow.date)}
+                                  {isToday && <span className="badge badge-accent" style={{ fontSize: '0.62rem' }}>Today</span>}
+                                </span>
+                              </td>
+                              <td style={{ textAlign: 'center', fontWeight: 700 }}>{dayRow.total}</td>
+                              <td style={{ textAlign: 'center', color: 'var(--success)', fontWeight: 700 }}>{dayRow.done}</td>
+                              <td style={{ textAlign: 'center', color: dayRow.todo > 0 ? 'var(--warning)' : 'var(--text-muted)' }}>{dayRow.todo}</td>
+                              <td style={{ textAlign: 'center', color: 'var(--accent-primary)' }}>{dayRow.underReview}</td>
+                              <td>
+                                <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                                  {Object.entries(dayRow.byEmployee || {}).map(([emp, stats]) => (
+                                    <span
+                                      key={emp}
+                                      className="badge badge-neutral"
+                                      style={{
+                                        fontSize: '0.7rem',
+                                        padding: '0.2rem 0.5rem',
+                                        background: stats.done === stats.total && stats.total > 0 ? 'rgba(16,185,129,0.1)' : 'var(--bg-tertiary)',
+                                        border: `1px solid ${stats.done === stats.total && stats.total > 0 ? 'rgba(16,185,129,0.3)' : 'var(--border-color)'}`,
+                                        color: stats.done === stats.total && stats.total > 0 ? 'var(--success)' : 'inherit'
+                                      }}
+                                    >
+                                      <strong>{emp}</strong>: {stats.done}/{stats.total} done
+                                    </span>
+                                  ))}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })
+                      ) : (
+                        <tr>
+                          <td colSpan={6} style={{ textAlign: 'center', padding: '1.5rem', color: 'var(--text-muted)' }}>
+                            No routine tasks recorded for this period.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </>
           )}
         </div>
@@ -1386,8 +1672,8 @@ const Tasks = () => {
                         onClick={async () => {
                           const res = await advanceTaskToNextDay(selectedTask.id);
                           if (res?.data) {
-                            setSelectedTask(res.data);
-                            setTasks(prev => prev.map(t => t.id === selectedTask.id ? res.data : t));
+                            setSelectedTask(prev => ({ ...prev, ...res.data, comments: res.data.comments || prev?.comments || [] }));
+                            setTasks(prev => prev.map(t => t.id === selectedTask.id ? { ...t, ...res.data, comments: res.data.comments || t.comments || [] } : t));
                             showToast(`Task rolled over to ${res.data.due_date} 🚀`);
                           }
                         }}

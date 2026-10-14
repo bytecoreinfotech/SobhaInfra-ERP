@@ -250,7 +250,7 @@ async function seedDatabase() {
   try {
     // Clear old generic placeholders or update
     await supabase.from('ai_knowledge').delete().eq('organization_id', DEFAULT_ORG_ID);
-    
+
     for (const item of AI_KNOWLEDGE_SECTIONS) {
       const { error } = await supabase.from('ai_knowledge').insert([{
         organization_id: DEFAULT_ORG_ID,

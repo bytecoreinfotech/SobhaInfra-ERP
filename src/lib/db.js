@@ -4,6 +4,7 @@
  * Supports offline demo fallback and live Supabase PostgreSQL connection with RLS.
  */
 import { supabase, isSupabaseConfigured } from './supabase';
+import { uploadToWhatsAppMedia } from './storage';
 
 export const DEFAULT_ORG_ID = '00000000-0000-0000-0000-000000000001';
 
@@ -2045,23 +2046,124 @@ export async function createDeal(dealData) {
   return { data, error };
 }
 
-export async function getTasks() {
-  if (isSupabaseConfigured) {
-    try {
-      const { data, error } = await supabase.from('tasks').select('*').order('created_at', { ascending: false });
-      if (!error && data) {
-        // Enrich with any local comments if needed
-        const localComments = JSON.parse(localStorage.getItem('erppro_task_comments') || '{}');
-        const enriched = data.map(t => ({
-          ...t,
-          comments: t.comments || localComments[t.id] || [],
-        }));
-        return { data: enriched, error: null };
-      }
-    } catch {}
+// ─────────────────────────────────────────────────────────────────────────────
+// TASKS
+//
+// Reliability rules (a past incident showed 0 tasks because `select('*')` pulled ~40 MB of
+// base64 proof images embedded in `comments`, hit Supabase's statement timeout, and the
+// error was swallowed and replaced by an empty list):
+//   1. Never read the whole table in one query: page the list, and fetch the heavy
+//      `comments` JSON separately in small chunks so one slow row can't hide every task.
+//   2. A failed read must never masquerade as "no tasks": return the error + last good cache.
+//   3. Never store binary/base64 in the DB: media goes to Storage and only the URL is saved.
+// ─────────────────────────────────────────────────────────────────────────────
+// Every column of `tasks` EXCEPT `comments`.
+const TASK_LIST_COLUMNS = 'id,organization_id,title,description,status,priority,due_date,assigned_to,related_lead_id,related_deal_id,tags,created_at,updated_at,client_name,client_phone,is_recurring,recurrence_interval,review_submitted_at,submitted_by,completed_at,approved_by,revision_requested_at';
+const TASK_CACHE_KEY = 'erppro_tasks_cache_v2';
+const TASK_PAGE_SIZE = 100;
+const TASK_COMMENT_CHUNK = 15;
+
+function readTasksCache() {
+  try { return JSON.parse(localStorage.getItem(TASK_CACHE_KEY) || 'null'); } catch { return null; }
+}
+
+function writeTasksCache(tasks) {
+  try {
+    // Cache only light fields — never comments (they may contain media).
+    localStorage.setItem(TASK_CACHE_KEY, JSON.stringify(tasks.map(({ comments, _commentsDeferred, ...rest }) => rest)));
+  } catch {}
+}
+
+/**
+ * Fetch the comments (activity + proofs) of a single task on demand.
+ */
+export async function getTaskComments(taskId) {
+  if (!isSupabaseConfigured) {
+    const t = MOCK_STORE.tasks.find(x => x.id === taskId);
+    return { data: t?.comments || [], error: null };
   }
-  const localTasks = JSON.parse(localStorage.getItem('erppro_local_tasks') || 'null');
-  return { data: localTasks || MOCK_STORE.tasks, error: null };
+  const { data, error } = await supabase.from('tasks').select('comments').eq('id', taskId).maybeSingle();
+  if (error) return { data: [], error };
+  return { data: Array.isArray(data?.comments) ? data.comments : [], error: null };
+}
+
+export async function getTasks() {
+  if (!isSupabaseConfigured) {
+    const localTasks = JSON.parse(localStorage.getItem('erppro_local_tasks') || 'null');
+    return { data: localTasks || MOCK_STORE.tasks, error: null };
+  }
+
+  try {
+    // 1. Light list, paged (stable order: created_at desc, id).
+    const rows = [];
+    for (let from = 0; ; from += TASK_PAGE_SIZE) {
+      const { data, error } = await supabase
+        .from('tasks')
+        .select(TASK_LIST_COLUMNS)
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: true })
+        .range(from, from + TASK_PAGE_SIZE - 1);
+      if (error) throw error;
+      rows.push(...(data || []));
+      if (!data || data.length < TASK_PAGE_SIZE) break;
+    }
+
+    // 2. Comments in small chunks, in parallel. A failing chunk only defers ITS tasks'
+    //    comments (loaded on demand when the task is opened) — the board still renders.
+    const commentsById = new Map();
+    const deferred = new Set();
+    const ids = rows.map(r => r.id);
+    const chunks = [];
+    for (let i = 0; i < ids.length; i += TASK_COMMENT_CHUNK) chunks.push(ids.slice(i, i + TASK_COMMENT_CHUNK));
+    await Promise.all(chunks.map(async (chunkIds) => {
+      try {
+        const { data, error } = await supabase.from('tasks').select('id,comments').in('id', chunkIds);
+        if (error) throw error;
+        (data || []).forEach(r => commentsById.set(r.id, Array.isArray(r.comments) ? r.comments : []));
+      } catch (e) {
+        console.warn('[getTasks] comments deferred for', chunkIds.length, 'tasks:', e?.message || e);
+        chunkIds.forEach(id => deferred.add(id));
+      }
+    }));
+
+    let localComments = {};
+    try { localComments = JSON.parse(localStorage.getItem('erppro_task_comments') || '{}'); } catch {}
+
+    const enriched = rows.map(t => ({
+      ...t,
+      comments: commentsById.get(t.id) || localComments[t.id] || [],
+      ...(deferred.has(t.id) ? { _commentsDeferred: true } : {}),
+    }));
+
+    writeTasksCache(enriched);
+    return { data: enriched, error: null };
+  } catch (err) {
+    console.error('[getTasks] FAILED to load tasks from database:', err);
+    // Do NOT pretend there are no tasks. Serve last-known-good data and expose the error.
+    const cached = readTasksCache();
+    return {
+      data: (cached || []).map(t => ({ ...t, comments: [], _commentsDeferred: true })),
+      error: { message: err?.message || 'Could not load tasks', code: err?.code, stale: Boolean(cached) },
+    };
+  }
+}
+
+/**
+ * Replace any inline base64 `media_url` with a Storage URL. Throws if the upload fails so a
+ * blob is never written to the database.
+ */
+async function offloadInlineMedia(comment) {
+  if (!comment || typeof comment.media_url !== 'string' || !comment.media_url.startsWith('data:')) return comment;
+  const blob = await (await fetch(comment.media_url)).blob();
+  const ext = (blob.type.split('/')[1] || 'bin').replace('jpeg', 'jpg');
+  const hasExt = comment.media_name && /\.[a-z0-9]{2,5}$/i.test(comment.media_name);
+  const file = new File([blob], hasExt ? comment.media_name : `proof_${Date.now()}.${ext}`, { type: blob.type });
+  const url = await uploadToWhatsAppMedia(file, 'task-proofs');
+  // storage.js falls back to a generic brochure URL for PDFs on failure — not valid for proofs.
+  if (!/^https?:\/\//.test(url) || url.endsWith('/sobha-products.pdf')) {
+    throw new Error('Proof upload failed. Please retry.');
+  }
+  return { ...comment, media_url: url };
 }
 
 export async function createTask(task) {
@@ -2083,6 +2185,10 @@ export async function createTask(task) {
       logAuditEvent('task.create', 'tasks', data.id, data);
       return { data: { ...data, comments: [] }, error: null };
     }
+    // Live DB is configured but the write failed: report it. Never save a "phantom" task
+    // in this browser's localStorage that other users (and the DB) will never see.
+    console.error('[createTask] failed:', error);
+    return { data: null, error: error || { message: 'Task could not be saved' } };
   }
 
   MOCK_STORE.tasks.unshift(newTask);
@@ -2096,9 +2202,19 @@ export async function createTask(task) {
 export async function updateTask(id, updates) {
   if (isSupabaseConfigured) {
     try {
-      const { data, error } = await supabase.from('tasks').update(updates).eq('id', id).select().single();
+      const safeUpdates = { ...updates };
+      if (Array.isArray(safeUpdates.comments)) {
+        safeUpdates.comments = await Promise.all(safeUpdates.comments.map(offloadInlineMedia));
+      }
+      // Return only light columns: avoids shipping the (potentially heavy) comments back.
+      const { data, error } = await supabase.from('tasks').update(safeUpdates).eq('id', id).select(TASK_LIST_COLUMNS + (safeUpdates.comments ? ',comments' : '')).single();
       if (!error && data) return { data, error: null };
-    } catch {}
+      console.error('[updateTask] failed:', error);
+      return { data: null, error: error || { message: 'Task could not be updated' } };
+    } catch (e) {
+      console.error('[updateTask] failed:', e);
+      return { data: null, error: { message: e?.message || 'Task could not be updated' } };
+    }
   }
   const idx = MOCK_STORE.tasks.findIndex(t => t.id === id);
   if (idx !== -1) {
@@ -2116,7 +2232,7 @@ export async function addTaskComment(taskId, commentData, author = 'Admin') {
     ? { text: commentData, author: author || 'Team Member' }
     : { ...commentData, author: commentData.author || author || 'Team Member' };
 
-  const comment = {
+  let comment = {
     id: 'comment-' + Date.now(),
     author: payload.author,
     author_role: payload.author_role || 'Team Member',
@@ -2129,6 +2245,30 @@ export async function addTaskComment(taskId, commentData, author = 'Admin') {
     is_proof: Boolean(payload.is_proof),
     created_at: new Date().toISOString(),
   };
+
+  // Binary media must live in Storage, never inline in the tasks table.
+  try {
+    comment = await offloadInlineMedia(comment);
+  } catch (e) {
+    console.error('[addTaskComment] media upload failed:', e);
+    return { data: null, error: { message: e?.message || 'Media upload failed' } };
+  }
+
+  // If Supabase has comments JSON on tasks, persist FIRST and only report success if it worked.
+  if (isSupabaseConfigured) {
+    try {
+      const { data: currentTask, error: readErr } = await supabase.from('tasks').select('comments').eq('id', taskId).maybeSingle();
+      if (readErr) throw readErr;
+      const existingComments = Array.isArray(currentTask?.comments) ? currentTask.comments : [];
+      const { error: writeErr } = await supabase.from('tasks').update({
+        comments: [...existingComments, comment]
+      }).eq('id', taskId);
+      if (writeErr) throw writeErr;
+    } catch (e) {
+      console.error('[addTaskComment] failed:', e);
+      return { data: null, error: { message: e?.message || 'Comment could not be saved' } };
+    }
+  }
 
   // Save in local storage map
   try {
@@ -2143,17 +2283,6 @@ export async function addTaskComment(taskId, commentData, author = 'Admin') {
   if (task) {
     if (!task.comments) task.comments = [];
     task.comments.push(comment);
-  }
-
-  // If Supabase has comments JSON on tasks
-  if (isSupabaseConfigured) {
-    try {
-      const { data: currentTask } = await supabase.from('tasks').select('comments').eq('id', taskId).maybeSingle();
-      const existingComments = currentTask?.comments || [];
-      await supabase.from('tasks').update({
-        comments: [...existingComments, comment]
-      }).eq('id', taskId);
-    } catch {}
   }
 
   logAuditEvent('task.comment_added', 'tasks', taskId, {
@@ -2367,60 +2496,69 @@ export async function checkAndRunRecurringTaskRoutines(forceTemplateId = null) {
     return getTodayDateStr(d);
   };
 
-  // ── 1. DAILY TASK AUTO-ROLLOVER & ADVANCEMENT ──────────────────────────────
-  // When a daily task is created (e.g. 1 October), when tomorrow arrives (2 October),
-  // or whenever the current date > due_date:
-  // - If it was marked 'Done' on a previous day: keep that completed task intact for historical
-  //   and monthly reporting, and spawn a fresh task instance for today (due_date = todayStr, status = 'To Do')!
-  // - If it was in 'To Do' / 'In Progress': advance due_date to todayStr so the employee works on today's active date!
+  // ── 1. DAILY TASK AUTO-SPAWNING (IMMUTABLE PAST, FRESH DAILY OCCURRENCES) ──
+  // Industry-Standard Task Integrity Rules:
+  // 1. Past tasks are IMMUTABLE: due_date is NEVER updated or moved to today!
+  //    Whether a past task was 'Done', 'To Do', or 'In Progress', it remains on its
+  //    original calendar day (e.g. 1 October) for historical accountability and audit.
+  // 2. When a new day arrives (todayStr > taskDue):
+  //    For every daily recurring task, the system ensures today's checklist occurrence
+  //    (due_date = todayStr, status = 'To Do') exists. If not already created, it spawns it!
   try {
-    const { data: existingTasks } = await getTasks();
+    const { data: existingTasks, error: existingTasksErr } = await getTasks();
+    if (existingTasksErr) throw new Error('Task list unavailable, skipping auto-spawn to avoid duplicates: ' + existingTasksErr.message);
     if (existingTasks && existingTasks.length > 0) {
+      // Build set of tasks already present for today to prevent duplicate runs
+      const todaySpawnedKeys = new Set(
+        existingTasks
+          .filter(t => (t.due_date || '').split('T')[0] === todayStr)
+          .map(t => `${(t.title || '').trim().toLowerCase()}::${(t.assigned_to || '').trim().toLowerCase()}`)
+      );
+
       for (const t of existingTasks) {
-        if (t.is_recurring && (t.recurrence_interval === 'Daily' || !t.recurrence_interval || t.recurrence_interval?.toLowerCase() === 'daily')) {
-          const taskDue = (t.due_date || '').split('T')[0];
-          if (taskDue && taskDue < todayStr) {
-            if (t.status === 'Done') {
-              const alreadySpawnedToday = existingTasks.some(other =>
-                other.id !== t.id &&
-                other.title === t.title &&
-                other.assigned_to === t.assigned_to &&
-                (other.due_date || '').split('T')[0] === todayStr
-              );
-              if (!alreadySpawnedToday) {
-                await createTask({
-                  title: t.title,
-                  description: t.description || '',
-                  status: 'To Do',
-                  priority: t.priority || 'Medium',
-                  due_date: todayStr,
-                  tags: t.tags || [],
-                  assigned_to: t.assigned_to || '',
-                  client_name: t.client_name || '',
-                  client_phone: t.client_phone || '',
-                  is_recurring: true,
-                  recurrence_interval: 'Daily'
-                });
-                totalTasksGenerated++;
-              }
-            } else {
-              const updates = {
-                due_date: todayStr,
-                updated_at: new Date().toISOString()
-              };
-              await updateTask(t.id, updates);
-              totalTasksGenerated++;
-            }
+        const isDaily = t.is_recurring && (
+          t.recurrence_interval === 'Daily' ||
+          !t.recurrence_interval ||
+          String(t.recurrence_interval).toLowerCase() === 'daily'
+        );
+        if (!isDaily) continue;
+
+        const taskDue = (t.due_date || '').split('T')[0];
+        // If task is from a previous calendar day and today's occurrence doesn't exist yet
+        if (taskDue && taskDue < todayStr) {
+          const key = `${(t.title || '').trim().toLowerCase()}::${(t.assigned_to || '').trim().toLowerCase()}`;
+          if (!todaySpawnedKeys.has(key)) {
+            await createTask({
+              title: t.title,
+              description: t.description || '',
+              status: 'To Do',
+              priority: t.priority || 'Medium',
+              due_date: todayStr,
+              tags: t.tags || [],
+              assigned_to: t.assigned_to || '',
+              client_name: t.client_name || '',
+              client_phone: t.client_phone || '',
+              is_recurring: true,
+              recurrence_interval: 'Daily'
+            });
+            todaySpawnedKeys.add(key);
+            totalTasksGenerated++;
           }
+          // CRITICAL: Past task t is NEVER mutated. Its due_date stays taskDue permanently.
         }
       }
     }
   } catch (err) {
-    console.warn('[db] Daily task rollover check notice:', err);
+    console.warn('[db] Daily task routine check notice:', err);
   }
 
   // ── 2. PROCESS RECURRING ROUTINE TEMPLATES ─────────────────────────────────
-  const { data: currentTasks } = await getTasks();
+  const { data: currentTasks, error: currentTasksErr } = await getTasks();
+  if (currentTasksErr) {
+    // Never run template spawning blind: with an unreadable task list every routine would be duplicated.
+    console.warn('[db] Routine templates skipped, task list unavailable:', currentTasksErr.message);
+    return { success: false, totalTasksGenerated, triggeredRoutines, error: currentTasksErr.message };
+  }
   const existingTaskTitles = new Set((currentTasks || []).map(t => `${t.title}::${t.due_date}::${t.assigned_to}`));
 
   for (const tpl of activeTemplates) {
@@ -2575,13 +2713,37 @@ export async function advanceTaskToNextDay(taskId) {
   const task = (allTasks || []).find(t => t.id === taskId);
   if (!task) return { error: 'Task not found' };
 
-  const nextDateStr = getNextDateStr(task.due_date);
+  const nextDateStr = getNextDateStr(task.due_date || getTodayDateStr());
 
+  if (task.is_recurring) {
+    // Check if task occurrence for nextDateStr already exists
+    const alreadyExists = (allTasks || []).find(t =>
+      (t.title || '').trim().toLowerCase() === (task.title || '').trim().toLowerCase() &&
+      (t.assigned_to || '').trim().toLowerCase() === (task.assigned_to || '').trim().toLowerCase() &&
+      (t.due_date || '').split('T')[0] === nextDateStr
+    );
+    if (alreadyExists) {
+      return { data: alreadyExists, error: null };
+    }
+    // Create fresh occurrence for nextDateStr preserving current task on its date
+    return await createTask({
+      title: task.title,
+      description: task.description || '',
+      status: 'To Do',
+      priority: task.priority || 'Medium',
+      due_date: nextDateStr,
+      tags: task.tags || [],
+      assigned_to: task.assigned_to || '',
+      client_name: task.client_name || '',
+      client_phone: task.client_phone || '',
+      is_recurring: true,
+      recurrence_interval: task.recurrence_interval || 'Daily'
+    });
+  }
+
+  // For non-recurring one-off tasks, update due_date
   const updates = {
     due_date: nextDateStr,
-    status: 'To Do',
-    completed_at: null,
-    review_submitted_at: null,
     updated_at: new Date().toISOString()
   };
 
@@ -2589,9 +2751,9 @@ export async function advanceTaskToNextDay(taskId) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// EMPLOYEE TASK ANALYTICS (Monthly per-employee breakdown)
+// EMPLOYEE TASK ANALYTICS (Monthly & Date-Wise per-employee breakdown)
 // ─────────────────────────────────────────────────────────────────────────────
-export async function getTasksByEmployee(month, year) {
+export async function getTasksByEmployee(month, year, specificDate = null) {
   // Get all tasks
   const { data: allTasks } = await getTasks();
   const tasks = allTasks || [];
@@ -2600,12 +2762,18 @@ export async function getTasksByEmployee(month, year) {
   const { data: members } = await getTeamMembers();
   const teamMembers = members || [];
   
-  // Filter tasks by month/year if provided (prioritize due_date for daily scheduled work)
+  // Filter tasks by specific date or month/year
   const filtered = tasks.filter(t => {
-    if (!month || !year) return true;
     const dateStr = t.due_date || t.created_at;
     if (!dateStr) return false;
     const cleanDate = String(dateStr).split('T')[0];
+
+    // If specific date requested (e.g. '2026-10-01')
+    if (specificDate) {
+      return cleanDate === specificDate;
+    }
+
+    if (!month || !year) return true;
     const parts = cleanDate.split('-');
     if (parts.length === 3) {
       const taskY = parseInt(parts[0], 10);
@@ -2632,11 +2800,47 @@ export async function getTasksByEmployee(month, year) {
       underReview: empTasks.filter(t => t.status === 'Under Review').length,
       done: empTasks.filter(t => t.status === 'Done').length,
       highPriority: empTasks.filter(t => t.priority === 'High').length,
+      tasks: empTasks,
     };
   });
+
+  // Group filtered tasks by due_date for day-by-day date-wise analysis
+  const dateMap = {};
+  filtered.forEach(t => {
+    const dStr = (t.due_date || t.created_at || '').split('T')[0];
+    if (!dStr) return;
+    if (!dateMap[dStr]) {
+      dateMap[dStr] = {
+        date: dStr,
+        total: 0,
+        todo: 0,
+        inProgress: 0,
+        underReview: 0,
+        done: 0,
+        byEmployee: {}
+      };
+    }
+    const row = dateMap[dStr];
+    row.total++;
+    if (t.status === 'Done') row.done++;
+    else if (t.status === 'In Progress') row.inProgress++;
+    else if (t.status === 'Under Review') row.underReview++;
+    else row.todo++;
+
+    const empName = t.assigned_to || 'Unassigned';
+    if (!row.byEmployee[empName]) {
+      row.byEmployee[empName] = { total: 0, done: 0, pending: 0 };
+    }
+    row.byEmployee[empName].total++;
+    if (t.status === 'Done') row.byEmployee[empName].done++;
+    else row.byEmployee[empName].pending++;
+  });
+
+  const dailyBreakdown = Object.values(dateMap).sort((a, b) => b.date.localeCompare(a.date));
   
   return {
     data: employeeStats,
+    dailyBreakdown,
     totalTasks: filtered.length,
     summary: {
       todo: filtered.filter(t => t.status === 'To Do').length,
