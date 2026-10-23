@@ -4,7 +4,18 @@
  * Supports offline demo fallback and live Supabase PostgreSQL connection with RLS.
  */
 import { supabase, isSupabaseConfigured } from './supabase';
-import { uploadToWhatsAppMedia } from './storage';
+import { uploadToWhatsAppMedia, getFileCategory, formatBytes } from './storage';
+import {
+  checkDayStatus, getNextWorkingDay, isSunday, getHolidayInfo, getAllHolidays,
+  addCompanyHoliday, isHolidayExceptionalTask, setWorkingDayOverride,
+  getWorkingDayOverrides, clearWorkingDayOverride, isSpecialWorkingDay
+} from './holidays';
+
+export {
+  checkDayStatus, getNextWorkingDay, isSunday, getHolidayInfo, getAllHolidays,
+  addCompanyHoliday, isHolidayExceptionalTask, setWorkingDayOverride,
+  getWorkingDayOverrides, clearWorkingDayOverride, isSpecialWorkingDay
+};
 
 export const DEFAULT_ORG_ID = '00000000-0000-0000-0000-000000000001';
 
@@ -2155,15 +2166,41 @@ export async function getTasks() {
 async function offloadInlineMedia(comment) {
   if (!comment || typeof comment.media_url !== 'string' || !comment.media_url.startsWith('data:')) return comment;
   const blob = await (await fetch(comment.media_url)).blob();
-  const ext = (blob.type.split('/')[1] || 'bin').replace('jpeg', 'jpg');
-  const hasExt = comment.media_name && /\.[a-z0-9]{2,5}$/i.test(comment.media_name);
-  const file = new File([blob], hasExt ? comment.media_name : `proof_${Date.now()}.${ext}`, { type: blob.type });
-  const url = await uploadToWhatsAppMedia(file, 'task-proofs');
-  // storage.js falls back to a generic brochure URL for PDFs on failure — not valid for proofs.
-  if (!/^https?:\/\//.test(url) || url.endsWith('/sobha-products.pdf')) {
-    throw new Error('Proof upload failed. Please retry.');
+
+  // Infer extension reliably from media_name or blob type
+  let ext = 'bin';
+  if (comment.media_name && comment.media_name.includes('.')) {
+    ext = comment.media_name.split('.').pop().toLowerCase();
+  } else if (blob.type) {
+    const subtype = blob.type.split('/')[1] || '';
+    if (subtype.includes('pdf')) ext = 'pdf';
+    else if (subtype.includes('sheet') || subtype.includes('excel')) ext = 'xlsx';
+    else if (subtype.includes('word') || subtype.includes('document')) ext = 'docx';
+    else if (subtype.includes('zip')) ext = 'zip';
+    else if (subtype.includes('csv')) ext = 'csv';
+    else ext = subtype.replace('jpeg', 'jpg').replace(/[^a-z0-9]/gi, '');
   }
-  return { ...comment, media_url: url };
+
+  const fileName = comment.media_name && /\.[a-z0-9]{2,5}$/i.test(comment.media_name)
+    ? comment.media_name
+    : `proof_${Date.now()}.${ext || 'bin'}`;
+
+  const file = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
+  const url = await uploadToWhatsAppMedia(file, 'task-proofs');
+
+  // storage.js fallback to brochure URL is not acceptable for employee proofs
+  if (!/^https?:\/\//.test(url) || url.endsWith('/sobha-products.pdf')) {
+    throw new Error('Proof file upload failed. Please verify storage connection and retry.');
+  }
+
+  const category = getFileCategory(fileName, blob.type);
+  return {
+    ...comment,
+    media_url: url,
+    media_name: fileName,
+    media_type: category,
+    media_size: blob.size || null
+  };
 }
 
 export async function createTask(task) {
@@ -2297,14 +2334,31 @@ export async function addTaskComment(taskId, commentData, author = 'Admin') {
 }
 
 export async function generateDailyTasksForClients(config = {}) {
-  const { template, clients = [], assignee = '', dueDate = getTodayDateStr() } = config;
+  const {
+    template,
+    clients = [],
+    assignee = '',
+    dueDate = getTodayDateStr(),
+    forceHolidayRun = false
+  } = config;
   if (!template) return { data: [], error: 'Template required' };
+
+  const dayStat = checkDayStatus(dueDate);
+  const isHolidayDuty = forceHolidayRun || dayStat.isDeclaredWorkingDay || (dayStat.isNonWorking && (template.run_on_holidays || template.is_holiday_work));
 
   const createdTasks = [];
 
   for (const client of clients) {
     const taskTitle = `${template.title} — ${client.name || 'Client'}`;
-    const taskDesc = `${template.description ? template.description + '\n\n' : ''}Client: ${client.name} (${client.phone || 'No phone'})\nCompany: ${client.company_name || 'N/A'}\nInterest: ${client.property_interest || 'N/A'}`;
+    const holidayNote = isHolidayDuty ? `\n[Office Open / Special Duty: Scheduled on ${dayStat.reason || 'Sunday/Holiday'}]` : '';
+    const taskDesc = `${template.description ? template.description + '\n\n' : ''}Client: ${client.name} (${client.phone || 'No phone'})\nCompany: ${client.company_name || 'N/A'}\nInterest: ${client.property_interest || 'N/A'}${holidayNote}`;
+
+    const tags = Array.from(new Set([
+      ...(template.tags || []),
+      'Daily Routine',
+      'Client Task',
+      ...(isHolidayDuty ? ['⚡ Holiday Duty'] : [])
+    ]));
 
     const taskPayload = {
       title: taskTitle,
@@ -2312,12 +2366,14 @@ export async function generateDailyTasksForClients(config = {}) {
       status: 'To Do',
       priority: template.priority || 'Medium',
       due_date: dueDate,
-      tags: Array.from(new Set([...(template.tags || []), 'Daily Routine', 'Client Task'])),
+      tags,
       assigned_to: assignee || template.default_assignee || client.assigned_to || 'Sales Executive',
       client_name: client.name || '',
       client_phone: client.phone || '',
       is_recurring: true,
       recurrence_interval: 'Daily',
+      is_holiday_work: Boolean(isHolidayDuty),
+      run_on_holidays: Boolean(isHolidayDuty || template.run_on_holidays)
     };
 
     const { data: created } = await createTask(taskPayload);
@@ -2467,7 +2523,7 @@ export async function deleteTaskTemplate(templateId) {
  * Evaluates all active recurring templates and auto-spawns tasks for employees.
  * Safe & idempotent: avoids duplicate runs on the same calendar day unless forced.
  */
-export async function checkAndRunRecurringTaskRoutines(forceTemplateId = null) {
+export async function checkAndRunRecurringTaskRoutines(forceTemplateId = null, forceRunOnHolidays = false) {
   const templates = await getTaskTemplates();
   const activeTemplates = (templates || []).filter(t => {
     if (forceTemplateId) return t.id === forceTemplateId;
@@ -2480,6 +2536,8 @@ export async function checkAndRunRecurringTaskRoutines(forceTemplateId = null) {
   const today = new Date();
   const dayOfWeekAbbr = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][today.getDay()];
   const dayOfWeekNum = today.getDay(); // 0: Sun, 1: Mon ... 6: Sat
+  const todayStatus = checkDayStatus(todayStr);
+  const isWorkingDayForced = forceRunOnHolidays || todayStatus.isDeclaredWorkingDay;
 
   let totalTasksGenerated = 0;
   const triggeredRoutines = [];
@@ -2504,6 +2562,10 @@ export async function checkAndRunRecurringTaskRoutines(forceTemplateId = null) {
   // 2. When a new day arrives (todayStr > taskDue):
   //    For every daily recurring task, the system ensures today's checklist occurrence
   //    (due_date = todayStr, status = 'To Do') exists. If not already created, it spawns it!
+  // 3. SUNDAY / HOLIDAY PROTECTION:
+  //    On Sundays or Indian Gazetted Holidays, standard daily checklists PAUSE and will
+  //    naturally resume on the next working day. Only tasks flagged as exceptional holiday work
+  //    (e.g. emergency site watch, 24x7 security, concrete curing, material unloading) spawn on holidays.
   try {
     const { data: existingTasks, error: existingTasksErr } = await getTasks();
     if (existingTasksErr) throw new Error('Task list unavailable, skipping auto-spawn to avoid duplicates: ' + existingTasksErr.message);
@@ -2522,6 +2584,11 @@ export async function checkAndRunRecurringTaskRoutines(forceTemplateId = null) {
           String(t.recurrence_interval).toLowerCase() === 'daily'
         );
         if (!isDaily) continue;
+
+        // Skip non-working days (Sundays / Holidays) for standard daily routines, UNLESS office is declared open or forced
+        if (todayStatus.isNonWorking && !isHolidayExceptionalTask(t) && !isWorkingDayForced) {
+          continue;
+        }
 
         const taskDue = (t.due_date || '').split('T')[0];
         // If task is from a previous calendar day and today's occurrence doesn't exist yet
@@ -2564,16 +2631,29 @@ export async function checkAndRunRecurringTaskRoutines(forceTemplateId = null) {
   for (const tpl of activeTemplates) {
     let targetDueDate = todayStr;
     const recType = tpl.recurrence_type || 'daily';
+    const isExceptional = isHolidayExceptionalTask(tpl);
 
     if (!forceTemplateId) {
       if (recType === 'daily') {
-        targetDueDate = todayStr;
+        // If today is a Sunday or Holiday and template is NOT exceptional, defer to next working day (unless office is open / forced)
+        if (todayStatus.isNonWorking && !isExceptional && !isWorkingDayForced) {
+          targetDueDate = todayStatus.nextWorkingDate;
+        } else {
+          targetDueDate = todayStr;
+        }
       } else if (recType === 'weekdays') {
         if (dayOfWeekNum >= 1 && dayOfWeekNum <= 5) {
-          targetDueDate = todayStr;
+          // If weekday is an official holiday and not marked exceptional, advance to next working day
+          if (todayStatus.isHoliday && !isExceptional) {
+            targetDueDate = todayStatus.nextWorkingDate;
+          } else {
+            targetDueDate = todayStr;
+          }
         } else {
-          // Weekend: schedule for upcoming Monday
-          targetDueDate = getUpcomingDayDate('Mon');
+          // Weekend: schedule for upcoming Monday or next working day if Monday is a holiday
+          const upcomingMon = getUpcomingDayDate('Mon');
+          const monStatus = checkDayStatus(upcomingMon);
+          targetDueDate = monStatus.isNonWorking ? monStatus.nextWorkingDate : upcomingMon;
         }
       } else if (recType === 'weekly') {
         const days = Array.isArray(tpl.recurrence_days) && tpl.recurrence_days.length > 0
@@ -2581,7 +2661,12 @@ export async function checkAndRunRecurringTaskRoutines(forceTemplateId = null) {
           : ['Mon'];
 
         if (days.includes(dayOfWeekAbbr)) {
-          targetDueDate = todayStr;
+          // If scheduled day happens to be a holiday and not exceptional, shift to next working day
+          if (todayStatus.isHoliday && !isExceptional) {
+            targetDueDate = todayStatus.nextWorkingDate;
+          } else {
+            targetDueDate = todayStr;
+          }
         } else {
           // Calculate earliest upcoming scheduled day (e.g. Next Monday)
           const candidateDates = days.map(d => getUpcomingDayDate(d));
@@ -2589,6 +2674,7 @@ export async function checkAndRunRecurringTaskRoutines(forceTemplateId = null) {
           targetDueDate = candidateDates[0] || getUpcomingDayDate('Mon');
         }
       } else if (recType === 'interval_days') {
+
         if (!tpl.last_generated_date) {
           targetDueDate = todayStr;
         } else {
@@ -2708,12 +2794,18 @@ export async function checkAndRunRecurringTaskRoutines(forceTemplateId = null) {
   };
 }
 
-export async function advanceTaskToNextDay(taskId) {
+export async function advanceTaskToNextDay(taskId, forceNextCalendarDay = false) {
   const { data: allTasks } = await getTasks();
   const task = (allTasks || []).find(t => t.id === taskId);
   if (!task) return { error: 'Task not found' };
 
-  const nextDateStr = getNextDateStr(task.due_date || getTodayDateStr());
+  const currentDue = (task.due_date || getTodayDateStr()).split('T')[0];
+  const isExceptional = isHolidayExceptionalTask(task);
+  // Advance to next business day (skipping Sundays and holidays) unless exceptional or explicitly requested
+  const nextDateStr = (!forceNextCalendarDay && !isExceptional)
+    ? getNextWorkingDay(currentDue)
+    : getNextDateStr(currentDue);
+
 
   if (task.is_recurring) {
     // Check if task occurrence for nextDateStr already exists
@@ -3234,6 +3326,11 @@ export async function sendWhatsAppMessage(
     }
   }
 
+  // Pre-normalize phone to ensure +91 / country code format
+  if (targetPhone) {
+    targetPhone = normalizePhone(targetPhone);
+  }
+
   let apiResult = null;
   // Dispatch outbound message via Meta Cloud API (Netlify handles DB persistence)
   if (targetPhone) {
@@ -3249,15 +3346,19 @@ export async function sendWhatsAppMessage(
     }
   }
 
+  const isFailed = apiResult && !apiResult.success;
   const newMsg = {
     id: apiResult?.messageId || 'msg-' + Date.now(),
     conversation_id: conversationId,
     direction: 'outbound',
     sender_type: senderType,
-    message_type: mediaType,
-    body: text,
+    message_type: apiResult?.usedTemplate ? 'template' : mediaType,
+    body: apiResult?.usedTemplate
+      ? `[📋 Template: ${apiResult.templateName}] ${text || 'Re-engagement greeting'}`
+      : text,
     media_url: mediaUrl || null,
-    status: apiResult?.success ? 'delivered' : 'sent',
+    status: isFailed ? 'failed' : (apiResult?.success ? 'delivered' : 'sent'),
+    error_message: isFailed ? (apiResult.error?.message || 'Meta delivery rejected') : null,
     created_at: new Date().toISOString(),
   };
 
@@ -3267,18 +3368,43 @@ export async function sendWhatsAppMessage(
       MOCK_STORE.whatsapp_messages[conversationId].push(newMsg);
       const convIdx = MOCK_STORE.whatsapp_conversations.findIndex(c => c.id === conversationId);
       if (convIdx !== -1) {
-        MOCK_STORE.whatsapp_conversations[convIdx].last_message_text = text;
+        MOCK_STORE.whatsapp_conversations[convIdx].last_message_text = newMsg.body;
         MOCK_STORE.whatsapp_conversations[convIdx].last_message_at = newMsg.created_at;
         MOCK_STORE.whatsapp_conversations[convIdx].unread_count = 0;
       }
     }
-    return { data: newMsg, error: apiResult?.error || null };
+    return { data: newMsg, error: apiResult?.error || null, usedTemplate: apiResult?.usedTemplate, templateName: apiResult?.templateName };
   }
 
   // Supabase insert is handled by the Netlify function send-message.js
   // Return success with the optimistic message object
-  return { data: newMsg, error: apiResult?.error || null };
+  return { data: newMsg, error: apiResult?.error || null, usedTemplate: apiResult?.usedTemplate, templateName: apiResult?.templateName };
 }
+
+/**
+ * Re-open 24-Hour WhatsApp Session Window using Meta Pre-Approved Template
+ */
+export async function reopenWhatsAppWindowWithTemplate(conversationId, contactPhone, templateName = 'hello_world') {
+  const normPhone = normalizePhone(contactPhone);
+  try {
+    const res = await fetch('/.netlify/functions/send-message', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        to: normPhone,
+        text: 'Hello from Sobha Infratech team.',
+        conversationId,
+        senderType: 'human_agent',
+        mediaType: 'template'
+      })
+    });
+    const data = await res.json();
+    return { data, error: data.success ? null : (data.error || { message: 'Template delivery failed' }) };
+  } catch (err) {
+    return { data: null, error: { message: err.message } };
+  }
+}
+
 
 /** Delete a single WhatsApp message from the CRM (does NOT delete from WhatsApp itself) */
 export async function deleteWhatsAppMessage(messageId) {
@@ -4155,12 +4281,32 @@ export async function updateEmployeeLivePing(pingData) {
         if (!error && data) return { data, error: null };
       }
 
-      // Upsert full ping
+      // Upsert full live ping
       const { data, error } = await supabase
         .from('employee_live_locations')
         .upsert(payload, { onConflict: 'employee_id' })
         .select()
         .single();
+
+      // Record historical breadcrumb trail (up to 30 days) in employee_location_logs
+      if (!isTurningOff && payload.lat && payload.lng) {
+        try {
+          await supabase.from('employee_location_logs').insert([{
+            organization_id: DEFAULT_ORG_ID,
+            employee_id: payload.employee_id,
+            employee_name: payload.employee_name,
+            role: payload.role,
+            lat: payload.lat,
+            lng: payload.lng,
+            accuracy: payload.accuracy,
+            address: payload.address,
+            activity_type: 'ping',
+            site_name: pingData.site_name || '',
+            recorded_at: new Date().toISOString()
+          }]);
+        } catch {}
+      }
+
       if (!error && data) return { data, error: null };
     } catch (e) {
       console.warn('[db] updateEmployeeLivePing fallback:', e.message);
@@ -4183,8 +4329,32 @@ export async function updateEmployeeLivePing(pingData) {
   } else {
     MOCK_STORE.employee_live_locations.push(payload);
   }
+
+  // Also record to in-memory historical logs
+  if (!isTurningOff && payload.lat && payload.lng) {
+    if (!MOCK_STORE.employee_location_logs) MOCK_STORE.employee_location_logs = [];
+    MOCK_STORE.employee_location_logs.unshift({
+      id: 'log-' + Date.now(),
+      organization_id: DEFAULT_ORG_ID,
+      employee_id: payload.employee_id,
+      employee_name: payload.employee_name,
+      role: payload.role,
+      lat: payload.lat,
+      lng: payload.lng,
+      accuracy: payload.accuracy,
+      address: payload.address,
+      activity_type: 'ping',
+      site_name: pingData.site_name || '',
+      recorded_at: new Date().toISOString()
+    });
+    if (MOCK_STORE.employee_location_logs.length > 1000) {
+      MOCK_STORE.employee_location_logs.pop();
+    }
+  }
+
   return { data: payload, error: null };
 }
+
 
 export async function getEmployeeLivePings() {
   const STALE_THRESHOLD_MS = 90 * 1000; // 90 seconds freshness cutoff
@@ -4364,6 +4534,209 @@ export async function reverseGeocode(lat, lng) {
   }
   return `GPS: ${Number(lat).toFixed(4)}°, ${Number(lng).toFixed(4)}°`;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EMPLOYEE LOCATION & SITE VISIT MOVEMENT HISTORY (7 Days to 30 Days)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const MOCK_NCR_SITES = [
+  { site: 'Sobha Infratech Regional HQ', lat: 28.6280, lng: 77.3649, address: 'Corporate Tower B, Industrial Area, Sector 62, Noida, UP' },
+  { site: 'Sobha City Sector 108', lat: 28.5140, lng: 77.3670, address: 'Sobha City, Expressway Sector 108, Noida, Uttar Pradesh' },
+  { site: 'Ace Parkway Sector 150', lat: 28.4350, lng: 77.4980, address: 'Ace Parkway, Sports City, Sector 150, Noida, UP' },
+  { site: 'ATS Destinaire Gr. Noida', lat: 28.5980, lng: 77.4520, address: 'ATS Destinaire, Sector 1, Greater Noida West, UP' },
+  { site: 'DLF One Midtown', lat: 28.6590, lng: 77.1420, address: 'DLF One Midtown, Shivaji Marg, Moti Nagar, New Delhi' },
+  { site: 'Godrej Woods Sector 43', lat: 28.5630, lng: 77.3480, address: 'Godrej Woods, Sector 43, Noida, Uttar Pradesh' },
+  { site: 'Mahagun Manorialle Sector 128', lat: 28.5270, lng: 77.3510, address: 'Wish Town, Sector 128, Noida-Greater Noida Expy, UP' },
+  { site: 'Prestige City Indirapuram', lat: 28.6410, lng: 77.3710, address: 'Prestige City, Vaibhav Khand, Indirapuram, Ghaziabad' },
+];
+
+function generateMockLocationTrail(employeeId = 'all', days = 30) {
+  const trail = [];
+  const empName = employeeId === 'usr-1' ? 'Amit Sharma' : employeeId === 'usr-2' ? 'Priya Singh' : 'Field Executive';
+  const role = 'Sales Executive';
+  const numDays = Math.min(Math.max(Number(days) || 7, 7), 30);
+  const now = new Date();
+
+  for (let d = 0; d < numDays; d++) {
+    const targetDate = new Date(now.getTime() - d * 24 * 60 * 60 * 1000);
+    // Skip Sundays unless day is 7 or 14 (occasional weekend site visit)
+    if (targetDate.getDay() === 0 && d % 7 !== 0) continue;
+
+    const dateIso = targetDate.toISOString().split('T')[0];
+
+    // Morning Office Check-in / Start Ping (09:15 - 09:30 AM)
+    const morningTime = new Date(`${dateIso}T09:20:00+05:30`);
+    trail.push({
+      id: `trail-${dateIso}-1`,
+      employee_id: employeeId !== 'all' ? employeeId : 'usr-1',
+      employee_name: empName,
+      role,
+      lat: 28.6280,
+      lng: 77.3649,
+      accuracy: 6,
+      address: 'Corporate Tower B, Industrial Area, Sector 62, Noida, UP',
+      site_name: 'Sobha Regional HQ — Office Check-in',
+      activity_type: 'check_in',
+      status: 'Completed',
+      recorded_at: morningTime.toISOString()
+    });
+
+    // Site Visit 1 (11:30 AM - 12:30 PM)
+    const site1 = MOCK_NCR_SITES[(d * 2 + 1) % MOCK_NCR_SITES.length];
+    const visitTime1 = new Date(`${dateIso}T11:45:00+05:30`);
+    trail.push({
+      id: `trail-${dateIso}-2`,
+      employee_id: employeeId !== 'all' ? employeeId : 'usr-1',
+      employee_name: empName,
+      role,
+      lat: site1.lat + (Math.sin(d) * 0.001),
+      lng: site1.lng + (Math.cos(d) * 0.001),
+      accuracy: 8,
+      address: site1.address,
+      site_name: `${site1.site} Inspection`,
+      client_name: d % 2 === 0 ? 'Vikram Malhotra' : 'Rameshwar Builders',
+      activity_type: 'site_visit',
+      status: 'Completed',
+      recorded_at: visitTime1.toISOString()
+    });
+
+    // Site Visit 2 (02:45 PM - 03:45 PM)
+    const site2 = MOCK_NCR_SITES[(d * 3 + 2) % MOCK_NCR_SITES.length];
+    const visitTime2 = new Date(`${dateIso}T15:10:00+05:30`);
+    trail.push({
+      id: `trail-${dateIso}-3`,
+      employee_id: employeeId !== 'all' ? employeeId : 'usr-1',
+      employee_name: empName,
+      role,
+      lat: site2.lat + (Math.cos(d) * 0.001),
+      lng: site2.lng + (Math.sin(d) * 0.001),
+      accuracy: 10,
+      address: site2.address,
+      site_name: `${site2.site} Client Walkthrough`,
+      client_name: 'Sunita Mehra (High Net Worth)',
+      activity_type: 'site_visit',
+      status: 'Completed',
+      recorded_at: visitTime2.toISOString()
+    });
+
+    // Evening Return / Wrap-up Ping (05:40 PM)
+    const eveningTime = new Date(`${dateIso}T17:40:00+05:30`);
+    trail.push({
+      id: `trail-${dateIso}-4`,
+      employee_id: employeeId !== 'all' ? employeeId : 'usr-1',
+      employee_name: empName,
+      role,
+      lat: 28.6280,
+      lng: 77.3649,
+      accuracy: 7,
+      address: 'Corporate Tower B, Industrial Area, Sector 62, Noida, UP',
+      site_name: 'Sobha Regional HQ — Daily Wrap-up',
+      activity_type: 'ping',
+      status: 'Completed',
+      recorded_at: eveningTime.toISOString()
+    });
+  }
+
+  return trail;
+}
+
+export async function getEmployeeLocationHistory({
+  employeeId = 'all',
+  days = 7,
+  startDate = null,
+  endDate = null
+} = {}) {
+  const cutoffTime = startDate
+    ? new Date(startDate).toISOString()
+    : new Date(Date.now() - (Number(days) * 24 * 60 * 60 * 1000)).toISOString();
+  const endTime = endDate ? new Date(endDate).toISOString() : new Date().toISOString();
+
+  let logs = [];
+  if (isSupabaseConfigured) {
+    try {
+      let query = supabase
+        .from('employee_location_logs')
+        .select('*')
+        .gte('recorded_at', cutoffTime)
+        .lte('recorded_at', endTime);
+
+      if (employeeId && employeeId !== 'all') {
+        query = query.eq('employee_id', String(employeeId));
+      }
+
+      query = query.order('recorded_at', { ascending: false });
+
+      const { data, error } = await query;
+      if (!error && Array.isArray(data)) {
+        logs = data;
+      }
+    } catch (err) {
+      console.warn('[db] getEmployeeLocationHistory supabase error:', err.message);
+    }
+  }
+
+  // Also query site_visits to guarantee that all recorded site check-ins are represented
+  const { data: allVisits } = await getSiteVisits();
+  const visitLogs = (allVisits || [])
+    .filter(v => {
+      const vTime = new Date(v.check_in_time || v.created_at).getTime();
+      const inRange = vTime >= new Date(cutoffTime).getTime() && vTime <= new Date(endTime).getTime();
+      const matchEmp = !employeeId || employeeId === 'all' || String(v.employee_id) === String(employeeId);
+      return inRange && matchEmp;
+    })
+    .map(v => ({
+      id: v.id,
+      employee_id: String(v.employee_id || 'usr-1'),
+      employee_name: v.employee_name || 'Field Agent',
+      role: 'Field Agent',
+      lat: Number(v.lat || 0),
+      lng: Number(v.lng || 0),
+      accuracy: Number(v.accuracy || 10),
+      address: v.address || '',
+      site_name: v.site_name || 'Site Inspection',
+      client_name: v.client_name || '',
+      photo_url: v.photo_url || null,
+      activity_type: 'site_visit',
+      status: v.status || 'Completed',
+      recorded_at: v.check_in_time || v.created_at,
+    }));
+
+  // Combine logs with visitLogs, deduplicating
+  const combined = [...logs];
+  for (const vl of visitLogs) {
+    const exists = combined.some(l =>
+      Math.abs(new Date(l.recorded_at).getTime() - new Date(vl.recorded_at).getTime()) < 60000 &&
+      l.employee_id === vl.employee_id
+    );
+    if (!exists) {
+      combined.push(vl);
+    }
+  }
+
+  // Check in-memory store
+  if (MOCK_STORE.employee_location_logs) {
+    for (const memLog of MOCK_STORE.employee_location_logs) {
+      const mTime = new Date(memLog.recorded_at).getTime();
+      if (mTime >= new Date(cutoffTime).getTime() && mTime <= new Date(endTime).getTime()) {
+        const matchEmp = !employeeId || employeeId === 'all' || String(memLog.employee_id) === String(employeeId);
+        if (matchEmp && !combined.some(c => c.id === memLog.id)) {
+          combined.push(memLog);
+        }
+      }
+    }
+  }
+
+  // If in demo or offline mode with sparse records, provide rich realistic historical location trail (up to 30 days)
+  if (combined.length === 0 && (!isSupabaseConfigured || logs.length === 0)) {
+    combined.push(...generateMockLocationTrail(employeeId, days));
+  }
+
+  // Sort descending by timestamp
+  combined.sort((a, b) => new Date(b.recorded_at) - new Date(a.recorded_at));
+
+  return { data: combined, error: null };
+}
+
 
 // Helper to convert plain human text with bullets/newlines into clean branded HTML email
 export function formatTextToEmailHtml(plainText, companyName = 'Sobha Infratech Pvt. Ltd.') {

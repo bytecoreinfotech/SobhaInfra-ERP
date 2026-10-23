@@ -25,13 +25,24 @@ const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
 const DEFAULT_ORG_ID = '00000000-0000-0000-0000-000000000001';
 
 
+function formatPhoneForMeta(phone) {
+  if (!phone) return '';
+  const digits = String(phone).replace(/\D/g, '');
+  if (!digits) return '';
+
+  if (digits.length === 10) return '91' + digits;
+  if (digits.length === 11 && digits.startsWith('0')) return '91' + digits.substring(1);
+  if (digits.length === 12 && digits.startsWith('91')) return digits;
+  return digits;
+}
+
 // ─── 2. Send WhatsApp Interactive Quick Reply / List Message ─────────────────
 async function sendMetaWhatsAppInteractive(to, text, buttons = [], headerMedia = null, footerText = null) {
   if (!WA_TOKEN || !PHONE_ID) {
     return { success: true, messageId: 'mock-wamid-' + Date.now() };
   }
   try {
-    const cleanPhone = String(to).replace(/[^\d+]/g, '').replace(/^\+/, '');
+    const cleanPhone = formatPhoneForMeta(to);
     const url = `https://graph.facebook.com/v20.0/${PHONE_ID}/messages`;
 
     // Filter valid buttons with labels
@@ -160,7 +171,7 @@ async function sendMetaWhatsAppMediaOrText(to, text, mediaType = 'text', mediaUr
     return { success: true, messageId: 'mock-wamid-' + Date.now() };
   }
   try {
-    const cleanPhone = String(to).replace(/[^\d+]/g, '').replace(/^\+/, '');
+    const cleanPhone = formatPhoneForMeta(to);
     const url = `https://graph.facebook.com/v20.0/${PHONE_ID}/messages`;
 
     let payload;
@@ -227,7 +238,7 @@ async function sendWhatsAppTemplate(to, templateName, language = 'en', bodyParam
     return { success: true, messageId: 'mock-tpl-' + Date.now(), simulated: true };
   }
   try {
-    const phone = String(to).replace(/[^\d]/g, '');
+    const phone = formatPhoneForMeta(to);
 
     // ── Build Components Array from Template Structure ──
     const components = [];

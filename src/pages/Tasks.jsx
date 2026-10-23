@@ -6,15 +6,19 @@ import {
   Trash2, FileText, BarChart3, Copy, ArrowRight, Image as ImageIcon,
   Paperclip, Link as LinkIcon, ExternalLink, ShieldCheck, Repeat,
   Building, Sparkles, AlertTriangle, Eye, UploadCloud, Edit3,
-  Play, Pause, Zap, ToggleLeft, ToggleRight, CalendarDays, Users, Layers
+  Play, Pause, Zap, ToggleLeft, ToggleRight, CalendarDays, Users, Layers,
+  FileSpreadsheet, FileArchive, Download, File
 } from 'lucide-react';
 import {
   getTasks, getTaskComments, createTask, updateTask, deleteTask, addTaskComment,
   getTeamMembers, getTaskTemplates, saveTaskTemplate, deleteTaskTemplate,
   getTasksByEmployee, getLeads, generateDailyTasksForClients,
   toggleTaskTemplateActive, checkAndRunRecurringTaskRoutines, advanceTaskToNextDay,
-  getTodayDateStr, getNextDateStr, formatTaskDate
+  getTodayDateStr, getNextDateStr, formatTaskDate,
+  checkDayStatus, getNextWorkingDay, isHolidayExceptionalTask,
+  setWorkingDayOverride, getWorkingDayOverrides, clearWorkingDayOverride, isSpecialWorkingDay
 } from '../lib/db';
+import { getFileCategory, formatBytes } from '../lib/storage';
 import { useAuth } from '../context/AuthContext';
 import { Skeleton, SkeletonCard, SkeletonTable } from '../components/Skeleton';
 import './Pages.css';
@@ -33,7 +37,8 @@ const EMPTY_TASK = {
   client_name: '',
   client_phone: '',
   is_recurring: false,
-  recurrence_interval: 'Daily'
+  recurrence_interval: 'Daily',
+  is_holiday_work: false,
 };
 
 const EMPTY_TEMPLATE = {
@@ -51,7 +56,9 @@ const EMPTY_TEMPLATE = {
   target_role: 'Sales Executive',
   target_employee_names: [],
   is_active: true,
+  run_on_holidays: false,
 };
+
 
 const DAYS_OF_WEEK = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -79,16 +86,21 @@ const Tasks = () => {
   const [newComment, setNewComment] = useState('');
   const [commentMediaUrl, setCommentMediaUrl] = useState(null);
   const [commentMediaName, setCommentMediaName] = useState('');
+  const [commentMediaSize, setCommentMediaSize] = useState(null);
+  const [commentMediaType, setCommentMediaType] = useState('image');
   const [commentLinkUrl, setCommentLinkUrl] = useState('');
   const [commentLinkTitle, setCommentLinkTitle] = useState('');
   const [showLinkInput, setShowLinkInput] = useState(false);
   const [addingComment, setAddingComment] = useState(false);
+  const [commentsLoading, setCommentsLoading] = useState(false);
 
   // Employee Proof Submission Panel
   const [showProofForm, setShowProofForm] = useState(false);
   const [proofText, setProofText] = useState('');
   const [proofMediaUrl, setProofMediaUrl] = useState(null);
   const [proofMediaName, setProofMediaName] = useState('');
+  const [proofMediaSize, setProofMediaSize] = useState(null);
+  const [proofMediaType, setProofMediaType] = useState('image');
   const [proofLinkUrl, setProofLinkUrl] = useState('');
   const [proofLinkTitle, setProofLinkTitle] = useState('');
   const [submittingProof, setSubmittingProof] = useState(false);
@@ -97,8 +109,8 @@ const Tasks = () => {
   const [showRevisionForm, setShowRevisionForm] = useState(false);
   const [revisionFeedback, setRevisionFeedback] = useState('');
 
-  // Image Lightbox Preview
-  const [lightboxImageUrl, setLightboxImageUrl] = useState(null);
+  // Media Lightbox Preview (Image, PDF, Spreadsheets, Documents)
+  const [lightboxMedia, setLightboxMedia] = useState(null); // { url, name, type, size }
 
   // Toast message
   const [feedbackToast, setFeedbackToast] = useState(null);
@@ -115,12 +127,14 @@ const Tasks = () => {
 
   // 1-Click Daily Routine Task Generator Modal
   const [showDailyGenModal, setShowDailyGenModal] = useState(false);
+  const [workingDayTrigger, setWorkingDayTrigger] = useState(0);
   const [dailyGenConfig, setDailyGenConfig] = useState({
     templateId: '',
     targetType: 'all', // 'all' | 'selected'
     selectedClientIds: [],
     assignee: '',
-    dueDate: getTodayDateStr()
+    dueDate: getTodayDateStr(),
+    forceHolidayRun: false
   });
   const [generatingDaily, setGeneratingDaily] = useState(false);
 
@@ -191,18 +205,57 @@ const Tasks = () => {
     setLoading(false);
   };
 
-  // Comments can be deferred (heavy rows): load them on demand when a task is opened.
+  // Always fetch fresh comments & proofs whenever a task drawer is opened,
+  // guaranteeing SuperAdmin & Supervisors instantly see what employees submitted.
   useEffect(() => {
-    if (!selectedTask?._commentsDeferred) return;
+    if (!selectedTask?.id) return;
     let cancelled = false;
     const taskId = selectedTask.id;
+    setCommentsLoading(true);
     getTaskComments(taskId).then(({ data, error }) => {
-      if (cancelled || error) return;
+      if (cancelled) return;
+      setCommentsLoading(false);
+      if (error) return;
       setSelectedTask(prev => (prev && prev.id === taskId ? { ...prev, comments: data, _commentsDeferred: false } : prev));
       setTasks(prev => prev.map(t => (t.id === taskId ? { ...t, comments: data, _commentsDeferred: false } : t)));
+    }).catch(() => {
+      if (!cancelled) setCommentsLoading(false);
     });
     return () => { cancelled = true; };
-  }, [selectedTask?.id, selectedTask?._commentsDeferred]);
+  }, [selectedTask?.id]);
+
+  // Manual one-click refresh for task activity & proofs
+  const handleRefreshTaskComments = async () => {
+    if (!selectedTask?.id) return;
+    setCommentsLoading(true);
+    try {
+      const { data } = await getTaskComments(selectedTask.id);
+      if (data) {
+        setSelectedTask(prev => (prev && prev.id === selectedTask.id ? { ...prev, comments: data, _commentsDeferred: false } : prev));
+        setTasks(prev => prev.map(t => t.id === selectedTask.id ? { ...t, comments: data, _commentsDeferred: false } : t));
+        showToast('Activity & proofs refreshed.');
+      }
+    } catch {}
+    setCommentsLoading(false);
+  };
+
+  // Auto-sync tasks board every 25 seconds so SuperAdmin gets employee submissions in real-time
+  useEffect(() => {
+    if (activeSubTab !== 'tasks') return;
+    const interval = setInterval(async () => {
+      try {
+        const { data: latestTasks } = await getTasks();
+        if (latestTasks && latestTasks.length > 0) {
+          setTasks(prev => {
+            // Merge status updates smoothly
+            const map = new Map(latestTasks.map(t => [t.id, t]));
+            return prev.map(t => map.get(t.id) || t);
+          });
+        }
+      } catch {}
+    }, 25000);
+    return () => clearInterval(interval);
+  }, [activeSubTab]);
 
   const loadAnalytics = async () => {
     setAnalyticsLoading(true);
@@ -278,11 +331,26 @@ const Tasks = () => {
     showToast('Task deleted.');
   };
 
-  // Helper to handle image file upload as base64 preview
-  const handleFileUpload = (e, setUrl, setName) => {
+  // Helper to handle general file uploads (Images, PDFs, Excel/Sheets, Docs, Zip archives)
+  const handleFileUpload = (e, setUrl, setName, setSize, setType) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    const ext = file.name.split('.').pop().toLowerCase();
+    const isDoc = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'csv', 'zip', 'rar', '7z', 'txt', 'rtf', 'ppt', 'pptx'].includes(ext);
+    const maxBytes = isDoc ? 50 * 1024 * 1024 : 25 * 1024 * 1024;
+
+    if (file.size > maxBytes) {
+      showToast(`File too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Maximum allowed size is ${isDoc ? 50 : 25} MB.`, 'error');
+      e.target.value = '';
+      return;
+    }
+
     setName(file.name);
+    if (setSize) setSize(file.size);
+    const category = getFileCategory(file.name, file.type);
+    if (setType) setType(category);
+
     const reader = new FileReader();
     reader.onload = (event) => {
       setUrl(event.target.result);
@@ -305,6 +373,8 @@ const Tasks = () => {
       author_role: authorRole,
       media_url: commentMediaUrl,
       media_name: commentMediaName,
+      media_type: commentMediaType || getFileCategory(commentMediaName),
+      media_size: commentMediaSize || null,
       link_url: commentLinkUrl.trim() || null,
       link_title: commentLinkTitle.trim() || null,
       is_proof: false,
@@ -325,6 +395,8 @@ const Tasks = () => {
       setNewComment('');
       setCommentMediaUrl(null);
       setCommentMediaName('');
+      setCommentMediaSize(null);
+      setCommentMediaType('image');
       setCommentLinkUrl('');
       setCommentLinkTitle('');
       setShowLinkInput(false);
@@ -351,6 +423,8 @@ const Tasks = () => {
       author_role: authorRole,
       media_url: proofMediaUrl,
       media_name: proofMediaName,
+      media_type: proofMediaType || getFileCategory(proofMediaName),
+      media_size: proofMediaSize || null,
       link_url: proofLinkUrl.trim() || null,
       link_title: proofLinkTitle.trim() || 'Proof Document / Link',
       is_proof: true,
@@ -387,6 +461,8 @@ const Tasks = () => {
     setProofText('');
     setProofMediaUrl(null);
     setProofMediaName('');
+    setProofMediaSize(null);
+    setProofMediaType('image');
     setProofLinkUrl('');
     setProofLinkTitle('');
     setShowProofForm(false);
@@ -519,12 +595,13 @@ const Tasks = () => {
       clients: targetClients,
       assignee: dailyGenConfig.assignee,
       dueDate: dailyGenConfig.dueDate,
+      forceHolidayRun: dailyGenConfig.forceHolidayRun
     });
 
     if (created && created.length > 0) {
       setTasks(prev => [...created, ...prev]);
       setShowDailyGenModal(false);
-      showToast(`⚡ Successfully scheduled ${created.length} daily tasks for today!`);
+      showToast(`⚡ Successfully scheduled ${created.length} daily tasks for ${dailyGenConfig.dueDate}!`);
     }
     setGeneratingDaily(false);
   };
@@ -577,14 +654,34 @@ const Tasks = () => {
 
   const handleRunAllRoutinesNow = async () => {
     setRunningAllRoutines(true);
-    const res = await checkAndRunRecurringTaskRoutines();
+    const todayStr = getTodayDateStr();
+    const todayStat = checkDayStatus(todayStr);
+
+    let shouldForce = false;
+    if (todayStat.isNonWorking) {
+      const confirmRun = window.confirm(
+        `Today (${todayStr}) is a ${todayStat.reason}. Standard recurring routines normally pause on non-working days.\n\n` +
+        `Is your office or project site open as regular today?\n\n` +
+        `Click "OK" to FORCE run all daily routines for today.\n` +
+        `Click "Cancel" to keep standard holiday pause.`
+      );
+      if (!confirmRun) {
+        setRunningAllRoutines(false);
+        return;
+      }
+      shouldForce = true;
+    }
+
+    const res = await checkAndRunRecurringTaskRoutines(null, shouldForce);
     await loadTasks();
     await loadTemplates();
     setRunningAllRoutines(false);
     if (res.totalTasksGenerated > 0) {
       showToast(`⚡ Successfully dispatched ${res.totalTasksGenerated} routine tasks for today across ${res.triggeredRoutines.length} routines!`);
     } else {
-      showToast('All scheduled routines have already run for today. Click "⚡ Run Today" on individual cards to force extra generation.');
+      showToast(shouldForce
+        ? 'All routines have already run for today.'
+        : 'All scheduled routines have already run for today. Click "⚡ Run Today" on individual cards to force extra generation.');
     }
   };
 
@@ -1107,23 +1204,50 @@ const Tasks = () => {
                                     const d = (task.due_date || '').split('T')[0];
                                     const isPast = d < todayStr && task.status !== 'Done';
                                     const isToday = d === todayStr;
+                                    const dayStat = checkDayStatus(d);
+                                    const isExceptional = isHolidayExceptionalTask(task);
                                     return (
-                                      <div
-                                        className="kanban-due"
-                                        style={{
-                                          color: isPast ? '#ef4444' : isToday ? 'var(--accent-primary)' : 'var(--text-muted)',
-                                          fontWeight: isPast || isToday ? 700 : 500,
-                                          background: isPast ? 'rgba(239,68,68,0.1)' : isToday ? 'rgba(99,102,241,0.1)' : 'transparent',
-                                          padding: '0.15rem 0.4rem',
-                                          borderRadius: 4,
-                                          border: isPast ? '1px solid rgba(239,68,68,0.25)' : isToday ? '1px solid rgba(99,102,241,0.25)' : 'none',
-                                          display: 'inline-flex',
-                                          alignItems: 'center',
-                                          gap: '0.25rem'
-                                        }}
-                                      >
-                                        <Calendar size={11} />
-                                        {isPast ? `Overdue • ${formatTaskDate(task.due_date)}` : isToday ? `Today • ${formatTaskDate(task.due_date)}` : formatTaskDate(task.due_date)}
+                                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                                        <div
+                                          className="kanban-due"
+                                          style={{
+                                            color: isPast ? '#ef4444' : isToday ? 'var(--accent-primary)' : 'var(--text-muted)',
+                                            fontWeight: isPast || isToday ? 700 : 500,
+                                            background: isPast ? 'rgba(239,68,68,0.1)' : isToday ? 'rgba(99,102,241,0.1)' : 'transparent',
+                                            padding: '0.15rem 0.4rem',
+                                            borderRadius: 4,
+                                            border: isPast ? '1px solid rgba(239,68,68,0.25)' : isToday ? '1px solid rgba(99,102,241,0.25)' : 'none',
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '0.25rem'
+                                          }}
+                                        >
+                                          <Calendar size={11} />
+                                          {isPast ? `Overdue • ${formatTaskDate(task.due_date)}` : isToday ? `Today • ${formatTaskDate(task.due_date)}` : formatTaskDate(task.due_date)}
+                                        </div>
+                                        {dayStat.isDeclaredWorkingDay ? (
+                                          <div style={{
+                                            fontSize: '0.58rem',
+                                            color: '#10b981',
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '0.2rem',
+                                            fontWeight: 700
+                                          }}>
+                                            🟢 Office Open ({dayStat.rawReason || 'Working Day'})
+                                          </div>
+                                        ) : dayStat.isNonWorking ? (
+                                          <div style={{
+                                            fontSize: '0.58rem',
+                                            color: isExceptional ? '#10b981' : '#f59e0b',
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '0.2rem',
+                                            fontWeight: 600
+                                          }}>
+                                            {isExceptional ? '⚡ Exceptional Duty' : `🏖️ ${dayStat.reason}`}
+                                          </div>
+                                        ) : null}
                                       </div>
                                     );
                                   })()}
@@ -1800,18 +1924,21 @@ const Tasks = () => {
                         />
                       </div>
 
-                      {/* Photo / Media Attachment Upload */}
+                      {/* Photo / Document / Media Attachment Upload */}
                       <div>
-                        <label style={{ fontSize: '0.75rem', fontWeight: 600, display: 'block', marginBottom: '0.25rem' }}>
-                          Proof Photo / Screenshot / Media Attachment
-                        </label>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.25rem' }}>
+                          <label style={{ fontSize: '0.75rem', fontWeight: 600 }}>
+                            Proof Attachment (Photos, PDFs, Excel/Spreadsheets, Word Docs, Zip)
+                          </label>
+                          <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>Max: 50 MB docs / 25 MB media</span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
                           <input
                             type="file"
-                            accept="image/*,.pdf"
+                            accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.rtf,.odt,.ppt,.pptx,.zip,.rar,.7z"
                             ref={proofFileInputRef}
                             style={{ display: 'none' }}
-                            onChange={(e) => handleFileUpload(e, setProofMediaUrl, setProofMediaName)}
+                            onChange={(e) => handleFileUpload(e, setProofMediaUrl, setProofMediaName, setProofMediaSize, setProofMediaType)}
                           />
                           <button
                             type="button"
@@ -1819,21 +1946,49 @@ const Tasks = () => {
                             onClick={() => proofFileInputRef.current?.click()}
                             style={{ gap: '0.35rem' }}
                           >
-                            <ImageIcon size={13} /> {proofMediaName ? 'Change File' : 'Upload Proof Image / Doc'}
+                            <UploadCloud size={13} /> {proofMediaName ? 'Change Attached File' : 'Attach Proof File (All Formats)'}
                           </button>
-                          {proofMediaName && (
-                            <span style={{ fontSize: '0.72rem', color: 'var(--success)' }}>
-                              ✓ {proofMediaName}
-                            </span>
-                          )}
                         </div>
+
                         {proofMediaUrl && (
-                          <div style={{ marginTop: '0.5rem', position: 'relative', width: 120, height: 80, borderRadius: 6, overflow: 'hidden', border: '1px solid var(--border-color)' }}>
-                            <img src={proofMediaUrl} alt="Proof" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                          <div style={{ marginTop: '0.55rem', display: 'inline-flex', alignItems: 'center', gap: '0.65rem', padding: '0.45rem 0.75rem', background: 'rgba(255,255,255,0.05)', borderRadius: 8, border: '1px solid var(--border-color)', position: 'relative' }}>
+                            {proofMediaType === 'image' ? (
+                              <div style={{ width: 44, height: 44, borderRadius: 6, overflow: 'hidden', border: '1px solid var(--border-color)', flexShrink: 0 }}>
+                                <img src={proofMediaUrl} alt="Proof" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                              </div>
+                            ) : proofMediaType === 'pdf' ? (
+                              <div style={{ width: 38, height: 38, borderRadius: 6, background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ef4444', flexShrink: 0 }}>
+                                <FileText size={20} />
+                              </div>
+                            ) : proofMediaType === 'spreadsheet' ? (
+                              <div style={{ width: 38, height: 38, borderRadius: 6, background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#10b981', flexShrink: 0 }}>
+                                <FileSpreadsheet size={20} />
+                              </div>
+                            ) : proofMediaType === 'archive' ? (
+                              <div style={{ width: 38, height: 38, borderRadius: 6, background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#f59e0b', flexShrink: 0 }}>
+                                <FileArchive size={20} />
+                              </div>
+                            ) : (
+                              <div style={{ width: 38, height: 38, borderRadius: 6, background: 'rgba(99,102,241,0.12)', border: '1px solid rgba(99,102,241,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--accent-primary)', flexShrink: 0 }}>
+                                <FileText size={20} />
+                              </div>
+                            )}
+
+                            <div>
+                              <div style={{ fontSize: '0.76rem', fontWeight: 700, color: 'var(--text-primary)', maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {proofMediaName || 'Proof Document'}
+                              </div>
+                              <div style={{ fontSize: '0.66rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                <span style={{ textTransform: 'uppercase', fontWeight: 600, color: 'var(--accent-primary)' }}>{proofMediaType}</span>
+                                {proofMediaSize && <span>• {formatBytes(proofMediaSize)}</span>}
+                              </div>
+                            </div>
+
                             <button
                               type="button"
-                              onClick={() => { setProofMediaUrl(null); setProofMediaName(''); }}
-                              style={{ position: 'absolute', top: 2, right: 2, background: 'rgba(0,0,0,0.7)', color: 'white', border: 'none', borderRadius: '50%', width: 18, height: 18, fontSize: 10, cursor: 'pointer' }}
+                              onClick={() => { setProofMediaUrl(null); setProofMediaName(''); setProofMediaSize(null); setProofMediaType('image'); }}
+                              style={{ background: 'rgba(239,68,68,0.1)', color: 'var(--danger)', border: 'none', borderRadius: 4, width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, cursor: 'pointer', marginLeft: '0.25rem' }}
+                              title="Remove attached file"
                             >
                               ✕
                             </button>
@@ -1917,6 +2072,17 @@ const Tasks = () => {
                   <MessageSquare size={16} color="var(--accent-primary)" />
                   Activity, Comments & Proofs ({selectedTask.comments?.length || 0})
                 </div>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={handleRefreshTaskComments}
+                  disabled={commentsLoading}
+                  title="Refresh activity and proofs from database"
+                  style={{ fontSize: '0.7rem', padding: '0.2rem 0.55rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}
+                >
+                  <RefreshCw size={11} className={commentsLoading ? 'animate-spin' : ''} />
+                  {commentsLoading ? 'Refreshing...' : 'Refresh'}
+                </button>
               </div>
 
               <div style={{ maxHeight: 280, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1rem', paddingRight: '0.25rem' }}>
@@ -1925,82 +2091,190 @@ const Tasks = () => {
                     No comments or proofs yet. Post a progress update or submit completion proof above.
                   </div>
                 ) : (
-                  selectedTask.comments.map(c => (
-                    <div
-                      key={c.id}
-                      style={{
-                        padding: '0.75rem 0.85rem', borderRadius: 8,
-                        background: c.is_proof ? 'rgba(16,185,129,0.06)' : 'var(--bg-tertiary)',
-                        border: `1px solid ${c.is_proof ? 'rgba(16,185,129,0.3)' : 'var(--border-color)'}`
-                      }}
-                    >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                          <strong style={{ fontSize: '0.8rem', color: 'var(--text-primary)' }}>👤 {c.author}</strong>
-                          {c.author_role && <span className="badge badge-neutral" style={{ fontSize: '0.62rem' }}>{c.author_role}</span>}
-                          {c.is_proof && (
-                            <span className="badge badge-success" style={{ fontSize: '0.62rem', display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
-                              <ShieldCheck size={10} /> Verified Proof
-                            </span>
-                          )}
-                        </div>
-                        <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
-                          {new Date(c.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} • {new Date(c.created_at).toLocaleDateString([], { day: '2-digit', month: 'short' })}
-                        </span>
-                      </div>
+                  selectedTask.comments.map(c => {
+                    const fileCategory = c.media_type || getFileCategory(c.media_name || c.media_url);
 
-                      {c.text && (
-                        <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', lineHeight: 1.4, marginBottom: (c.media_url || c.link_url) ? '0.5rem' : 0 }}>
-                          {c.text}
-                        </div>
-                      )}
-
-                      {/* Render Proof Media Image Attachment */}
-                      {c.media_url && (
-                        <div style={{ marginTop: '0.4rem', marginBottom: '0.4rem' }}>
-                          <div
-                            onClick={() => setLightboxImageUrl(c.media_url)}
-                            style={{
-                              display: 'inline-flex', alignItems: 'center', gap: '0.5rem',
-                              padding: '0.35rem 0.65rem', borderRadius: 6, background: 'rgba(255,255,255,0.05)',
-                              border: '1px solid var(--border-color)', cursor: 'pointer'
-                            }}
-                          >
-                            <img src={c.media_url} alt="Proof Thumbnail" style={{ width: 42, height: 42, borderRadius: 4, objectFit: 'cover' }} />
-                            <div>
-                              <div style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-primary)' }}>{c.media_name || 'Proof Photo / Document'}</div>
-                              <div style={{ fontSize: '0.65rem', color: 'var(--accent-primary)', display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
-                                <Eye size={10} /> Click to View Full Size
-                              </div>
-                            </div>
+                    return (
+                      <div
+                        key={c.id}
+                        style={{
+                          padding: '0.75rem 0.85rem', borderRadius: 8,
+                          background: c.is_proof ? 'rgba(16,185,129,0.06)' : 'var(--bg-tertiary)',
+                          border: `1px solid ${c.is_proof ? 'rgba(16,185,129,0.3)' : 'var(--border-color)'}`
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                            <strong style={{ fontSize: '0.8rem', color: 'var(--text-primary)' }}>👤 {c.author}</strong>
+                            {c.author_role && <span className="badge badge-neutral" style={{ fontSize: '0.62rem' }}>{c.author_role}</span>}
+                            {c.is_proof && (
+                              <span className="badge badge-success" style={{ fontSize: '0.62rem', display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
+                                <ShieldCheck size={10} /> Verified Proof
+                              </span>
+                            )}
                           </div>
+                          <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+                            {new Date(c.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} • {new Date(c.created_at).toLocaleDateString([], { day: '2-digit', month: 'short' })}
+                          </span>
                         </div>
-                      )}
 
-                      {/* Render Proof External URL / Link */}
-                      {c.link_url && (
-                        <div style={{ marginTop: '0.3rem' }}>
-                          <a
-                            href={c.link_url}
-                            target="_blank"
-                            rel="noreferrer"
-                            style={{
-                              display: 'inline-flex', alignItems: 'center', gap: '0.35rem',
-                              padding: '0.25rem 0.6rem', borderRadius: 4, background: 'rgba(99,102,241,0.12)',
-                              color: 'var(--accent-primary)', fontSize: '0.72rem', textDecoration: 'none', fontWeight: 600
-                            }}
-                          >
-                            <ExternalLink size={12} /> {c.link_title || c.link_url}
-                          </a>
-                        </div>
-                      )}
-                    </div>
-                  ))
+                        {c.text && (
+                          <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', lineHeight: 1.4, marginBottom: (c.media_url || c.link_url) ? '0.5rem' : 0 }}>
+                            {c.text}
+                          </div>
+                        )}
+
+                        {/* Render Proof / Comment File Attachment based on Category */}
+                        {c.media_url && (
+                          <div style={{ marginTop: '0.4rem', marginBottom: '0.4rem' }}>
+                            {fileCategory === 'image' ? (
+                              <div
+                                onClick={() => setLightboxMedia({ url: c.media_url, name: c.media_name || 'Proof Image', type: 'image' })}
+                                style={{
+                                  display: 'inline-flex', alignItems: 'center', gap: '0.5rem',
+                                  padding: '0.35rem 0.65rem', borderRadius: 6, background: 'rgba(255,255,255,0.05)',
+                                  border: '1px solid var(--border-color)', cursor: 'pointer'
+                                }}
+                              >
+                                <img
+                                  src={c.media_url}
+                                  alt="Proof Thumbnail"
+                                  style={{ width: 44, height: 44, borderRadius: 4, objectFit: 'cover' }}
+                                  onError={(e) => {
+                                    e.currentTarget.style.display = 'none';
+                                    if (e.currentTarget.nextSibling) e.currentTarget.nextSibling.style.display = 'flex';
+                                  }}
+                                />
+                                <div style={{ display: 'none', width: 44, height: 44, borderRadius: 4, background: 'rgba(99,102,241,0.1)', alignItems: 'center', justifyContent: 'center' }}>
+                                  <ImageIcon size={18} color="var(--accent-primary)" />
+                                </div>
+                                <div>
+                                  <div style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-primary)' }}>{c.media_name || 'Proof Photo / Screenshot'}</div>
+                                  <div style={{ fontSize: '0.65rem', color: 'var(--accent-primary)', display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
+                                    <Eye size={10} /> Click to View Full Size
+                                  </div>
+                                </div>
+                              </div>
+                            ) : fileCategory === 'pdf' ? (
+                              <div
+                                onClick={() => setLightboxMedia({ url: c.media_url, name: c.media_name || 'Proof Document.pdf', type: 'pdf' })}
+                                style={{
+                                  display: 'inline-flex', alignItems: 'center', gap: '0.6rem',
+                                  padding: '0.4rem 0.75rem', borderRadius: 6, background: 'rgba(239,68,68,0.08)',
+                                  border: '1px solid rgba(239,68,68,0.25)', cursor: 'pointer'
+                                }}
+                              >
+                                <div style={{ width: 34, height: 34, borderRadius: 4, background: 'rgba(239,68,68,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ef4444' }}>
+                                  <FileText size={18} />
+                                </div>
+                                <div>
+                                  <div style={{ fontSize: '0.74rem', fontWeight: 600, color: 'var(--text-primary)' }}>{c.media_name || 'Proof Document.pdf'}</div>
+                                  <div style={{ fontSize: '0.64rem', color: '#ef4444', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                    <Eye size={10} /> View / Open PDF Document
+                                  </div>
+                                </div>
+                              </div>
+                            ) : fileCategory === 'spreadsheet' ? (
+                              <div
+                                onClick={() => setLightboxMedia({ url: c.media_url, name: c.media_name || 'Spreadsheet.xlsx', type: 'spreadsheet' })}
+                                style={{
+                                  display: 'inline-flex', alignItems: 'center', gap: '0.6rem',
+                                  padding: '0.4rem 0.75rem', borderRadius: 6, background: 'rgba(16,185,129,0.08)',
+                                  border: '1px solid rgba(16,185,129,0.25)', cursor: 'pointer'
+                                }}
+                              >
+                                <div style={{ width: 34, height: 34, borderRadius: 4, background: 'rgba(16,185,129,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#10b981' }}>
+                                  <FileSpreadsheet size={18} />
+                                </div>
+                                <div>
+                                  <div style={{ fontSize: '0.74rem', fontWeight: 600, color: 'var(--text-primary)' }}>{c.media_name || 'Excel Spreadsheet.xlsx'}</div>
+                                  <div style={{ fontSize: '0.64rem', color: '#10b981', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                    <Download size={10} /> Download / Open Excel Sheet
+                                  </div>
+                                </div>
+                              </div>
+                            ) : fileCategory === 'archive' ? (
+                              <div
+                                onClick={() => setLightboxMedia({ url: c.media_url, name: c.media_name || 'Archive.zip', type: 'archive' })}
+                                style={{
+                                  display: 'inline-flex', alignItems: 'center', gap: '0.6rem',
+                                  padding: '0.4rem 0.75rem', borderRadius: 6, background: 'rgba(245,158,11,0.08)',
+                                  border: '1px solid rgba(245,158,11,0.25)', cursor: 'pointer'
+                                }}
+                              >
+                                <div style={{ width: 34, height: 34, borderRadius: 4, background: 'rgba(245,158,11,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#f59e0b' }}>
+                                  <FileArchive size={18} />
+                                </div>
+                                <div>
+                                  <div style={{ fontSize: '0.74rem', fontWeight: 600, color: 'var(--text-primary)' }}>{c.media_name || 'Archive Package.zip'}</div>
+                                  <div style={{ fontSize: '0.64rem', color: '#f59e0b', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                    <Download size={10} /> Download Zip Archive
+                                  </div>
+                                </div>
+                              </div>
+                            ) : (
+                              <div
+                                onClick={() => setLightboxMedia({ url: c.media_url, name: c.media_name || 'Document', type: fileCategory })}
+                                style={{
+                                  display: 'inline-flex', alignItems: 'center', gap: '0.6rem',
+                                  padding: '0.4rem 0.75rem', borderRadius: 6, background: 'rgba(99,102,241,0.08)',
+                                  border: '1px solid rgba(99,102,241,0.25)', cursor: 'pointer'
+                                }}
+                              >
+                                <div style={{ width: 34, height: 34, borderRadius: 4, background: 'rgba(99,102,241,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--accent-primary)' }}>
+                                  <FileText size={18} />
+                                </div>
+                                <div>
+                                  <div style={{ fontSize: '0.74rem', fontWeight: 600, color: 'var(--text-primary)' }}>{c.media_name || 'Document Attachment'}</div>
+                                  <div style={{ fontSize: '0.64rem', color: 'var(--accent-primary)', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                    <Download size={10} /> Download / Open Document
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Render Proof External URL / Link */}
+                        {c.link_url && (
+                          <div style={{ marginTop: '0.3rem' }}>
+                            <a
+                              href={c.link_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              style={{
+                                display: 'inline-flex', alignItems: 'center', gap: '0.35rem',
+                                padding: '0.25rem 0.6rem', borderRadius: 4, background: 'rgba(99,102,241,0.12)',
+                                color: 'var(--accent-primary)', fontSize: '0.72rem', textDecoration: 'none', fontWeight: 600
+                              }}
+                            >
+                              <ExternalLink size={12} /> {c.link_title || c.link_url}
+                            </a>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
                 )}
               </div>
 
               {/* Standard Comment Composer */}
               <form onSubmit={handleAddComment} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                {commentMediaName && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.25rem 0.6rem', background: 'rgba(99,102,241,0.1)', borderRadius: 6, border: '1px solid rgba(99,102,241,0.3)', width: 'fit-content', fontSize: '0.72rem' }}>
+                    <Paperclip size={12} color="var(--accent-primary)" />
+                    <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{commentMediaName}</span>
+                    {commentMediaSize && <span style={{ color: 'var(--text-muted)' }}>({formatBytes(commentMediaSize)})</span>}
+                    <button
+                      type="button"
+                      onClick={() => { setCommentMediaUrl(null); setCommentMediaName(''); setCommentMediaSize(null); setCommentMediaType('image'); }}
+                      style={{ background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer', padding: 0, marginLeft: '0.2rem' }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )}
+
                 <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                   <input
                     type="text"
@@ -2014,19 +2288,19 @@ const Tasks = () => {
                   {/* Attachment Button */}
                   <input
                     type="file"
-                    accept="image/*"
+                    accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.rtf,.odt,.ppt,.pptx,.zip,.rar,.7z"
                     ref={fileInputRef}
                     style={{ display: 'none' }}
-                    onChange={(e) => handleFileUpload(e, setCommentMediaUrl, setCommentMediaName)}
+                    onChange={(e) => handleFileUpload(e, setCommentMediaUrl, setCommentMediaName, setCommentMediaSize, setCommentMediaType)}
                   />
                   <button
                     type="button"
                     className="btn btn-secondary"
                     onClick={() => fileInputRef.current?.click()}
-                    title="Attach Image"
+                    title="Attach File (Images, PDF, Excel, Docs, Zip)"
                     style={{ padding: '0.45rem 0.65rem', color: commentMediaUrl ? 'var(--success)' : 'var(--text-muted)' }}
                   >
-                    <ImageIcon size={15} />
+                    <Paperclip size={15} />
                   </button>
 
                   {/* Add Link Button */}
@@ -2192,6 +2466,101 @@ const Tasks = () => {
                 </div>
               </div>
 
+              {dailyGenConfig.dueDate && (() => {
+                const dayStat = checkDayStatus(dailyGenConfig.dueDate);
+                if (dayStat.isDeclaredWorkingDay) {
+                  return (
+                    <div style={{
+                      padding: '0.65rem 0.85rem', borderRadius: 8,
+                      background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.3)',
+                      fontSize: '0.74rem', color: '#10b981', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: 700 }}>
+                        <CheckCircle2 size={14} />
+                        <span>Declared Special Working Day: {dayStat.reason}. Routine tasks will run as regular.</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          clearWorkingDayOverride(dailyGenConfig.dueDate);
+                          setWorkingDayTrigger(t => t + 1);
+                          showToast('Special working day override cleared.');
+                        }}
+                        style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: '0.7rem', cursor: 'pointer', textDecoration: 'underline' }}
+                      >
+                        Reset to Holiday
+                      </button>
+                    </div>
+                  );
+                }
+                if (!dayStat.isNonWorking) return null;
+                const isForced = dailyGenConfig.forceHolidayRun;
+                return (
+                  <div style={{
+                    padding: '0.65rem 0.85rem', borderRadius: 8,
+                    background: isForced ? 'rgba(16,185,129,0.08)' : 'rgba(245,158,11,0.1)',
+                    border: `1px solid ${isForced ? 'rgba(16,185,129,0.3)' : 'rgba(245,158,11,0.3)'}`,
+                    fontSize: '0.74rem', display: 'flex', flexDirection: 'column', gap: '0.45rem'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.4rem', fontWeight: 700, color: isForced ? '#10b981' : '#f59e0b' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                        <AlertTriangle size={14} />
+                        <span>Notice: Selected date is a {dayStat.reason}</span>
+                      </div>
+                      {isForced && (
+                        <span className="badge badge-success" style={{ fontSize: '0.64rem' }}>
+                          ⚡ Force Routine on Holiday Active
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ color: 'var(--text-secondary)', lineHeight: 1.35 }}>
+                      {isForced
+                        ? 'Confirmed: All generated client routine tasks will be scheduled on this day with Holiday Duty priority flags.'
+                        : 'Offices are normally closed. You can shift all generated tasks to the next business day, OR force-run them today if the office or project site is open.'}
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', marginTop: '0.2rem' }}>
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        style={{ fontSize: '0.72rem', padding: '0.25rem 0.65rem', background: 'var(--accent-primary)', color: 'white', fontWeight: 600 }}
+                        onClick={() => {
+                          setDailyGenConfig(p => ({ ...p, dueDate: dayStat.nextWorkingDate, forceHolidayRun: false }));
+                        }}
+                      >
+                        📅 Shift to Next Working Day ({dayStat.nextWorkingDate})
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        style={{
+                          fontSize: '0.72rem', padding: '0.25rem 0.65rem',
+                          background: isForced ? '#10b981' : 'var(--bg-tertiary)',
+                          color: isForced ? 'white' : 'var(--text-primary)',
+                          border: '1px solid var(--border-color)', fontWeight: 600
+                        }}
+                        onClick={() => setDailyGenConfig(p => ({ ...p, forceHolidayRun: !p.forceHolidayRun }))}
+                      >
+                        {isForced ? '✓ Office Open — Routine Confirmed' : '⚡ Office Open — Run on this Day'}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        style={{ fontSize: '0.72rem', padding: '0.25rem 0.65rem', background: 'transparent', border: '1px dashed var(--accent-secondary)', color: 'var(--accent-secondary)', fontWeight: 600 }}
+                        onClick={() => {
+                          setWorkingDayOverride(dailyGenConfig.dueDate, true, 'Office Open as Regular');
+                          setWorkingDayTrigger(t => t + 1);
+                          showToast(`Declared ${dailyGenConfig.dueDate} as official working day!`);
+                        }}
+                        title="Declares this Sunday/Holiday as an official working day for all tasks in the ERP"
+                      >
+                        📢 Declare as Official Working Day
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
+
+
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '0.5rem' }}>
                 <button type="button" className="btn btn-secondary" onClick={() => setShowDailyGenModal(false)}>Cancel</button>
                 <button
@@ -2257,6 +2626,110 @@ const Tasks = () => {
                   <input type="date" className="input-field" value={form.due_date} onChange={e => setForm(p => ({ ...p, due_date: e.target.value }))} />
                 </div>
               </div>
+
+              {/* Sunday / Holiday Detection & Exceptional Case Handler */}
+              {form.due_date && (() => {
+                const dayStat = checkDayStatus(form.due_date);
+                if (dayStat.isDeclaredWorkingDay) {
+                  return (
+                    <div style={{
+                      padding: '0.65rem 0.85rem', borderRadius: 8,
+                      background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.3)',
+                      fontSize: '0.74rem', color: '#10b981', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: 700 }}>
+                        <CheckCircle2 size={14} />
+                        <span>Declared Special Working Day: {dayStat.reason}. Task scheduled as regular.</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          clearWorkingDayOverride(form.due_date);
+                          setWorkingDayTrigger(t => t + 1);
+                          showToast('Working day override cleared.');
+                        }}
+                        style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: '0.7rem', cursor: 'pointer', textDecoration: 'underline' }}
+                      >
+                        Reset to Holiday
+                      </button>
+                    </div>
+                  );
+                }
+                if (!dayStat.isNonWorking) return null;
+                const isExceptional = form.tags?.includes('⚡ Holiday Duty') || form.is_holiday_work;
+                return (
+                  <div style={{
+                    padding: '0.7rem 0.9rem', borderRadius: 8,
+                    background: isExceptional ? 'rgba(16,185,129,0.08)' : 'rgba(245,158,11,0.1)',
+                    border: `1px solid ${isExceptional ? 'rgba(16,185,129,0.35)' : 'rgba(245,158,11,0.35)'}`,
+                    display: 'flex', flexDirection: 'column', gap: '0.45rem'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.4rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: 700, color: isExceptional ? '#10b981' : '#f59e0b', fontSize: '0.8rem' }}>
+                        <AlertTriangle size={15} />
+                        <span>Scheduled on {dayStat.reason} ({formatTaskDate(form.due_date)})</span>
+                      </div>
+                      {isExceptional && (
+                        <span className="badge badge-success" style={{ fontSize: '0.64rem', padding: '0.15rem 0.45rem' }}>
+                          ⚡ Office Open / Exceptional Duty
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: '0.73rem', color: 'var(--text-secondary)', lineHeight: 1.35 }}>
+                      {isExceptional
+                        ? 'Confirmed: Scheduled directly on Sunday/Holiday (office open as regular, emergency site visit, or priority shift). Staff will see this as active duty.'
+                        : 'Offices and regular routines are normally closed on this day. You can shift the due date, keep it on this day (office open / urgent), or declare the entire day as an official working day.'}
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', marginTop: '0.2rem' }}>
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        style={{ fontSize: '0.72rem', padding: '0.25rem 0.65rem', background: 'var(--accent-primary)', color: 'white', fontWeight: 600 }}
+                        onClick={() => setForm(p => ({ ...p, due_date: dayStat.nextWorkingDate }))}
+                      >
+                        📅 Shift to Next Working Day ({dayStat.nextWorkingDate})
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        style={{
+                          fontSize: '0.72rem', padding: '0.25rem 0.65rem',
+                          background: isExceptional ? '#10b981' : 'var(--bg-tertiary)',
+                          color: isExceptional ? 'white' : 'var(--text-primary)',
+                          border: '1px solid var(--border-color)', fontWeight: 600
+                        }}
+                        onClick={() => {
+                          const nextVal = !isExceptional;
+                          setForm(p => ({
+                            ...p,
+                            is_holiday_work: nextVal,
+                            run_on_holidays: nextVal,
+                            tags: nextVal
+                              ? Array.from(new Set([...(p.tags || []), '⚡ Holiday Duty']))
+                              : (p.tags || []).filter(t => t !== '⚡ Holiday Duty')
+                          }));
+                        }}
+                      >
+                        {isExceptional ? '✓ Keep on this Day (Confirmed)' : '⚡ Office Open — Keep on this Day'}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        style={{ fontSize: '0.72rem', padding: '0.25rem 0.65rem', background: 'transparent', border: '1px dashed var(--accent-secondary)', color: 'var(--accent-secondary)', fontWeight: 600 }}
+                        onClick={() => {
+                          setWorkingDayOverride(form.due_date, true, 'Office Open as Regular');
+                          setWorkingDayTrigger(t => t + 1);
+                          showToast(`Declared ${form.due_date} as official working day!`);
+                        }}
+                        title="Declares this Sunday/Holiday as an official working day for all tasks in the ERP"
+                      >
+                        📢 Declare Office Open Today
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
+
 
               {/* Recurring Task Option */}
               <div style={{ padding: '0.65rem 0.85rem', borderRadius: 8, background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
@@ -2492,9 +2965,32 @@ const Tasks = () => {
                         />
                       </div>
                     )}
+
+                    {/* Sunday / Holiday Operating Mode */}
+                    <div style={{ padding: '0.6rem 0.8rem', background: 'var(--bg-secondary)', borderRadius: 8, border: '1px solid var(--border-color)', marginTop: '0.35rem' }}>
+                      <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.55rem', cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={tplForm.run_on_holidays || false}
+                          onChange={e => setTplForm(p => ({ ...p, run_on_holidays: e.target.checked }))}
+                          style={{ marginTop: 3 }}
+                        />
+                        <div>
+                          <div style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                            ⚡ Run on Sundays & Gazetted Holidays (Exceptional / 24x7 Sites)
+                          </div>
+                          <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', lineHeight: 1.35, marginTop: '0.15rem' }}>
+                            {tplForm.run_on_holidays
+                              ? 'This routine WILL spawn on Sundays & public holidays (ideal for 24/7 site guarding, concrete curing, material unloading).'
+                              : 'Recommended (Default): Daily routine automatically pauses on Sundays & official Indian Gazetted Holidays, resuming on the next business day.'}
+                          </div>
+                        </div>
+                      </label>
+                    </div>
                   </div>
                 )}
               </div>
+
 
               {/* 3. Auto-Assign Target Rules */}
               <div>
@@ -2582,22 +3078,175 @@ const Tasks = () => {
         </div>
       )}
 
-      {/* Lightbox Image Preview Modal */}
-      {lightboxImageUrl && (
-        <div className="modal-overlay" onClick={() => setLightboxImageUrl(null)} style={{ background: 'rgba(0,0,0,0.85)', zIndex: 99999 }}>
-          <div style={{ position: 'relative', maxWidth: 800, width: '90%' }} onClick={e => e.stopPropagation()}>
-            <button
-              className="modal-close-btn"
-              onClick={() => setLightboxImageUrl(null)}
-              style={{ position: 'absolute', top: -40, right: 0, color: '#ffffff' }}
-            >
-              ✕
-            </button>
-            <img
-              src={lightboxImageUrl}
-              alt="Proof Full Resolution"
-              style={{ width: '100%', maxHeight: '80vh', objectFit: 'contain', borderRadius: 8, border: '1px solid rgba(255,255,255,0.2)' }}
-            />
+      {/* Multi-Format Lightbox & Document Preview Modal */}
+      {lightboxMedia && (
+        <div className="modal-overlay" onClick={() => setLightboxMedia(null)} style={{ background: 'rgba(0,0,0,0.85)', zIndex: 99999 }}>
+          <div
+            style={{
+              position: 'relative',
+              maxWidth: lightboxMedia.type === 'pdf' ? 960 : 820,
+              width: '92%',
+              background: 'var(--bg-secondary)',
+              borderRadius: 12,
+              border: '1px solid var(--border-color)',
+              overflow: 'hidden',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.7)'
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.85rem 1.25rem', borderBottom: '1px solid var(--border-color)', background: 'var(--bg-tertiary)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', overflow: 'hidden' }}>
+                {lightboxMedia.type === 'image' ? (
+                  <ImageIcon size={18} color="var(--accent-primary)" />
+                ) : lightboxMedia.type === 'pdf' ? (
+                  <FileText size={18} color="#ef4444" />
+                ) : lightboxMedia.type === 'spreadsheet' ? (
+                  <FileSpreadsheet size={18} color="#10b981" />
+                ) : lightboxMedia.type === 'archive' ? (
+                  <FileArchive size={18} color="#f59e0b" />
+                ) : (
+                  <FileText size={18} color="var(--accent-primary)" />
+                )}
+                <div style={{ fontWeight: 700, fontSize: '0.88rem', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {lightboxMedia.name || 'Attachment Preview'}
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                {lightboxMedia.url && (
+                  <>
+                    <a
+                      href={lightboxMedia.url}
+                      download={lightboxMedia.name || 'attachment'}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="btn btn-secondary btn-sm"
+                      style={{ fontSize: '0.72rem', padding: '0.25rem 0.6rem', gap: '0.3rem' }}
+                      title="Download file"
+                    >
+                      <Download size={12} /> Download
+                    </a>
+                    <a
+                      href={lightboxMedia.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="btn btn-secondary btn-sm"
+                      style={{ fontSize: '0.72rem', padding: '0.25rem 0.6rem', gap: '0.3rem' }}
+                      title="Open in new window"
+                    >
+                      <ExternalLink size={12} /> Open Full
+                    </a>
+                  </>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setLightboxMedia(null)}
+                  style={{
+                    background: 'none', border: 'none', color: 'var(--text-muted)',
+                    fontSize: '1.25rem', cursor: 'pointer', padding: '0 0.4rem', lineHeight: 1
+                  }}
+                  title="Close preview"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Body */}
+            <div style={{ padding: lightboxMedia.type === 'pdf' ? '0' : '1.25rem', display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 320, background: '#0a0f1d' }}>
+              {lightboxMedia.type === 'image' ? (
+                <div style={{ width: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                  <img
+                    src={lightboxMedia.url}
+                    alt={lightboxMedia.name || 'Proof Full Resolution'}
+                    style={{ maxWidth: '100%', maxHeight: '72vh', objectFit: 'contain', borderRadius: 6 }}
+                    onError={(e) => {
+                      e.currentTarget.style.display = 'none';
+                      if (e.currentTarget.nextSibling) e.currentTarget.nextSibling.style.display = 'flex';
+                    }}
+                  />
+                  <div style={{ display: 'none', flexDirection: 'column', alignItems: 'center', gap: '0.5rem', padding: '2rem', color: 'var(--text-muted)' }}>
+                    <AlertTriangle size={36} color="var(--warning)" />
+                    <div style={{ fontSize: '0.85rem' }}>Image could not be rendered directly.</div>
+                    <a href={lightboxMedia.url} target="_blank" rel="noreferrer" className="btn btn-primary btn-sm">
+                      <ExternalLink size={13} /> Open Image Link Directly
+                    </a>
+                  </div>
+                </div>
+              ) : lightboxMedia.type === 'pdf' ? (
+                <div style={{ width: '100%', height: '75vh', position: 'relative' }}>
+                  <iframe
+                    src={lightboxMedia.url}
+                    title="PDF Document Preview"
+                    style={{ width: '100%', height: '100%', border: 'none', background: '#ffffff' }}
+                  />
+                </div>
+              ) : lightboxMedia.type === 'spreadsheet' ? (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', gap: '1rem', padding: '3rem 2rem' }}>
+                  <div style={{ width: 72, height: 72, borderRadius: 16, background: 'rgba(16,185,129,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#10b981' }}>
+                    <FileSpreadsheet size={40} />
+                  </div>
+                  <div>
+                    <h3 style={{ fontSize: '1.05rem', fontWeight: 700, margin: '0 0 0.35rem 0', color: 'var(--text-primary)' }}>
+                      {lightboxMedia.name || 'Spreadsheet Document'}
+                    </h3>
+                    <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: 0, maxWidth: 420 }}>
+                      This Excel / Spreadsheet file can be downloaded or opened in Google Sheets / Excel Online.
+                    </p>
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
+                    <a href={lightboxMedia.url} download={lightboxMedia.name || 'data.xlsx'} className="btn btn-primary" style={{ background: '#10b981', borderColor: '#10b981' }}>
+                      <Download size={14} /> Download Excel Spreadsheet
+                    </a>
+                    <a href={lightboxMedia.url} target="_blank" rel="noreferrer" className="btn btn-secondary">
+                      <ExternalLink size={14} /> View File in Browser
+                    </a>
+                  </div>
+                </div>
+              ) : lightboxMedia.type === 'archive' ? (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', gap: '1rem', padding: '3rem 2rem' }}>
+                  <div style={{ width: 72, height: 72, borderRadius: 16, background: 'rgba(245,158,11,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#f59e0b' }}>
+                    <FileArchive size={40} />
+                  </div>
+                  <div>
+                    <h3 style={{ fontSize: '1.05rem', fontWeight: 700, margin: '0 0 0.35rem 0', color: 'var(--text-primary)' }}>
+                      {lightboxMedia.name || 'Compressed Archive (Zip/Rar)'}
+                    </h3>
+                    <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: 0, maxWidth: 420 }}>
+                      Contains zipped employee submission documents, logs, or site inspection archives.
+                    </p>
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
+                    <a href={lightboxMedia.url} download={lightboxMedia.name || 'archive.zip'} className="btn btn-primary" style={{ background: '#f59e0b', borderColor: '#f59e0b' }}>
+                      <Download size={14} /> Download Zip Archive
+                    </a>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', gap: '1rem', padding: '3rem 2rem' }}>
+                  <div style={{ width: 72, height: 72, borderRadius: 16, background: 'rgba(99,102,241,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--accent-primary)' }}>
+                    <FileText size={40} />
+                  </div>
+                  <div>
+                    <h3 style={{ fontSize: '1.05rem', fontWeight: 700, margin: '0 0 0.35rem 0', color: 'var(--text-primary)' }}>
+                      {lightboxMedia.name || 'Document File'}
+                    </h3>
+                    <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: 0, maxWidth: 420 }}>
+                      Word document, text report, or presentation attached by employee.
+                    </p>
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
+                    <a href={lightboxMedia.url} download={lightboxMedia.name || 'document'} className="btn btn-primary">
+                      <Download size={14} /> Download Document
+                    </a>
+                    <a href={lightboxMedia.url} target="_blank" rel="noreferrer" className="btn btn-secondary">
+                      <ExternalLink size={14} /> Open in Browser
+                    </a>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}

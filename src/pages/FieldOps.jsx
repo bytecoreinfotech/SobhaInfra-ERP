@@ -1,17 +1,22 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   MapPin, Camera, Navigation, User, Users, Building, Calendar,
   Clock, CheckCircle, Plus, Search, Filter, Download, RefreshCw,
   ExternalLink, MessageCircle, AlertCircle, Eye, ShieldCheck, Check,
   Radio, Power, ToggleLeft, ToggleRight, ArrowRight, X, Image as ImageIcon,
-  Activity, Signal, Share2, Copy
+  Activity, Signal, Share2, Copy, Route, Compass, FileSpreadsheet
 } from 'lucide-react';
-import { getSiteVisits, createSiteVisit, updateSiteVisit, getLeads, getTeamMembers, updateEmployeeLivePing, getEmployeeLivePings, getAllEmployeeLiveLocations, reverseGeocode } from '../lib/db';
+import {
+  getSiteVisits, createSiteVisit, updateSiteVisit, getLeads, getTeamMembers,
+  updateEmployeeLivePing, getEmployeeLivePings, getAllEmployeeLiveLocations,
+  reverseGeocode, getEmployeeLocationHistory
+} from '../lib/db';
 import { useAuth } from '../context/AuthContext';
 import { useCompany } from '../context/CompanyContext';
 import FieldMap from '../components/FieldMap';
 import GeotaggedCameraModal from '../components/GeotaggedCameraModal';
 import './Pages.css';
+
 
 const FieldOps = () => {
   const { user, canPerformAction } = useAuth();
@@ -37,6 +42,16 @@ const FieldOps = () => {
   const [previewPhotoUrl, setPreviewPhotoUrl] = useState(null);
   const [previewVisit, setPreviewVisit] = useState(null);
   const [fitAllTrigger, setFitAllTrigger] = useState(0);
+
+  // Employee Movement & Location History (7 Days to 30 Days) State
+  const [historyDays, setHistoryDays] = useState(7); // 7, 14, 30, 'custom'
+  const [historyEmpId, setHistoryEmpId] = useState('all');
+  const [historyStartDate, setHistoryStartDate] = useState('');
+  const [historyEndDate, setHistoryEndDate] = useState('');
+  const [historyLogs, setHistoryLogs] = useState([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [selectedHistoryDate, setSelectedHistoryDate] = useState('all');
+
 
   // Employee Live Location State
   const [liveLocationActive, setLiveLocationActive] = useState(true);
@@ -149,6 +164,57 @@ const FieldOps = () => {
     setTeamMembers(usersRes.data || []);
     setLoading(false);
   };
+
+  const loadHistoryLogs = useCallback(async () => {
+    setLoadingHistory(true);
+    try {
+      const res = await getEmployeeLocationHistory({
+        employeeId: isSupervisor ? historyEmpId : (user?.id || user?.email || 'usr-1'),
+        days: historyDays === 'custom' ? 30 : historyDays,
+        startDate: historyDays === 'custom' && historyStartDate ? historyStartDate : null,
+        endDate: historyDays === 'custom' && historyEndDate ? historyEndDate : null,
+      });
+      if (res && res.data) {
+        setHistoryLogs(res.data);
+      }
+    } catch (e) {
+      console.warn('Error loading location history:', e);
+    } finally {
+      setLoadingHistory(false);
+    }
+  }, [isSupervisor, historyEmpId, user, historyDays, historyStartDate, historyEndDate]);
+
+  useEffect(() => {
+    if (activeTab === 'history') {
+      loadHistoryLogs();
+    }
+  }, [activeTab, loadHistoryLogs]);
+
+  const handleExportHistoryCSV = () => {
+    if (historyLogs.length === 0) return;
+    const headers = ['Date', 'Time', 'Employee Name', 'Role', 'Activity Type', 'Site / Property', 'Client', 'Address', 'Latitude', 'Longitude'];
+    const rows = historyLogs.map(l => [
+      new Date(l.recorded_at).toLocaleDateString('en-IN'),
+      new Date(l.recorded_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
+      `"${l.employee_name || ''}"`,
+      `"${l.role || ''}"`,
+      `"${l.activity_type || ''}"`,
+      `"${(l.site_name || '').replace(/"/g, '""')}"`,
+      `"${(l.client_name || '').replace(/"/g, '""')}"`,
+      `"${(l.address || '').replace(/"/g, '""')}"`,
+      l.lat,
+      l.lng
+    ]);
+    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement('a');
+    link.setAttribute('href', encodedUri);
+    link.setAttribute('download', `Employee_Movement_History_${historyDays}days_${Date.now()}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
 
   // Acquire real device GPS and broadcast live ping to Supabase
   const fetchCurrentGps = () => {
@@ -644,12 +710,14 @@ const FieldOps = () => {
           </div>
 
           {/* Sub Navigation Tabs */}
-          <div style={{ display: 'flex', borderBottom: '1px solid var(--border-color)', marginBottom: '1.25rem' }}>
+          <div style={{ display: 'flex', borderBottom: '1px solid var(--border-color)', marginBottom: '1.25rem', overflowX: 'auto' }}>
             {[
               { id: 'map', label: `Live Field Map (${liveAgents.length} Active)`, icon: <MapPin size={15} /> },
+              { id: 'history', label: `Movement History (7-30 Days)`, icon: <Route size={15} /> },
               { id: 'gallery', label: `Geotagged Photo Gallery (${photosSnappedCount})`, icon: <Camera size={15} /> },
               { id: 'logs', label: `Inspection Logs & Approval (${visits.length})`, icon: <CheckCircle size={15} /> },
             ].map(tab => (
+
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
@@ -846,6 +914,344 @@ const FieldOps = () => {
               </div>
             </div>
           )}
+
+          {/* TAB: Employee Movement & Location History (7 Days to 30 Days) */}
+          {activeTab === 'history' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+              {/* Filter Controls Bar */}
+              <div className="glass-card" style={{ padding: '1.25rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '1rem' }}>
+                  <div>
+                    <h3 style={{ fontSize: '1rem', fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <Route size={18} color="var(--accent-primary)" />
+                      Employee Movement & Location Trail History
+                    </h3>
+                    <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
+                      Chronological day-wise audit trail of sites, properties, and locations visited by staff.
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      onClick={loadHistoryLogs}
+                      disabled={loadingHistory}
+                      style={{ fontSize: '0.74rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+                    >
+                      <RefreshCw size={13} className={loadingHistory ? 'animate-spin' : ''} />
+                      Refresh History
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-sm"
+                      onClick={handleExportHistoryCSV}
+                      disabled={historyLogs.length === 0}
+                      style={{ fontSize: '0.74rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+                    >
+                      <Download size={13} /> Export Audit Log (CSV)
+                    </button>
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem', alignItems: 'flex-end' }}>
+                  {/* Employee Selector */}
+                  <div>
+                    <label style={{ fontSize: '0.78rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>
+                      👤 Select Employee
+                    </label>
+                    <select
+                      className="input-field"
+                      value={historyEmpId}
+                      onChange={e => setHistoryEmpId(e.target.value)}
+                      style={{ fontSize: '0.8rem' }}
+                    >
+                      <option value="all">👥 All Field Staff (Combined Trail)</option>
+                      {teamMembers.map(m => (
+                        <option key={m.id} value={m.id || m.full_name}>{m.full_name} ({m.role})</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Range Preset Selector */}
+                  <div>
+                    <label style={{ fontSize: '0.78rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>
+                      📅 Historical Horizon
+                    </label>
+                    <div style={{ display: 'flex', gap: '0.35rem' }}>
+                      {[
+                        { days: 7, label: '7 Days' },
+                        { days: 14, label: '14 Days' },
+                        { days: 30, label: '30 Days (1 Month)' },
+                        { days: 'custom', label: 'Custom' }
+                      ].map(p => (
+                        <button
+                          key={p.days}
+                          type="button"
+                          className="btn btn-sm"
+                          onClick={() => setHistoryDays(p.days)}
+                          style={{
+                            fontSize: '0.72rem',
+                            padding: '0.35rem 0.65rem',
+                            flex: 1,
+                            background: historyDays === p.days ? 'var(--accent-primary)' : 'var(--bg-secondary)',
+                            color: historyDays === p.days ? 'white' : 'var(--text-secondary)',
+                            border: `1px solid ${historyDays === p.days ? 'var(--accent-primary)' : 'var(--border-color)'}`
+                          }}
+                        >
+                          {p.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Custom Date Pickers */}
+                  {historyDays === 'custom' && (
+                    <div style={{ display: 'flex', gap: '0.5rem', gridColumn: 'span 2' }}>
+                      <div style={{ flex: 1 }}>
+                        <label style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.2rem' }}>From Date</label>
+                        <input
+                          type="date"
+                          className="input-field"
+                          value={historyStartDate}
+                          onChange={e => setHistoryStartDate(e.target.value)}
+                          style={{ fontSize: '0.78rem' }}
+                        />
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <label style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.2rem' }}>To Date</label>
+                        <input
+                          type="date"
+                          className="input-field"
+                          value={historyEndDate}
+                          onChange={e => setHistoryEndDate(e.target.value)}
+                          style={{ fontSize: '0.78rem' }}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Quick Metrics Bar */}
+              {(() => {
+                const datesCount = new Set(historyLogs.map(l => (l.recorded_at || '').split('T')[0])).size;
+                const distinctSites = new Set(historyLogs.map(l => l.site_name).filter(Boolean)).size;
+                const inspectionsCount = historyLogs.filter(l => l.activity_type === 'site_visit' || l.activity_type === 'check_in').length;
+                return (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.85rem' }}>
+                    <div className="glass-card" style={{ padding: '0.85rem 1rem' }}>
+                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600 }}>Active Field Days</div>
+                      <div style={{ fontSize: '1.3rem', fontWeight: 800, color: 'var(--text-primary)', marginTop: '0.2rem' }}>
+                        {datesCount} <span style={{ fontSize: '0.75rem', fontWeight: 500, color: 'var(--text-muted)' }}>/ {historyDays === 'custom' ? 'range' : `${historyDays} days`}</span>
+                      </div>
+                    </div>
+                    <div className="glass-card" style={{ padding: '0.85rem 1rem' }}>
+                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600 }}>Total Visited Stops</div>
+                      <div style={{ fontSize: '1.3rem', fontWeight: 800, color: '#10b981', marginTop: '0.2rem' }}>
+                        {historyLogs.length} <span style={{ fontSize: '0.75rem', fontWeight: 500, color: 'var(--text-muted)' }}>Locations</span>
+                      </div>
+                    </div>
+                    <div className="glass-card" style={{ padding: '0.85rem 1rem' }}>
+                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600 }}>Properties / Sites Visited</div>
+                      <div style={{ fontSize: '1.3rem', fontWeight: 800, color: '#06b6d4', marginTop: '0.2rem' }}>
+                        {distinctSites} <span style={{ fontSize: '0.75rem', fontWeight: 500, color: 'var(--text-muted)' }}>Sites</span>
+                      </div>
+                    </div>
+                    <div className="glass-card" style={{ padding: '0.85rem 1rem' }}>
+                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600 }}>Inspections & Check-Ins</div>
+                      <div style={{ fontSize: '1.3rem', fontWeight: 800, color: 'var(--accent-primary)', marginTop: '0.2rem' }}>
+                        {inspectionsCount} <span style={{ fontSize: '0.75rem', fontWeight: 500, color: 'var(--text-muted)' }}>Logged</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Day-Wise Route Itinerary Timeline & Interactive Map */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(400px, 1.15fr) 1fr', gap: '1.25rem', alignItems: 'start' }}>
+                {/* Left Itinerary Column */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxHeight: 680, overflowY: 'auto' }}>
+                  {loadingHistory ? (
+                    <div className="glass-card" style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+                      <RefreshCw size={24} className="animate-spin" style={{ margin: '0 auto 0.5rem' }} />
+                      <div>Loading {historyDays}-day location trail...</div>
+                    </div>
+                  ) : historyLogs.length === 0 ? (
+                    <div className="glass-card" style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+                      <MapPin size={32} style={{ opacity: 0.3, margin: '0 auto 0.5rem' }} />
+                      <div style={{ fontWeight: 600 }}>No location records found in this time range</div>
+                      <div style={{ fontSize: '0.75rem', marginTop: '0.25rem' }}>
+                        Ensure staff keep "Live Location" enabled on mobile or record property check-ins.
+                      </div>
+                    </div>
+                  ) : (
+                    (() => {
+                      // Group logs by date
+                      const grouped = historyLogs.reduce((acc, item) => {
+                        const dateKey = (item.recorded_at || '').split('T')[0];
+                        if (!acc[dateKey]) acc[dateKey] = [];
+                        acc[dateKey].push(item);
+                        return acc;
+                      }, {});
+
+                      return Object.entries(grouped).map(([dateStr, items]) => {
+                        const dObj = new Date(dateStr);
+                        const dayName = dObj.toLocaleDateString('en-IN', { weekday: 'long' });
+                        const dateFormatted = dObj.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+                        const isSunday = dObj.getDay() === 0;
+
+                        return (
+                          <div key={dateStr} className="glass-card" style={{ padding: '1rem', borderLeft: isSunday ? '3px solid #f59e0b' : '3px solid var(--accent-primary)' }}>
+                            {/* Day Header */}
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <Calendar size={14} color={isSunday ? '#f59e0b' : 'var(--accent-primary)'} />
+                                <strong style={{ fontSize: '0.85rem', color: 'var(--text-primary)' }}>
+                                  {dayName}, {dateFormatted}
+                                </strong>
+                                {isSunday && (
+                                  <span className="badge" style={{ fontSize: '0.6rem', background: 'rgba(245,158,11,0.15)', color: '#f59e0b' }}>
+                                    Sunday Duty
+                                  </span>
+                                )}
+                              </div>
+                              <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 600 }}>
+                                {items.length} Stop{items.length > 1 ? 's' : ''} Visited
+                              </span>
+                            </div>
+
+                            {/* Stop Timeline for this day */}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+                              {items.map((stop, idx) => {
+                                const timeStr = new Date(stop.recorded_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+                                const isSelected = selectedVisit?.id === stop.id;
+
+                                return (
+                                  <div
+                                    key={stop.id || idx}
+                                    onClick={() => setSelectedVisit(stop)}
+                                    style={{
+                                      display: 'flex', gap: '0.65rem', padding: '0.55rem 0.75rem', borderRadius: 8,
+                                      background: isSelected ? 'rgba(99,102,241,0.15)' : 'var(--bg-secondary)',
+                                      border: isSelected ? '1px solid var(--accent-primary)' : '1px solid var(--border-color)',
+                                      cursor: 'pointer', transition: 'all 0.15s ease'
+                                    }}
+                                  >
+                                    {/* Number / Stop Marker */}
+                                    <div style={{
+                                      width: 24, height: 24, borderRadius: '50%',
+                                      background: stop.activity_type === 'site_visit' ? 'rgba(16,185,129,0.2)' : 'rgba(99,102,241,0.2)',
+                                      color: stop.activity_type === 'site_visit' ? '#10b981' : 'var(--accent-primary)',
+                                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                      fontSize: '0.68rem', fontWeight: 800, flexShrink: 0, marginTop: 2
+                                    }}>
+                                      {idx + 1}
+                                    </div>
+
+                                    {/* Stop Details */}
+                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.2rem' }}>
+                                        <div style={{ fontWeight: 700, fontSize: '0.8rem', color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                          {stop.site_name || 'Location Stop'}
+                                        </div>
+                                        <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                          <Clock size={11} /> {timeStr}
+                                        </div>
+                                      </div>
+
+                                      <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'flex-start', gap: '0.3rem', lineHeight: 1.3 }}>
+                                        <MapPin size={12} color="var(--accent-primary)" style={{ flexShrink: 0, marginTop: 2 }} />
+                                        <span>{stop.address || `GPS: ${Number(stop.lat).toFixed(4)}, ${Number(stop.lng).toFixed(4)}`}</span>
+                                      </div>
+
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.35rem', flexWrap: 'wrap' }}>
+                                        <span className="badge" style={{
+                                          fontSize: '0.62rem',
+                                          background: stop.activity_type === 'site_visit' ? 'rgba(16,185,129,0.1)' : 'rgba(99,102,241,0.1)',
+                                          color: stop.activity_type === 'site_visit' ? '#10b981' : 'var(--accent-primary)',
+                                          border: `1px solid ${stop.activity_type === 'site_visit' ? 'rgba(16,185,129,0.3)' : 'rgba(99,102,241,0.3)'}`
+                                        }}>
+                                          {stop.activity_type === 'site_visit' ? '🏢 Site Inspection' : stop.activity_type === 'check_in' ? '📋 Check-in' : '📍 GPS Ping'}
+                                        </span>
+
+                                        {stop.employee_name && (
+                                          <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
+                                            <User size={10} /> {stop.employee_name}
+                                          </span>
+                                        )}
+
+                                        {stop.client_name && (
+                                          <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>
+                                            • Client: <strong>{stop.client_name}</strong>
+                                          </span>
+                                        )}
+
+                                        {stop.photo_url && (
+                                          <button
+                                            type="button"
+                                            className="btn btn-secondary btn-sm"
+                                            onClick={(e) => { e.stopPropagation(); setPreviewPhotoUrl(stop.photo_url); }}
+                                            style={{ fontSize: '0.62rem', padding: '0.1rem 0.4rem', color: '#10b981' }}
+                                          >
+                                            <Camera size={10} /> Photo
+                                          </button>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      });
+                    })()
+                  )}
+                </div>
+
+                {/* Right Interactive Route Map */}
+                <div className="glass-card" style={{ padding: '1rem', minHeight: 520, position: 'sticky', top: 20 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                    <div style={{ fontWeight: 700, fontSize: '0.88rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                      <Compass size={15} color="var(--accent-primary)" />
+                      Plot Route Pins on Map ({historyLogs.length} Stops)
+                    </div>
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => setFitAllTrigger(t => t + 1)}
+                      style={{ fontSize: '0.7rem', padding: '0.2rem 0.5rem' }}
+                      title="Fit all historical stops on map"
+                    >
+                      🎯 Fit Trail
+                    </button>
+                  </div>
+                  <FieldMap
+                    visits={historyLogs.map(l => ({
+                      id: l.id,
+                      site_name: l.site_name || 'Location Stop',
+                      address: l.address,
+                      lat: l.lat,
+                      lng: l.lng,
+                      accuracy: l.accuracy,
+                      employee_name: l.employee_name,
+                      check_in_time: l.recorded_at,
+                      status: l.status || 'Verified',
+                      photo_url: l.photo_url || null
+                    }))}
+                    liveAgents={[]}
+                    selectedVisit={selectedVisit}
+                    onSelectVisit={(v) => setSelectedVisit(v)}
+                    onViewPhoto={(url) => setPreviewPhotoUrl(url)}
+                    fitAllTrigger={fitAllTrigger}
+                    height="560px"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
 
           {/* TAB 2: Geotagged Photo Gallery */}
           {activeTab === 'gallery' && (

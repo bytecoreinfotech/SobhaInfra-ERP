@@ -33,17 +33,33 @@ export async function uploadToWhatsAppMedia(file, folder = 'crm', onProgress = n
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
   const lowerName = file.name.toLowerCase();
 
-  // Validate file type
-  const allowed = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'pdf', 'mp4', 'mp3', 'ogg', 'wav', 'doc', 'docx'];
+  // Validate file type — All general business formats supported
+  const allowed = [
+    // Images
+    'jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'heic', 'ico',
+    // Documents
+    'pdf', 'doc', 'docx', 'txt', 'rtf', 'odt',
+    // Spreadsheets & Data
+    'xls', 'xlsx', 'csv', 'ods', 'tsv',
+    // Presentations
+    'ppt', 'pptx', 'odp',
+    // Compressed Archives
+    'zip', 'rar', '7z', 'tar', 'gz',
+    // Audio & Video
+    'mp4', 'mov', 'avi', 'webm', 'mp3', 'ogg', 'wav', 'm4a'
+  ];
   if (!allowed.includes(ext)) {
-    throw new Error(`File type ".${ext}" is not allowed. Supported: images, PDF, video, audio, documents.`);
+    throw new Error(`File type ".${ext}" is not supported. Supported: Images, PDFs, Word/Docs, Excel/Sheets, CSV, Text, Zip archives, and Audio/Video.`);
   }
 
-  // Validate file size (Documents up to 100 MB per WhatsApp Cloud API specs, media up to 25 MB)
-  const isDoc = ['pdf', 'doc', 'docx'].includes(ext);
-  const MAX_BYTES = isDoc ? 100 * 1024 * 1024 : 25 * 1024 * 1024;
+  // Validate file size:
+  // - Spreadsheets, Documents & Archives: up to 50 MB
+  // - Images: up to 25 MB
+  // - Videos/Audio: up to 35 MB
+  const isLargeDoc = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'csv', 'zip', 'rar', '7z', 'ppt', 'pptx'].includes(ext);
+  const MAX_BYTES = isLargeDoc ? 50 * 1024 * 1024 : 25 * 1024 * 1024;
   if (file.size > MAX_BYTES) {
-    throw new Error(`File too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Maximum is ${isDoc ? '100' : '25'} MB.`);
+    throw new Error(`File size (${(file.size / 1024 / 1024).toFixed(1)} MB) exceeds the allowed limit of ${isLargeDoc ? '50' : '25'} MB.`);
   }
 
   if (onProgress) onProgress(15);
@@ -136,10 +152,42 @@ export function getWhatsAppMediaType(file) {
   const type = file.type || '';
   const ext = (file.name || '').split('.').pop().toLowerCase();
 
-  if (type.startsWith('image/') || ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) return 'image';
-  if (type.startsWith('video/') || ['mp4', 'mov', 'avi'].includes(ext)) return 'video';
+  if (type.startsWith('image/') || ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'heic'].includes(ext)) return 'image';
+  if (type.startsWith('video/') || ['mp4', 'mov', 'avi', 'webm'].includes(ext)) return 'video';
   if (type.startsWith('audio/') || ['mp3', 'ogg', 'wav', 'm4a'].includes(ext)) return 'audio';
-  return 'document'; // PDF, DOCX, etc.
+  return 'document'; // PDF, spreadsheets, docs, archives
+}
+
+/**
+ * Universal file category detector for proof submission and UI rendering
+ * Returns: 'image' | 'pdf' | 'spreadsheet' | 'document' | 'archive' | 'video' | 'audio' | 'file'
+ */
+export function getFileCategory(nameOrUrl = '', mimeType = '') {
+  const clean = String(nameOrUrl || '').split('?')[0].split('#')[0];
+  const ext = clean.split('.').pop().toLowerCase();
+  const mime = String(mimeType || '').toLowerCase();
+
+  if (mime.startsWith('image/') || ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'heic', 'ico'].includes(ext)) return 'image';
+  if (mime.includes('pdf') || ext === 'pdf') return 'pdf';
+  if (['xls', 'xlsx', 'csv', 'ods', 'tsv'].includes(ext) || mime.includes('spreadsheet') || mime.includes('excel') || mime.includes('csv')) return 'spreadsheet';
+  if (['doc', 'docx', 'rtf', 'txt', 'odt'].includes(ext) || mime.includes('word') || mime.includes('document') || mime.startsWith('text/')) return 'document';
+  if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext) || mime.includes('zip') || mime.includes('compressed') || mime.includes('archive')) return 'archive';
+  if (['ppt', 'pptx', 'odp'].includes(ext) || mime.includes('presentation')) return 'presentation';
+  if (mime.startsWith('video/') || ['mp4', 'mov', 'avi', 'webm'].includes(ext)) return 'video';
+  if (mime.startsWith('audio/') || ['mp3', 'ogg', 'wav', 'm4a'].includes(ext)) return 'audio';
+  return 'file';
+}
+
+/**
+ * Format bytes into human-readable string (e.g. 2.4 MB)
+ */
+export function formatBytes(bytes, decimals = 1) {
+  if (!bytes || bytes === 0 || isNaN(bytes)) return '0 B';
+  const k = 1024;
+  const dm = decimals < 0 ? 0 : decimals;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
 }
 
 /**

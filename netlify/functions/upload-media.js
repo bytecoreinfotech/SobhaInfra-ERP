@@ -77,20 +77,51 @@ exports.handler = async (event) => {
       };
     }
 
-    // Determine mediaType
-    let mediaType = 'image';
-    if (mimeType?.startsWith('image/') || ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) {
+    // Determine mediaType & exact MIME type
+    let mediaType = 'document';
+    const mimeMap = {
+      // Images
+      jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif',
+      webp: 'image/webp', svg: 'image/svg+xml', bmp: 'image/bmp', heic: 'image/heic',
+      // Documents & PDFs
+      pdf: 'application/pdf',
+      doc: 'application/msword',
+      docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      txt: 'text/plain',
+      rtf: 'application/rtf',
+      odt: 'application/vnd.oasis.opendocument.text',
+      // Spreadsheets
+      xls: 'application/vnd.ms-excel',
+      xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      csv: 'text/csv',
+      ods: 'application/vnd.oasis.opendocument.spreadsheet',
+      tsv: 'text/tab-separated-values',
+      // Presentations
+      ppt: 'application/vnd.ms-powerpoint',
+      pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      // Archives
+      zip: 'application/zip',
+      rar: 'application/x-rar-compressed',
+      '7z': 'application/x-7z-compressed',
+      tar: 'application/x-tar',
+      gz: 'application/gzip',
+      // Media
+      mp4: 'video/mp4', mov: 'video/quicktime', avi: 'video/x-msvideo', webm: 'video/webm',
+      mp3: 'audio/mpeg', ogg: 'audio/ogg', wav: 'audio/wav', m4a: 'audio/mp4'
+    };
+
+    if (mimeType?.startsWith('image/') || ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'heic'].includes(ext)) {
       mediaType = 'image';
-      mimeType = mimeType || `image/${ext === 'jpg' ? 'jpeg' : ext}`;
-    } else if (mimeType?.startsWith('video/') || ['mp4', 'mov', 'avi'].includes(ext)) {
+      mimeType = mimeType || mimeMap[ext] || 'image/jpeg';
+    } else if (mimeType?.startsWith('video/') || ['mp4', 'mov', 'avi', 'webm'].includes(ext)) {
       mediaType = 'video';
-      mimeType = mimeType || 'video/mp4';
+      mimeType = mimeType || mimeMap[ext] || 'video/mp4';
     } else if (mimeType?.startsWith('audio/') || ['mp3', 'ogg', 'wav', 'm4a'].includes(ext)) {
       mediaType = 'audio';
-      mimeType = mimeType || 'audio/mpeg';
+      mimeType = mimeType || mimeMap[ext] || 'audio/mpeg';
     } else {
       mediaType = 'document';
-      mimeType = mimeType || 'application/pdf';
+      mimeType = mimeType || mimeMap[ext] || 'application/octet-stream';
     }
 
     const safeName = String(fileName).replace(/[^a-zA-Z0-9._-]/g, '_');

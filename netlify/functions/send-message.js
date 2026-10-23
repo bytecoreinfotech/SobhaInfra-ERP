@@ -22,11 +22,33 @@ const SUPABASE_URL = process.env.SUPABASE_URL || 'https://mcgmppnvnwnilioapbli.s
 const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1jZ21wcG52bnduaWxpb2FwYmxpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc1NzE5ODIsImV4cCI6MjEwMzE0Nzk4Mn0.27BrkeNVxcEfG0R1W2gzlV2ueuK6NBS7MuD98Y5iDME';
 
 
+// ─── Format Phone Number for Meta WhatsApp Cloud API (E.164 without '+') ───────
+function formatPhoneForMeta(phone) {
+  if (!phone) return '';
+  const digits = String(phone).replace(/\D/g, '');
+  if (!digits) return '';
+
+  // 10 digits without country code (e.g. Indian mobile 9876543210) -> 91 + digits
+  if (digits.length === 10) {
+    return '91' + digits;
+  }
+  // 11 digits starting with 0 (e.g. 09876543210) -> 91 + remaining 10 digits
+  if (digits.length === 11 && digits.startsWith('0')) {
+    return '91' + digits.substring(1);
+  }
+  // 12 digits starting with 91 (e.g. 919876543210) -> 919876543210
+  if (digits.length === 12 && digits.startsWith('91')) {
+    return digits;
+  }
+  // International format with 11+ digits (e.g. US 1XXXXXXXXXX or UAE 971XXXXXXXXX)
+  return digits;
+}
+
 // ─── Check if a Meta API error is a 24-hour session window rejection ──────────
 function is24HourWindowError(error) {
   if (!error) return false;
   const errStr = typeof error === 'string' ? error : JSON.stringify(error);
-  // Meta error codes for outside-session: 131047 (re-engagement), 131026 (not opted-in),
+  // Meta error codes for outside-session: 131047 (re-engagement), 131026 (not opted-in / delivery),
   // 130429 (rate limit / session), plus keyword fallbacks
   return /131047|131026|130429/i.test(errStr) ||
     /re.?engag/i.test(errStr) ||
@@ -36,12 +58,12 @@ function is24HourWindowError(error) {
 }
 
 // ─── Send Approved Meta Template Message (bypasses 24h window) ────────────────
-async function sendWhatsAppTemplate(to, templateName, language = 'en', params = []) {
+async function sendWhatsAppTemplate(to, templateName, language = 'en_US', params = []) {
   if (!WA_TOKEN || !PHONE_ID) {
     return { success: true, messageId: 'mock-tpl-' + Date.now(), simulated: true, isTemplate: true, templateName };
   }
   try {
-    const cleanPhone = String(to).replace(/[^\d]/g, '');
+    const cleanPhone = formatPhoneForMeta(to);
     const url = `https://graph.facebook.com/v20.0/${PHONE_ID}/messages`;
 
     const components = [];
@@ -63,7 +85,7 @@ async function sendWhatsAppTemplate(to, templateName, language = 'en', params = 
       },
     };
 
-    console.log(`[send-message] Sending template "${templateName}" to ${cleanPhone}`);
+    console.log(`[send-message] Sending template "${templateName}" (${language}) to ${cleanPhone}`);
     const res = await fetch(url, {
       method: 'POST',
       headers: {
@@ -85,27 +107,33 @@ async function sendWhatsAppTemplate(to, templateName, language = 'en', params = 
   }
 }
 
-// ─── Cascading Template Fallback: try custom templates → hello_world ──────────
+// ─── Cascading Template Fallback: try hello_world (utility) → custom templates ─
 async function sendTemplateFallback(to, originalText) {
-  // Try 1: Custom Sobha template (if approved on Meta)
-  const tpl1 = await sendWhatsAppTemplate(to, 'sobha_catalog_campaign_v1', 'en', []);
+  // Try 1: Meta's pre-approved standard utility template 'hello_world' (en_US)
+  // Utility templates bypass marketing frequency caps (error 131049) and exist on all WhatsApp accounts
+  const tpl1 = await sendWhatsAppTemplate(to, 'hello_world', 'en_US', []);
   if (tpl1.success) return tpl1;
 
-  // Try 2: Meta's built-in hello_world template (every business account has this)
-  const tpl2 = await sendWhatsAppTemplate(to, 'hello_world', 'en_US', []);
+  // Try 2: Custom Sobha template (sobha_catalog_campaign_v1 with en)
+  const tpl2 = await sendWhatsAppTemplate(to, 'sobha_catalog_campaign_v1', 'en', []);
   if (tpl2.success) return tpl2;
+
+  // Try 3: sobha_catalog_campaign_v1 with en_US
+  const tpl3 = await sendWhatsAppTemplate(to, 'sobha_catalog_campaign_v1', 'en_US', []);
+  if (tpl3.success) return tpl3;
 
   // All template attempts failed
   console.error(`[send-message] All template fallbacks failed for ${to}`);
   return {
     success: false,
     error: {
-      message: 'Message could not be delivered. Contact has not messaged within 24 hours and no approved templates are available. Please create an approved message template in Meta Business Manager.',
+      message: 'Message could not be delivered: Contact has not messaged within 24 hours, and template dispatch failed. Ensure number is on WhatsApp.',
       code: 'TEMPLATE_FALLBACK_EXHAUSTED',
     },
     isTemplate: true,
   };
 }
+
 
 
 // ─── Resolve and ensure valid public HTTPS URL for WhatsApp Media ─────────────
@@ -165,8 +193,9 @@ async function sendMetaWhatsApp(to, text, mediaType = 'text', mediaUrl = null, m
   if (!WA_TOKEN || !PHONE_ID) {
     return { success: true, messageId: 'mock-wamid-' + Date.now() };
   }
-  const cleanPhone = String(to).replace(/[^\d+]/g, '').replace(/^\+/, '');
+  const cleanPhone = formatPhoneForMeta(to);
   const url = `https://graph.facebook.com/v20.0/${PHONE_ID}/messages`;
+
 
   // Resolve media URL to ensure valid public HTTPS link
   let resolvedUrl = mediaUrl;
@@ -298,19 +327,21 @@ exports.handler = async (event) => {
     if (SUPABASE_URL && SUPABASE_KEY) {
       try {
         supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
-        const cleanPhone = String(to).replace(/[^\d+]/g, '');
-        const digitsOnly = cleanPhone.replace(/[^\d]/g, '');
+        const cleanPhone = formatPhoneForMeta(to);
+        const digitsOnly = cleanPhone;
+        const tenDigits = cleanPhone.slice(-10);
 
         // If no conversationId passed, find or create one
         if (!effectiveConvId) {
           const { data: existingConv } = await supabase.from('whatsapp_conversations')
             .select('id')
-            .or(`contact_phone.eq.${cleanPhone},contact_phone.eq.${digitsOnly},contact_phone.eq.+${digitsOnly}`)
+            .or(`contact_phone.eq.${cleanPhone},contact_phone.eq.+${cleanPhone},contact_phone.ilike.%${tenDigits}`)
             .maybeSingle();
 
           if (existingConv) {
             effectiveConvId = existingConv.id;
           } else {
+
             // Check if matching lead name or customer_master name exists
             let discoveredName = null;
             const isGenericName = (n) => !n || typeof n !== 'string' || !n.trim() || /^(customer(\s*\d+)?|recipient(\s*\d+)?|whatsapp\s*user|user\s*\d*)$/i.test(n.trim());

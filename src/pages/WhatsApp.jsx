@@ -13,8 +13,10 @@ import {
   getWhatsAppConversations, getWhatsAppMessages, sendWhatsAppMessage,
   updateConversationMode, toggleLeadOptOut, reassignSalesperson, submitAiFeedback,
   getTeamMembers, updateConversationContactName,
-  getCustomerMaster, triggerSheetSync, invalidateCustomerMasterCache, syncMetaTemplates
+  getCustomerMaster, triggerSheetSync, invalidateCustomerMasterCache, syncMetaTemplates,
+  reopenWhatsAppWindowWithTemplate
 } from '../lib/db';
+
 import {
   extractMainName, isGenericName, formatPhoneNumber, getDisplayName, getGreeting
 } from '../lib/nameHelper';
@@ -147,6 +149,8 @@ const WhatsApp = () => {
   const [chatFilter, setChatFilter] = useState('all'); // 'all' | 'customers' | 'takeover' | 'unread'
   const [convLoading, setConvLoading] = useState(true);
   const [sendingMsg, setSendingMsg] = useState(false);
+  const [sendingTemplate, setSendingTemplate] = useState(false);
+  const [deliveryNotice, setDeliveryNotice] = useState(null); // { type: 'error' | 'warning' | 'info' | 'success', text: string }
   const [selected360LeadId, setSelected360LeadId] = useState(null);
   const selectedConvRef = useRef(null);
 
@@ -455,7 +459,7 @@ const WhatsApp = () => {
         mediaUrl = await uploadToWhatsAppMedia(fileToSend, 'crm', setUploadProgress);
       }
 
-      const { data: newMsg, error: sendErr } = await sendWhatsAppMessage(
+      const { data: newMsg, error: sendErr, usedTemplate } = await sendWhatsAppMessage(
         selectedConv.id,
         textToSend,
         'human_agent',
@@ -467,6 +471,35 @@ const WhatsApp = () => {
 
       if (sendErr) {
         console.warn('[WhatsApp Page] Send warning:', sendErr);
+        const errMsg = typeof sendErr === 'object' ? (sendErr.message || JSON.stringify(sendErr)) : String(sendErr);
+        if (errMsg.includes('131047') || errMsg.includes('24 hour') || errMsg.includes('window')) {
+          setDeliveryNotice({
+            type: 'warning',
+            text: 'Meta 24-Hour Service Window has closed. To continue chatting, click "Send Utility Template to Re-open" below.'
+          });
+        } else if (errMsg.includes('131026')) {
+          setDeliveryNotice({
+            type: 'error',
+            text: 'Message undeliverable: Please ensure recipient mobile number is a valid 10-digit Indian number (+91).'
+          });
+        } else if (errMsg.includes('131049')) {
+          setDeliveryNotice({
+            type: 'warning',
+            text: 'Meta marketing ecosystem limit reached. Utility template recommended instead of promotional templates.'
+          });
+        } else {
+          setDeliveryNotice({
+            type: 'error',
+            text: `Delivery warning: ${errMsg}`
+          });
+        }
+      } else if (usedTemplate) {
+        setDeliveryNotice({
+          type: 'info',
+          text: '24-hr customer window was closed — message dispatched using pre-approved Meta Utility Template.'
+        });
+      } else {
+        setDeliveryNotice(null);
       }
 
       setMsgInput('');
@@ -484,7 +517,10 @@ const WhatsApp = () => {
       }
     } catch (err) {
       console.error('[WhatsApp Page] Send error:', err);
-      alert(`Message sending failed: ${err.message || 'Please try again.'}`);
+      setDeliveryNotice({
+        type: 'error',
+        text: `Message sending failed: ${err.message || 'Please check contact phone number (+91).'}`
+      });
     } finally {
       setSendingMsg(false);
       setUploadProgress(0);
@@ -514,6 +550,71 @@ const WhatsApp = () => {
       setFeedbackSuccess(false);
       setSelectedFeedbackTag(null);
     }, 2500);
+  };
+
+  // ── Calculate 24-Hour Customer Window Status (Meta Cloud API Rule) ──
+  const customerWindowStatus = useMemo(() => {
+    if (!messages || messages.length === 0) {
+      return { isActive: false, hoursLeft: 0, reason: 'No conversation history' };
+    }
+    const inboundMessages = messages.filter(m => m.sender === 'contact' || m.sender === 'customer');
+    if (inboundMessages.length === 0) {
+      return { isActive: false, hoursLeft: 0, reason: 'Contact has not replied yet' };
+    }
+    const lastInbound = inboundMessages[inboundMessages.length - 1];
+    const inboundTime = new Date(lastInbound.created_at || lastInbound.timestamp).getTime();
+    if (isNaN(inboundTime)) {
+      return { isActive: true, hoursLeft: 24, reason: 'Active window' };
+    }
+    const diffHours = (Date.now() - inboundTime) / (1000 * 60 * 60);
+    if (diffHours >= 24) {
+      return {
+        isActive: false,
+        hoursLeft: 0,
+        expiredAgoHours: Math.round(diffHours - 24),
+        reason: '24-hour customer window expired'
+      };
+    }
+    return {
+      isActive: true,
+      hoursLeft: Math.max(0, 24 - diffHours),
+      reason: 'Active 24-hour service window'
+    };
+  }, [messages]);
+
+  // ── Re-open 24-Hour Window with Meta Utility Template ──
+  const handleReopenWindow = async () => {
+    if (!selectedConv || !selectedConv.contact_phone) return;
+    setSendingTemplate(true);
+    setDeliveryNotice(null);
+    try {
+      const res = await reopenWhatsAppWindowWithTemplate(
+        selectedConv.id,
+        selectedConv.contact_phone,
+        'hello_world'
+      );
+      if (res.error) {
+        setDeliveryNotice({
+          type: 'error',
+          text: `Template dispatch failed: ${res.error.message || res.error}. Please verify contact mobile format.`
+        });
+      } else {
+        setDeliveryNotice({
+          type: 'success',
+          text: `Meta Utility template dispatched to ${selectedConv.contact_phone}! Once the customer replies, the 24-hour customer window will open.`
+        });
+        if (res.data) {
+          setMessages(prev => [...prev, res.data]);
+        }
+      }
+    } catch (err) {
+      setDeliveryNotice({
+        type: 'error',
+        text: `Template error: ${err.message}`
+      });
+    } finally {
+      setSendingTemplate(false);
+    }
   };
 
   // ── Customer Phone Map (matches 10-digit normalized phone numbers to Google Sheet) ──
@@ -1185,6 +1286,44 @@ const WhatsApp = () => {
                         </span>
                       )}
                       <span className="badge badge-whatsapp" style={{ fontSize: '0.65rem' }}>WhatsApp</span>
+                      {customerWindowStatus.isActive ? (
+                        <span
+                          style={{
+                            fontSize: '0.65rem',
+                            fontWeight: 700,
+                            background: 'rgba(16, 185, 129, 0.1)',
+                            color: '#10b981',
+                            border: '1px solid rgba(16, 185, 129, 0.25)',
+                            padding: '0.1rem 0.45rem',
+                            borderRadius: 12,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '0.25rem'
+                          }}
+                          title={`Meta 24-Hour Customer Window is open (~${customerWindowStatus.hoursLeft.toFixed(1)} hrs left)`}
+                        >
+                          <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#10b981' }} />
+                          24h Window Open ({Math.round(customerWindowStatus.hoursLeft)}h)
+                        </span>
+                      ) : (
+                        <span
+                          style={{
+                            fontSize: '0.65rem',
+                            fontWeight: 700,
+                            background: 'rgba(245, 158, 11, 0.12)',
+                            color: '#d97706',
+                            border: '1px solid rgba(245, 158, 11, 0.3)',
+                            padding: '0.1rem 0.45rem',
+                            borderRadius: 12,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '0.25rem'
+                          }}
+                          title="Meta 24-Hour Customer Window is closed. Sending free-form text will use templates or require contact reply."
+                        >
+                          <Clock size={10} /> 24h Window Closed
+                        </span>
+                      )}
                     </div>
                     <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.1rem' }}>
                       {selectedConv._sheet_companies_str ? (
@@ -1792,6 +1931,80 @@ const WhatsApp = () => {
                 )}
 
                 <input ref={fileInputRef} type="file" accept="image/*,.pdf,.mp4,.mp3,.ogg,.wav,.doc,.docx" style={{ display: 'none' }} onChange={e => handleFileSelect(e.target.files[0])} />
+
+                {/* 24-Hour Window & Delivery Diagnostics Notification Banner */}
+                {(!customerWindowStatus.isActive || deliveryNotice) && (
+                  <div style={{
+                    padding: '0.55rem 1.25rem',
+                    background: deliveryNotice?.type === 'error' ? 'rgba(239, 68, 68, 0.12)' :
+                                deliveryNotice?.type === 'success' ? 'rgba(16, 185, 129, 0.12)' :
+                                deliveryNotice?.type === 'warning' ? 'rgba(245, 158, 11, 0.12)' :
+                                !customerWindowStatus.isActive ? 'rgba(245, 158, 11, 0.08)' : 'rgba(59, 130, 246, 0.08)',
+                    borderTop: '1px solid var(--border-color)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    fontSize: '0.74rem',
+                    gap: '0.75rem',
+                    flexWrap: 'wrap'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1, minWidth: 260 }}>
+                      {deliveryNotice ? (
+                        <span style={{
+                          color: deliveryNotice.type === 'error' ? '#ef4444' :
+                                 deliveryNotice.type === 'success' ? '#10b981' :
+                                 deliveryNotice.type === 'warning' ? '#d97706' : 'var(--accent-primary)',
+                          fontWeight: 600
+                        }}>
+                          {deliveryNotice.type === 'error' ? '⚠️ ' : deliveryNotice.type === 'success' ? '✅ ' : 'ℹ️ '}
+                          {deliveryNotice.text}
+                        </span>
+                      ) : (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: 'var(--text-secondary)' }}>
+                          <span style={{ color: '#d97706', fontWeight: 700 }}>⚠️ 24-Hour Meta Window Closed:</span>
+                          <span style={{ fontSize: '0.72rem' }}>Customer must reply, or send an approved Meta Utility template to initiate.</span>
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0 }}>
+                      {!customerWindowStatus.isActive && (
+                        <button
+                          type="button"
+                          onClick={handleReopenWindow}
+                          disabled={sendingTemplate}
+                          style={{
+                            background: 'var(--accent-primary)',
+                            color: '#fff',
+                            border: 'none',
+                            borderRadius: '6px',
+                            padding: '0.3rem 0.75rem',
+                            fontSize: '0.72rem',
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.35rem',
+                            boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
+                          }}
+                          title="Sends Meta-verified 'hello_world' utility template to contact"
+                        >
+                          <Zap size={12} className={sendingTemplate ? 'animate-spin' : ''} />
+                          {sendingTemplate ? 'Sending Template...' : '⚡ Send Meta Template to Re-Open'}
+                        </button>
+                      )}
+                      {deliveryNotice && (
+                        <button
+                          type="button"
+                          onClick={() => setDeliveryNotice(null)}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '0.9rem', padding: '0.2rem' }}
+                          title="Dismiss notice"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
 
                 {/* Smart Quick Reply Chips (Using main name without surnames) */}
                 <div style={{ padding: '0.4rem 1.25rem', background: 'var(--bg-tertiary)', borderTop: '1px solid var(--border-color)', display: 'flex', gap: '0.4rem', overflowX: 'auto', alignItems: 'center' }}>
