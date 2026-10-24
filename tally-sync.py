@@ -2045,7 +2045,7 @@ def build_tally_master_summary(comp: str, comp_records: list) -> dict:
             # Non-debtor accounts (Loans, Fixed Assets, Creditors, Expenses, Vehicles) must NEVER enter sundry_debtors
             excluded_kw = [
                 'creditor', 'loan', 'vehicle', 'plant', 'machinery', 'building', 'land',
-                'kharchi', 'sand', 'silica', 'diesel', 'deisel', 'packing', 'staff', 'driver',
+                'kharchi', 'silica', 'diesel', 'deisel', 'packing', 'staff', 'driver',
                 'maint', 'gst', 'tcs', 'tds', 'bank', 'primary', 'icipru', 'tyre',
                 'labour', 'freight', 'rent', 'printing', 'goods', 'deposit', 'sip',
                 'asset', 'liability', 'expense', 'blacklist', 'fly ash', 'spare', 'transport'
@@ -2062,7 +2062,7 @@ def build_tally_master_summary(comp: str, comp_records: list) -> dict:
                 any(sub in parent_lower for sub in [
                     'mumbai', 'thane', 'palghar', 'mira/bhayandar', 'bhiwandi', 
                     'navi mumbai', 'shahpur/kalyan', 'karan', 'dubey ji', 'kalpesh bhai',
-                    'customer advances', 'vie win', 'yadav trading', 'vnr infra'
+                    'customer advances', 'vie win', 'yadav trading', 'vnr infra', 'sand list'
                 ])
             )
             if not is_debtor:

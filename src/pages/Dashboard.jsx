@@ -540,7 +540,7 @@ const Dashboard = () => {
               <div className="stat-header">
                 <div>
                   <div className="stat-label">Total Customer Outstanding</div>
-                  <div className="stat-value">{fmtAmount(tallyGrossDebit)}</div>
+                  <div className="stat-value">{fmtAmount(totalCustomerOutstanding)}</div>
                 </div>
                 <div className="stat-icon" style={{ background: 'var(--danger-bg)' }}>
                   <CreditCard size={22} style={{ color: 'var(--danger)' }} />
@@ -552,10 +552,10 @@ const Dashboard = () => {
                 ) : (
                   <span className="stat-trend up" style={{ color: 'var(--success)' }}><CheckCircle2 size={13} /> 0 Overdue</span>
                 )}
-                <span className="stat-period" title={`Tally Debit: ₹${(tallySummary?.debit ?? 0).toLocaleString('en-IN')}${tallySummary?.credit > 0 ? ` • Advances: ₹${(tallySummary?.credit ?? 0).toLocaleString('en-IN')}` : ''} • Net: ₹${totalCustomerOutstanding.toLocaleString('en-IN')}`}>
+                <span className="stat-period" title={`Tally Gross Debit: ₹${(tallySummary?.debit ?? 0).toLocaleString('en-IN')}${tallySummary?.credit > 0 ? ` • Customer Advances: ₹${(tallySummary?.credit ?? 0).toLocaleString('en-IN')}` : ''} • Net Closing Balance: ₹${totalCustomerOutstanding.toLocaleString('en-IN')}`}>
                   {tallySummary?.credit > 0
-                    ? `Net: ${fmtAmount(totalCustomerOutstanding)} (Adv: ${fmtAmount(tallySummary.credit)})`
-                    : `Net: ${fmtAmount(totalCustomerOutstanding)}`}
+                    ? `Dr: ${fmtAmount(tallyGrossDebit)} · Adv: ${fmtAmount(tallySummary.credit)}`
+                    : `Dr: ${fmtAmount(tallyGrossDebit)}`}
                 </span>
               </div>
             </div>

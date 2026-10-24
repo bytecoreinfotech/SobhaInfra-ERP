@@ -1189,26 +1189,26 @@ const Finance = () => {
                   </div>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem', marginTop: '0.2rem', flexWrap: 'wrap' }}>
                     <div style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--text-primary)' }}>
-                      {fmtCurrency(financeView === 'receivables' ? tallyDebitTotal : totalOutstanding)}
+                      {fmtCurrency(totalOutstanding)}
                     </div>
                     {financeView === 'receivables' && (
                       <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 600 }}>
-                        (Net Closing Balance: <strong style={{ color: 'var(--text-primary)' }}>{fmtCurrency(totalOutstanding)}</strong>)
+                        (Gross Debit: <strong style={{ color: 'var(--text-primary)' }}>{fmtCurrency(tallyDebitTotal)}</strong>{tallyCreditTotal > 0 ? <> · Advances: <strong style={{ color: '#10b981' }}>{fmtCurrency(tallyCreditTotal)}</strong></> : null})
                       </div>
                     )}
                   </div>
                   <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.2rem', display: 'flex', flexWrap: 'wrap', gap: '0.4rem', alignItems: 'center' }}>
                     {financeView === 'receivables' ? (
                       <>
-                        <span>Tally Debit (Gross Pending): <strong style={{ color: 'var(--text-primary)' }}>{fmtCurrency(tallyDebitTotal)}</strong></span>
+                        <span>Net Outstanding (Tally Closing): <strong style={{ color: '#ef4444' }}>{fmtCurrency(totalOutstanding)}</strong></span>
                         <span>•</span>
+                        <span>Tally Debit (Gross Pending): <strong style={{ color: 'var(--text-primary)' }}>{fmtCurrency(tallyDebitTotal)}</strong></span>
                         {tallyCreditTotal > 0 ? (
                           <>
-                            <span>Customer Advances (Credit): <strong style={{ color: '#10b981' }}>{fmtCurrency(tallyCreditTotal)}</strong></span>
                             <span>•</span>
+                            <span>Customer Advances (Credit): <strong style={{ color: '#10b981' }}>{fmtCurrency(tallyCreditTotal)}</strong></span>
                           </>
                         ) : null}
-                        <span>Net Outstanding: <strong style={{ color: '#ef4444' }}>{fmtCurrency(totalOutstanding)}</strong></span>
                       </>
                     ) : (
                       `${activeBills.filter(i => i.status === 'Overdue' || i.status === 'Pending').length} unpaid bills (${fmtCurrency(currentBillsOutstanding)})`

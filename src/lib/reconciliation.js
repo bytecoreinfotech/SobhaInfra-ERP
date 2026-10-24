@@ -271,7 +271,14 @@ export function reconcileCustomerInvoices(rawInvoices = []) {
     const ledgerMarker = records.find(r => 
       (r.invoice_number || '').toUpperCase().includes('LEDGER-')
     );
-    const tallyClosingBalance = ledgerMarker ? Number(ledgerMarker.amount || 0) : null;
+    const isMarkerAdvance = ledgerMarker ? (
+      ledgerMarker.metadata?.is_credit_advance === true ||
+      ledgerMarker.metadata?.closing_balance_type === 'Cr' ||
+      (ledgerMarker.direction || ledgerMarker.metadata?.direction || '').toLowerCase() === 'credit' ||
+      Number(ledgerMarker.amount || 0) < 0
+    ) : false;
+    const rawMarkerAmt = ledgerMarker ? Math.abs(Number(ledgerMarker.amount || 0)) : null;
+    const tallyClosingBalance = ledgerMarker ? (isMarkerAdvance ? -rawMarkerAmt : rawMarkerAmt) : null;
 
     // 2. Identify Sales invoices and Receipts (excluding LEDGER-* and OP-* markers)
     const salesInvoices = [];
@@ -352,7 +359,7 @@ export function reconcileCustomerInvoices(rawInvoices = []) {
         }
       }
       const rem = rAmt - allocatedForThis;
-      if (rem > 0.5) unallocatedReceiptAmt += rem;
+      if (rem > 0.001) unallocatedReceiptAmt += rem;
     }
 
     // 4. FIFO Settlement for unallocated receipts
@@ -394,9 +401,9 @@ export function reconcileCustomerInvoices(rawInvoices = []) {
 
     const currentPendingSum = salesInvoices.reduce((sum, inv) => sum + (inv.status !== 'Paid' ? Number(inv.pending_amount || 0) : 0), 0);
 
-    if (effectiveClosingBalance !== null && effectiveClosingBalance >= 0) {
-      if (effectiveClosingBalance === 0) {
-        // Tally confirmed zero outstanding balance
+    if (effectiveClosingBalance !== null) {
+      if (effectiveClosingBalance <= 0) {
+        // Tally confirmed zero or credit/advance outstanding balance — party owes zero on bills
         for (const s of salesInvoices) {
           s.status = 'Paid';
           s.pending_amount = 0;
@@ -428,9 +435,14 @@ export function reconcileCustomerInvoices(rawInvoices = []) {
 
           if (allowedPending >= curPending) {
             allowedPending -= curPending;
-          } else if (allowedPending > 0) {
+          } else if (allowedPending > 0.01) {
             inv.pending_amount = Math.round(allowedPending * 100) / 100;
             inv.paid_amount = Math.round((Number(inv.amount || 0) - allowedPending) * 100) / 100;
+            if (inv.pending_amount <= 0.01) {
+              inv.status = 'Paid';
+              inv.pending_amount = 0;
+              inv.paid_amount = Number(inv.amount || 0);
+            }
             allowedPending = 0;
           } else {
             inv.status = 'Paid';
@@ -899,7 +911,7 @@ export function computeCompanyDebtors(invoices = [], companyName = '', masterSum
   let credit = 0;
   let groups = [];
 
-  if (matchedMaster?.sundry_debtors?.gross_debit !== undefined && matchedMaster.sundry_debtors.gross_debit > 0) {
+  if (matchedMaster?.sundry_debtors?.gross_debit !== undefined && matchedMaster.sundry_debtors.gross_debit >= 0) {
     debit = Number(matchedMaster.sundry_debtors.gross_debit || 0);
     credit = Number(matchedMaster.sundry_debtors.gross_credit || 0);
     groups = matchedMaster.sundry_debtors.subgroups ? [...matchedMaster.sundry_debtors.subgroups] : [];
@@ -907,7 +919,7 @@ export function computeCompanyDebtors(invoices = [], companyName = '', masterSum
     // Universal Dynamic Debtor calculation directly from verified party ledgers
     const excluded_kw = [
       'creditor', 'loan', 'vehicle', 'plant', 'machinery', 'building', 'land',
-      'kharchi', 'sand', 'silica', 'diesel', 'deisel', 'packing', 'staff', 'driver',
+      'kharchi', 'silica', 'diesel', 'deisel', 'packing', 'staff', 'driver',
       'maint', 'gst', 'tcs', 'tds', 'bank', 'primary', 'icipru', 'tyre',
       'labour', 'freight', 'rent', 'printing', 'goods', 'deposit', 'sip',
       'asset', 'liability', 'expense', 'blacklist', 'fly ash', 'spare', 'transport'
@@ -918,23 +930,30 @@ export function computeCompanyDebtors(invoices = [], companyName = '', masterSum
       const parentLower = parent.toLowerCase();
       if (excluded_kw.some(kw => parentLower.includes(kw))) return;
 
+      const isSalesBills = parentLower.includes('sales bills to make');
       const dir = (l.direction || l.metadata?.direction || '').toLowerCase();
-      const isAdvance = l.metadata?.is_credit_advance || 
-                        l.metadata?.is_advance || 
-                        l.metadata?.advance_paid || 
-                        Number(l.amount || 0) < 0 || 
-                        dir === 'credit' || 
-                        (l.metadata?.closing_balance_type || '').toLowerCase() === 'cr';
+      const isAdvance = !isSalesBills && (
+        l.metadata?.is_credit_advance || 
+        l.metadata?.is_advance || 
+        l.metadata?.advance_paid || 
+        Number(l.amount || 0) < 0 || 
+        dir === 'credit' || 
+        (l.metadata?.closing_balance_type || '').toLowerCase() === 'cr'
+      );
 
       const isDebtor = parentLower.includes('debtor') || 
                        dir === 'receivable' || 
                        isAdvance ||
-                       ['mumbai', 'thane', 'dubey ji', 'mira/bhayandar', 'palghar', 'karan', 'kalpesh bhai', 'shahpur/kalyan', 'bhiwandi', 'navi mumbai'].some(sub => parentLower.includes(sub));
+                       isSalesBills ||
+                       ['mumbai', 'thane', 'dubey ji', 'mira/bhayandar', 'palghar', 'karan', 'kalpesh bhai', 'shahpur/kalyan', 'bhiwandi', 'navi mumbai', 'customer advances', 'vie win', 'yadav trading', 'vnr infra', 'sand list'].some(sub => parentLower.includes(sub));
 
       if (isDebtor) {
         const amt = Math.abs(Number(l.amount || 0));
         const partyName = l.client_name || l.ledger_name || l.invoice_number;
-        if (isAdvance) {
+        if (isSalesBills) {
+          debit -= amt;
+          groups.push({ name: partyName, debit: -amt, credit: 0, net: -amt, parent: parent || 'Sales Bills to Make' });
+        } else if (isAdvance) {
           credit += amt;
           groups.push({ name: partyName, debit: 0, credit: amt, net: -amt, parent: parent || 'Customer Advances', is_advance: true });
         } else {
