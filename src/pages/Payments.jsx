@@ -595,7 +595,7 @@ const Payments = () => {
       ) : (
         <div className="stats-grid">
           {[
-            { label: 'Total Tally Outstanding', value: fmtAmount(tallySummary.net), color: '#ef4444', bg: 'rgba(239,68,68,0.1)', icon: <CreditCard size={20} />, count: tallySummary.credit > 0 ? `Dr: ${fmtAmount(tallySummary.debit)} · Adv: ${fmtAmount(tallySummary.credit)}` : `Dr: ${fmtAmount(tallySummary.debit)} (Net)` },
+            { label: 'Total Outstanding (Tally)', value: fmtAmount(tallySummary.debit), color: '#ef4444', bg: 'rgba(239,68,68,0.1)', icon: <CreditCard size={20} />, count: tallySummary.credit > 0 ? `Net: ${fmtAmount(tallySummary.net)} · Adv: ${fmtAmount(tallySummary.credit)}` : `Net: ${fmtAmount(tallySummary.net)}` },
             { label: 'Actionable Overdue', value: fmtAmount(totalOverdue), color: 'var(--danger)', bg: 'var(--danger-bg)', icon: <AlertTriangle size={20} />, count: enrichedInvoices.filter(i => i.status === 'Overdue').length + ' invoices' },
             { label: 'Not Yet Due', value: fmtAmount(totalPending), color: 'var(--warning)', bg: 'var(--warning-bg)', icon: <Clock size={20} />, count: enrichedInvoices.filter(i => i.status === 'Pending').length + ' invoices' },
             { label: 'Collected (Paid)', value: fmtAmount(totalPaid), color: 'var(--success)', bg: 'var(--success-bg)', icon: <CheckCircle2 size={20} />, count: enrichedInvoices.filter(i => i.status === 'Paid').length + ' invoices' },

@@ -2062,7 +2062,7 @@ def build_tally_master_summary(comp: str, comp_records: list) -> dict:
                 any(sub in parent_lower for sub in [
                     'mumbai', 'thane', 'palghar', 'mira/bhayandar', 'bhiwandi', 
                     'navi mumbai', 'shahpur/kalyan', 'karan', 'dubey ji', 'kalpesh bhai',
-                    'customer advances', 'vie win', 'yadav trading', 'vnr infra', 'sand list'
+                    'customer advances', 'vie win', 'yadav trading', 'vnr infra'
                 ])
             )
             if not is_debtor:
